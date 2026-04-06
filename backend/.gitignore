@@ -1,0 +1,6 @@
+node_modules/
+data/academy.db
+data/academy.db-wal
+data/academy.db-shm
+.env
+*.log
