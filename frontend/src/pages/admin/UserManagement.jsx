@@ -63,7 +63,7 @@ function UserModal({ open, onClose, user, onSaved }) {
           <label className="label">{t('admin.password')} {user && '(leave blank to keep)'}</label>
           <div className="relative">
             <input type={showPw ? 'text' : 'password'} className="input pe-10" value={form.password}
-              onChange={e => set('password', e.target.value)} />
+              onChange={e => set('password', e.target.value)} autoComplete="new-password" />
             <button type="button" onClick={() => setShowPw(v => !v)}
               className="absolute end-2.5 top-1/2 -translate-y-1/2 p-1 text-text-secondary">
               {showPw ? <EyeOff size={15}/> : <Eye size={15}/>}
@@ -172,6 +172,7 @@ export default function UserManagement() {
       </div>
 
       <UserModal
+        key={selected?.id ?? 'new'}
         open={showModal}
         user={selected}
         onClose={() => setShowModal(false)}
