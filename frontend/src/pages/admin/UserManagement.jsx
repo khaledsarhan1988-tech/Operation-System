@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Plus, Eye, EyeOff } from 'lucide-react';
+import { Plus, Eye, EyeOff, Pencil } from 'lucide-react';
 import api from '../../api/axios';
 import DataTable from '../../components/ui/DataTable';
 import Modal from '../../components/ui/Modal';
@@ -136,6 +136,17 @@ export default function UserManagement() {
     { key: 'language', label: t('admin.language'), render: v => v === 'ar' ? 'العربية' : 'English' },
     { key: 'is_active', label: t('admin.status'), render: v => <Badge value={v ? 'نشطة' : 'غير منتهية'} /> },
     { key: 'created_at', label: 'Created', render: v => v?.slice(0,10) },
+    {
+      key: 'id', label: '', render: (_, row) => (
+        <button
+          onClick={e => { e.stopPropagation(); setSelected(row); setShowModal(true); }}
+          className="p-1.5 rounded-lg hover:bg-primary/10 text-primary transition-colors"
+          title={t('admin.editUser')}
+        >
+          <Pencil size={15} />
+        </button>
+      )
+    },
   ];
 
   return (
