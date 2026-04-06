@@ -71,14 +71,25 @@ router.put('/users/:id', (req, res) => {
   return res.json(updated);
 });
 
-// DELETE /api/admin/users/:id (soft delete)
+// PATCH /api/admin/users/:id/status — toggle active/inactive
+router.patch('/users/:id/status', (req, res) => {
+  const { id } = req.params;
+  if (parseInt(id) === req.user.id) return res.status(400).json({ error: 'Cannot change your own status' });
+  const user = db.prepare('SELECT id, is_active FROM users WHERE id = ?').get(id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const newStatus = user.is_active ? 0 : 1;
+  db.prepare("UPDATE users SET is_active = ?, updated_at = datetime('now') WHERE id = ?").run(newStatus, id);
+  return res.json({ is_active: newStatus });
+});
+
+// DELETE /api/admin/users/:id — hard delete
 router.delete('/users/:id', (req, res) => {
   const { id } = req.params;
-  if (parseInt(id) === req.user.id) return res.status(400).json({ error: 'Cannot deactivate yourself' });
+  if (parseInt(id) === req.user.id) return res.status(400).json({ error: 'Cannot delete yourself' });
   const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
   if (!user) return res.status(404).json({ error: 'User not found' });
-  db.prepare("UPDATE users SET is_active = 0, updated_at = datetime('now') WHERE id = ?").run(id);
-  return res.json({ message: 'User deactivated' });
+  db.prepare('DELETE FROM users WHERE id = ?').run(id);
+  return res.json({ message: 'User deleted' });
 });
 
 // ─── SIDE SESSION CHECKS — Admin only delete ─────────────────────────────────

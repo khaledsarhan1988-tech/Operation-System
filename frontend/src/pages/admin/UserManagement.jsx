@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Plus, Eye, EyeOff, Pencil } from 'lucide-react';
+import { Plus, Eye, EyeOff, Pencil, Trash2, ToggleLeft, ToggleRight } from 'lucide-react';
 import api from '../../api/axios';
 import DataTable from '../../components/ui/DataTable';
 import Modal from '../../components/ui/Modal';
@@ -60,12 +60,12 @@ function UserModal({ open, onClose, user, onSaved }) {
           </div>
         </div>
         <div>
-          <label className="label">{t('admin.password')} {user && '(leave blank to keep)'}</label>
+          <label className="label">{t('admin.password')} {user && '(اتركها فارغة للإبقاء على نفس الباسورد)'}</label>
           <div className="relative">
             <input type={showPw ? 'text' : 'password'} className="input pe-10" value={form.password}
               onChange={e => set('password', e.target.value)} autoComplete="new-password" />
             <button type="button" onClick={() => setShowPw(v => !v)}
-              className="absolute end-2.5 top-1/2 -translate-y-1/2 p-1 text-text-secondary">
+              className="absolute end-2.5 top-1/2 -translate-y-1/2 p-1 text-gray-500">
               {showPw ? <EyeOff size={15}/> : <Eye size={15}/>}
             </button>
           </div>
@@ -101,13 +101,21 @@ function UserModal({ open, onClose, user, onSaved }) {
           </div>
         </div>
         {user && (
-          <div className="flex items-center gap-3">
-            <label className="label mb-0">{t('admin.status')}</label>
+          <div className="flex items-center gap-3 p-3 rounded-lg bg-surface border border-border">
+            <label className="label mb-0 flex-1">الحالة</label>
             <button
+              type="button"
               onClick={() => set('is_active', form.is_active ? 0 : 1)}
-              className={`px-3 py-1 rounded-full text-sm font-medium ${form.is_active ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`}
+              className={`flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                form.is_active
+                  ? 'bg-success/15 text-success hover:bg-success/25'
+                  : 'bg-danger/15 text-danger hover:bg-danger/25'
+              }`}
             >
-              {form.is_active ? t('admin.active') : t('admin.inactive')}
+              {form.is_active
+                ? <><ToggleRight size={16}/> نشط — اضغط لإيقاف التفعيل</>
+                : <><ToggleLeft size={16}/> غير نشط — اضغط للتفعيل</>
+              }
             </button>
           </div>
         )}
@@ -127,11 +135,38 @@ export default function UserManagement() {
   const qc = useQueryClient();
   const [selected, setSelected] = useState(null);
   const [showModal, setShowModal] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+  const [togglingId, setTogglingId] = useState(null);
 
   const { data: users, isLoading } = useQuery({
     queryKey: ['admin-users'],
     queryFn: () => api.get('/admin/users').then(r => r.data),
   });
+
+  const handleDelete = async (row) => {
+    if (!window.confirm(`هل أنت متأكد من حذف المستخدم "${row.full_name}" نهائياً؟`)) return;
+    setDeletingId(row.id);
+    try {
+      await api.delete(`/admin/users/${row.id}`);
+      qc.invalidateQueries(['admin-users']);
+    } catch (e) {
+      alert(e.response?.data?.error || 'حدث خطأ');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleToggleStatus = async (row) => {
+    setTogglingId(row.id);
+    try {
+      await api.patch(`/admin/users/${row.id}/status`);
+      qc.invalidateQueries(['admin-users']);
+    } catch (e) {
+      alert(e.response?.data?.error || 'حدث خطأ');
+    } finally {
+      setTogglingId(null);
+    }
+  };
 
   const columns = [
     { key: 'username', label: t('admin.username') },
@@ -139,17 +174,39 @@ export default function UserManagement() {
     { key: 'role', label: t('admin.role'), render: v => <span className="badge bg-primary/10 text-primary">{t(`roles.${v}`, v)}</span> },
     { key: 'department', label: t('admin.department') },
     { key: 'language', label: t('admin.language'), render: v => v === 'ar' ? 'العربية' : 'English' },
-    { key: 'is_active', label: t('admin.status'), render: v => <Badge value={v ? 'نشطة' : 'غير منتهية'} /> },
-    { key: 'created_at', label: 'Created', render: v => v?.slice(0,10) },
+    {
+      key: 'is_active', label: 'الحالة', render: (v, row) => (
+        <button
+          onClick={e => { e.stopPropagation(); handleToggleStatus(row); }}
+          disabled={togglingId === row.id}
+          className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+            v ? 'bg-success/15 text-success hover:bg-success/25' : 'bg-danger/15 text-danger hover:bg-danger/25'
+          }`}
+        >
+          {togglingId === row.id ? '...' : v ? 'نشط' : 'غير نشط'}
+        </button>
+      )
+    },
+    { key: 'created_at', label: 'تاريخ الإنشاء', render: v => v?.slice(0,10) },
     {
       key: 'id', label: '', render: (_, row) => (
-        <button
-          onClick={e => { e.stopPropagation(); setSelected(row); setShowModal(true); }}
-          className="p-1.5 rounded-lg hover:bg-primary/10 text-primary transition-colors"
-          title={t('admin.editUser')}
-        >
-          <Pencil size={15} />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={e => { e.stopPropagation(); setSelected(row); setShowModal(true); }}
+            className="p-1.5 rounded-lg hover:bg-primary/10 text-primary transition-colors"
+            title="تعديل"
+          >
+            <Pencil size={15} />
+          </button>
+          <button
+            onClick={e => { e.stopPropagation(); handleDelete(row); }}
+            disabled={deletingId === row.id}
+            className="p-1.5 rounded-lg hover:bg-danger/10 text-danger transition-colors"
+            title="حذف"
+          >
+            <Trash2 size={15} />
+          </button>
+        </div>
       )
     },
   ];
@@ -157,7 +214,7 @@ export default function UserManagement() {
   return (
     <div className="space-y-5 animate-fadeIn">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-text-primary">{t('admin.users')}</h1>
+        <h1 className="text-xl font-bold text-gray-800">{t('admin.users')}</h1>
         <button onClick={() => { setSelected(null); setShowModal(true); }} className="btn-primary flex items-center gap-2 text-sm">
           <Plus size={15} /> {t('admin.addUser')}
         </button>
@@ -172,7 +229,6 @@ export default function UserManagement() {
           limit={100}
           onPageChange={() => {}}
           loading={isLoading}
-          onRowClick={row => { setSelected(row); setShowModal(true); }}
         />
       </div>
 
