@@ -23,16 +23,18 @@ initDb().then(db => {
   const password = process.env.ADMIN_PASSWORD || 'Admin@2024';
   const fullName = process.env.ADMIN_FULLNAME || 'System Admin';
 
+  const hash = bcrypt.hashSync(password, 12);
   const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
   if (!existing) {
-    const hash = bcrypt.hashSync(password, 12);
     db.prepare(`
       INSERT INTO users (username, password_hash, full_name, role, department, language)
       VALUES (?, ?, ?, 'admin', 'General', 'ar')
     `).run(username, hash, fullName);
-    console.log(`✅ Admin user created: ${username} / password: ${password}`);
+    console.log(`✅ Admin user created: ${username}`);
   } else {
-    console.log(`ℹ️  Admin user already exists: ${username}`);
+    db.prepare(`UPDATE users SET password_hash = ?, full_name = ? WHERE username = ?`)
+      .run(hash, fullName, username);
+    console.log(`✅ Admin user updated: ${username}`);
   }
 
   saveNow();
