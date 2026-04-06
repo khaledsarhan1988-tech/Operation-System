@@ -131,7 +131,7 @@ export default function UserManagement() {
   const columns = [
     { key: 'username', label: t('admin.username') },
     { key: 'full_name', label: t('admin.fullName') },
-    { key: 'role', label: t('admin.role'), render: v => <span className="capitalize badge bg-primary/10 text-primary">{v}</span> },
+    { key: 'role', label: t('admin.role'), render: v => <span className="badge bg-primary/10 text-primary">{t(`roles.${v}`, v)}</span> },
     { key: 'department', label: t('admin.department') },
     { key: 'language', label: t('admin.language'), render: v => v === 'ar' ? 'العربية' : 'English' },
     { key: 'is_active', label: t('admin.status'), render: v => <Badge value={v ? 'نشطة' : 'غير منتهية'} /> },
