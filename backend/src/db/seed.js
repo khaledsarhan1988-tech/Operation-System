@@ -18,6 +18,14 @@ initDb().then(db => {
   });
   console.log('✅ Schema applied');
 
+  // Add management column if it doesn't exist (migration)
+  try {
+    db._raw.run(`ALTER TABLE users ADD COLUMN management TEXT NOT NULL DEFAULT 'Customer Services'`);
+    console.log('✅ Migration: added management column');
+  } catch(e) {
+    // Column already exists, ignore
+  }
+
   // Create admin user
   const username = process.env.ADMIN_USERNAME || 'admin';
   const password = process.env.ADMIN_PASSWORD || 'Admin@2024';
@@ -27,12 +35,12 @@ initDb().then(db => {
   const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
   if (!existing) {
     db.prepare(`
-      INSERT INTO users (username, password_hash, full_name, role, department, language)
-      VALUES (?, ?, ?, 'admin', 'General', 'ar')
+      INSERT INTO users (username, password_hash, full_name, role, department, language, management)
+      VALUES (?, ?, ?, 'admin', 'All', 'ar', 'Customer Services')
     `).run(username, hash, fullName);
     console.log(`✅ Admin user created: ${username}`);
   } else {
-    db.prepare(`UPDATE users SET password_hash = ?, full_name = ?, role = 'admin' WHERE username = ?`)
+    db.prepare(`UPDATE users SET password_hash = ?, full_name = ?, role = 'admin', management = 'Customer Services' WHERE username = ?`)
       .run(hash, fullName, username);
     console.log(`✅ Admin user updated: ${username}`);
   }

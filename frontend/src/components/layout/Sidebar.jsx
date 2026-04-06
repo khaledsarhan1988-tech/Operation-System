@@ -36,6 +36,12 @@ const ADMIN_LINKS = [
 
 const ROLE_LINKS = { agent: AGENT_LINKS, leader: LEADER_LINKS, admin: ADMIN_LINKS };
 
+const managementMap = {
+  'Customer Services': 'خدمة العملاء',
+  'Education': 'التعليم',
+  'Quality': 'الجودة',
+};
+
 export default function Sidebar({ mobile, onClose }) {
   const { t } = useTranslation();
   const { user, logout } = useAuth();
@@ -64,7 +70,7 @@ export default function Sidebar({ mobile, onClose }) {
       <div className="px-4 py-3 border-b border-white/10">
         <p className="text-white text-sm font-semibold truncate">{user?.full_name}</p>
         <p className="text-sidebar-text/60 text-xs">
-          {t(`roles.${user?.role}`, user?.role)} · {t(`departments.${user?.department}`, user?.department)}
+          {t(`roles.${user?.role}`, user?.role)} · {managementMap[user?.management] || user?.management}
         </p>
       </div>
 

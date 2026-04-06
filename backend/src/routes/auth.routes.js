@@ -36,6 +36,7 @@ router.post('/login', (req, res) => {
     full_name: user.full_name,
     role: user.role,
     department: user.department,
+    management: user.management,
     language: user.language,
   };
 
@@ -65,6 +66,7 @@ router.post('/login', (req, res) => {
       full_name: user.full_name,
       role: user.role,
       department: user.department,
+      management: user.management,
       language: user.language,
     },
   });
@@ -93,6 +95,7 @@ router.post('/refresh', (req, res) => {
     full_name: stored.full_name,
     role: stored.role,
     department: stored.department,
+    management: stored.management,
     language: stored.language,
   };
 
@@ -122,7 +125,7 @@ router.post('/logout', authenticate, (req, res) => {
 // GET /api/auth/me
 router.get('/me', authenticate, (req, res) => {
   const user = db.prepare(
-    'SELECT id, username, full_name, role, department, language, is_active FROM users WHERE id = ?'
+    'SELECT id, username, full_name, role, department, management, language, is_active FROM users WHERE id = ?'
   ).get(req.user.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
   return res.json(user);
@@ -139,7 +142,7 @@ router.put('/me', authenticate, (req, res) => {
       .run(language, req.user.id);
   }
   const user = db.prepare(
-    'SELECT id, username, full_name, role, department, language FROM users WHERE id = ?'
+    'SELECT id, username, full_name, role, department, management, language FROM users WHERE id = ?'
   ).get(req.user.id);
   return res.json(user);
 });

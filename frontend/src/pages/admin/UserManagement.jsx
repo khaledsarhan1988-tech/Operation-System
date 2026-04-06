@@ -9,7 +9,7 @@ import Badge from '../../components/ui/Badge';
 
 const EMPTY_FORM = {
   username: '', password: '', full_name: '',
-  role: 'agent', department: 'All', language: 'ar', is_active: 1,
+  role: 'agent', department: 'All', management: 'Customer Services', language: 'ar', is_active: 1,
 };
 
 function UserModal({ open, onClose, user, onSaved }) {
@@ -17,7 +17,7 @@ function UserModal({ open, onClose, user, onSaved }) {
   const [form, setForm] = useState(user ? {
     username: user.username, password: '',
     full_name: user.full_name, role: user.role,
-    department: user.department, language: user.language,
+    department: user.department, management: user.management || 'Customer Services', language: user.language,
     is_active: user.is_active,
   } : { ...EMPTY_FORM });
   const [showPw, setShowPw] = useState(false);
@@ -70,7 +70,7 @@ function UserModal({ open, onClose, user, onSaved }) {
             </button>
           </div>
         </div>
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="label">{t('admin.role')}</label>
             <select className="input" value={form.role} onChange={e => {
@@ -90,6 +90,14 @@ function UserModal({ open, onClose, user, onSaved }) {
               <option value="General">{t('common.general')}</option>
               <option value="Private">{t('common.private')}</option>
               <option value="Semi">{t('common.semi')}</option>
+            </select>
+          </div>
+          <div>
+            <label className="label">الإدارة</label>
+            <select className="input" value={form.management} onChange={e => set('management', e.target.value)}>
+              <option value="Customer Services">خدمة العملاء</option>
+              <option value="Education">التعليم</option>
+              <option value="Quality">الجودة</option>
             </select>
           </div>
           <div>
@@ -173,6 +181,10 @@ export default function UserManagement() {
     { key: 'full_name', label: t('admin.fullName') },
     { key: 'role', label: t('admin.role'), render: v => <span className="badge bg-primary/10 text-primary">{t(`roles.${v}`, v)}</span> },
     { key: 'department', label: t('admin.department') },
+    { key: 'management', label: 'الإدارة', render: v => {
+      const map = { 'Customer Services': 'خدمة العملاء', 'Education': 'التعليم', 'Quality': 'الجودة' };
+      return <span className="badge bg-accent/10 text-accent">{map[v] || v}</span>;
+    }},
     { key: 'language', label: t('admin.language'), render: v => v === 'ar' ? 'العربية' : 'English' },
     {
       key: 'is_active', label: 'الحالة', render: (v, row) => (
