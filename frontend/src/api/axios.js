@@ -56,7 +56,10 @@ api.interceptors.response.use(
         _refreshQueue.forEach(p => p.reject(refreshError));
         _refreshQueue = [];
         clearAccessToken();
-        window.location.href = '/login';
+        // Only redirect if not already on login page to avoid infinite loop
+        if (!window.location.pathname.startsWith('/login')) {
+          window.location.href = '/login';
+        }
         return Promise.reject(refreshError);
       } finally {
         _isRefreshing = false;

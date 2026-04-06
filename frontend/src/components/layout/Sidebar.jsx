@@ -51,7 +51,9 @@ export default function Sidebar({ mobile, onClose }) {
     <div className="flex flex-col h-full bg-sidebar text-sidebar-text w-64">
       {/* Logo */}
       <div className="flex items-center gap-3 p-5 border-b border-white/10">
-        <img src="/logo.png" alt="Logo" className="h-10 w-10 rounded-lg object-contain bg-white p-1" />
+        <div className="h-11 w-11 rounded-xl bg-white flex items-center justify-center flex-shrink-0 shadow-md">
+          <img src="/logo.png" alt="Logo" className="h-9 w-9 object-contain" />
+        </div>
         <div className="min-w-0">
           <p className="text-white font-bold text-sm leading-tight truncate">{t('app.name')}</p>
           <p className="text-sidebar-text/70 text-xs truncate">{t('app.tagline')}</p>
@@ -61,7 +63,9 @@ export default function Sidebar({ mobile, onClose }) {
       {/* User info */}
       <div className="px-4 py-3 border-b border-white/10">
         <p className="text-white text-sm font-semibold truncate">{user?.full_name}</p>
-        <p className="text-sidebar-text/60 text-xs capitalize">{user?.role} · {user?.department}</p>
+        <p className="text-sidebar-text/60 text-xs">
+          {t(`roles.${user?.role}`, user?.role)} · {t(`departments.${user?.department}`, user?.department)}
+        </p>
       </div>
 
       {/* Navigation */}

@@ -13,7 +13,7 @@ const upload = multer({
     const ok = /\.xlsx$/i.test(file.originalname) ||
                file.mimetype.includes('spreadsheetml') ||
                file.mimetype.includes('excel');
-    cb(null, ok ? null : new Error('Only .xlsx files allowed'), ok);
+    cb(ok ? null : new Error('Only .xlsx files allowed'), ok);
   },
 });
 
@@ -27,7 +27,7 @@ router.post('/:fileType', authenticate, requireRole('admin'), upload.single('fil
 
   try {
     const rows = syncFile(fileType, req.file.buffer, req.user.id, req.file.originalname);
-    return res.json({ message: 'Import successful', fileType, rows_imported: rows });
+    return res.json({ message: 'Import successful', fileType, inserted: rows, rows_imported: rows });
   } catch (err) {
     return res.status(500).json({ error: 'Import failed', details: err.message });
   }

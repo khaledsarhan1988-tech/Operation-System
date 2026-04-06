@@ -5,12 +5,12 @@ import { Upload, CheckCircle, AlertCircle, Clock, FileSpreadsheet, RefreshCw } f
 import api from '../../api/axios';
 
 const FILE_TYPES = [
-  { key: 'employees',     labelAr: 'الموظفون',              labelEn: 'Employees',             file: 'Data.xlsx' },
+  { key: 'data',          labelAr: 'الموظفون',              labelEn: 'Employees',             file: 'Data.xlsx' },
   { key: 'trainees',      labelAr: 'المتدربون النشطون',     labelEn: 'Active Trainees',        file: 'Active Batches Trainees.xlsx' },
   { key: 'batches',       labelAr: 'المجموعات',             labelEn: 'Batches',                file: 'Batches.xlsx' },
   { key: 'remarks',       labelAr: 'الملاحظات',             labelEn: 'Remarks',                file: 'Remarks.xlsx' },
   { key: 'lectures',      labelAr: 'المحاضرات الرئيسية',   labelEn: 'Main Lectures',          file: 'Lectures.xlsx' },
-  { key: 'sideSessions',  labelAr: 'الجلسات الجانبية',    labelEn: 'Side Sessions',          file: 'Side Sessions.xlsx' },
+  { key: 'side_sessions', labelAr: 'الجلسات الجانبية',    labelEn: 'Side Sessions',          file: 'Side Sessions.xlsx' },
   { key: 'absent',        labelAr: 'الغيابات',             labelEn: 'Absent Students',        file: 'Absent.xlsx' },
 ];
 

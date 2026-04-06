@@ -3,6 +3,17 @@
     "name": "أكاديمية أحمد حسن",
     "tagline": "نظام إدارة التشغيل"
   },
+  "roles": {
+    "admin": "مسؤول",
+    "leader": "قائد فريق",
+    "agent": "موظف"
+  },
+  "departments": {
+    "general": "عام",
+    "customer_service": "خدمة العملاء",
+    "educational": "الإدارة التعليمية",
+    "quality": "إدارة الجودة"
+  },
   "nav": {
     "dashboard": "لوحة التحكم",
     "myTasks": "مهامي",

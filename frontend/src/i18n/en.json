@@ -3,6 +3,17 @@
     "name": "Ahmed Hassan Academy",
     "tagline": "Operations Management System"
   },
+  "roles": {
+    "admin": "Admin",
+    "leader": "Team Leader",
+    "agent": "Agent"
+  },
+  "departments": {
+    "general": "General",
+    "customer_service": "Customer Service",
+    "educational": "Educational",
+    "quality": "Quality"
+  },
   "nav": {
     "dashboard": "Dashboard",
     "myTasks": "My Tasks",

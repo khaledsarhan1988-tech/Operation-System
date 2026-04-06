@@ -21,6 +21,9 @@
   .btn-accent {
     @apply bg-accent text-white px-4 py-2 rounded-lg font-medium hover:bg-orange-500 transition-colors;
   }
+  .btn-secondary {
+    @apply bg-gray-100 text-gray-700 px-4 py-2 rounded-lg font-medium hover:bg-gray-200 transition-colors;
+  }
   .btn-outline {
     @apply border border-border text-gray-700 px-4 py-2 rounded-lg font-medium hover:bg-gray-50 transition-colors;
   }
