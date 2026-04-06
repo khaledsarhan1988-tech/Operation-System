@@ -9,7 +9,7 @@ import Badge from '../../components/ui/Badge';
 
 const EMPTY_FORM = {
   username: '', password: '', full_name: '',
-  role: 'agent', department: 'General', language: 'ar', is_active: 1,
+  role: 'agent', department: 'All', language: 'ar', is_active: 1,
 };
 
 function UserModal({ open, onClose, user, onSaved }) {
@@ -73,7 +73,11 @@ function UserModal({ open, onClose, user, onSaved }) {
         <div className="grid grid-cols-3 gap-4">
           <div>
             <label className="label">{t('admin.role')}</label>
-            <select className="input" value={form.role} onChange={e => set('role', e.target.value)}>
+            <select className="input" value={form.role} onChange={e => {
+              const r = e.target.value;
+              set('role', r);
+              if (r === 'admin' || r === 'leader') set('department', 'All');
+            }}>
               <option value="agent">{t('admin.agent')}</option>
               <option value="leader">{t('admin.leader')}</option>
               <option value="admin">{t('admin.admin')}</option>
@@ -82,6 +86,7 @@ function UserModal({ open, onClose, user, onSaved }) {
           <div>
             <label className="label">{t('admin.department')}</label>
             <select className="input" value={form.department} onChange={e => set('department', e.target.value)}>
+              <option value="All">جميع الأقسام</option>
               <option value="General">{t('common.general')}</option>
               <option value="Private">{t('common.private')}</option>
               <option value="Semi">{t('common.semi')}</option>
