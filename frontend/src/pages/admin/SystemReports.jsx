@@ -103,7 +103,9 @@ export default function SystemReports() {
   });
   const [applied, setApplied] = useState({});
   const [errorsTab, setErrorsTab] = useState('remarks');
-  const [remarksOpen, setRemarksOpen] = useState(true);
+  const [remarksOpen,  setRemarksOpen]  = useState(true);
+  const [expiredOpen,  setExpiredOpen]  = useState(true);
+  const [errorsOpen,   setErrorsOpen]   = useState(true);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['reports', applied],
@@ -375,8 +377,20 @@ export default function SystemReports() {
 
       {/* ── EXPIRED ACTIVE GROUPS TABLE ── */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
-        <SectionHeader title="مجموعات منتهية ولا تزال نشطة" />
-        <TableWrapper>
+        <div className="flex items-center justify-between mb-3 pb-2 border-b border-gray-200">
+          <h2 className="text-base font-bold text-gray-800">مجموعات منتهية ولا تزال نشطة</h2>
+          <button
+            onClick={() => setExpiredOpen(o => !o)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-50 hover:bg-gray-100 border border-gray-200 text-sm text-gray-600 transition"
+          >
+            {expiredOpen ? (
+              <><ChevronUp size={16} /> طي القائمة</>
+            ) : (
+              <><ChevronDown size={16} /> عرض القائمة <span className="mr-1 bg-orange-100 text-orange-700 rounded-full px-2 text-xs font-bold">{data?.expired_groups_list?.length ?? 0}</span></>
+            )}
+          </button>
+        </div>
+        {expiredOpen && <TableWrapper>
           <thead>
             <tr>
               <Th>اسم المجموعة</Th>
@@ -403,13 +417,26 @@ export default function SystemReports() {
               ))
             )}
           </tbody>
-        </TableWrapper>
+        </TableWrapper>}
       </div>
 
       {/* ── ERRORS REPORT (TABBED) ── */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
-        <SectionHeader title="تقرير الأخطاء" />
+        <div className="flex items-center justify-between mb-3 pb-2 border-b border-gray-200">
+          <h2 className="text-base font-bold text-gray-800">تقرير الأخطاء</h2>
+          <button
+            onClick={() => setErrorsOpen(o => !o)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-50 hover:bg-gray-100 border border-gray-200 text-sm text-gray-600 transition"
+          >
+            {errorsOpen ? (
+              <><ChevronUp size={16} /> طي القائمة</>
+            ) : (
+              <><ChevronDown size={16} /> عرض القائمة</>
+            )}
+          </button>
+        </div>
 
+        {errorsOpen && <>
         {/* Tab buttons */}
         <div className="flex gap-2 mb-4 border-b border-gray-200">
           {[
@@ -549,6 +576,7 @@ export default function SystemReports() {
             </tbody>
           </TableWrapper>
         )}
+        </>}
       </div>
     </div>
   );
