@@ -29,11 +29,38 @@ function KpiCard({ label, value, icon: Icon, iconClass, loading, onClick }) {
   );
 }
 
+// ─── DEPT BADGE ───────────────────────────────────────────────────────────────
+function DeptBadge({ dept }) {
+  const map = {
+    'Semi':    'bg-yellow-50 text-yellow-700',
+    'Private': 'bg-purple-50 text-purple-700',
+    'General': 'bg-blue-50   text-blue-700',
+    'All':     'bg-gray-50   text-gray-600',
+  };
+  return (
+    <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${map[dept] ?? 'bg-gray-50 text-gray-600'}`}>
+      {dept ?? '—'}
+    </span>
+  );
+}
+
 // ─── GROUPS MODAL ─────────────────────────────────────────────────────────────
-function GroupsModal({ title, groups, onClose }) {
+function GroupsModal({ title, groups, allUsers = [], onClose }) {
   const [expandedGroup,  setExpandedGroup]  = useState(null);
   const [traineesGroup,  setTraineesGroup]  = useState(null);
   const [search,         setSearch]         = useState('');
+
+  // Map: full_name (lowercase) → department من جدول المستخدمين
+  const userDeptMap = {};
+  allUsers.forEach(u => {
+    if (u.full_name) userDeptMap[u.full_name.toLowerCase().trim()] = u.department;
+  });
+
+  // جلب قسم المنسق من المستخدمين، fallback لـ dept_type من الـ batch
+  const getCoordDept = (g) => {
+    const name = (g.coordinators ?? '').toLowerCase().trim();
+    return userDeptMap[name] ?? g.dept_type ?? '—';
+  };
 
   const filteredGroups = search.trim()
     ? groups.filter(g => g.group_name?.toLowerCase().includes(search.trim().toLowerCase()))
@@ -117,7 +144,7 @@ function GroupsModal({ title, groups, onClose }) {
                     <td className="px-3 py-2.5 font-medium text-gray-800 whitespace-nowrap" style={{ minWidth: '280px' }}>{g.group_name}</td>
                     <td className="px-3 py-2.5 text-gray-600">{g.course ?? '—'}</td>
                     <td className="px-3 py-2.5">
-                      <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">{g.dept_type ?? '—'}</span>
+                      <DeptBadge dept={getCoordDept(g)} />
                     </td>
 
                     {/* ── عدد المتدربين قابل للضغط ── */}
@@ -999,6 +1026,7 @@ export default function SystemReports() {
         <GroupsModal
           title={groupsModal.title}
           groups={groupsModal.groups}
+          allUsers={usersData ?? []}
           onClose={() => setGroupsModal(null)}
         />
       )}
