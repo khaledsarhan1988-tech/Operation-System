@@ -192,18 +192,33 @@ router.get('/lectures-list', (req, res) => {
   const dateFilter   = from_date && to_date ? ` AND l.date BETWEEN '${from_date}' AND '${to_date}'`
                      : from_date ? ` AND l.date >= '${from_date}'`
                      : to_date   ? ` AND l.date <= '${to_date}'` : '';
+
+  // For side sessions: add onboarding/offboarding counts per group
+  const sideExtraFields = session_type === 'side' ? `,
+    (SELECT COUNT(*) FROM lectures lx
+     WHERE lx.group_name = l.group_name
+       AND lx.session_type = 'side'
+       AND lx.side_session_category = 'onboarding') AS onboarding_count,
+    (SELECT COUNT(*) FROM lectures lx
+     WHERE lx.group_name = l.group_name
+       AND lx.session_type = 'side'
+       AND lx.side_session_category = 'offboarding') AS offboarding_count` : '';
+
   try {
     const totalRow = db.prepare(
       `SELECT COUNT(*) as cnt FROM lectures l
        LEFT JOIN batches b ON l.group_name = b.group_name
        WHERE l.session_type = '${session_type}'${dateFilter}${deptFilter}${empFilter}${searchFilter}`
     ).get();
+
     const rows = db.prepare(
-      `SELECT l.*, b.dept_type, b.coordinators FROM lectures l
+      `SELECT l.*, b.dept_type, b.coordinators, b.lecture_duration_min${sideExtraFields}
+       FROM lectures l
        LEFT JOIN batches b ON l.group_name = b.group_name
        WHERE l.session_type = '${session_type}'${dateFilter}${deptFilter}${empFilter}${searchFilter}
        ORDER BY l.date DESC LIMIT ${Number(limit)} OFFSET ${offset}`
     ).all();
+
     return res.json({ total: totalRow.cnt, page: Number(page), limit: Number(limit), rows });
   } catch (err) {
     return res.status(500).json({ error: err.message });

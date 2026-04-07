@@ -434,6 +434,24 @@ function ListModal({ title, endpoint, params, columns, onClose }) {
         <CheckCircle size={11}/>{val ?? 0} حاضر
       </span>
     );
+    if (col.type === 'duration') return val
+      ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700"><Clock size={11}/>{val}</span>
+      : <span className="text-gray-300 text-xs">—</span>;
+    if (col.type === 'category') {
+      const catMap = {
+        onboarding:   { label: 'Onboarding',   cls: 'bg-blue-100 text-blue-700' },
+        offboarding:  { label: 'Offboarding',  cls: 'bg-orange-100 text-orange-700' },
+        regular:      { label: 'جلسة عادية',  cls: 'bg-green-100 text-green-700' },
+        compensatory: { label: 'تعويضية',     cls: 'bg-purple-100 text-purple-700' },
+      };
+      const cfg = catMap[val?.toLowerCase()] ?? { label: val ?? '—', cls: 'bg-gray-100 text-gray-600' };
+      return <span className={`inline-block px-2 py-0.5 rounded-lg text-xs font-semibold ${cfg.cls}`}>{cfg.label}</span>;
+    }
+    if (col.type === 'ob_count') return (
+      <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-black ${
+        (val ?? 0) > 0 ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-400'
+      }`}>{val ?? 0}</span>
+    );
     return val ?? '—';
   };
 
@@ -698,15 +716,15 @@ export default function SystemReports() {
               endpoint: '/reports/lectures-list',
               params: { session_type: 'main', ...applied },
               columns: [
-                { key: 'group_name',   label: 'المجموعة' },
-                { key: 'session_type', label: 'النوع',    type: 'type' },
-                { key: 'date',         label: 'التاريخ',  type: 'date' },
-                { key: 'time',         label: 'الوقت' },
-                { key: 'trainer',      label: 'المدرب' },
-                { key: 'status',       label: 'الحالة' },
-                { key: 'attendance',   label: 'الحضور' },
-                { key: 'dept_type',    label: 'القسم',    type: 'badge' },
-                { key: 'coordinators', label: 'المنسق' },
+                { key: 'group_name',          label: 'المجموعة',    noWrap: true },
+                { key: 'date',                label: 'التاريخ',     type: 'date' },
+                { key: 'time',                label: 'الوقت' },
+                { key: 'duration',            label: 'المدة',       type: 'duration' },
+                { key: 'trainer',             label: 'المدرب' },
+                { key: 'status',              label: 'الحالة' },
+                { key: 'attendance',          label: 'الحضور' },
+                { key: 'dept_type',           label: 'القسم',       type: 'badge' },
+                { key: 'coordinators',        label: 'المنسق' },
               ],
             })} />
           <KpiCard label="الجلسات الجانبية" value={kpis.side_sessions} icon={Layers}
@@ -717,14 +735,16 @@ export default function SystemReports() {
               endpoint: '/reports/lectures-list',
               params: { session_type: 'side', ...applied },
               columns: [
-                { key: 'group_name',           label: 'المجموعة' },
-                { key: 'session_type',          label: 'النوع',   type: 'type' },
-                { key: 'date',                  label: 'التاريخ', type: 'date' },
+                { key: 'group_name',           label: 'المجموعة',    noWrap: true },
+                { key: 'date',                  label: 'التاريخ',    type: 'date' },
                 { key: 'time',                  label: 'الوقت' },
+                { key: 'duration',              label: 'المدة',      type: 'duration' },
                 { key: 'trainer',               label: 'المدرب' },
                 { key: 'status',                label: 'الحالة' },
-                { key: 'side_session_category', label: 'التصنيف' },
-                { key: 'dept_type',             label: 'القسم',   type: 'badge' },
+                { key: 'side_session_category', label: 'التصنيف',   type: 'category' },
+                { key: 'onboarding_count',      label: 'Onboarding', type: 'ob_count' },
+                { key: 'offboarding_count',     label: 'Offboarding',type: 'ob_count' },
+                { key: 'dept_type',             label: 'القسم',      type: 'badge' },
                 { key: 'coordinators',          label: 'المنسق' },
               ],
             })} />
