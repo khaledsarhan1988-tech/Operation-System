@@ -458,6 +458,7 @@ export default function SystemReports() {
           icon={AlertTriangle}
           iconClass="bg-red-100 text-red-600"
           loading={isLoading}
+          onClick={() => setGroupsModal({ title: 'مجموعات منتهية ولا تزال نشطة', groups: data?.expired_groups_list ?? [] })}
         />
         <KpiCard
           label="المحاضرات الأساسية"
