@@ -275,8 +275,8 @@ function ListModal({ title, endpoint, params, columns, onClose }) {
                 data.rows.map((row, i) => (
                   <tr key={row.id ?? i} className="hover:bg-gray-50 transition">
                     {columns.map(c => (
-                      <td key={c.key} className="px-3 py-2.5 text-gray-700 max-w-[200px]">
-                        <div className="truncate">{renderCell(row, c)}</div>
+                      <td key={c.key} className="px-3 py-2.5 text-gray-700 whitespace-nowrap">
+                        {renderCell(row, c)}
                       </td>
                     ))}
                   </tr>
