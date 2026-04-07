@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Users, AlertTriangle, BookOpen, Layers, UserX, AlertCircle, MessageSquare, RefreshCw,
+  Users, AlertTriangle, BookOpen, Layers, UserX, AlertCircle, MessageSquare, RefreshCw, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import api from '../../api/axios';
 
@@ -103,6 +103,7 @@ export default function SystemReports() {
   });
   const [applied, setApplied] = useState({});
   const [errorsTab, setErrorsTab] = useState('remarks');
+  const [remarksOpen, setRemarksOpen] = useState(true);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['reports', applied],
@@ -290,8 +291,20 @@ export default function SystemReports() {
 
       {/* ── OPEN REMARKS TABLE ── */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
-        <SectionHeader title="الملاحظات المفتوحة" />
-        <TableWrapper>
+        <div className="flex items-center justify-between mb-3 pb-2 border-b border-gray-200">
+          <h2 className="text-base font-bold text-gray-800">الملاحظات المفتوحة</h2>
+          <button
+            onClick={() => setRemarksOpen(o => !o)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-50 hover:bg-gray-100 border border-gray-200 text-sm text-gray-600 transition"
+          >
+            {remarksOpen ? (
+              <><ChevronUp size={16} /> طي القائمة</>
+            ) : (
+              <><ChevronDown size={16} /> عرض القائمة <span className="mr-1 bg-red-100 text-red-700 rounded-full px-2 text-xs font-bold">{data?.open_remarks_list?.length ?? 0}</span></>
+            )}
+          </button>
+        </div>
+        {remarksOpen && <TableWrapper>
           <thead>
             <tr>
               <Th>اسم العميل</Th>
@@ -348,7 +361,7 @@ export default function SystemReports() {
               })
             )}
           </tbody>
-        </TableWrapper>
+        </TableWrapper>}
       </div>
 
       {/* ── EXPIRED ACTIVE GROUPS TABLE ── */}
