@@ -36,6 +36,37 @@ initDb().then(db => {
     // Column already exists, ignore
   }
 
+  // Fix dept_type for existing batches where regex was wrong
+  try {
+    // Fix Semi: group names containing _SP( or _SP_ or _Sp etc.
+    const semiResult = db._raw.run(
+      `UPDATE batches SET dept_type = 'Semi', lecture_duration_min = 60
+       WHERE (lower(group_name) LIKE '%\\_sp(%' ESCAPE '\\'
+          OR lower(group_name) LIKE '%\\_sp_%' ESCAPE '\\'
+          OR lower(group_name) LIKE '%\\_sp ' ESCAPE '\\'
+          OR lower(group_name) LIKE '%semi%')
+         AND dept_type != 'Semi'`
+    );
+    console.log(`✅ Migration: fixed ${semiResult.changes} Semi batches`);
+  } catch(e) {
+    console.log('dept_type Semi migration:', e.message);
+  }
+
+  try {
+    // Fix Private: group names containing _P( or _4P( etc., but NOT _SP
+    const privateResult = db._raw.run(
+      `UPDATE batches SET dept_type = 'Private', lecture_duration_min = 60
+       WHERE (lower(group_name) LIKE '%\\_p(%' ESCAPE '\\'
+          OR lower(group_name) LIKE '%private%')
+         AND lower(group_name) NOT LIKE '%\\_sp%' ESCAPE '\\'
+         AND dept_type != 'Semi'
+         AND dept_type != 'Private'`
+    );
+    console.log(`✅ Migration: fixed ${privateResult.changes} Private batches`);
+  } catch(e) {
+    console.log('dept_type Private migration:', e.message);
+  }
+
   // Create admin user
   const username = process.env.ADMIN_USERNAME || 'admin';
   const password = process.env.ADMIN_PASSWORD || 'Admin@2024';

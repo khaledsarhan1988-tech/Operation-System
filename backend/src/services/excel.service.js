@@ -35,17 +35,18 @@ function parseGroupCode(groupName) {
     const result = { dept_type: null, level_code: null, main_days: null, side_days: null, lecture_duration_min: null };
 
     // Detect department type
-    if (/\bSP\b/i.test(groupName) || /semi/i.test(groupName)) {
+    // Semi: group name contains _SP( or _SP_ or _Sp( etc.
+    if (/_SP[^a-zA-Z]/i.test(groupName) || /semi/i.test(groupName)) {
       result.dept_type = 'Semi';
       result.lecture_duration_min = 60;
-    } else if (/\b_P_\b/i.test(groupName) || /\bPrivate\b/i.test(groupName) || /_P\(/i.test(groupName)) {
+    // Private: group name contains _P( or _4P( or _5P( etc. (but NOT _SP)
+    } else if (/\bPrivate\b/i.test(groupName) || /_\d*P\(/i.test(groupName)) {
       result.dept_type = 'Private';
       result.lecture_duration_min = 60;
     } else if (/General/i.test(groupName)) {
       result.dept_type = 'General';
       result.lecture_duration_min = 90;
     } else {
-      // Default by process of elimination
       result.dept_type = 'General';
       result.lecture_duration_min = 90;
     }
