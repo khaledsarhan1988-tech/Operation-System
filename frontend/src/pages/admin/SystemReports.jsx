@@ -24,35 +24,37 @@ function KpiCard({ label, value, icon: Icon, gradient, loading, onClick, pulse }
   return (
     <div
       onClick={onClick}
-      className={`relative overflow-hidden rounded-2xl p-5 flex flex-col gap-3 transition-all duration-200 select-none
-        ${onClick ? 'cursor-pointer hover:-translate-y-0.5 hover:shadow-xl active:scale-95' : ''}
+      className={`relative overflow-hidden rounded-xl flex items-center gap-3 px-4 py-3 transition-all duration-200 select-none
+        ${onClick ? 'cursor-pointer hover:-translate-y-0.5 hover:shadow-lg active:scale-95' : ''}
         ${pulse ? 'ring-2 ring-red-400 ring-offset-1' : ''}
-        shadow-md`}
+        shadow-sm`}
       style={{ background: gradient }}
     >
       {/* Decorative circle */}
-      <div className="absolute -top-4 -left-4 w-24 h-24 rounded-full bg-white/10 pointer-events-none" />
-      <div className="absolute -bottom-6 -right-2 w-20 h-20 rounded-full bg-white/10 pointer-events-none" />
+      <div className="absolute -top-3 -left-3 w-16 h-16 rounded-full bg-white/10 pointer-events-none" />
+      <div className="absolute -bottom-4 -right-1 w-14 h-14 rounded-full bg-white/10 pointer-events-none" />
 
-      <div className="flex items-start justify-between relative z-10">
-        <div className="bg-white/20 backdrop-blur-sm p-2.5 rounded-xl">
-          <Icon className="w-5 h-5 text-white" />
-        </div>
-        {onClick && (
-          <div className="bg-white/20 p-1.5 rounded-lg">
-            <Eye className="w-3.5 h-3.5 text-white/80" />
-          </div>
-        )}
+      {/* Icon */}
+      <div className="relative z-10 bg-white/20 backdrop-blur-sm p-2 rounded-lg flex-shrink-0">
+        <Icon className="w-4 h-4 text-white" />
       </div>
 
-      <div className="relative z-10">
+      {/* Text */}
+      <div className="relative z-10 flex-1 min-w-0">
         {loading ? (
-          <div className="h-9 w-16 bg-white/30 animate-pulse rounded-lg" />
+          <div className="h-6 w-12 bg-white/30 animate-pulse rounded mb-0.5" />
         ) : (
-          <p className="text-3xl font-black text-white tracking-tight">{value ?? '—'}</p>
+          <p className="text-xl font-black text-white leading-none">{value ?? '—'}</p>
         )}
-        <p className="text-sm text-white/80 mt-0.5 font-medium">{label}</p>
+        <p className="text-xs text-white/75 mt-0.5 font-medium truncate">{label}</p>
       </div>
+
+      {/* Eye */}
+      {onClick && (
+        <div className="relative z-10 bg-white/20 p-1 rounded-lg flex-shrink-0">
+          <Eye className="w-3 h-3 text-white/70" />
+        </div>
+      )}
     </div>
   );
 }
@@ -549,7 +551,7 @@ export default function SystemReports() {
   };
 
   return (
-    <div className="space-y-6" dir="rtl">
+    <div className="space-y-4" dir="rtl">
 
       {/* ── PAGE HEADER ── */}
       <div className="flex items-center justify-between">
@@ -640,10 +642,10 @@ export default function SystemReports() {
 
       {/* ── KPI — ROW 1: Groups Status ── */}
       <div>
-        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-          <Users size={12} /> حالة المجموعات
+        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+          <Users size={11} /> حالة المجموعات
         </p>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <KpiCard label="مجموعات نشطة" value={kpis.active_groups} icon={Users}
             gradient="linear-gradient(135deg, #1e3a5f 0%, #2d5a9e 100%)"
             loading={isLoading}
@@ -661,10 +663,10 @@ export default function SystemReports() {
 
       {/* ── KPI — ROW 2: Activity Metrics ── */}
       <div>
-        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-          <TrendingUp size={12} /> مؤشرات النشاط
+        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+          <TrendingUp size={11} /> مؤشرات النشاط
         </p>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <KpiCard label="مجموعات منتهية ونشطة" value={kpis.expired_active_groups} icon={AlertTriangle}
             gradient="linear-gradient(135deg, #dc2626 0%, #ef4444 100%)"
             loading={isLoading} pulse={(kpis.expired_active_groups ?? 0) > 0}
@@ -730,10 +732,10 @@ export default function SystemReports() {
 
       {/* ── KPI — ROW 3: Alerts ── */}
       <div>
-        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-          <Zap size={12} /> التنبيهات
+        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+          <Zap size={11} /> التنبيهات
         </p>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <KpiCard label="غياب الجلسات الجانبية" value={kpis.absent_side} icon={UserX}
             gradient="linear-gradient(135deg, #ca8a04 0%, #eab308 100%)"
             loading={isLoading} />
