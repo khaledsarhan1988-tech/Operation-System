@@ -170,6 +170,60 @@ router.get('/dashboard', (req, res) => {
   }
 });
 
+// ─── GET /api/reports/lectures-list ──────────────────────────────────────────
+router.get('/lectures-list', (req, res) => {
+  const { from_date, to_date, department, employee, session_type = 'main', page = 1, limit = 100 } = req.query;
+  const offset = (Number(page) - 1) * Number(limit);
+  const deptFilter = department && department !== 'All' ? ` AND b.dept_type = '${department}'` : '';
+  const empFilter  = employee ? ` AND b.coordinators LIKE '%${employee}%'` : '';
+  const dateFilter = from_date && to_date ? ` AND l.date BETWEEN '${from_date}' AND '${to_date}'`
+                   : from_date ? ` AND l.date >= '${from_date}'`
+                   : to_date   ? ` AND l.date <= '${to_date}'` : '';
+  try {
+    const totalRow = db.prepare(
+      `SELECT COUNT(*) as cnt FROM lectures l
+       LEFT JOIN batches b ON l.group_name = b.group_name
+       WHERE l.session_type = '${session_type}'${dateFilter}${deptFilter}${empFilter}`
+    ).get();
+    const rows = db.prepare(
+      `SELECT l.*, b.dept_type, b.coordinators FROM lectures l
+       LEFT JOIN batches b ON l.group_name = b.group_name
+       WHERE l.session_type = '${session_type}'${dateFilter}${deptFilter}${empFilter}
+       ORDER BY l.date DESC LIMIT ${Number(limit)} OFFSET ${offset}`
+    ).all();
+    return res.json({ total: totalRow.cnt, page: Number(page), limit: Number(limit), rows });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GET /api/reports/absent-list ─────────────────────────────────────────────
+router.get('/absent-list', (req, res) => {
+  const { from_date, to_date, department, employee, page = 1, limit = 100 } = req.query;
+  const offset = (Number(page) - 1) * Number(limit);
+  const deptFilter = department && department !== 'All' ? ` AND b.dept_type = '${department}'` : '';
+  const empFilter  = employee ? ` AND b.coordinators LIKE '%${employee}%'` : '';
+  const dateFilter = from_date && to_date ? ` AND a.date BETWEEN '${from_date}' AND '${to_date}'`
+                   : from_date ? ` AND a.date >= '${from_date}'`
+                   : to_date   ? ` AND a.date <= '${to_date}'` : '';
+  try {
+    const totalRow = db.prepare(
+      `SELECT COUNT(*) as cnt FROM absent_students a
+       LEFT JOIN batches b ON a.group_name = b.group_name
+       WHERE 1=1${dateFilter}${deptFilter}${empFilter}`
+    ).get();
+    const rows = db.prepare(
+      `SELECT a.*, b.dept_type, b.coordinators FROM absent_students a
+       LEFT JOIN batches b ON a.group_name = b.group_name
+       WHERE 1=1${dateFilter}${deptFilter}${empFilter}
+       ORDER BY a.date DESC LIMIT ${Number(limit)} OFFSET ${offset}`
+    ).all();
+    return res.json({ total: totalRow.cnt, page: Number(page), limit: Number(limit), rows });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/reports/group-trainees?group_name=xxx ──────────────────────────
 router.get('/group-trainees', (req, res) => {
   const { group_name } = req.query;

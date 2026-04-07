@@ -210,6 +210,97 @@ function GroupsModal({ title, groups, onClose }) {
   );
 }
 
+// ─── LIST MODAL (محاضرات / غياب) ─────────────────────────────────────────────
+function ListModal({ title, endpoint, params, columns, onClose }) {
+  const [page, setPage] = useState(1);
+  const LIMIT = 100;
+
+  const { data, isLoading } = useQuery({
+    queryKey: [endpoint, params, page],
+    queryFn: () => api.get(endpoint, { params: { ...params, page, limit: LIMIT } }).then(r => r.data),
+  });
+
+  const fmtDate = (d) => {
+    if (!d) return '—';
+    if (typeof d === 'string' && /^\d{1,2}\/\d{1,2}\/\d{4}/.test(d)) return d.split(',')[0].trim();
+    try { const p = new Date(d); return isNaN(p) ? d : p.toLocaleDateString('ar-EG'); } catch { return d; }
+  };
+
+  const totalPages = data ? Math.ceil(data.total / LIMIT) : 1;
+
+  const renderCell = (row, col) => {
+    const val = row[col.key];
+    if (col.type === 'date')  return fmtDate(val);
+    if (col.type === 'badge') return <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${col.badgeClass ?? 'bg-blue-50 text-blue-700'}`}>{val ?? '—'}</span>;
+    if (col.type === 'type')  return (
+      <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${val === 'main' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
+        {val === 'main' ? 'أساسية' : 'جانبية'}
+      </span>
+    );
+    return val ?? '—';
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto" dir="rtl">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl my-8">
+        {/* Header */}
+        <div className="flex items-center justify-between p-5 border-b border-gray-100">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900">{title}</h2>
+            {data && <p className="text-sm text-gray-400 mt-0.5">إجمالي: {data.total?.toLocaleString()} سجل</p>}
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg transition"><X size={20} className="text-gray-500" /></button>
+        </div>
+
+        {/* Table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-right">
+            <thead>
+              <tr className="bg-gray-50">
+                {columns.map(c => (
+                  <th key={c.key} className="px-3 py-3 text-xs font-semibold text-gray-500 whitespace-nowrap">{c.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {isLoading ? (
+                Array.from({ length: 8 }).map((_, i) => (
+                  <tr key={i} className="animate-pulse">
+                    {columns.map((c) => <td key={c.key} className="px-3 py-3"><div className="h-4 bg-gray-200 rounded" /></td>)}
+                  </tr>
+                ))
+              ) : !data?.rows?.length ? (
+                <tr><td colSpan={columns.length} className="text-center py-10 text-gray-400">لا توجد بيانات</td></tr>
+              ) : (
+                data.rows.map((row, i) => (
+                  <tr key={row.id ?? i} className="hover:bg-gray-50 transition">
+                    {columns.map(c => (
+                      <td key={c.key} className="px-3 py-2.5 text-gray-700">{renderCell(row, c)}</td>
+                    ))}
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-center gap-2 p-4 border-t border-gray-100">
+            <button disabled={page === 1} onClick={() => setPage(p => p - 1)} className="px-3 py-1.5 rounded-lg border text-sm disabled:opacity-40 hover:bg-gray-50 transition">السابق</button>
+            <span className="text-sm text-gray-500">صفحة {page} من {totalPages}</span>
+            <button disabled={page === totalPages} onClick={() => setPage(p => p + 1)} className="px-3 py-1.5 rounded-lg border text-sm disabled:opacity-40 hover:bg-gray-50 transition">التالي</button>
+          </div>
+        )}
+
+        <div className="p-4 border-t border-gray-100 flex justify-end">
+          <button onClick={onClose} className="px-5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm transition">إغلاق</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── URGENCY BADGE ─────────────────────────────────────────────────────────────
 function UrgencyBadge({ level }) {
   const map = {
@@ -293,6 +384,7 @@ export default function SystemReports() {
   const [expiredOpen,  setExpiredOpen]  = useState(true);
   const [errorsOpen,   setErrorsOpen]   = useState(true);
   const [groupsModal,  setGroupsModal]  = useState(null); // { title, groups }
+  const [listModal,    setListModal]    = useState(null); // { title, endpoint, params, columns }
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['reports', applied],
@@ -466,6 +558,22 @@ export default function SystemReports() {
           icon={BookOpen}
           iconClass="bg-blue-100 text-blue-600"
           loading={isLoading}
+          onClick={() => setListModal({
+            title: 'المحاضرات الأساسية',
+            endpoint: '/reports/lectures-list',
+            params: { session_type: 'main', ...applied },
+            columns: [
+              { key: 'group_name',   label: 'المجموعة' },
+              { key: 'session_type', label: 'النوع',    type: 'type' },
+              { key: 'date',         label: 'التاريخ',  type: 'date' },
+              { key: 'time',         label: 'الوقت' },
+              { key: 'trainer',      label: 'المدرب' },
+              { key: 'status',       label: 'الحالة' },
+              { key: 'attendance',   label: 'الحضور' },
+              { key: 'dept_type',    label: 'القسم',    type: 'badge' },
+              { key: 'coordinators', label: 'المنسق' },
+            ],
+          })}
         />
         <KpiCard
           label="الجلسات الجانبية"
@@ -473,6 +581,22 @@ export default function SystemReports() {
           icon={Layers}
           iconClass="bg-purple-100 text-purple-600"
           loading={isLoading}
+          onClick={() => setListModal({
+            title: 'الجلسات الجانبية',
+            endpoint: '/reports/lectures-list',
+            params: { session_type: 'side', ...applied },
+            columns: [
+              { key: 'group_name',            label: 'المجموعة' },
+              { key: 'session_type',           label: 'النوع',       type: 'type' },
+              { key: 'date',                   label: 'التاريخ',     type: 'date' },
+              { key: 'time',                   label: 'الوقت' },
+              { key: 'trainer',                label: 'المدرب' },
+              { key: 'status',                 label: 'الحالة' },
+              { key: 'side_session_category',  label: 'التصنيف' },
+              { key: 'dept_type',              label: 'القسم',       type: 'badge', badgeClass: 'bg-purple-50 text-purple-700' },
+              { key: 'coordinators',           label: 'المنسق' },
+            ],
+          })}
         />
         <KpiCard
           label="غياب المحاضرات الأساسية"
@@ -480,6 +604,21 @@ export default function SystemReports() {
           icon={UserX}
           iconClass="bg-orange-100 text-orange-600"
           loading={isLoading}
+          onClick={() => setListModal({
+            title: 'غياب المحاضرات الأساسية',
+            endpoint: '/reports/absent-list',
+            params: { ...applied },
+            columns: [
+              { key: 'student_name', label: 'اسم الطالب' },
+              { key: 'phone',        label: 'الموبايل' },
+              { key: 'group_name',   label: 'المجموعة' },
+              { key: 'date',         label: 'التاريخ',  type: 'date' },
+              { key: 'time',         label: 'الوقت' },
+              { key: 'lecture_no',   label: 'رقم المحاضرة' },
+              { key: 'dept_type',    label: 'القسم',    type: 'badge', badgeClass: 'bg-orange-50 text-orange-700' },
+              { key: 'coordinators', label: 'المنسق' },
+            ],
+          })}
         />
         <KpiCard
           label="غياب الجلسات الجانبية"
@@ -794,6 +933,17 @@ export default function SystemReports() {
           title={groupsModal.title}
           groups={groupsModal.groups}
           onClose={() => setGroupsModal(null)}
+        />
+      )}
+
+      {/* ── LIST MODAL ── */}
+      {listModal && (
+        <ListModal
+          title={listModal.title}
+          endpoint={listModal.endpoint}
+          params={listModal.params}
+          columns={listModal.columns}
+          onClose={() => setListModal(null)}
         />
       )}
     </div>
