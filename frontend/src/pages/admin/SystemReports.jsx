@@ -424,6 +424,16 @@ function ListModal({ title, endpoint, params, columns, onClose }) {
         ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700"><XCircle size={11}/>غائب</span>
         : <span className="text-gray-400 text-xs">—</span>
     );
+    if (col.type === 'absent_count') return (
+      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700">
+        <XCircle size={11}/>{val ?? 0} غائب
+      </span>
+    );
+    if (col.type === 'present_count') return (
+      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">
+        <CheckCircle size={11}/>{val ?? 0} حاضر
+      </span>
+    );
     return val ?? '—';
   };
 
@@ -753,16 +763,17 @@ export default function SystemReports() {
               endpoint: '/reports/absent-side-list',
               params: { ...applied },
               columns: [
-                { key: 'group_name',            label: 'اسم المجموعة',   noWrap: true },
-                { key: 'session_date',           label: 'التاريخ',         type: 'date' },
-                { key: 'trainer',                label: 'المدرب' },
-                { key: 'coordinators',           label: 'المنسق' },
-                { key: 'dept_type',              label: 'القسم',           type: 'badge' },
-                { key: 'trainer_present',        label: 'حضور المدرب',    type: 'present' },
-                { key: 'lecture_start_time',     label: 'وقت البداية' },
-                { key: 'actual_duration_min',    label: 'المدة (د)' },
-                { key: 'side_session_category',  label: 'التصنيف' },
-                { key: 'notes',                  label: 'ملاحظات' },
+                { key: 'group_name',           label: 'اسم المجموعة',  noWrap: true },
+                { key: 'session_date',          label: 'التاريخ',        type: 'date' },
+                { key: 'trainer',               label: 'المدرب' },
+                { key: 'coordinators',          label: 'المنسق' },
+                { key: 'dept_type',             label: 'القسم',          type: 'badge' },
+                { key: 'absent_count',          label: 'عدد الغياب',     type: 'absent_count' },
+                { key: 'present_count',         label: 'عدد الحضور',     type: 'present_count' },
+                { key: 'total_checked',         label: 'إجمالي الجلسات' },
+                { key: 'lecture_start_time',    label: 'وقت البداية' },
+                { key: 'actual_duration_min',   label: 'المدة (د)' },
+                { key: 'notes',                 label: 'ملاحظات' },
               ],
             })} />
           <KpiCard label="ملاحظات مفتوحة" value={kpis.open_remarks} icon={MessageSquare}
