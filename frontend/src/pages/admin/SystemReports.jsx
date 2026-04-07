@@ -212,13 +212,27 @@ function GroupsModal({ title, groups, onClose }) {
 
 // ─── LIST MODAL (محاضرات / غياب) ─────────────────────────────────────────────
 function ListModal({ title, endpoint, params, columns, onClose }) {
-  const [page, setPage] = useState(1);
+  const [page, setPage]     = useState(1);
+  const [search, setSearch] = useState('');
+  const [appliedSearch, setAppliedSearch] = useState('');
   const LIMIT = 100;
 
   const { data, isLoading } = useQuery({
-    queryKey: [endpoint, params, page],
-    queryFn: () => api.get(endpoint, { params: { ...params, page, limit: LIMIT } }).then(r => r.data),
+    queryKey: [endpoint, params, page, appliedSearch],
+    queryFn: () => api.get(endpoint, { params: { ...params, page, limit: LIMIT, search: appliedSearch } }).then(r => r.data),
   });
+
+  const handleSearch = (e) => {
+    e.preventDefault();
+    setPage(1);
+    setAppliedSearch(search);
+  };
+
+  const handleClearSearch = () => {
+    setSearch('');
+    setAppliedSearch('');
+    setPage(1);
+  };
 
   const fmtDate = (d) => {
     if (!d) return '—';
@@ -244,12 +258,35 @@ function ListModal({ title, endpoint, params, columns, onClose }) {
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 overflow-y-auto" dir="rtl">
       <div className="bg-white rounded-2xl shadow-2xl w-[96vw] max-w-7xl my-6 mx-auto flex flex-col" style={{ maxHeight: '90vh' }}>
         {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-gray-100 flex-shrink-0">
-          <div>
-            <h2 className="text-lg font-bold text-gray-900">{title}</h2>
-            {data && <p className="text-sm text-gray-400 mt-0.5">إجمالي: {data.total?.toLocaleString()} سجل</p>}
+        <div className="p-5 border-b border-gray-100 flex-shrink-0">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">{title}</h2>
+              {data && <p className="text-sm text-gray-400 mt-0.5">إجمالي: {data.total?.toLocaleString()} سجل</p>}
+            </div>
+            <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg transition"><X size={20} className="text-gray-500" /></button>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg transition"><X size={20} className="text-gray-500" /></button>
+          {/* Search bar */}
+          <form onSubmit={handleSearch} className="flex items-center gap-2">
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="بحث باسم المجموعة..."
+              className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+            />
+            <button type="submit" className="px-4 py-2 bg-[#1e3a5f] text-white rounded-lg text-sm hover:bg-[#15294a] transition whitespace-nowrap">
+              بحث
+            </button>
+            {appliedSearch && (
+              <button type="button" onClick={handleClearSearch} className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm hover:bg-gray-200 transition whitespace-nowrap">
+                مسح
+              </button>
+            )}
+          </form>
+          {appliedSearch && (
+            <p className="text-xs text-blue-600 mt-1.5">نتائج البحث عن: <span className="font-semibold">"{appliedSearch}"</span></p>
+          )}
         </div>
 
         {/* Table — scrollable */}
