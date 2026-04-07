@@ -32,9 +32,17 @@ router.get('/dashboard', (req, res) => {
   const empRemark   = employee ? ` AND remarks.assigned_to LIKE '%${employee}%'` : '';
 
   try {
-    // 1. Active groups
+    // 1. Active groups (3 statuses)
     const activeGroupsList = db.prepare(
       `SELECT * FROM batches WHERE status='نشطة'${deptBatches}${empFilter} ORDER BY start_date DESC`
+    ).all();
+
+    const waitingTraineesList = db.prepare(
+      `SELECT * FROM batches WHERE status='بانتظار تسجيل المتدربين'${deptBatches}${empFilter} ORDER BY start_date DESC`
+    ).all();
+
+    const waitingLecturesList = db.prepare(
+      `SELECT * FROM batches WHERE status='بانتظار تسجيل المحاضرات'${deptBatches}${empFilter} ORDER BY start_date DESC`
     ).all();
 
     // 2. Expired active groups
@@ -136,6 +144,8 @@ router.get('/dashboard', (req, res) => {
     return res.json({
       kpis: {
         active_groups:         activeGroupsList.length,
+        waiting_trainees:      waitingTraineesList.length,
+        waiting_lectures:      waitingLecturesList.length,
         expired_active_groups: expiredGroupsList.length,
         main_lectures:         mainLecturesRow?.cnt ?? 0,
         side_sessions:         sideLecturesRow?.cnt ?? 0,
@@ -143,8 +153,10 @@ router.get('/dashboard', (req, res) => {
         absent_side:           absentSideRow?.cnt ?? 0,
         open_remarks:          openRemarksList.length,
       },
-      active_groups_list:   activeGroupsList,
-      expired_groups_list:  expiredGroupsList,
+      active_groups_list:     activeGroupsList,
+      waiting_trainees_list:  waitingTraineesList,
+      waiting_lectures_list:  waitingLecturesList,
+      expired_groups_list:    expiredGroupsList,
       open_remarks_list:    openRemarksList,
       groups_with_errors: {
         remarks_errors:      remarksErrors,
@@ -154,6 +166,21 @@ router.get('/dashboard', (req, res) => {
     });
   } catch (err) {
     console.error('[reports] dashboard error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GET /api/reports/group-lectures?group_name=xxx ───────────────────────────
+router.get('/group-lectures', (req, res) => {
+  const { group_name } = req.query;
+  if (!group_name) return res.status(400).json({ error: 'group_name required' });
+  try {
+    const batch = db.prepare(`SELECT * FROM batches WHERE group_name = ?`).get(group_name);
+    const lectures = db.prepare(
+      `SELECT * FROM lectures WHERE group_name = ? ORDER BY date ASC`
+    ).all(group_name);
+    return res.json({ batch, lectures });
+  } catch (err) {
     return res.status(500).json({ error: err.message });
   }
 });

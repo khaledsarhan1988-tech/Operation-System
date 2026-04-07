@@ -1,24 +1,156 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Users, AlertTriangle, BookOpen, Layers, UserX, AlertCircle, MessageSquare, RefreshCw, ChevronDown, ChevronUp,
+  Users, AlertTriangle, BookOpen, Layers, UserX, AlertCircle, MessageSquare,
+  RefreshCw, ChevronDown, ChevronUp, X, Clock, UserCheck, Eye,
 } from 'lucide-react';
 import api from '../../api/axios';
 
 // ─── KPI CARD ─────────────────────────────────────────────────────────────────
-function KpiCard({ label, value, icon: Icon, iconClass, loading }) {
+function KpiCard({ label, value, icon: Icon, iconClass, loading, onClick }) {
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 flex items-center gap-4">
+    <div
+      onClick={onClick}
+      className={`bg-white rounded-xl shadow-sm border border-gray-100 p-5 flex items-center gap-4 ${onClick ? 'cursor-pointer hover:shadow-md hover:border-blue-200 transition-all' : ''}`}
+    >
       <div className={`p-3 rounded-xl ${iconClass}`}>
         <Icon className="w-6 h-6" />
       </div>
-      <div>
+      <div className="flex-1 min-w-0">
         <p className="text-xs text-gray-500 mb-0.5">{label}</p>
         {loading ? (
           <div className="h-7 w-12 bg-gray-200 animate-pulse rounded" />
         ) : (
           <p className="text-2xl font-bold text-gray-800">{value ?? '—'}</p>
         )}
+      </div>
+      {onClick && <Eye className="w-4 h-4 text-gray-300 flex-shrink-0" />}
+    </div>
+  );
+}
+
+// ─── GROUPS MODAL ─────────────────────────────────────────────────────────────
+function GroupsModal({ title, groups, onClose }) {
+  const [expandedGroup, setExpandedGroup] = useState(null);
+
+  const { data: lecturesData, isLoading: lecturesLoading } = useQuery({
+    queryKey: ['group-lectures', expandedGroup],
+    queryFn: () => api.get('/reports/group-lectures', { params: { group_name: expandedGroup } }).then(r => r.data),
+    enabled: !!expandedGroup,
+  });
+
+  const fmtDate = (d) => {
+    if (!d) return '—';
+    if (typeof d === 'string' && /^\d{1,2}\/\d{1,2}\/\d{4}/.test(d)) return d.split(',')[0].trim();
+    try { const p = new Date(d); return isNaN(p) ? d : p.toLocaleDateString('ar-EG'); } catch { return d; }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto" dir="rtl">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl my-8">
+        {/* Header */}
+        <div className="flex items-center justify-between p-5 border-b border-gray-100">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900">{title}</h2>
+            <p className="text-sm text-gray-400 mt-0.5">{groups.length} مجموعة</p>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg transition">
+            <X size={20} className="text-gray-500" />
+          </button>
+        </div>
+
+        {/* Table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-right">
+            <thead>
+              <tr className="bg-gray-50">
+                {['اسم المجموعة','الكورس','القسم','المتدربين','المحاضرات','تاريخ البداية','تاريخ النهاية','المنسق',''].map(h => (
+                  <th key={h} className="px-3 py-3 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {groups.length === 0 && (
+                <tr><td colSpan={9} className="text-center py-10 text-gray-400">لا توجد مجموعات</td></tr>
+              )}
+              {groups.map((g, i) => (
+                <>
+                  <tr key={g.external_id ?? i} className="hover:bg-gray-50 transition">
+                    <td className="px-3 py-2.5 font-medium text-gray-800 max-w-[200px] truncate">{g.group_name}</td>
+                    <td className="px-3 py-2.5 text-gray-600">{g.course ?? '—'}</td>
+                    <td className="px-3 py-2.5">
+                      <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">{g.dept_type ?? '—'}</span>
+                    </td>
+                    <td className="px-3 py-2.5 text-center font-bold text-gray-700">{g.trainee_count ?? 0}</td>
+                    <td className="px-3 py-2.5">
+                      <span className="text-green-600 font-medium">{g.completed_lectures ?? 0}</span>
+                      <span className="text-gray-400 mx-1">/</span>
+                      <span className="text-gray-700">{g.scheduled_lectures ?? 0}</span>
+                    </td>
+                    <td className="px-3 py-2.5 text-gray-600 whitespace-nowrap">{fmtDate(g.start_date)}</td>
+                    <td className="px-3 py-2.5 text-gray-600 whitespace-nowrap">{fmtDate(g.end_date)}</td>
+                    <td className="px-3 py-2.5 text-gray-600">{g.coordinators ?? '—'}</td>
+                    <td className="px-3 py-2.5">
+                      <button
+                        onClick={() => setExpandedGroup(expandedGroup === g.group_name ? null : g.group_name)}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#1e3a5f] text-white text-xs hover:bg-[#15294a] transition whitespace-nowrap"
+                      >
+                        <BookOpen size={12} />
+                        المحاضرات
+                        {expandedGroup === g.group_name ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                      </button>
+                    </td>
+                  </tr>
+                  {expandedGroup === g.group_name && (
+                    <tr key={`lec-${g.group_name}`}>
+                      <td colSpan={9} className="bg-blue-50/60 px-6 py-4">
+                        {lecturesLoading ? (
+                          <div className="text-center text-sm text-gray-400 py-4">جاري التحميل...</div>
+                        ) : !lecturesData?.lectures?.length ? (
+                          <div className="text-center text-sm text-gray-400 py-4">لا توجد محاضرات مسجلة</div>
+                        ) : (
+                          <div className="overflow-x-auto rounded-lg border border-blue-100">
+                            <table className="w-full text-xs text-right">
+                              <thead>
+                                <tr className="bg-blue-100">
+                                  {['#','النوع','التاريخ','الوقت','المدة','المدرب','الحالة','الحضور'].map(h => (
+                                    <th key={h} className="px-2 py-2 font-semibold text-blue-800 whitespace-nowrap">{h}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-blue-50 bg-white">
+                                {lecturesData.lectures.map((l, idx) => (
+                                  <tr key={l.id ?? idx} className="hover:bg-blue-50/40">
+                                    <td className="px-2 py-1.5 text-gray-500">{idx + 1}</td>
+                                    <td className="px-2 py-1.5">
+                                      <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${l.session_type === 'main' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
+                                        {l.session_type === 'main' ? 'أساسية' : 'جانبية'}
+                                      </span>
+                                    </td>
+                                    <td className="px-2 py-1.5 text-gray-700 whitespace-nowrap">{fmtDate(l.date)}</td>
+                                    <td className="px-2 py-1.5 text-gray-600">{l.time ?? '—'}</td>
+                                    <td className="px-2 py-1.5 text-gray-600">{l.duration ?? '—'}</td>
+                                    <td className="px-2 py-1.5 text-gray-700">{l.trainer ?? '—'}</td>
+                                    <td className="px-2 py-1.5 text-gray-700">{l.status ?? '—'}</td>
+                                    <td className="px-2 py-1.5 text-gray-700">{l.attendance ?? '—'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="p-4 border-t border-gray-100 flex justify-end">
+          <button onClick={onClose} className="px-5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm transition">إغلاق</button>
+        </div>
       </div>
     </div>
   );
@@ -106,6 +238,7 @@ export default function SystemReports() {
   const [remarksOpen,  setRemarksOpen]  = useState(true);
   const [expiredOpen,  setExpiredOpen]  = useState(true);
   const [errorsOpen,   setErrorsOpen]   = useState(true);
+  const [groupsModal,  setGroupsModal]  = useState(null); // { title, groups }
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['reports', applied],
@@ -236,14 +369,35 @@ export default function SystemReports() {
       </div>
 
       {/* ── KPI CARDS ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* المجموعات - صف مستقل بـ 3 */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <KpiCard
-          label="المجموعات النشطة"
+          label="مجموعات نشطة"
           value={kpis.active_groups}
           icon={Users}
           iconClass="bg-green-100 text-green-600"
           loading={isLoading}
+          onClick={() => setGroupsModal({ title: 'مجموعات نشطة', groups: data?.active_groups_list ?? [] })}
         />
+        <KpiCard
+          label="بانتظار تسجيل المتدربين"
+          value={kpis.waiting_trainees}
+          icon={UserCheck}
+          iconClass="bg-yellow-100 text-yellow-600"
+          loading={isLoading}
+          onClick={() => setGroupsModal({ title: 'بانتظار تسجيل المتدربين', groups: data?.waiting_trainees_list ?? [] })}
+        />
+        <KpiCard
+          label="بانتظار تسجيل المحاضرات"
+          value={kpis.waiting_lectures}
+          icon={Clock}
+          iconClass="bg-orange-100 text-orange-600"
+          loading={isLoading}
+          onClick={() => setGroupsModal({ title: 'بانتظار تسجيل المحاضرات', groups: data?.waiting_lectures_list ?? [] })}
+        />
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiCard
           label="مجموعات منتهية ونشطة"
           value={kpis.expired_active_groups}
@@ -578,6 +732,15 @@ export default function SystemReports() {
         )}
         </>}
       </div>
+
+      {/* ── GROUPS MODAL ── */}
+      {groupsModal && (
+        <GroupsModal
+          title={groupsModal.title}
+          groups={groupsModal.groups}
+          onClose={() => setGroupsModal(null)}
+        />
+      )}
     </div>
   );
 }
