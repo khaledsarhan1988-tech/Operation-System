@@ -235,16 +235,20 @@ router.get('/absent-list', (req, res) => {
   const dateFilter   = from_date && to_date ? ` AND a.date BETWEEN '${from_date}' AND '${to_date}'`
                      : from_date ? ` AND a.date >= '${from_date}'`
                      : to_date   ? ` AND a.date <= '${to_date}'` : '';
+  // استبعاد الصفوف التي لا يوجد بها اسم الطالب أو رقم الموبايل
+  const validFilter = ` AND a.student_name IS NOT NULL AND TRIM(a.student_name) != ''
+                        AND a.phone IS NOT NULL AND TRIM(a.phone) != ''`;
+
   try {
     const totalRow = db.prepare(
       `SELECT COUNT(*) as cnt FROM absent_students a
        LEFT JOIN batches b ON a.group_name = b.group_name
-       WHERE 1=1${dateFilter}${deptFilter}${empFilter}${searchFilter}`
+       WHERE 1=1${validFilter}${dateFilter}${deptFilter}${empFilter}${searchFilter}`
     ).get();
     const rows = db.prepare(
       `SELECT a.*, b.dept_type, b.coordinators FROM absent_students a
        LEFT JOIN batches b ON a.group_name = b.group_name
-       WHERE 1=1${dateFilter}${deptFilter}${empFilter}${searchFilter}
+       WHERE 1=1${validFilter}${dateFilter}${deptFilter}${empFilter}${searchFilter}
        ORDER BY a.date DESC LIMIT ${Number(limit)} OFFSET ${offset}`
     ).all();
     return res.json({ total: totalRow.cnt, page: Number(page), limit: Number(limit), rows });
