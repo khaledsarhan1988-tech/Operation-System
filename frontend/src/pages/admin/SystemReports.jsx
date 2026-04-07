@@ -241,10 +241,10 @@ function ListModal({ title, endpoint, params, columns, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto" dir="rtl">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl my-8">
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 overflow-y-auto" dir="rtl">
+      <div className="bg-white rounded-2xl shadow-2xl w-[96vw] max-w-7xl my-6 mx-auto flex flex-col" style={{ maxHeight: '90vh' }}>
         {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-gray-100">
+        <div className="flex items-center justify-between p-5 border-b border-gray-100 flex-shrink-0">
           <div>
             <h2 className="text-lg font-bold text-gray-900">{title}</h2>
             {data && <p className="text-sm text-gray-400 mt-0.5">إجمالي: {data.total?.toLocaleString()} سجل</p>}
@@ -252,13 +252,13 @@ function ListModal({ title, endpoint, params, columns, onClose }) {
           <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg transition"><X size={20} className="text-gray-500" /></button>
         </div>
 
-        {/* Table */}
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm text-right">
-            <thead>
+        {/* Table — scrollable */}
+        <div className="overflow-auto flex-1">
+          <table className="w-full text-sm text-right" style={{ minWidth: '700px' }}>
+            <thead className="sticky top-0 z-10">
               <tr className="bg-gray-50">
                 {columns.map(c => (
-                  <th key={c.key} className="px-3 py-3 text-xs font-semibold text-gray-500 whitespace-nowrap">{c.label}</th>
+                  <th key={c.key} className="px-3 py-3 text-xs font-semibold text-gray-500 whitespace-nowrap border-b border-gray-100">{c.label}</th>
                 ))}
               </tr>
             </thead>
@@ -275,7 +275,9 @@ function ListModal({ title, endpoint, params, columns, onClose }) {
                 data.rows.map((row, i) => (
                   <tr key={row.id ?? i} className="hover:bg-gray-50 transition">
                     {columns.map(c => (
-                      <td key={c.key} className="px-3 py-2.5 text-gray-700">{renderCell(row, c)}</td>
+                      <td key={c.key} className="px-3 py-2.5 text-gray-700 max-w-[200px]">
+                        <div className="truncate">{renderCell(row, c)}</div>
+                      </td>
                     ))}
                   </tr>
                 ))
@@ -284,16 +286,15 @@ function ListModal({ title, endpoint, params, columns, onClose }) {
           </table>
         </div>
 
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <div className="flex items-center justify-center gap-2 p-4 border-t border-gray-100">
-            <button disabled={page === 1} onClick={() => setPage(p => p - 1)} className="px-3 py-1.5 rounded-lg border text-sm disabled:opacity-40 hover:bg-gray-50 transition">السابق</button>
-            <span className="text-sm text-gray-500">صفحة {page} من {totalPages}</span>
-            <button disabled={page === totalPages} onClick={() => setPage(p => p + 1)} className="px-3 py-1.5 rounded-lg border text-sm disabled:opacity-40 hover:bg-gray-50 transition">التالي</button>
+        {/* Pagination + Close */}
+        <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100 flex-shrink-0">
+          <div className="flex items-center gap-2">
+            {totalPages > 1 && <>
+              <button disabled={page === 1} onClick={() => setPage(p => p - 1)} className="px-3 py-1.5 rounded-lg border text-sm disabled:opacity-40 hover:bg-gray-50 transition">السابق</button>
+              <span className="text-sm text-gray-500">صفحة {page} من {totalPages}</span>
+              <button disabled={page === totalPages} onClick={() => setPage(p => p + 1)} className="px-3 py-1.5 rounded-lg border text-sm disabled:opacity-40 hover:bg-gray-50 transition">التالي</button>
+            </>}
           </div>
-        )}
-
-        <div className="p-4 border-t border-gray-100 flex justify-end">
           <button onClick={onClose} className="px-5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm transition">إغلاق</button>
         </div>
       </div>
