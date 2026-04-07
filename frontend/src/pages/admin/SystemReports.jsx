@@ -481,7 +481,9 @@ function ListModal({ title, endpoint, params, columns, onClose }) {
                 data.rows.map((row, i) => (
                   <tr key={row.id ?? i} className={`border-b border-gray-50 transition-colors hover:bg-gray-50/70 ${i % 2 === 1 ? 'bg-gray-50/30' : ''}`}>
                     {columns.map(c => (
-                      <td key={c.key} className="px-4 py-3 text-gray-700 whitespace-nowrap">{renderCell(row, c)}</td>
+                      <td key={c.key} className={`px-4 py-3 text-gray-700 ${c.noWrap !== false ? 'whitespace-nowrap' : ''} ${c.key === 'group_name' ? 'font-semibold text-gray-900' : ''}`}>
+                        {renderCell(row, c)}
+                      </td>
                     ))}
                   </tr>
                 ))
@@ -751,17 +753,16 @@ export default function SystemReports() {
               endpoint: '/reports/absent-side-list',
               params: { ...applied },
               columns: [
-                { key: 'group_name',            label: 'المجموعة' },
-                { key: 'session_date',           label: 'تاريخ الجلسة',   type: 'date' },
-                { key: 'side_session_category',  label: 'التصنيف' },
+                { key: 'group_name',            label: 'اسم المجموعة',   noWrap: true },
+                { key: 'session_date',           label: 'التاريخ',         type: 'date' },
                 { key: 'trainer',                label: 'المدرب' },
+                { key: 'coordinators',           label: 'المنسق' },
+                { key: 'dept_type',              label: 'القسم',           type: 'badge' },
                 { key: 'trainer_present',        label: 'حضور المدرب',    type: 'present' },
                 { key: 'lecture_start_time',     label: 'وقت البداية' },
-                { key: 'actual_duration_min',    label: 'المدة (دقيقة)' },
+                { key: 'actual_duration_min',    label: 'المدة (د)' },
+                { key: 'side_session_category',  label: 'التصنيف' },
                 { key: 'notes',                  label: 'ملاحظات' },
-                { key: 'dept_type',              label: 'القسم',           type: 'badge' },
-                { key: 'coordinators',           label: 'المنسق' },
-                { key: 'checked_by_name',        label: 'تدقيق بواسطة' },
               ],
             })} />
           <KpiCard label="ملاحظات مفتوحة" value={kpis.open_remarks} icon={MessageSquare}
