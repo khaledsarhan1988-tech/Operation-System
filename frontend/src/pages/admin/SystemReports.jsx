@@ -31,7 +31,8 @@ function KpiCard({ label, value, icon: Icon, iconClass, loading, onClick }) {
 
 // ─── GROUPS MODAL ─────────────────────────────────────────────────────────────
 function GroupsModal({ title, groups, onClose }) {
-  const [expandedGroup, setExpandedGroup] = useState(null);
+  const [expandedGroup,  setExpandedGroup]  = useState(null); // lectures
+  const [traineesGroup,  setTraineesGroup]  = useState(null); // trainees popup
 
   const { data: lecturesData, isLoading: lecturesLoading } = useQuery({
     queryKey: ['group-lectures', expandedGroup],
@@ -39,11 +40,19 @@ function GroupsModal({ title, groups, onClose }) {
     enabled: !!expandedGroup,
   });
 
+  const { data: traineesData, isLoading: traineesLoading } = useQuery({
+    queryKey: ['group-trainees', traineesGroup],
+    queryFn: () => api.get('/reports/group-trainees', { params: { group_name: traineesGroup } }).then(r => r.data),
+    enabled: !!traineesGroup,
+  });
+
   const fmtDate = (d) => {
     if (!d) return '—';
     if (typeof d === 'string' && /^\d{1,2}\/\d{1,2}\/\d{4}/.test(d)) return d.split(',')[0].trim();
     try { const p = new Date(d); return isNaN(p) ? d : p.toLocaleDateString('ar-EG'); } catch { return d; }
   };
+
+  const hasLectures = (g) => (g.scheduled_lectures ?? 0) > 0 || (g.completed_lectures ?? 0) > 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto" dir="rtl">
@@ -81,19 +90,62 @@ function GroupsModal({ title, groups, onClose }) {
                     <td className="px-3 py-2.5">
                       <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">{g.dept_type ?? '—'}</span>
                     </td>
-                    <td className="px-3 py-2.5 text-center font-bold text-gray-700">{g.trainee_count ?? 0}</td>
+
+                    {/* ── عدد المتدربين قابل للضغط ── */}
+                    <td className="px-3 py-2.5 text-center relative">
+                      <button
+                        onClick={() => setTraineesGroup(traineesGroup === g.group_name ? null : g.group_name)}
+                        className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 font-bold text-sm hover:bg-indigo-200 transition"
+                        title="عرض المتدربين"
+                      >
+                        {g.trainee_count ?? 0}
+                      </button>
+
+                      {/* Popup المتدربين */}
+                      {traineesGroup === g.group_name && (
+                        <div className="absolute z-30 top-10 right-0 w-64 bg-white rounded-xl shadow-2xl border border-gray-100 p-3 text-right">
+                          <div className="flex items-center justify-between mb-2 pb-1.5 border-b border-gray-100">
+                            <button onClick={() => setTraineesGroup(null)} className="text-gray-400 hover:text-gray-600"><X size={14} /></button>
+                            <span className="text-xs font-bold text-gray-700">المتدربين ({traineesData?.length ?? '...'})</span>
+                          </div>
+                          {traineesLoading ? (
+                            <div className="text-center text-xs text-gray-400 py-3">جاري التحميل...</div>
+                          ) : !traineesData?.length ? (
+                            <div className="text-center text-xs text-gray-400 py-3">لا يوجد متدربين مسجلين</div>
+                          ) : (
+                            <div className="max-h-48 overflow-y-auto space-y-1.5">
+                              {traineesData.map((t, idx) => (
+                                <div key={idx} className="flex items-center justify-between gap-2 text-xs bg-gray-50 rounded-lg px-2 py-1.5">
+                                  <span className="text-blue-600 font-mono">{t.phone ?? '—'}</span>
+                                  <span className="font-medium text-gray-800 truncate">{t.name}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </td>
+
+                    {/* ── المحاضرات المكتملة/المجدولة ── */}
                     <td className="px-3 py-2.5">
                       <span className="text-green-600 font-medium">{g.completed_lectures ?? 0}</span>
                       <span className="text-gray-400 mx-1">/</span>
                       <span className="text-gray-700">{g.scheduled_lectures ?? 0}</span>
                     </td>
+
                     <td className="px-3 py-2.5 text-gray-600 whitespace-nowrap">{fmtDate(g.start_date)}</td>
                     <td className="px-3 py-2.5 text-gray-600 whitespace-nowrap">{fmtDate(g.end_date)}</td>
                     <td className="px-3 py-2.5 text-gray-600">{g.coordinators ?? '—'}</td>
+
+                    {/* ── زر المحاضرات — أحمر لو مفيش، أزرق لو فيه ── */}
                     <td className="px-3 py-2.5">
                       <button
                         onClick={() => setExpandedGroup(expandedGroup === g.group_name ? null : g.group_name)}
-                        className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#1e3a5f] text-white text-xs hover:bg-[#15294a] transition whitespace-nowrap"
+                        className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-white text-xs transition whitespace-nowrap ${
+                          hasLectures(g)
+                            ? 'bg-[#1e3a5f] hover:bg-[#15294a]'
+                            : 'bg-red-500 hover:bg-red-600'
+                        }`}
                       >
                         <BookOpen size={12} />
                         المحاضرات
@@ -101,13 +153,15 @@ function GroupsModal({ title, groups, onClose }) {
                       </button>
                     </td>
                   </tr>
+
+                  {/* ── تفاصيل المحاضرات ── */}
                   {expandedGroup === g.group_name && (
                     <tr key={`lec-${g.group_name}`}>
                       <td colSpan={9} className="bg-blue-50/60 px-6 py-4">
                         {lecturesLoading ? (
                           <div className="text-center text-sm text-gray-400 py-4">جاري التحميل...</div>
                         ) : !lecturesData?.lectures?.length ? (
-                          <div className="text-center text-sm text-gray-400 py-4">لا توجد محاضرات مسجلة</div>
+                          <div className="text-center text-sm text-red-400 py-4">⚠ لا توجد محاضرات مسجلة لهذه المجموعة</div>
                         ) : (
                           <div className="overflow-x-auto rounded-lg border border-blue-100">
                             <table className="w-full text-xs text-right">

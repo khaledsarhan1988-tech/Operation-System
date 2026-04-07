@@ -170,6 +170,20 @@ router.get('/dashboard', (req, res) => {
   }
 });
 
+// ─── GET /api/reports/group-trainees?group_name=xxx ──────────────────────────
+router.get('/group-trainees', (req, res) => {
+  const { group_name } = req.query;
+  if (!group_name) return res.status(400).json({ error: 'group_name required' });
+  try {
+    const trainees = db.prepare(
+      `SELECT name, phone FROM clients WHERE group_name = ? ORDER BY name ASC`
+    ).all(group_name);
+    return res.json(trainees);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/reports/group-lectures?group_name=xxx ───────────────────────────
 router.get('/group-lectures', (req, res) => {
   const { group_name } = req.query;
