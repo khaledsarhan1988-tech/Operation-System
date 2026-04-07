@@ -31,6 +31,16 @@ router.get('/dashboard', (req, res) => {
   const empBFilter  = employee ? ` AND b.coordinators LIKE '%${employee}%'` : '';
   const empRemark   = employee ? ` AND remarks.assigned_to LIKE '%${employee}%'` : '';
 
+  // للملاحظات: ربط العميل بالمجموعة للفلترة بالقسم
+  const deptRemark  = department && department !== 'All'
+    ? ` AND EXISTS (
+          SELECT 1 FROM clients c
+          INNER JOIN batches b ON c.group_name = b.group_name
+          WHERE c.phone = remarks.client_phone
+            AND b.dept_type = '${department}'
+        )`
+    : '';
+
   try {
     // 1. Active groups (3 statuses)
     const activeGroupsList = db.prepare(
@@ -95,7 +105,7 @@ router.get('/dashboard', (req, res) => {
       `SELECT * FROM remarks
        WHERE LOWER(status) NOT IN ('closed','مغلق','resolved')
        ${buildDateFilter('remarks.added_at', from_date, to_date)}
-       ${empRemark}
+       ${empRemark}${deptRemark}
        ORDER BY added_at DESC`
     ).all();
 
@@ -113,6 +123,7 @@ router.get('/dashboard', (req, res) => {
        FROM remarks
        WHERE LOWER(status) NOT IN ('closed','مغلق','resolved')
          AND ROUND((julianday('now') - julianday(added_at)) * 24, 1) >= 3
+         ${deptRemark}
        ORDER BY hours_open DESC`
     ).all();
 
