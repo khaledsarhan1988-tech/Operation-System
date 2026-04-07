@@ -77,6 +77,7 @@ function UserModal({ open, onClose, user, onSaved }) {
               const r = e.target.value;
               set('role', r);
               if (r === 'admin' || r === 'leader') set('department', 'All');
+              if (r === 'admin') set('management', 'All');
             }}>
               <option value="agent">{t('admin.agent')}</option>
               <option value="leader">{t('admin.leader')}</option>
@@ -95,6 +96,7 @@ function UserModal({ open, onClose, user, onSaved }) {
           <div>
             <label className="label">الإدارة</label>
             <select className="input" value={form.management} onChange={e => set('management', e.target.value)}>
+              <option value="All">جميع الإدارات</option>
               <option value="Customer Services">خدمة العملاء</option>
               <option value="Education">التعليم</option>
               <option value="Quality">الجودة</option>

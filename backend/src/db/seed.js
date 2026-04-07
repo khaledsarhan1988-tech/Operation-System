@@ -50,7 +50,7 @@ initDb().then(db => {
     `).run(username, hash, fullName);
     console.log(`✅ Admin user created: ${username}`);
   } else {
-    db.prepare(`UPDATE users SET password_hash = ?, full_name = ?, role = 'admin', management = 'Customer Services' WHERE username = ?`)
+    db.prepare(`UPDATE users SET password_hash = ?, full_name = ?, role = 'admin', management = 'All' WHERE username = ?`)
       .run(hash, fullName, username);
     console.log(`✅ Admin user updated: ${username}`);
   }
