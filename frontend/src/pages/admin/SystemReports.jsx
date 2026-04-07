@@ -417,6 +417,13 @@ function ListModal({ title, endpoint, params, columns, onClose }) {
         {val === 'main' ? 'أساسية' : 'جانبية'}
       </span>
     );
+    if (col.type === 'present') return (
+      val === 1 || val === true
+        ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700"><CheckCircle size={11}/>حاضر</span>
+        : val === 0 || val === false
+        ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700"><XCircle size={11}/>غائب</span>
+        : <span className="text-gray-400 text-xs">—</span>
+    );
     return val ?? '—';
   };
 
@@ -738,7 +745,25 @@ export default function SystemReports() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <KpiCard label="غياب الجلسات الجانبية" value={kpis.absent_side} icon={UserX}
             gradient="linear-gradient(135deg, #ca8a04 0%, #eab308 100%)"
-            loading={isLoading} />
+            loading={isLoading}
+            onClick={() => setListModal({
+              title: 'غياب الجلسات الجانبية',
+              endpoint: '/reports/absent-side-list',
+              params: { ...applied },
+              columns: [
+                { key: 'group_name',            label: 'المجموعة' },
+                { key: 'session_date',           label: 'تاريخ الجلسة',   type: 'date' },
+                { key: 'side_session_category',  label: 'التصنيف' },
+                { key: 'trainer',                label: 'المدرب' },
+                { key: 'trainer_present',        label: 'حضور المدرب',    type: 'present' },
+                { key: 'lecture_start_time',     label: 'وقت البداية' },
+                { key: 'actual_duration_min',    label: 'المدة (دقيقة)' },
+                { key: 'notes',                  label: 'ملاحظات' },
+                { key: 'dept_type',              label: 'القسم',           type: 'badge' },
+                { key: 'coordinators',           label: 'المنسق' },
+                { key: 'checked_by_name',        label: 'تدقيق بواسطة' },
+              ],
+            })} />
           <KpiCard label="ملاحظات مفتوحة" value={kpis.open_remarks} icon={MessageSquare}
             gradient="linear-gradient(135deg, #b91c1c 0%, #f87171 100%)"
             loading={isLoading} pulse={(kpis.open_remarks ?? 0) > 0} />

@@ -237,6 +237,62 @@ router.get('/absent-list', (req, res) => {
   }
 });
 
+// ─── GET /api/reports/absent-side-list ────────────────────────────────────────
+router.get('/absent-side-list', (req, res) => {
+  const { from_date, to_date, department, employee, page = 1, limit = 100, search = '' } = req.query;
+  const offset     = (Number(page) - 1) * Number(limit);
+  const deptFilter = department && department !== 'All' ? ` AND b.dept_type = '${department}'` : '';
+  const empFilter  = employee ? ` AND b.coordinators LIKE '%${employee}%'` : '';
+  const searchFilter = search ? ` AND ssc.group_name LIKE '%${search}%'` : '';
+  const dateFilter = from_date && to_date
+    ? ` AND ssc.session_date BETWEEN '${from_date}' AND '${to_date}'`
+    : from_date ? ` AND ssc.session_date >= '${from_date}'`
+    : to_date   ? ` AND ssc.session_date <= '${to_date}'` : '';
+
+  try {
+    const totalRow = db.prepare(
+      `SELECT COUNT(*) as cnt
+       FROM side_session_checks ssc
+       LEFT JOIN batches b ON ssc.group_name = b.group_name
+       LEFT JOIN lectures l ON ssc.lecture_id = l.id
+       LEFT JOIN users u ON ssc.checked_by = u.id
+       WHERE ssc.student_present = 0
+       ${dateFilter}${deptFilter}${empFilter}${searchFilter}`
+    ).get();
+
+    const rows = db.prepare(
+      `SELECT
+         ssc.id,
+         ssc.group_name,
+         ssc.session_date,
+         ssc.trainer_present,
+         ssc.lecture_start_time,
+         ssc.recording_start_time,
+         ssc.actual_duration_min,
+         ssc.notes,
+         ssc.checked_at,
+         l.trainer,
+         l.side_session_category,
+         b.dept_type,
+         b.coordinators,
+         u.full_name as checked_by_name
+       FROM side_session_checks ssc
+       LEFT JOIN batches b ON ssc.group_name = b.group_name
+       LEFT JOIN lectures l ON ssc.lecture_id = l.id
+       LEFT JOIN users u ON ssc.checked_by = u.id
+       WHERE ssc.student_present = 0
+       ${dateFilter}${deptFilter}${empFilter}${searchFilter}
+       ORDER BY ssc.session_date DESC
+       LIMIT ${Number(limit)} OFFSET ${offset}`
+    ).all();
+
+    return res.json({ total: totalRow.cnt, page: Number(page), limit: Number(limit), rows });
+  } catch (err) {
+    console.error('[reports] absent-side-list error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/reports/group-trainees?group_name=xxx ──────────────────────────
 router.get('/group-trainees', (req, res) => {
   const { group_name } = req.query;
