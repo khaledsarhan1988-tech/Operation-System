@@ -783,17 +783,14 @@ export default function SystemReports() {
               endpoint: '/reports/absent-side-list',
               params: { ...applied },
               columns: [
-                { key: 'group_name',           label: 'اسم المجموعة',  noWrap: true },
-                { key: 'session_date',          label: 'التاريخ',        type: 'date' },
+                { key: 'group_name',           label: 'اسم المجموعة',   noWrap: true },
+                { key: 'session_date',          label: 'التاريخ',         type: 'date' },
+                { key: 'lecture_start_time',    label: 'الوقت' },
+                { key: 'actual_duration',       label: 'المدة',          type: 'duration' },
                 { key: 'trainer',               label: 'المدرب' },
                 { key: 'coordinators',          label: 'المنسق' },
-                { key: 'dept_type',             label: 'القسم',          type: 'badge' },
-                { key: 'absent_count',          label: 'عدد الغياب',     type: 'absent_count' },
-                { key: 'present_count',         label: 'عدد الحضور',     type: 'present_count' },
-                { key: 'total_checked',         label: 'إجمالي الجلسات' },
-                { key: 'lecture_start_time',    label: 'وقت البداية' },
-                { key: 'actual_duration_min',   label: 'المدة (د)' },
-                { key: 'notes',                 label: 'ملاحظات' },
+                { key: 'dept_type',             label: 'القسم',           type: 'badge' },
+                { key: 'side_session_category', label: 'التصنيف',        type: 'category' },
               ],
             })} />
           <KpiCard label="ملاحظات مفتوحة" value={kpis.open_remarks} icon={MessageSquare}

@@ -93,12 +93,16 @@ router.get('/dashboard', (req, res) => {
        ${deptBatches}${empFilter}`
     ).get();
 
-    // 6. Absent side — only valid side sessions (duration <= 15 min, excludes Onboarding/Offboarding)
+    // 6. Absent side — status=مؤكدة & attendance IS NULL & duration <= '00:15' (excludes Onboarding/Offboarding)
     const absentSideRow = db.prepare(
-      `SELECT COUNT(*) as cnt FROM side_session_checks
-       WHERE student_present = 0
-         AND (actual_duration_min IS NULL OR actual_duration_min <= 15)
-       ${buildDateFilter('session_date', from_date, to_date)}`
+      `SELECT COUNT(*) as cnt FROM lectures l
+       INNER JOIN batches b ON l.group_name = b.group_name
+       WHERE l.session_type = 'side'
+         AND l.status = 'مؤكدة'
+         AND (l.attendance IS NULL OR l.attendance = '0')
+         AND (l.duration IS NULL OR l.duration <= '00:15')
+       ${buildDateFilter('l.date', from_date, to_date)}
+       ${deptBatches}${empFilter}`
     ).get();
 
     // 7. Open remarks
@@ -258,58 +262,50 @@ router.get('/absent-list', (req, res) => {
 });
 
 // ─── GET /api/reports/absent-side-list ────────────────────────────────────────
-// Returns grouped rows: per group + session_date
-// Only counts valid side sessions (duration <= 15 min — excludes Onboarding/Offboarding)
+// Source: lectures table (session_type='side', status='مؤكدة', attendance IS NULL)
+// Duration filter: duration <= '00:15' excludes Onboarding/Offboarding (> 15 min)
 router.get('/absent-side-list', (req, res) => {
   const { from_date, to_date, department, employee, page = 1, limit = 100, search = '' } = req.query;
   const offset       = (Number(page) - 1) * Number(limit);
   const deptFilter   = department && department !== 'All' ? ` AND b.dept_type = '${department}'` : '';
   const empFilter    = employee ? ` AND b.coordinators LIKE '%${employee}%'` : '';
-  const searchFilter = search ? ` AND ssc.group_name LIKE '%${search}%'` : '';
+  const searchFilter = search ? ` AND l.group_name LIKE '%${search}%'` : '';
   const dateFilter   = from_date && to_date
-    ? ` AND ssc.session_date BETWEEN '${from_date}' AND '${to_date}'`
-    : from_date ? ` AND ssc.session_date >= '${from_date}'`
-    : to_date   ? ` AND ssc.session_date <= '${to_date}'` : '';
+    ? ` AND l.date BETWEEN '${from_date}' AND '${to_date}'`
+    : from_date ? ` AND l.date >= '${from_date}'`
+    : to_date   ? ` AND l.date <= '${to_date}'` : '';
 
-  // Only valid side sessions: duration <= 15 min or not recorded
-  const durationFilter = ` AND (ssc.actual_duration_min IS NULL OR ssc.actual_duration_min <= 15)`;
-
-  const baseWhere = `WHERE 1=1 ${durationFilter}${dateFilter}${deptFilter}${empFilter}${searchFilter}`;
+  const baseWhere = `
+    WHERE l.session_type = 'side'
+      AND l.status = 'مؤكدة'
+      AND (l.attendance IS NULL OR l.attendance = '0')
+      AND (l.duration IS NULL OR l.duration <= '00:15')
+    ${dateFilter}${deptFilter}${empFilter}${searchFilter}`;
 
   try {
-    // Count distinct group+date combinations that have at least 1 absent
     const totalRow = db.prepare(
-      `SELECT COUNT(*) as cnt FROM (
-         SELECT ssc.group_name, ssc.session_date
-         FROM side_session_checks ssc
-         LEFT JOIN batches b ON ssc.group_name = b.group_name
-         ${baseWhere}
-         GROUP BY ssc.group_name, ssc.session_date
-         HAVING SUM(CASE WHEN ssc.student_present = 0 THEN 1 ELSE 0 END) > 0
-       )`
+      `SELECT COUNT(*) as cnt
+       FROM lectures l
+       LEFT JOIN batches b ON l.group_name = b.group_name
+       ${baseWhere}`
     ).get();
 
     const rows = db.prepare(
       `SELECT
-         ssc.group_name,
-         ssc.session_date,
-         MAX(l.trainer)                                                   AS trainer,
-         MAX(b.coordinators)                                              AS coordinators,
-         MAX(b.dept_type)                                                 AS dept_type,
-         COUNT(*)                                                         AS total_checked,
-         SUM(CASE WHEN ssc.student_present = 1 THEN 1 ELSE 0 END)        AS present_count,
-         SUM(CASE WHEN ssc.student_present = 0 THEN 1 ELSE 0 END)        AS absent_count,
-         MAX(ssc.lecture_start_time)                                      AS lecture_start_time,
-         MAX(ssc.actual_duration_min)                                     AS actual_duration_min,
-         MAX(l.side_session_category)                                     AS side_session_category,
-         MAX(ssc.notes)                                                   AS notes
-       FROM side_session_checks ssc
-       LEFT JOIN batches b ON ssc.group_name = b.group_name
-       LEFT JOIN lectures l ON ssc.lecture_id = l.id
+         l.id,
+         l.group_name,
+         l.date           AS session_date,
+         l.time           AS lecture_start_time,
+         l.duration       AS actual_duration,
+         l.trainer,
+         l.status,
+         l.side_session_category,
+         b.dept_type,
+         b.coordinators
+       FROM lectures l
+       LEFT JOIN batches b ON l.group_name = b.group_name
        ${baseWhere}
-       GROUP BY ssc.group_name, ssc.session_date
-       HAVING absent_count > 0
-       ORDER BY ssc.session_date DESC
+       ORDER BY l.date DESC
        LIMIT ${Number(limit)} OFFSET ${offset}`
     ).all();
 
