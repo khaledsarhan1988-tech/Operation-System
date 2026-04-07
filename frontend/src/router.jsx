@@ -69,6 +69,8 @@ const router = createBrowserRouter([
       { path: 'absent-report',  element: <AbsentReport /> },
       { path: 'groups',         element: <GroupCoverage /> },
       { path: 'tasks',          element: <TaskDistribution /> },
+      { path: 'users',          element: <UserManagement /> },
+      { path: 'upload',         element: <ExcelUpload /> },
     ],
   },
 

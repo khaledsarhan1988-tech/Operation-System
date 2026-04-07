@@ -18,7 +18,7 @@ const upload = multer({
 });
 
 // POST /api/upload/:fileType
-router.post('/:fileType', authenticate, requireRole('admin'), upload.single('file'), (req, res) => {
+router.post('/:fileType', authenticate, requireRole('leader'), upload.single('file'), (req, res) => {
   const { fileType } = req.params;
   if (!FILE_TYPES.includes(fileType)) {
     return res.status(400).json({ error: `Invalid fileType. Must be one of: ${FILE_TYPES.join(', ')}` });

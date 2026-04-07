@@ -6,7 +6,7 @@ const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 
 const router = express.Router();
-router.use(authenticate, requireRole('admin'));
+router.use(authenticate, requireRole('leader'));
 
 // ─── USER MANAGEMENT ──────────────────────────────────────────────────────────
 

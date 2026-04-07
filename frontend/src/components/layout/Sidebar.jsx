@@ -23,6 +23,8 @@ const LEADER_LINKS = [
   { to: '/leader/groups',      label: 'nav.groupCoverage',   icon: Globe },
   { to: '/leader/tasks',       label: 'nav.taskDistribution',icon: ClipboardList },
   { to: '/leader/performance', label: 'nav.performance',     icon: BarChart2 },
+  { to: '/leader/users',       label: 'nav.users',           icon: UserCog },
+  { to: '/leader/upload',      label: 'nav.excelUpload',     icon: Upload },
 ];
 
 const ADMIN_LINKS = [
