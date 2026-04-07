@@ -4,36 +4,42 @@ import { useAuth } from '../../auth/AuthContext';
 import {
   LayoutDashboard, ClipboardList, Search, UserX, Calendar,
   Video, Users, BarChart2, Globe, UserCog, Upload, FileText,
-  LogOut, ChevronRight
+  LogOut, Headphones, GraduationCap, ShieldCheck
 } from 'lucide-react';
 
 const AGENT_LINKS = [
-  { to: '/agent',              label: 'nav.dashboard',      icon: LayoutDashboard, end: true },
-  { to: '/agent/tasks',        label: 'nav.myTasks',        icon: ClipboardList },
-  { to: '/agent/clients',      label: 'nav.clientSearch',   icon: Search },
-  { to: '/agent/absent',       label: 'nav.absentFollowUp', icon: UserX },
-  { to: '/agent/schedule',     label: 'nav.todaySchedule',  icon: Calendar },
-  { to: '/agent/side-sessions',label: 'nav.sideSessionCheck',icon: Video },
+  { to: '/agent',               label: 'nav.dashboard',       icon: LayoutDashboard, end: true },
+  { to: '/agent/tasks',         label: 'nav.myTasks',         icon: ClipboardList },
+  { to: '/agent/clients',       label: 'nav.clientSearch',    icon: Search },
+  { to: '/agent/absent',        label: 'nav.absentFollowUp',  icon: UserX },
+  { to: '/agent/schedule',      label: 'nav.todaySchedule',   icon: Calendar },
+  { to: '/agent/side-sessions', label: 'nav.sideSessionCheck',icon: Video },
 ];
 
 const LEADER_LINKS = [
-  { to: '/leader',             label: 'nav.dashboard',       icon: LayoutDashboard, end: true },
-  { to: '/leader/team',        label: 'nav.team',            icon: Users },
-  { to: '/leader/absent',      label: 'nav.absentReport',    icon: UserX },
-  { to: '/leader/groups',      label: 'nav.groupCoverage',   icon: Globe },
-  { to: '/leader/tasks',       label: 'nav.taskDistribution',icon: ClipboardList },
-  { to: '/leader/performance', label: 'nav.performance',     icon: BarChart2 },
-  { to: '/leader/users',       label: 'nav.users',           icon: UserCog },
-  { to: '/leader/upload',      label: 'nav.excelUpload',     icon: Upload },
+  { to: '/leader',              label: 'nav.dashboard',        icon: LayoutDashboard, end: true },
+  { to: '/leader/team',         label: 'nav.team',             icon: Users },
+  { to: '/leader/absent',       label: 'nav.absentReport',     icon: UserX },
+  { to: '/leader/groups',       label: 'nav.groupCoverage',    icon: Globe },
+  { to: '/leader/tasks',        label: 'nav.taskDistribution', icon: ClipboardList },
+  { to: '/leader/performance',  label: 'nav.performance',      icon: BarChart2 },
+  { to: '/leader/users',        label: 'nav.users',            icon: UserCog },
+  { to: '/leader/upload',       label: 'nav.excelUpload',      icon: Upload },
+  { type: 'section', label: 'التقارير' },
+  { to: '/leader/reports/customer-services', label: 'تقارير خدمة العملاء',    icon: Headphones,     exact: true },
+  { to: '/leader/reports/education',         label: 'تقارير الإدارة التعليمية', icon: GraduationCap,  exact: true },
+  { to: '/leader/reports/quality',           label: 'تقارير الجودة',           icon: ShieldCheck,    exact: true },
 ];
 
 const ADMIN_LINKS = [
-  { to: '/admin',              label: 'nav.dashboard',    icon: LayoutDashboard, end: true },
-  { to: '/admin/users',        label: 'nav.users',        icon: UserCog },
-  { to: '/admin/upload',       label: 'nav.excelUpload',  icon: Upload },
-  { to: '/admin/reports',      label: 'nav.systemReports',icon: FileText },
-  // Admin can also access leader views
-  { to: '/leader',             label: 'nav.team',         icon: Users },
+  { to: '/admin',               label: 'nav.dashboard',    icon: LayoutDashboard, end: true },
+  { to: '/admin/users',         label: 'nav.users',        icon: UserCog },
+  { to: '/admin/upload',        label: 'nav.excelUpload',  icon: Upload },
+  { to: '/leader',              label: 'nav.team',         icon: Users },
+  { type: 'section', label: 'التقارير' },
+  { to: '/admin/reports/customer-services', label: 'تقارير خدمة العملاء',     icon: Headphones,    exact: true },
+  { to: '/admin/reports/education',         label: 'تقارير الإدارة التعليمية', icon: GraduationCap, exact: true },
+  { to: '/admin/reports/quality',           label: 'تقارير الجودة',            icon: ShieldCheck,   exact: true },
 ];
 
 const ROLE_LINKS = { agent: AGENT_LINKS, leader: LEADER_LINKS, admin: ADMIN_LINKS };
@@ -42,6 +48,7 @@ const managementMap = {
   'Customer Services': 'خدمة العملاء',
   'Education': 'التعليم',
   'Quality': 'الجودة',
+  'All': 'جميع الإدارات',
 };
 
 export default function Sidebar({ mobile, onClose }) {
@@ -78,18 +85,28 @@ export default function Sidebar({ mobile, onClose }) {
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
-        {links.map(({ to, label, icon: Icon, end }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={end}
-            onClick={mobile ? onClose : undefined}
-            className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}
-          >
-            <Icon size={18} />
-            <span className="flex-1 text-sm">{t(label)}</span>
-          </NavLink>
-        ))}
+        {links.map((item, i) => {
+          if (item.type === 'section') {
+            return (
+              <div key={i} className="px-3 pt-4 pb-1">
+                <p className="text-xs font-semibold text-sidebar-text/40 uppercase tracking-wider">{item.label}</p>
+              </div>
+            );
+          }
+          const { to, label, icon: Icon, end } = item;
+          return (
+            <NavLink
+              key={to}
+              to={to}
+              end={end}
+              onClick={mobile ? onClose : undefined}
+              className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}
+            >
+              <Icon size={18} />
+              <span className="flex-1 text-sm">{t(label, label)}</span>
+            </NavLink>
+          );
+        })}
       </nav>
 
       {/* Logout */}

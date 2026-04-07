@@ -24,25 +24,17 @@ import AdminDashboard from './pages/admin/AdminDashboard';
 import UserManagement from './pages/admin/UserManagement';
 import ExcelUpload from './pages/admin/ExcelUpload';
 import SystemReports from './pages/admin/SystemReports';
+import EducationReports from './pages/admin/EducationReports';
+import QualityReports from './pages/admin/QualityReports';
 
 const router = createBrowserRouter([
-  {
-    path: '/login',
-    element: <Login />,
-  },
-  {
-    path: '/',
-    element: <Navigate to="/login" replace />,
-  },
+  { path: '/login', element: <Login /> },
+  { path: '/', element: <Navigate to="/login" replace /> },
 
   // ── Agent routes ──────────────────────────────────────────────
   {
     path: '/agent',
-    element: (
-      <PrivateRoute role="agent">
-        <AppShell />
-      </PrivateRoute>
-    ),
+    element: <PrivateRoute role="agent"><AppShell /></PrivateRoute>,
     children: [
       { index: true, element: <Navigate to="dashboard" replace /> },
       { path: 'dashboard',          element: <AgentDashboard /> },
@@ -57,45 +49,38 @@ const router = createBrowserRouter([
   // ── Leader routes ─────────────────────────────────────────────
   {
     path: '/leader',
-    element: (
-      <PrivateRoute role="leader">
-        <AppShell />
-      </PrivateRoute>
-    ),
+    element: <PrivateRoute role="leader"><AppShell /></PrivateRoute>,
     children: [
       { index: true, element: <Navigate to="dashboard" replace /> },
-      { path: 'dashboard',      element: <LeaderDashboard /> },
-      { path: 'team',           element: <TeamOverview /> },
-      { path: 'absent-report',  element: <AbsentReport /> },
-      { path: 'groups',         element: <GroupCoverage /> },
-      { path: 'tasks',          element: <TaskDistribution /> },
-      { path: 'users',          element: <UserManagement /> },
-      { path: 'upload',         element: <ExcelUpload /> },
+      { path: 'dashboard',                    element: <LeaderDashboard /> },
+      { path: 'team',                         element: <TeamOverview /> },
+      { path: 'absent-report',                element: <AbsentReport /> },
+      { path: 'groups',                       element: <GroupCoverage /> },
+      { path: 'tasks',                        element: <TaskDistribution /> },
+      { path: 'users',                        element: <UserManagement /> },
+      { path: 'upload',                       element: <ExcelUpload /> },
+      { path: 'reports/customer-services',    element: <SystemReports /> },
+      { path: 'reports/education',            element: <EducationReports /> },
+      { path: 'reports/quality',              element: <QualityReports /> },
     ],
   },
 
   // ── Admin routes ──────────────────────────────────────────────
   {
     path: '/admin',
-    element: (
-      <PrivateRoute role="admin">
-        <AppShell />
-      </PrivateRoute>
-    ),
+    element: <PrivateRoute role="admin"><AppShell /></PrivateRoute>,
     children: [
       { index: true, element: <Navigate to="dashboard" replace /> },
-      { path: 'dashboard', element: <AdminDashboard /> },
-      { path: 'users',     element: <UserManagement /> },
-      { path: 'upload',    element: <ExcelUpload /> },
-      { path: 'reports',   element: <SystemReports /> },
+      { path: 'dashboard',                    element: <AdminDashboard /> },
+      { path: 'users',                        element: <UserManagement /> },
+      { path: 'upload',                       element: <ExcelUpload /> },
+      { path: 'reports/customer-services',    element: <SystemReports /> },
+      { path: 'reports/education',            element: <EducationReports /> },
+      { path: 'reports/quality',             element: <QualityReports /> },
     ],
   },
 
-  // ── Catch-all ─────────────────────────────────────────────────
-  {
-    path: '*',
-    element: <Navigate to="/login" replace />,
-  },
+  { path: '*', element: <Navigate to="/login" replace /> },
 ]);
 
 export default router;
