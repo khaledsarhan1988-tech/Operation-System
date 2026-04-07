@@ -31,8 +31,13 @@ function KpiCard({ label, value, icon: Icon, iconClass, loading, onClick }) {
 
 // ─── GROUPS MODAL ─────────────────────────────────────────────────────────────
 function GroupsModal({ title, groups, onClose }) {
-  const [expandedGroup,  setExpandedGroup]  = useState(null); // lectures
-  const [traineesGroup,  setTraineesGroup]  = useState(null); // trainees popup
+  const [expandedGroup,  setExpandedGroup]  = useState(null);
+  const [traineesGroup,  setTraineesGroup]  = useState(null);
+  const [search,         setSearch]         = useState('');
+
+  const filteredGroups = search.trim()
+    ? groups.filter(g => g.group_name?.toLowerCase().includes(search.trim().toLowerCase()))
+    : groups;
 
   const { data: lecturesData, isLoading: lecturesLoading } = useQuery({
     queryKey: ['group-lectures', expandedGroup],
@@ -55,37 +60,61 @@ function GroupsModal({ title, groups, onClose }) {
   const hasLectures = (g) => (g.scheduled_lectures ?? 0) > 0 || (g.completed_lectures ?? 0) > 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto" dir="rtl">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl my-8">
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 overflow-y-auto" dir="rtl">
+      <div className="bg-white rounded-2xl shadow-2xl w-[96vw] max-w-7xl my-6 mx-auto flex flex-col" style={{ maxHeight: '90vh' }}>
+
         {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-gray-100">
-          <div>
-            <h2 className="text-lg font-bold text-gray-900">{title}</h2>
-            <p className="text-sm text-gray-400 mt-0.5">{groups.length} مجموعة</p>
+        <div className="p-5 border-b border-gray-100 flex-shrink-0">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">{title}</h2>
+              <p className="text-sm text-gray-400 mt-0.5">
+                {search.trim() ? `${filteredGroups.length} من ${groups.length}` : groups.length} مجموعة
+              </p>
+            </div>
+            <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg transition">
+              <X size={20} className="text-gray-500" />
+            </button>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg transition">
-            <X size={20} className="text-gray-500" />
-          </button>
+          {/* Search */}
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={search}
+              onChange={e => { setSearch(e.target.value); setExpandedGroup(null); setTraineesGroup(null); }}
+              placeholder="بحث باسم المجموعة..."
+              className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+            />
+            {search && (
+              <button onClick={() => { setSearch(''); setExpandedGroup(null); }}
+                className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm hover:bg-gray-200 transition">
+                مسح
+              </button>
+            )}
+          </div>
+          {search.trim() && (
+            <p className="text-xs text-blue-600 mt-1.5">نتائج البحث عن: <span className="font-semibold">"{search}"</span></p>
+          )}
         </div>
 
         {/* Table */}
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm text-right">
-            <thead>
+        <div className="overflow-auto flex-1">
+          <table className="w-full text-sm text-right" style={{ minWidth: '900px' }}>
+            <thead className="sticky top-0 z-10">
               <tr className="bg-gray-50">
                 {['اسم المجموعة','الكورس','القسم','المتدربين','المحاضرات','تاريخ البداية','تاريخ النهاية','المنسق',''].map(h => (
-                  <th key={h} className="px-3 py-3 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
+                  <th key={h} className="px-3 py-3 text-xs font-semibold text-gray-500 whitespace-nowrap border-b border-gray-100">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {groups.length === 0 && (
+              {filteredGroups.length === 0 && (
                 <tr><td colSpan={9} className="text-center py-10 text-gray-400">لا توجد مجموعات</td></tr>
               )}
-              {groups.map((g, i) => (
+              {filteredGroups.map((g, i) => (
                 <>
                   <tr key={g.external_id ?? i} className="hover:bg-gray-50 transition">
-                    <td className="px-3 py-2.5 font-medium text-gray-800 max-w-[200px] truncate">{g.group_name}</td>
+                    <td className="px-3 py-2.5 font-medium text-gray-800 whitespace-nowrap" style={{ minWidth: '280px' }}>{g.group_name}</td>
                     <td className="px-3 py-2.5 text-gray-600">{g.course ?? '—'}</td>
                     <td className="px-3 py-2.5">
                       <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">{g.dept_type ?? '—'}</span>
@@ -202,7 +231,7 @@ function GroupsModal({ title, groups, onClose }) {
           </table>
         </div>
 
-        <div className="p-4 border-t border-gray-100 flex justify-end">
+        <div className="p-4 border-t border-gray-100 flex justify-end flex-shrink-0">
           <button onClick={onClose} className="px-5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm transition">إغلاق</button>
         </div>
       </div>
