@@ -34,13 +34,13 @@ router.get('/dashboard', (req, res) => {
   try {
     // 1. Active groups
     const activeGroupsList = db.prepare(
-      `SELECT * FROM batches WHERE status='Active'${deptBatches}${empFilter} ORDER BY start_date DESC`
+      `SELECT * FROM batches WHERE status='نشطة'${deptBatches}${empFilter} ORDER BY start_date DESC`
     ).all();
 
     // 2. Expired active groups
     const expiredGroupsList = db.prepare(
       `SELECT * FROM batches
-       WHERE status='Active'
+       WHERE status='نشطة'
          AND end_date IS NOT NULL
          AND end_date != ''
          AND end_date < date('now')
@@ -114,7 +114,7 @@ router.get('/dashboard', (req, res) => {
          (scheduled_lectures - completed_lectures) as missing_lectures,
          dept_type, coordinators, start_date, end_date
        FROM batches
-       WHERE status='Active' AND scheduled_lectures > completed_lectures
+       WHERE status='نشطة' AND scheduled_lectures > completed_lectures
        ${deptBatches}${empFilter}
        ORDER BY missing_lectures DESC`
     ).all();
@@ -126,7 +126,7 @@ router.get('/dashboard', (req, res) => {
          (b.trainee_count * 7) as expected_side_count
        FROM batches b
        LEFT JOIN lectures l ON l.group_name = b.group_name AND l.session_type = 'side'
-       WHERE b.status = 'Active'
+       WHERE b.status = 'نشطة'
        ${deptB}${empBFilter}
        GROUP BY b.group_name
        HAVING side_count < expected_side_count

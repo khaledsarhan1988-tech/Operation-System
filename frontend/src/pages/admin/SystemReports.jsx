@@ -127,7 +127,15 @@ export default function SystemReports() {
 
   const fmtDate = (d) => {
     if (!d) return '—';
-    try { return new Date(d).toLocaleDateString('ar-EG'); } catch { return d; }
+    try {
+      // Handle format: "31/03/2026, 12:59 PM" — extract date part only
+      if (typeof d === 'string' && /^\d{1,2}\/\d{1,2}\/\d{4}/.test(d)) {
+        return d.split(',')[0].trim();
+      }
+      const parsed = new Date(d);
+      if (isNaN(parsed.getTime())) return d;
+      return parsed.toLocaleDateString('ar-EG');
+    } catch { return d; }
   };
 
   return (
@@ -288,7 +296,9 @@ export default function SystemReports() {
             <tr>
               <Th>اسم العميل</Th>
               <Th>تفاصيل</Th>
+              <Th>التصنيف</Th>
               <Th>الحالة</Th>
+              <Th>الأهمية</Th>
               <Th>مستوى الإلحاح</Th>
               <Th>آخر تحديث</Th>
               <Th>مسؤول</Th>
@@ -296,7 +306,7 @@ export default function SystemReports() {
           </thead>
           <tbody className="divide-y divide-gray-50">
             {isLoading ? (
-              <SkeletonRows cols={6} />
+              <SkeletonRows cols={8} />
             ) : !data?.open_remarks_list?.length ? (
               <EmptyState />
             ) : (
@@ -315,7 +325,21 @@ export default function SystemReports() {
                   <tr key={r.id} className="hover:bg-gray-50 transition">
                     <Td className="font-medium">{r.client_name}</Td>
                     <Td className="max-w-xs truncate">{r.details}</Td>
+                    <Td>
+                      <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 whitespace-nowrap">
+                        {r.category ?? '—'}
+                      </span>
+                    </Td>
                     <Td>{r.status}</Td>
+                    <Td>
+                      <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap ${
+                        r.priority === 'عاجلة' ? 'bg-red-100 text-red-700' :
+                        r.priority === 'هامة'  ? 'bg-orange-100 text-orange-700' :
+                                                  'bg-gray-100 text-gray-600'
+                      }`}>
+                        {r.priority ?? '—'}
+                      </span>
+                    </Td>
                     <Td><UrgencyBadge level={urgency} /></Td>
                     <Td>{fmtDate(r.last_updated)}</Td>
                     <Td>{r.assigned_to}</Td>
