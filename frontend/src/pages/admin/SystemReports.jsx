@@ -110,6 +110,12 @@ export default function SystemReports() {
     queryFn: () => api.get('/reports/dashboard', { params: applied }).then(r => r.data),
   });
 
+  const { data: usersData } = useQuery({
+    queryKey: ['users-agents'],
+    queryFn: () => api.get('/admin/users').then(r => r.data),
+  });
+  const agents = (usersData ?? []).filter(u => u.role === 'agent');
+
   const kpis = data?.kpis ?? {};
 
   const handleApply = () => {
@@ -196,16 +202,19 @@ export default function SystemReports() {
               <option value="Semi">شبه خاص</option>
             </select>
           </div>
-          {/* Employee search */}
+          {/* Employee dropdown */}
           <div>
             <label className="block text-xs text-gray-500 mb-1">الموظف / المنسق</label>
-            <input
-              type="text"
-              placeholder="بحث بالاسم..."
+            <select
               value={filters.employee}
               onChange={e => setFilters(f => ({ ...f, employee: e.target.value }))}
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
-            />
+            >
+              <option value="">الكل</option>
+              {agents.map(u => (
+                <option key={u.id} value={u.full_name}>{u.full_name}</option>
+              ))}
+            </select>
           </div>
         </div>
         <div className="flex gap-2">
