@@ -368,6 +368,67 @@ router.get('/absent-side-list', (req, res) => {
   }
 });
 
+// ─── GET /api/reports/remarks-list ───────────────────────────────────────────
+router.get('/remarks-list', (req, res) => {
+  const {
+    from_date, to_date, department, employee,
+    page = 1, limit = 100, search = '',
+    assigned_to = '', priority = '', modal_from = '', modal_to = '', modal_dept = '',
+  } = req.query;
+  const offset = (Number(page) - 1) * Number(limit);
+
+  const activeFrom = modal_from || from_date;
+  const activeTo   = modal_to   || to_date;
+  const activeDept = modal_dept && modal_dept !== 'All' ? modal_dept
+                   : department && department !== 'All' ? department : '';
+
+  const dateFilter     = activeFrom && activeTo ? ` AND added_at BETWEEN '${activeFrom}' AND '${activeTo}'`
+                       : activeFrom ? ` AND added_at >= '${activeFrom}'`
+                       : activeTo   ? ` AND added_at <= '${activeTo}'` : '';
+  const empFilter      = employee    ? ` AND assigned_to LIKE '%${employee}%'` : '';
+  const assignFilter   = assigned_to ? ` AND assigned_to LIKE '%${assigned_to}%'` : '';
+  const priorityFilter = priority    ? ` AND priority = '${priority}'` : '';
+  const searchFilter   = search      ? ` AND (client_name LIKE '%${search}%' OR details LIKE '%${search}%')` : '';
+  const deptFilter     = activeDept
+    ? ` AND EXISTS (
+          SELECT 1 FROM clients c
+          INNER JOIN batches b ON c.group_name = b.group_name
+          WHERE c.phone = remarks.client_phone
+            AND b.dept_type = '${activeDept}'
+        )`
+    : '';
+
+  const baseWhere = `WHERE LOWER(status) NOT IN ('closed','مغلق','resolved')
+    ${dateFilter}${empFilter}${assignFilter}${priorityFilter}${deptFilter}${searchFilter}`;
+
+  try {
+    const totalRow = db.prepare(
+      `SELECT COUNT(*) as cnt FROM remarks ${baseWhere}`
+    ).get();
+
+    const rows = db.prepare(
+      `SELECT *,
+         ROUND((julianday('now') - julianday(added_at)) * 24, 1) AS hours_open,
+         CASE
+           WHEN ROUND((julianday('now') - julianday(added_at)) * 24, 1) > 72  THEN 'overdue'
+           WHEN ROUND((julianday('now') - julianday(added_at)) * 24, 1) > 48  THEN 'normal'
+           WHEN ROUND((julianday('now') - julianday(added_at)) * 24, 1) > 24  THEN 'important'
+           WHEN ROUND((julianday('now') - julianday(added_at)) * 24, 1) >= 3  THEN 'urgent'
+           ELSE 'ok'
+         END AS urgency_level
+       FROM remarks
+       ${baseWhere}
+       ORDER BY added_at DESC
+       LIMIT ${Number(limit)} OFFSET ${offset}`
+    ).all();
+
+    return res.json({ total: totalRow.cnt, page: Number(page), limit: Number(limit), rows });
+  } catch (err) {
+    console.error('[reports] remarks-list error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/reports/group-trainees?group_name=xxx ──────────────────────────
 router.get('/group-trainees', (req, res) => {
   const { group_name } = req.query;

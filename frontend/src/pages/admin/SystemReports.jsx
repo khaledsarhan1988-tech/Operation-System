@@ -403,6 +403,7 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
   // Extra filters state
   const [modalF, setModalF] = useState({
     trainer: '', coordinator: '', modal_from: '', modal_to: '', modal_dept: '',
+    assigned_to: '', priority: '',
   });
   const [appliedMF, setAppMF] = useState({});
   const LIMIT = 100;
@@ -422,7 +423,7 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
   };
   const handleClear = () => {
     setSearch(''); setApplied('');
-    setModalF({ trainer: '', coordinator: '', modal_from: '', modal_to: '', modal_dept: '' });
+    setModalF({ trainer: '', coordinator: '', modal_from: '', modal_to: '', modal_dept: '', assigned_to: '', priority: '' });
     setAppMF({});
     setPage(1);
   };
@@ -480,6 +481,24 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
         (val ?? 0) > 0 ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-400'
       }`}>{val ?? 0}</span>
     );
+    if (col.type === 'urgency') {
+      const uMap = {
+        overdue:  { label: '🔴 متأخر جداً', cls: 'bg-red-200 text-red-900 border-red-300' },
+        normal:   { label: '📋 عادي',       cls: 'bg-yellow-100 text-yellow-800 border-yellow-200' },
+        important:{ label: '⚠ مهم',         cls: 'bg-orange-100 text-orange-700 border-orange-200' },
+        urgent:   { label: '⚡ عاجل',        cls: 'bg-red-100 text-red-700 border-red-200' },
+        ok:       { label: '✓ بخير',         cls: 'bg-green-100 text-green-700 border-green-200' },
+      };
+      const u = uMap[val] ?? uMap.ok;
+      return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold border ${u.cls}`}>{u.label}</span>;
+    }
+    if (col.type === 'priority') {
+      const pMap = {
+        'عاجلة': 'bg-red-100 text-red-700',
+        'هامة':  'bg-orange-100 text-orange-700',
+      };
+      return <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${pMap[val] ?? 'bg-gray-100 text-gray-600'}`}>{val ?? '—'}</span>;
+    }
     return val ?? '—';
   };
 
@@ -521,7 +540,12 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
 
             {/* Extra filters row */}
             {show.length > 0 && (
-              <div className={`grid gap-2 pt-1 ${show.length === 1 ? 'grid-cols-1 max-w-xs' : show.length === 2 ? 'grid-cols-2' : show.length === 3 ? 'grid-cols-3' : 'grid-cols-2 md:grid-cols-4'}`}>
+              <div className={`grid gap-2 pt-1 ${
+                show.length === 1 ? 'grid-cols-1 max-w-xs' :
+                show.length === 2 ? 'grid-cols-2' :
+                show.length === 3 ? 'grid-cols-3' :
+                'grid-cols-2 md:grid-cols-4'
+              }`}>
                 {show.includes('trainer') && (
                   <div>
                     <label className="block text-xs text-gray-400 mb-1 font-semibold">المدرب</label>
@@ -569,6 +593,30 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
                       <option value="General">عام</option>
                       <option value="Private">خاص</option>
                       <option value="Semi">شبه خاص</option>
+                    </select>
+                  </div>
+                )}
+                {show.includes('assigned_to') && (
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1 font-semibold">المسؤول</label>
+                    <input type="text" value={modalF.assigned_to}
+                      onChange={e => setModalF(f => ({ ...f, assigned_to: e.target.value }))}
+                      placeholder="اسم المسؤول..."
+                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
+                    />
+                  </div>
+                )}
+                {show.includes('priority') && (
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1 font-semibold">الأهمية</label>
+                    <select value={modalF.priority}
+                      onChange={e => setModalF(f => ({ ...f, priority: e.target.value }))}
+                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
+                    >
+                      <option value="">الكل</option>
+                      <option value="عاجلة">عاجلة</option>
+                      <option value="هامة">هامة</option>
+                      <option value="عادية">عادية</option>
                     </select>
                   </div>
                 )}
@@ -886,7 +934,24 @@ export default function SystemReports() {
             })} />
           <KpiCard label="ملاحظات مفتوحة" value={kpis.open_remarks} icon={MessageSquare}
             gradient="linear-gradient(135deg, #b91c1c 0%, #f87171 100%)"
-            loading={isLoading} pulse={(kpis.open_remarks ?? 0) > 0} />
+            loading={isLoading} pulse={(kpis.open_remarks ?? 0) > 0}
+            onClick={() => setListModal({
+              title: 'الملاحظات المفتوحة',
+              endpoint: '/reports/remarks-list',
+              params: { ...applied },
+              extraFilters: ['assigned_to', 'priority', 'date', 'dept'],
+              columns: [
+                { key: 'client_name',   label: 'اسم العميل',     noWrap: true },
+                { key: 'details',       label: 'التفاصيل',        wrap: true },
+                { key: 'category',      label: 'التصنيف',         type: 'badge' },
+                { key: 'status',        label: 'الحالة' },
+                { key: 'priority',      label: 'الأهمية',         type: 'priority' },
+                { key: 'urgency_level', label: 'مستوى الإلحاح',   type: 'urgency' },
+                { key: 'hours_open',    label: 'ساعات مفتوحة' },
+                { key: 'last_updated',  label: 'آخر تحديث',       type: 'date' },
+                { key: 'assigned_to',   label: 'مسؤول' },
+              ],
+            })} />
           <KpiCard label="مجموعات بها أخطاء" value={isLoading ? undefined : totalErrors} icon={AlertCircle}
             gradient="linear-gradient(135deg, #374151 0%, #6b7280 100%)"
             loading={isLoading} />
