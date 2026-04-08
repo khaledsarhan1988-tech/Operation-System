@@ -5,7 +5,7 @@ import {
   Users, AlertTriangle, BookOpen, Layers, UserX, AlertCircle,
   MessageSquare, RefreshCw, ChevronDown, ChevronUp, X, Clock,
   UserCheck, Eye, Search, Filter, TrendingUp, Calendar,
-  CheckCircle, XCircle, AlertOctagon, BarChart2, Zap,
+  CheckCircle, XCircle, AlertOctagon, BarChart2, Zap, FileText,
 } from 'lucide-react';
 import api from '../../api/axios';
 
@@ -395,6 +395,241 @@ function GroupsModal({ title, groups, allUsers = [], onClose }) {
   );
 }
 
+// ─── REMARKS NOTES MODAL ─────────────────────────────────────────────────────
+function RemarksNotesModal({ params, onClose }) {
+  const LIMIT = 100;
+  const [tab, setTab]               = useState('main');
+  // main tab
+  const [pageM, setPageM]           = useState(1);
+  const [searchM, setSearchM]       = useState('');
+  const [appliedM, setAppliedM]     = useState('');
+  // zoom tab
+  const [pageZ, setPageZ]           = useState(1);
+  const [searchZ, setSearchZ]       = useState('');
+  const [appliedZ, setAppliedZ]     = useState('');
+  // categories section
+  const [pageC, setPageC]           = useState(1);
+  const [searchC, setSearchC]       = useState('');
+  const [appliedC, setAppliedC]     = useState('');
+
+  const { data: mData, isLoading: mLoad } = useQuery({
+    queryKey: ['rnm', params, pageM, appliedM],
+    queryFn: () => api.get('/reports/remarks-notes-main', { params: { ...params, page: pageM, limit: LIMIT, search: appliedM } }).then(r => r.data),
+    staleTime: 2 * 60 * 1000,
+  });
+  const { data: zData, isLoading: zLoad } = useQuery({
+    queryKey: ['rnz', params, pageZ, appliedZ],
+    queryFn: () => api.get('/reports/remarks-notes-zoom', { params: { ...params, page: pageZ, limit: LIMIT, search: appliedZ } }).then(r => r.data),
+    staleTime: 2 * 60 * 1000,
+  });
+  const { data: cData, isLoading: cLoad } = useQuery({
+    queryKey: ['rnc', params, pageC, appliedC],
+    queryFn: () => api.get('/reports/remarks-categories', { params: { ...params, page: pageC, limit: LIMIT, search: appliedC } }).then(r => r.data),
+    staleTime: 2 * 60 * 1000,
+  });
+
+  const tpM = mData ? Math.ceil(mData.total / LIMIT) : 1;
+  const tpZ = zData ? Math.ceil(zData.total / LIMIT) : 1;
+  const tpC = cData ? Math.ceil(cData.total / LIMIT) : 1;
+
+  const PagBar = ({ page, setPage, total }) => total > 1 ? (
+    <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100 bg-gray-50/60">
+      <button disabled={page<=1} onClick={()=>setPage(p=>p-1)} className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-gray-200 disabled:opacity-40 hover:bg-gray-50">السابق</button>
+      <span className="text-xs text-gray-500">{page} / {total}</span>
+      <button disabled={page>=total} onClick={()=>setPage(p=>p+1)} className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-gray-200 disabled:opacity-40 hover:bg-gray-50">التالي</button>
+    </div>
+  ) : null;
+
+  const SearchBar = ({ val, setVal, onApply, total, placeholder }) => (
+    <div className="px-5 py-3 border-b border-gray-50 flex items-center gap-2">
+      <form onSubmit={e=>{e.preventDefault();onApply(val);}} className="flex gap-2 flex-1">
+        <input value={val} onChange={e=>setVal(e.target.value)} placeholder={placeholder}
+          className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
+        <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700">بحث</button>
+      </form>
+      <span className="text-xs text-gray-400 whitespace-nowrap">إجمالي: <b className="text-gray-700">{total ?? '—'}</b></span>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-gray-50" dir="rtl">
+      {/* Header */}
+      <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between shadow-sm flex-shrink-0">
+        <button onClick={onClose} className="p-2 rounded-xl hover:bg-gray-100 transition-colors">
+          <X className="w-5 h-5 text-gray-500" />
+        </button>
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-xl bg-indigo-100"><FileText className="w-5 h-5 text-indigo-600" /></div>
+          <div>
+            <h2 className="text-xl font-black text-gray-900">ملحوظات الريماركات</h2>
+            <p className="text-xs text-gray-400">مقارنة الغيابات بالريماركات وملخص التصنيفات</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-auto p-4 space-y-5">
+
+        {/* ── SECTION 1: COMPARISON ── */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          {/* Section header + tabs */}
+          <div className="px-5 py-3 border-b border-gray-100 bg-gradient-to-l from-blue-50/60 to-white flex items-center justify-between flex-wrap gap-2">
+            <div className="flex gap-2">
+              <button onClick={()=>setTab('main')}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${tab==='main' ? 'bg-blue-600 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                📚 المحاضرات الأساسية
+              </button>
+              <button onClick={()=>setTab('zoom')}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${tab==='zoom' ? 'bg-purple-600 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                🖥️ الجلسات الجانبية (Zoom)
+              </button>
+            </div>
+            <h3 className="text-sm font-bold text-gray-700">القسم الأول — مقارنة الغيابات بالريماركات</h3>
+          </div>
+
+          {/* MAIN SESSION TAB */}
+          {tab === 'main' && (
+            <>
+              <SearchBar val={searchM} setVal={setSearchM} onApply={v=>{setAppliedM(v);setPageM(1);}} total={mData?.total} placeholder="بحث باسم الطالب، المجموعة، أو الموبايل..." />
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-right" style={{minWidth:'1000px'}}>
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-100">
+                      {['اسم الطالب','الموبايل','المجموعة','القسم','المنسق','تاريخ الغياب','تاريخ الريمارك المتوقع','حالة الريمارك','تفاصيل الريمارك','المسؤول'].map(h=>(
+                        <th key={h} className="px-4 py-3 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {mLoad ? <SkeletonRows cols={10}/> :
+                     !mData?.rows?.length ? <EmptyRow cols={10}/> :
+                     mData.rows.map((row,i)=>(
+                       <tr key={row.id??i} className={`hover:bg-gray-50/70 transition-colors ${!row.has_remark ? 'bg-red-50/40' : ''}`}>
+                         <td className="px-4 py-3 font-semibold text-gray-900 whitespace-nowrap">{row.student_name??'—'}</td>
+                         <td className="px-4 py-3"><span className="font-mono text-xs text-blue-600">{row.student_phone??'—'}</span></td>
+                         <td className="px-4 py-3 text-xs whitespace-nowrap text-gray-700">{row.group_name??'—'}</td>
+                         <td className="px-4 py-3"><DeptBadge dept={row.dept_type}/></td>
+                         <td className="px-4 py-3 text-xs whitespace-nowrap text-gray-600">{row.coordinators??'—'}</td>
+                         <td className="px-4 py-3 text-xs whitespace-nowrap font-medium text-gray-700">{fmtDate(row.absence_date)}</td>
+                         <td className="px-4 py-3 text-xs whitespace-nowrap font-bold text-orange-600">{fmtDate(row.expected_remark_date)}</td>
+                         <td className="px-4 py-3">
+                           {row.has_remark
+                             ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700"><CheckCircle size={11}/>موجود</span>
+                             : <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700"><XCircle size={11}/>غير موجود</span>}
+                         </td>
+                         <td className="px-4 py-3 text-xs text-gray-500" style={{maxWidth:'200px',overflowWrap:'break-word'}}>{row.remark_details??'—'}</td>
+                         <td className="px-4 py-3 text-xs whitespace-nowrap text-gray-600">{row.assigned_to??'—'}</td>
+                       </tr>
+                     ))}
+                  </tbody>
+                </table>
+              </div>
+              <PagBar page={pageM} setPage={setPageM} total={tpM}/>
+            </>
+          )}
+
+          {/* ZOOM CALL TAB */}
+          {tab === 'zoom' && (
+            <>
+              <SearchBar val={searchZ} setVal={setSearchZ} onApply={v=>{setAppliedZ(v);setPageZ(1);}} total={zData?.total} placeholder="بحث باسم العميل، المجموعة، أو الموبايل..." />
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-right" style={{minWidth:'1000px'}}>
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-100">
+                      {['اسم العميل','الموبايل','المجموعة','القسم','المنسق','تاريخ الريمارك','تاريخ الجلسة المتوقع','حالة الجلسة','تفاصيل الريمارك','المسؤول'].map(h=>(
+                        <th key={h} className="px-4 py-3 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {zLoad ? <SkeletonRows cols={10}/> :
+                     !zData?.rows?.length ? <EmptyRow cols={10}/> :
+                     zData.rows.map((row,i)=>(
+                       <tr key={row.id??i} className={`hover:bg-gray-50/70 transition-colors ${!row.has_session ? 'bg-amber-50/40' : ''}`}>
+                         <td className="px-4 py-3 font-semibold text-gray-900 whitespace-nowrap">{row.client_name??'—'}</td>
+                         <td className="px-4 py-3"><span className="font-mono text-xs text-blue-600">{row.client_phone??'—'}</span></td>
+                         <td className="px-4 py-3 text-xs whitespace-nowrap text-gray-700">{row.group_name??'—'}</td>
+                         <td className="px-4 py-3"><DeptBadge dept={row.dept_type}/></td>
+                         <td className="px-4 py-3 text-xs whitespace-nowrap text-gray-600">{row.coordinators??'—'}</td>
+                         <td className="px-4 py-3 text-xs whitespace-nowrap font-medium text-gray-700">{fmtDate(row.remark_date)}</td>
+                         <td className="px-4 py-3 text-xs whitespace-nowrap font-bold text-orange-600">{fmtDate(row.expected_session_date)}</td>
+                         <td className="px-4 py-3">
+                           {row.has_session
+                             ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700"><CheckCircle size={11}/>موجودة</span>
+                             : <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-700"><AlertTriangle size={11}/>غير موجودة</span>}
+                         </td>
+                         <td className="px-4 py-3 text-xs text-gray-500" style={{maxWidth:'200px',overflowWrap:'break-word'}}>{row.remark_details??'—'}</td>
+                         <td className="px-4 py-3 text-xs whitespace-nowrap text-gray-600">{row.assigned_to??'—'}</td>
+                       </tr>
+                     ))}
+                  </tbody>
+                </table>
+              </div>
+              <PagBar page={pageZ} setPage={setPageZ} total={tpZ}/>
+            </>
+          )}
+        </div>
+
+        {/* ── SECTION 2: CATEGORIES SUMMARY ── */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="px-5 py-3 border-b border-gray-100 bg-gradient-to-l from-purple-50/60 to-white flex items-center justify-between flex-wrap gap-2">
+            <h3 className="text-sm font-bold text-gray-700">القسم الثاني — ملخص التصنيفات</h3>
+            <span className="text-xs text-gray-400">إجمالي: <b className="text-gray-700">{cData?.total ?? '—'}</b> سجل</span>
+          </div>
+          <SearchBar val={searchC} setVal={setSearchC} onApply={v=>{setAppliedC(v);setPageC(1);}} total={cData?.total} placeholder="بحث بالتصنيف، اسم العميل، أو الموبايل..." />
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-right" style={{minWidth:'900px'}}>
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100">
+                  {['التصنيف','العدد','تاريخ الريمارك','المنسق','اسم العميل','الموبايل','المجموعة'].map(h=>(
+                    <th key={h} className="px-4 py-3 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {cLoad ? <SkeletonRows cols={7}/> :
+                 !cData?.rows?.length ? <EmptyRow cols={7}/> :
+                 (() => {
+                   let lastCat = null;
+                   return cData.rows.map((row,i) => {
+                     const isNew = row.category !== lastCat;
+                     lastCat = row.category;
+                     const isAttendance = row.category === 'Attendance Main Session' || row.category === 'Attendance Zoom Call';
+                     return (
+                       <tr key={row.id??i} className={`border-b border-gray-50 hover:bg-gray-50/70 transition-colors ${isAttendance ? 'bg-blue-50/20' : ''}`}>
+                         <td className="px-4 py-3">
+                           {isNew ? (
+                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-100 text-indigo-700 whitespace-nowrap">
+                               {row.category}
+                             </span>
+                           ) : null}
+                         </td>
+                         <td className="px-4 py-3">
+                           {isNew ? (
+                             <span className="inline-flex items-center justify-center w-8 h-8 rounded-full text-xs font-black bg-indigo-600 text-white">
+                               {row.category_count}
+                             </span>
+                           ) : null}
+                         </td>
+                         <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">{fmtDate(row.remark_date_val)}</td>
+                         <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">{row.coordinators??'—'}</td>
+                         <td className="px-4 py-3 text-xs font-semibold text-gray-800 whitespace-nowrap">{row.client_name??'—'}</td>
+                         <td className="px-4 py-3"><span className="font-mono text-xs text-blue-600">{row.client_phone??'—'}</span></td>
+                         <td className="px-4 py-3 text-xs text-gray-600" style={{maxWidth:'180px',overflowWrap:'anywhere'}}>{row.group_name??'—'}</td>
+                       </tr>
+                     );
+                   });
+                 })()}
+              </tbody>
+            </table>
+          </div>
+          <PagBar page={pageC} setPage={setPageC} total={tpC}/>
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
 // ─── LIST MODAL ───────────────────────────────────────────────────────────────
 // extraFilters: array of keys to show → ['trainer','coordinator','date','dept']
 function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [] }) {
@@ -749,8 +984,9 @@ export default function SystemReports() {
   const [remarksOpen,  setRemarksOpen]  = useState(true);
   const [expiredOpen,  setExpiredOpen]  = useState(true);
   const [errorsOpen,   setErrorsOpen]   = useState(true);
-  const [groupsModal,  setGroupsModal]  = useState(null);
-  const [listModal,    setListModal]    = useState(null);
+  const [groupsModal,       setGroupsModal]       = useState(null);
+  const [listModal,         setListModal]         = useState(null);
+  const [remarksNotesOpen,  setRemarksNotesOpen]  = useState(false);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['reports', applied],
@@ -1026,6 +1262,10 @@ export default function SystemReports() {
           <KpiCard label="مجموعات بها أخطاء" value={isLoading ? undefined : totalErrors} icon={AlertCircle}
             gradient="linear-gradient(135deg, #374151 0%, #6b7280 100%)"
             loading={isLoading} />
+          <KpiCard label="ملحوظات الريماركات" value={kpis.remarks_notes} icon={FileText}
+            gradient="linear-gradient(135deg, #4338ca 0%, #7c3aed 100%)"
+            loading={isLoading}
+            onClick={() => setRemarksNotesOpen(true)} />
         </div>
       </div>
 
@@ -1239,6 +1479,12 @@ export default function SystemReports() {
           columns={listModal.columns}
           extraFilters={listModal.extraFilters ?? false}
           onClose={() => setListModal(null)}
+        />
+      )}
+      {remarksNotesOpen && (
+        <RemarksNotesModal
+          params={applied}
+          onClose={() => setRemarksNotesOpen(false)}
         />
       )}
     </div>

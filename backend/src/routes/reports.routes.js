@@ -185,6 +185,17 @@ router.get('/dashboard', (req, res) => {
         absent_main:           absentMainRow?.cnt ?? 0,
         absent_side:           absentSideRow?.cnt ?? 0,
         open_remarks:          openRemarksCount?.cnt ?? 0,
+        remarks_notes:         (() => {
+          try {
+            return db.prepare(
+              `SELECT COUNT(*) as cnt FROM remarks
+               WHERE category IN ('Attendance Main Session','Attendance Zoom Call')
+               AND LOWER(status) NOT IN ('closed','مغلق','resolved')
+               ${buildDateFilter('remarks.added_at', from_date, to_date)}
+               ${empRemark}${deptRemark}`
+            ).get()?.cnt ?? 0;
+          } catch(e) { return 0; }
+        })(),
       },
       active_groups_list:     activeGroupsList,
       waiting_trainees_list:  waitingTraineesList,
@@ -466,6 +477,159 @@ router.get('/remarks-list', (req, res) => {
     return res.json({ total: totalRow.cnt, page: Number(page), limit: Number(limit), rows });
   } catch (err) {
     console.error('[reports] remarks-list error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GET /api/reports/remarks-notes-main ─────────────────────────────────────
+// Absent main session students vs "Attendance Main Session" remarks (remark date = absence date + 1)
+router.get('/remarks-notes-main', (req, res) => {
+  const { from_date, to_date, department, employee, page = 1, limit = 100, search = '' } = req.query;
+  const offset = (Number(page) - 1) * Number(limit);
+
+  const deptFilter   = department && department !== 'All' ? ` AND b.dept_type = '${department}'` : '';
+  const empFilter    = employee ? ` AND b.coordinators LIKE '%${employee}%'` : '';
+  const searchFilter = search   ? ` AND (a.student_name LIKE '%${search}%' OR a.group_name LIKE '%${search}%' OR a.phone LIKE '%${search}%')` : '';
+  const dateFilter   = buildDateFilter('a.date', from_date, to_date);
+
+  const baseWhere = `WHERE a.student_name IS NOT NULL AND TRIM(a.student_name) != ''
+    AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
+    ${dateFilter}${deptFilter}${empFilter}${searchFilter}`;
+
+  try {
+    const totalRow = db.prepare(
+      `SELECT COUNT(*) as cnt FROM absent_students a
+       LEFT JOIN batches b ON a.group_name = b.group_name ${baseWhere}`
+    ).get();
+
+    const rows = db.prepare(
+      `SELECT a.id, a.student_name, a.phone AS student_phone, a.group_name, a.date AS absence_date,
+         b.coordinators, b.dept_type,
+         date(a.date, '+1 day') AS expected_remark_date,
+         r.id AS remark_id, r.details AS remark_details, r.added_at AS remark_date,
+         r.assigned_to, r.status AS remark_status,
+         CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END AS has_remark
+       FROM absent_students a
+       LEFT JOIN batches b ON a.group_name = b.group_name
+       LEFT JOIN remarks r
+         ON r.client_phone = a.phone
+         AND r.category = 'Attendance Main Session'
+         AND date(substr(r.added_at,7,4)||'-'||substr(r.added_at,4,2)||'-'||substr(r.added_at,1,2))
+             = date(a.date, '+1 day')
+       ${baseWhere}
+       ORDER BY a.date DESC
+       LIMIT ${Number(limit)} OFFSET ${offset}`
+    ).all();
+
+    return res.json({ total: totalRow.cnt, page: Number(page), limit: Number(limit), rows });
+  } catch (err) {
+    console.error('[reports] remarks-notes-main error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GET /api/reports/remarks-notes-zoom ──────────────────────────────────────
+// "Attendance Zoom Call" remarks vs side sessions (session date = remark date - 1)
+router.get('/remarks-notes-zoom', (req, res) => {
+  const { from_date, to_date, department, employee, page = 1, limit = 100, search = '' } = req.query;
+  const offset = (Number(page) - 1) * Number(limit);
+
+  const remarkDateSQL      = `date(substr(r.added_at,7,4)||'-'||substr(r.added_at,4,2)||'-'||substr(r.added_at,1,2))`;
+  const expectedSessionSQL = `date(${remarkDateSQL}, '-1 day')`;
+
+  const deptFilter   = department && department !== 'All' ? ` AND b.dept_type = '${department}'` : '';
+  const empFilter    = employee ? ` AND b.coordinators LIKE '%${employee}%'` : '';
+  const searchFilter = search   ? ` AND (r.client_name LIKE '%${search}%' OR r.client_phone LIKE '%${search}%' OR c.group_name LIKE '%${search}%')` : '';
+  const dateFilter   = from_date && to_date ? ` AND ${remarkDateSQL} BETWEEN '${from_date}' AND '${to_date}'`
+                     : from_date ? ` AND ${remarkDateSQL} >= '${from_date}'`
+                     : to_date   ? ` AND ${remarkDateSQL} <= '${to_date}'` : '';
+
+  const baseWhere = `WHERE r.category = 'Attendance Zoom Call'
+    ${dateFilter}${deptFilter}${empFilter}${searchFilter}`;
+
+  try {
+    const totalRow = db.prepare(
+      `SELECT COUNT(*) as cnt FROM remarks r
+       LEFT JOIN clients c ON c.phone = r.client_phone
+       LEFT JOIN batches b ON b.group_name = c.group_name ${baseWhere}`
+    ).get();
+
+    const rows = db.prepare(
+      `SELECT r.id, r.client_name, r.client_phone, r.details AS remark_details,
+         r.added_at AS remark_date, r.assigned_to, r.status AS remark_status,
+         c.group_name, b.coordinators, b.dept_type,
+         ${expectedSessionSQL} AS expected_session_date,
+         l.id AS session_id, l.date AS session_date,
+         CASE WHEN l.id IS NOT NULL THEN 1 ELSE 0 END AS has_session
+       FROM remarks r
+       LEFT JOIN clients c ON c.phone = r.client_phone
+       LEFT JOIN batches b ON b.group_name = c.group_name
+       LEFT JOIN lectures l
+         ON l.group_name = c.group_name
+         AND l.session_type = 'side'
+         AND l.date = ${expectedSessionSQL}
+       ${baseWhere}
+       ORDER BY r.added_at DESC
+       LIMIT ${Number(limit)} OFFSET ${offset}`
+    ).all();
+
+    return res.json({ total: totalRow.cnt, page: Number(page), limit: Number(limit), rows });
+  } catch (err) {
+    console.error('[reports] remarks-notes-zoom error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GET /api/reports/remarks-categories ──────────────────────────────────────
+// All remark categories with counts + details, grouped by category
+router.get('/remarks-categories', (req, res) => {
+  const { from_date, to_date, department, employee, page = 1, limit = 100, search = '' } = req.query;
+  const offset = (Number(page) - 1) * Number(limit);
+
+  const remarkDateSQL = `date(substr(r.added_at,7,4)||'-'||substr(r.added_at,4,2)||'-'||substr(r.added_at,1,2))`;
+  const deptFilter   = department && department !== 'All'
+    ? ` AND EXISTS (SELECT 1 FROM clients cx INNER JOIN batches bx ON cx.group_name=bx.group_name WHERE cx.phone=r.client_phone AND bx.dept_type='${department}')`
+    : '';
+  const empFilter    = employee ? ` AND r.assigned_to LIKE '%${employee}%'` : '';
+  const searchFilter = search   ? ` AND (r.client_name LIKE '%${search}%' OR r.category LIKE '%${search}%' OR r.client_phone LIKE '%${search}%')` : '';
+  const dateFilter   = buildDateFilter(remarkDateSQL, from_date, to_date);
+
+  const baseWhere = `WHERE r.category IS NOT NULL AND TRIM(r.category) != ''
+    ${dateFilter}${deptFilter}${empFilter}${searchFilter}`;
+
+  try {
+    const totalRow = db.prepare(
+      `SELECT COUNT(*) as cnt FROM remarks r ${baseWhere}`
+    ).get();
+
+    const rows = db.prepare(
+      `WITH cat_counts AS (
+         SELECT category, COUNT(*) as cnt FROM remarks
+         WHERE category IS NOT NULL AND TRIM(category) != ''
+         GROUP BY category
+       ),
+       client_groups AS (
+         SELECT c.phone, b.group_name, b.coordinators
+         FROM clients c INNER JOIN batches b ON c.group_name = b.group_name
+         GROUP BY c.phone
+       )
+       SELECT r.id, r.category,
+         cc.cnt AS category_count,
+         ${remarkDateSQL} AS remark_date_val,
+         r.added_at AS remark_date_raw,
+         r.client_name, r.client_phone, r.assigned_to,
+         cg.group_name, cg.coordinators
+       FROM remarks r
+       LEFT JOIN cat_counts cc ON cc.category = r.category
+       LEFT JOIN client_groups cg ON cg.phone = r.client_phone
+       ${baseWhere}
+       ORDER BY r.category, r.added_at DESC
+       LIMIT ${Number(limit)} OFFSET ${offset}`
+    ).all();
+
+    return res.json({ total: totalRow.cnt, page: Number(page), limit: Number(limit), rows });
+  } catch (err) {
+    console.error('[reports] remarks-categories error:', err);
     return res.status(500).json({ error: err.message });
   }
 });
