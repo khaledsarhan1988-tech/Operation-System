@@ -577,22 +577,25 @@ router.get('/remarks-notes-zoom', (req, res) => {
   const baseWhere = `WHERE r.category = 'Attendance Zoom Call'
     ${dateFilter}${deptFilter}${empFilter}${coordFilter}${searchFilter}`;
 
-  // Deduplicate clients: one row per phone to avoid multiplication when client is in multiple groups
+  // Deduplicate clients (one row per phone) AND lectures (one row per group+date)
+  // to prevent row multiplication from either join
   const innerQ = `
     SELECT r.id, r.client_name, r.client_phone, r.details AS remark_details,
       r.added_at AS remark_date, r.assigned_to, r.status AS remark_status,
       c.group_name, b.coordinators, b.dept_type,
       ${expectedSessionSQL} AS expected_session_date,
-      l.id AS session_id, l.date AS session_date,
-      CASE WHEN l.id IS NOT NULL THEN 1 ELSE 0 END AS has_session
+      l.session_date,
+      CASE WHEN l.group_name IS NOT NULL THEN 1 ELSE 0 END AS has_session
     FROM remarks r
     LEFT JOIN (SELECT phone, MIN(group_name) AS group_name FROM clients GROUP BY phone) c
       ON c.phone = r.client_phone
     LEFT JOIN batches b ON b.group_name = c.group_name
-    LEFT JOIN lectures l
-      ON l.group_name = c.group_name
-      AND l.session_type = 'side'
-      AND l.date = ${expectedSessionSQL}
+    LEFT JOIN (
+      SELECT group_name, date AS session_date
+      FROM lectures
+      WHERE session_type = 'side'
+      GROUP BY group_name, date
+    ) l ON l.group_name = c.group_name AND l.session_date = ${expectedSessionSQL}
     ${baseWhere}`;
 
   const havingFilter = has_session === '1' ? ` AND has_session = 1`
