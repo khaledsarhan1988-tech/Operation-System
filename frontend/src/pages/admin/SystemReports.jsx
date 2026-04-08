@@ -500,12 +500,12 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
       return <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${pMap[val] ?? 'bg-gray-100 text-gray-600'}`}>{val ?? '—'}</span>;
     }
     if (col.type === 'details') return val ? (
-      <div style={{ fontSize: '12px', color: '#4b5563', lineHeight: '1.6', whiteSpace: 'normal', wordBreak: 'break-word', maxWidth: '240px' }}>
+      <div style={{ fontSize: '12px', color: '#4b5563', lineHeight: '1.7', minWidth: '180px', maxWidth: '320px', overflowWrap: 'break-word' }}>
         {val}
       </div>
     ) : <span className="text-gray-300">—</span>;
     if (col.type === 'active_group') return val ? (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-semibold bg-emerald-100 text-emerald-700" style={{ whiteSpace: 'normal', wordBreak: 'break-all', maxWidth: '200px' }}>
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-semibold bg-emerald-100 text-emerald-700" style={{ minWidth: '140px', maxWidth: '220px', overflowWrap: 'anywhere', whiteSpace: 'normal' }}>
         ✓ {val}
       </span>
     ) : <span className="text-gray-300 text-xs">—</span>;
@@ -979,8 +979,8 @@ export default function SystemReports() {
               columns: [
                 { key: 'client_name',   label: 'اسم العميل',      noWrap: true },
                 { key: 'client_phone',  label: 'الموبايل',         type: 'phone' },
-                { key: 'details',       label: 'التفاصيل',         type: 'details' },
-                { key: 'active_group',  label: 'المجموعة النشطة',  type: 'active_group' },
+                { key: 'details',       label: 'التفاصيل',         type: 'details',      noWrap: false },
+                { key: 'active_group',  label: 'المجموعة النشطة',  type: 'active_group', noWrap: false },
                 { key: 'category',      label: 'التصنيف',          type: 'badge' },
                 { key: 'status',        label: 'الحالة' },
                 { key: 'priority',      label: 'الأهمية',          type: 'priority' },
