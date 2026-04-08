@@ -26,6 +26,7 @@ import ExcelUpload from './pages/admin/ExcelUpload';
 import SystemReports from './pages/admin/SystemReports';
 import EducationReports from './pages/admin/EducationReports';
 import QualityReports from './pages/admin/QualityReports';
+import TeamPage from './pages/admin/TeamPage';
 
 const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
@@ -74,9 +75,11 @@ const router = createBrowserRouter([
       { path: 'dashboard',                    element: <AdminDashboard /> },
       { path: 'users',                        element: <UserManagement /> },
       { path: 'upload',                       element: <ExcelUpload /> },
+      { path: 'team',                         element: <TeamPage /> },
+      { path: 'control',                      element: <LeaderDashboard /> },
       { path: 'reports/customer-services',    element: <SystemReports /> },
       { path: 'reports/education',            element: <EducationReports /> },
-      { path: 'reports/quality',             element: <QualityReports /> },
+      { path: 'reports/quality',              element: <QualityReports /> },
     ],
   },
 
