@@ -250,28 +250,42 @@ router.get('/lectures-list', (req, res) => {
 
 // ─── GET /api/reports/absent-list ─────────────────────────────────────────────
 router.get('/absent-list', (req, res) => {
-  const { from_date, to_date, department, employee, page = 1, limit = 100, search = '' } = req.query;
+  const {
+    from_date, to_date, department, employee,
+    page = 1, limit = 100, search = '',
+    coordinator = '', modal_from = '', modal_to = '', modal_dept = '',
+  } = req.query;
   const offset = (Number(page) - 1) * Number(limit);
-  const deptFilter   = department && department !== 'All' ? ` AND b.dept_type = '${department}'` : '';
-  const empFilter    = employee ? ` AND b.coordinators LIKE '%${employee}%'` : '';
-  const searchFilter = search   ? ` AND a.group_name LIKE '%${search}%'` : '';
-  const dateFilter   = from_date && to_date ? ` AND a.date BETWEEN '${from_date}' AND '${to_date}'`
-                     : from_date ? ` AND a.date >= '${from_date}'`
-                     : to_date   ? ` AND a.date <= '${to_date}'` : '';
+
+  // Modal filters override outer filters when provided
+  const activeDept  = modal_dept  && modal_dept  !== 'All' ? modal_dept  : (department && department !== 'All' ? department : '');
+  const activeFrom  = modal_from  || from_date;
+  const activeTo    = modal_to    || to_date;
+
+  const deptFilter   = activeDept ? ` AND b.dept_type = '${activeDept}'` : '';
+  const empFilter    = employee   ? ` AND b.coordinators LIKE '%${employee}%'` : '';
+  const coordFilter  = coordinator ? ` AND b.coordinators LIKE '%${coordinator}%'` : '';
+  const searchFilter = search     ? ` AND a.group_name LIKE '%${search}%'` : '';
+  const dateFilter   = activeFrom && activeTo ? ` AND a.date BETWEEN '${activeFrom}' AND '${activeTo}'`
+                     : activeFrom ? ` AND a.date >= '${activeFrom}'`
+                     : activeTo   ? ` AND a.date <= '${activeTo}'` : '';
+
   // استبعاد الصفوف التي لا يوجد بها اسم الطالب أو رقم الموبايل
   const validFilter = ` AND a.student_name IS NOT NULL AND TRIM(a.student_name) != ''
                         AND a.phone IS NOT NULL AND TRIM(a.phone) != ''`;
+
+  const allFilters = `${validFilter}${dateFilter}${deptFilter}${empFilter}${coordFilter}${searchFilter}`;
 
   try {
     const totalRow = db.prepare(
       `SELECT COUNT(*) as cnt FROM absent_students a
        LEFT JOIN batches b ON a.group_name = b.group_name
-       WHERE 1=1${validFilter}${dateFilter}${deptFilter}${empFilter}${searchFilter}`
+       WHERE 1=1${allFilters}`
     ).get();
     const rows = db.prepare(
       `SELECT a.*, b.dept_type, b.coordinators FROM absent_students a
        LEFT JOIN batches b ON a.group_name = b.group_name
-       WHERE 1=1${validFilter}${dateFilter}${deptFilter}${empFilter}${searchFilter}
+       WHERE 1=1${allFilters}
        ORDER BY a.date DESC LIMIT ${Number(limit)} OFFSET ${offset}`
     ).all();
     return res.json({ total: totalRow.cnt, page: Number(page), limit: Number(limit), rows });
@@ -286,21 +300,32 @@ router.get('/absent-list', (req, res) => {
 // absent_count   = trainee_count - present_count
 // Only valid side sessions: duration <= '00:15' (excludes Onboarding/Offboarding)
 router.get('/absent-side-list', (req, res) => {
-  const { from_date, to_date, department, employee, page = 1, limit = 100, search = '' } = req.query;
-  const offset       = (Number(page) - 1) * Number(limit);
-  const deptFilter   = department && department !== 'All' ? ` AND b.dept_type = '${department}'` : '';
-  const empFilter    = employee ? ` AND b.coordinators LIKE '%${employee}%'` : '';
-  const searchFilter = search ? ` AND l.group_name LIKE '%${search}%'` : '';
-  const dateFilter   = from_date && to_date
-    ? ` AND l.date BETWEEN '${from_date}' AND '${to_date}'`
-    : from_date ? ` AND l.date >= '${from_date}'`
-    : to_date   ? ` AND l.date <= '${to_date}'` : '';
+  const {
+    from_date, to_date, department, employee,
+    page = 1, limit = 100, search = '',
+    trainer = '', coordinator = '', modal_from = '', modal_to = '', modal_dept = '',
+  } = req.query;
+  const offset = (Number(page) - 1) * Number(limit);
+
+  const activeDept = modal_dept && modal_dept !== 'All' ? modal_dept : (department && department !== 'All' ? department : '');
+  const activeFrom = modal_from || from_date;
+  const activeTo   = modal_to   || to_date;
+
+  const deptFilter    = activeDept  ? ` AND b.dept_type = '${activeDept}'` : '';
+  const empFilter     = employee    ? ` AND b.coordinators LIKE '%${employee}%'` : '';
+  const trainerFilter = trainer     ? ` AND l.trainer LIKE '%${trainer}%'` : '';
+  const coordFilter   = coordinator ? ` AND b.coordinators LIKE '%${coordinator}%'` : '';
+  const searchFilter  = search      ? ` AND l.group_name LIKE '%${search}%'` : '';
+  const dateFilter    = activeFrom && activeTo
+    ? ` AND l.date BETWEEN '${activeFrom}' AND '${activeTo}'`
+    : activeFrom ? ` AND l.date >= '${activeFrom}'`
+    : activeTo   ? ` AND l.date <= '${activeTo}'` : '';
 
   const baseWhere = `
     WHERE l.session_type = 'side'
       AND l.status = 'مؤكدة'
       AND (l.duration IS NULL OR l.duration <= '00:15')
-    ${dateFilter}${deptFilter}${empFilter}${searchFilter}`;
+    ${dateFilter}${deptFilter}${empFilter}${trainerFilter}${coordFilter}${searchFilter}`;
 
   const groupedQuery = `
     SELECT

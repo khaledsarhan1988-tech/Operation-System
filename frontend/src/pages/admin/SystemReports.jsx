@@ -392,13 +392,18 @@ function GroupsModal({ title, groups, allUsers = [], onClose }) {
 }
 
 // ─── LIST MODAL ───────────────────────────────────────────────────────────────
-function ListModal({ title, endpoint, params, columns, onClose, extraFilters = false }) {
+// extraFilters: array of keys to show → ['trainer','coordinator','date','dept']
+function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [] }) {
   const [page, setPage]             = useState(1);
   const [search, setSearch]         = useState('');
   const [appliedSearch, setApplied] = useState('');
 
-  // Extra filters (trainer, coordinator, date)
-  const [modalF, setModalF]   = useState({ trainer: '', coordinator: '', modal_from: '', modal_to: '' });
+  const show = Array.isArray(extraFilters) ? extraFilters : (extraFilters ? ['trainer','coordinator','date'] : []);
+
+  // Extra filters state
+  const [modalF, setModalF] = useState({
+    trainer: '', coordinator: '', modal_from: '', modal_to: '', modal_dept: '',
+  });
   const [appliedMF, setAppMF] = useState({});
   const LIMIT = 100;
 
@@ -413,14 +418,16 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = f
     e.preventDefault();
     setPage(1);
     setApplied(search);
-    setAppMF(Object.fromEntries(Object.entries(modalF).filter(([, v]) => v !== '')));
+    setAppMF(Object.fromEntries(Object.entries(modalF).filter(([, v]) => v !== '' && v !== 'All')));
   };
   const handleClear = () => {
     setSearch(''); setApplied('');
-    setModalF({ trainer: '', coordinator: '', modal_from: '', modal_to: '' });
+    setModalF({ trainer: '', coordinator: '', modal_from: '', modal_to: '', modal_dept: '' });
     setAppMF({});
     setPage(1);
   };
+
+  const hasActiveFilters = appliedSearch || Object.keys(appliedMF).length > 0;
 
   const totalPages = data ? Math.ceil(data.total / LIMIT) : 1;
 
@@ -504,7 +511,7 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = f
                 className="px-5 py-2.5 bg-[#1e3a5f] text-white rounded-xl text-sm font-semibold hover:bg-[#15294a] transition-all whitespace-nowrap">
                 بحث
               </button>
-              {(appliedSearch || Object.keys(appliedMF).length > 0) && (
+              {hasActiveFilters && (
                 <button type="button" onClick={handleClear}
                   className="px-4 py-2.5 bg-gray-100 text-gray-600 rounded-xl text-sm font-medium hover:bg-gray-200 transition-all whitespace-nowrap">
                   مسح الكل
@@ -512,39 +519,59 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = f
               )}
             </div>
 
-            {/* Extra filters row — trainer / coordinator / date */}
-            {extraFilters && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 pt-1">
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1 font-medium">المدرب</label>
-                  <input type="text" value={modalF.trainer}
-                    onChange={e => setModalF(f => ({ ...f, trainer: e.target.value }))}
-                    placeholder="اسم المدرب..."
-                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1 font-medium">المنسق</label>
-                  <input type="text" value={modalF.coordinator}
-                    onChange={e => setModalF(f => ({ ...f, coordinator: e.target.value }))}
-                    placeholder="اسم المنسق..."
-                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1 font-medium">من تاريخ</label>
-                  <input type="date" value={modalF.modal_from}
-                    onChange={e => setModalF(f => ({ ...f, modal_from: e.target.value }))}
-                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1 font-medium">إلى تاريخ</label>
-                  <input type="date" value={modalF.modal_to}
-                    onChange={e => setModalF(f => ({ ...f, modal_to: e.target.value }))}
-                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
-                  />
-                </div>
+            {/* Extra filters row */}
+            {show.length > 0 && (
+              <div className={`grid gap-2 pt-1 ${show.length === 1 ? 'grid-cols-1 max-w-xs' : show.length === 2 ? 'grid-cols-2' : show.length === 3 ? 'grid-cols-3' : 'grid-cols-2 md:grid-cols-4'}`}>
+                {show.includes('trainer') && (
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1 font-semibold">المدرب</label>
+                    <input type="text" value={modalF.trainer}
+                      onChange={e => setModalF(f => ({ ...f, trainer: e.target.value }))}
+                      placeholder="اسم المدرب..."
+                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
+                    />
+                  </div>
+                )}
+                {show.includes('coordinator') && (
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1 font-semibold">المنسق</label>
+                    <input type="text" value={modalF.coordinator}
+                      onChange={e => setModalF(f => ({ ...f, coordinator: e.target.value }))}
+                      placeholder="اسم المنسق..."
+                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
+                    />
+                  </div>
+                )}
+                {show.includes('date') && (<>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1 font-semibold">من تاريخ</label>
+                    <input type="date" value={modalF.modal_from}
+                      onChange={e => setModalF(f => ({ ...f, modal_from: e.target.value }))}
+                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1 font-semibold">إلى تاريخ</label>
+                    <input type="date" value={modalF.modal_to}
+                      onChange={e => setModalF(f => ({ ...f, modal_to: e.target.value }))}
+                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
+                    />
+                  </div>
+                </>)}
+                {show.includes('dept') && (
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1 font-semibold">القسم</label>
+                    <select value={modalF.modal_dept}
+                      onChange={e => setModalF(f => ({ ...f, modal_dept: e.target.value }))}
+                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
+                    >
+                      <option value="">الكل</option>
+                      <option value="General">عام</option>
+                      <option value="Private">خاص</option>
+                      <option value="Semi">شبه خاص</option>
+                    </select>
+                  </div>
+                )}
               </div>
             )}
           </form>
@@ -775,7 +802,7 @@ export default function SystemReports() {
               title: 'المحاضرات الأساسية',
               endpoint: '/reports/lectures-list',
               params: { session_type: 'main', ...applied },
-              extraFilters: true,
+              extraFilters: ['trainer', 'coordinator', 'date', 'dept'],
               columns: [
                 { key: 'group_name',          label: 'المجموعة',    noWrap: true },
                 { key: 'date',                label: 'التاريخ',     type: 'date' },
@@ -808,6 +835,7 @@ export default function SystemReports() {
                 { key: 'dept_type',             label: 'القسم',      type: 'badge' },
                 { key: 'coordinators',          label: 'المنسق' },
               ],
+              extraFilters: ['trainer', 'coordinator', 'date', 'dept'],
             })} />
           <KpiCard label="غياب المحاضرات الأساسية" value={kpis.absent_main} icon={UserX}
             gradient="linear-gradient(135deg, #b45309 0%, #d97706 100%)"
@@ -826,6 +854,7 @@ export default function SystemReports() {
                 { key: 'dept_type',    label: 'القسم',   type: 'badge' },
                 { key: 'coordinators', label: 'المنسق' },
               ],
+              extraFilters: ['coordinator', 'date', 'dept'],
             })} />
         </div>
       </div>
@@ -853,6 +882,7 @@ export default function SystemReports() {
                 { key: 'present_count', label: 'عدد الحضور',      type: 'present_count' },
                 { key: 'absent_count',  label: 'عدد الغياب',      type: 'absent_count' },
               ],
+              extraFilters: ['trainer', 'coordinator', 'date', 'dept'],
             })} />
           <KpiCard label="ملاحظات مفتوحة" value={kpis.open_remarks} icon={MessageSquare}
             gradient="linear-gradient(135deg, #b91c1c 0%, #f87171 100%)"
