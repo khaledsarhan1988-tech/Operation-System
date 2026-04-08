@@ -1128,6 +1128,210 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
   );
 }
 
+// ─── CODE PROBLEMS MODAL ──────────────────────────────────────────────────────
+function CodeProblemsModal({ params, onClose }) {
+  const [search,      setSearch]      = useState('');
+  const [fSection,    setFSection]    = useState('all');   // all | main | side
+  const [fProbType,   setFProbType]   = useState('');
+  const [fDept,       setFDept]       = useState('');
+  const [fCoord,      setFCoord]      = useState('');
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['code-problems-modal', params],
+    queryFn: () => api.get('/reports/code-problems', { params }).then(r => r.data),
+    staleTime: 5 * 60 * 1000,
+    gcTime:    15 * 60 * 1000,
+  });
+
+  const mainProbs = data?.main_problems ?? [];
+  const sideProbs = data?.side_problems ?? [];
+
+  // Collect unique values for dropdowns
+  const allProbs   = [...mainProbs, ...sideProbs];
+  const probTypes  = [...new Set(allProbs.map(p => p.problem_type).filter(Boolean))].sort();
+  const depts      = [...new Set(allProbs.map(p => p.dept_type).filter(Boolean))].sort();
+  const coords     = [...new Set(allProbs.map(p => p.coordinators).filter(Boolean))].sort();
+
+  const applyFilters = (rows) => rows.filter(p => {
+    if (search    && !p.group_name?.toLowerCase().includes(search.toLowerCase())) return false;
+    if (fProbType && p.problem_type !== fProbType) return false;
+    if (fDept     && p.dept_type    !== fDept)     return false;
+    if (fCoord    && p.coordinators !== fCoord)    return false;
+    return true;
+  });
+
+  const filteredMain = fSection === 'side' ? [] : applyFilters(mainProbs);
+  const filteredSide = fSection === 'main' ? [] : applyFilters(sideProbs);
+  const total        = filteredMain.length + filteredSide.length;
+
+  const problemBadge = (type) => {
+    const cls =
+      type === 'عدد محاضرات زيادة'    || type === 'جلسات جانبية زيادة'  ? 'bg-orange-100 text-orange-700 border-orange-200' :
+      type === 'تاريخ أول محاضرة غلط' || type === 'جلسات جانبية ناقصة'  ? 'bg-red-100 text-red-700 border-red-200' :
+      'bg-yellow-100 text-yellow-800 border-yellow-200';
+    return (
+      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${cls}`}>
+        {type}
+      </span>
+    );
+  };
+
+  const selectCls = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f] min-w-[130px]';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 backdrop-blur-sm overflow-y-auto p-4" dir="rtl">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-7xl my-6 flex flex-col" style={{ maxHeight: '92vh' }}>
+
+        {/* Header */}
+        <div className="px-6 py-5 border-b border-gray-100 flex-shrink-0 bg-gradient-to-l from-gray-700/5 to-white rounded-t-3xl">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-xl font-black text-gray-900 flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-gray-600" />
+                أكواد فيها مشكلة
+              </h2>
+              <p className="text-sm text-gray-400 mt-1">
+                {isLoading ? 'جاري التحميل...' : `${total} مشكلة — ${filteredMain.length} أساسية · ${filteredSide.length} جانبية`}
+              </p>
+            </div>
+            <button onClick={onClose} className="p-2.5 bg-gray-100 hover:bg-gray-200 rounded-xl transition-all">
+              <X size={18} className="text-gray-600" />
+            </button>
+          </div>
+
+          {/* Filters */}
+          <div className="flex flex-wrap gap-2 items-center">
+            {/* Search */}
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                type="text" value={search} onChange={e => setSearch(e.target.value)}
+                placeholder="بحث باسم المجموعة..."
+                className="w-full bg-white border border-gray-200 rounded-xl pr-10 pl-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
+              />
+            </div>
+
+            {/* Section filter */}
+            <select value={fSection} onChange={e => setFSection(e.target.value)} className={selectCls}>
+              <option value="all">كل المشاكل</option>
+              <option value="main">أساسية فقط</option>
+              <option value="side">جانبية فقط</option>
+            </select>
+
+            {/* Problem type */}
+            <select value={fProbType} onChange={e => setFProbType(e.target.value)} className={selectCls}>
+              <option value="">كل أنواع المشاكل</option>
+              {probTypes.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+
+            {/* Dept */}
+            <select value={fDept} onChange={e => setFDept(e.target.value)} className={selectCls}>
+              <option value="">كل الأقسام</option>
+              {depts.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+
+            {/* Coordinator */}
+            <select value={fCoord} onChange={e => setFCoord(e.target.value)} className={selectCls}>
+              <option value="">كل المنسقين</option>
+              {coords.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+
+            {/* Clear */}
+            {(search || fSection !== 'all' || fProbType || fDept || fCoord) && (
+              <button
+                onClick={() => { setSearch(''); setFSection('all'); setFProbType(''); setFDept(''); setFCoord(''); }}
+                className="px-3 py-2 text-xs text-gray-500 hover:text-red-600 border border-gray-200 rounded-xl hover:border-red-200 transition-all font-medium"
+              >مسح الفلاتر</button>
+            )}
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="overflow-auto flex-1">
+
+          {/* Main problems */}
+          {fSection !== 'side' && (
+            <div>
+              <div className="flex items-center gap-2 px-5 py-3 bg-blue-50/70 border-b border-blue-100 sticky top-0 z-10">
+                <span className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
+                <span className="text-sm font-bold text-blue-800">مشاكل المحاضرات الأساسية</span>
+                <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">{filteredMain.length}</span>
+              </div>
+              <table className="w-full text-sm text-right" style={{ minWidth: '820px' }}>
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-100">
+                    {['اسم المجموعة','نوع المشكلة','التفاصيل','القسم','المنسق'].map(h => (
+                      <th key={h} className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {isLoading ? <SkeletonRows cols={5} rows={5} /> :
+                   !filteredMain.length
+                     ? <EmptyRow cols={5} msg="✓ لا توجد مشاكل في المحاضرات الأساسية" />
+                     : filteredMain.map((p, i) => (
+                       <tr key={i} className="border-b border-gray-50 hover:bg-gray-50/70 transition-colors">
+                         <td className="px-4 py-3 font-semibold text-gray-900 text-xs" style={{ maxWidth: '280px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.group_name}</td>
+                         <td className="px-4 py-3 whitespace-nowrap">{problemBadge(p.problem_type)}</td>
+                         <td className="px-4 py-3 text-xs text-gray-600" style={{ maxWidth: '300px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.detail}</td>
+                         <td className="px-4 py-3 whitespace-nowrap"><DeptBadge dept={p.dept_type} /></td>
+                         <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{p.coordinators ?? '—'}</td>
+                       </tr>
+                     ))
+                  }
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Side problems */}
+          {fSection !== 'main' && (
+            <div>
+              <div className="flex items-center gap-2 px-5 py-3 bg-purple-50/70 border-b border-purple-100 border-t border-gray-100 sticky top-0 z-10">
+                <span className="w-2 h-2 rounded-full bg-purple-500 flex-shrink-0" />
+                <span className="text-sm font-bold text-purple-800">مشاكل الجلسات الجانبية</span>
+                <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">{filteredSide.length}</span>
+              </div>
+              <table className="w-full text-sm text-right" style={{ minWidth: '820px' }}>
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-100">
+                    {['اسم المجموعة','نوع المشكلة','التفاصيل','القسم','المنسق'].map(h => (
+                      <th key={h} className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {isLoading ? <SkeletonRows cols={5} rows={5} /> :
+                   !filteredSide.length
+                     ? <EmptyRow cols={5} msg="✓ لا توجد مشاكل في الجلسات الجانبية" />
+                     : filteredSide.map((p, i) => (
+                       <tr key={i} className="border-b border-gray-50 hover:bg-gray-50/70 transition-colors">
+                         <td className="px-4 py-3 font-semibold text-gray-900 text-xs" style={{ maxWidth: '280px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.group_name}</td>
+                         <td className="px-4 py-3 whitespace-nowrap">{problemBadge(p.problem_type)}</td>
+                         <td className="px-4 py-3 text-xs text-gray-600" style={{ maxWidth: '300px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.detail}</td>
+                         <td className="px-4 py-3 whitespace-nowrap"><DeptBadge dept={p.dept_type} /></td>
+                         <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{p.coordinators ?? '—'}</td>
+                       </tr>
+                     ))
+                  }
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-gray-100 bg-gray-50/50 rounded-b-3xl flex-shrink-0 flex justify-end">
+          <button onClick={onClose}
+            className="px-6 py-2.5 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-xl text-sm font-semibold transition-all">
+            إغلاق
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 export default function SystemReports() {
   const today = new Date().toISOString().slice(0, 10);
@@ -1141,6 +1345,7 @@ export default function SystemReports() {
   const [groupsModal,       setGroupsModal]       = useState(null);
   const [listModal,         setListModal]         = useState(null);
   const [remarksNotesOpen,  setRemarksNotesOpen]  = useState(false);
+  const [codeProbsOpen,     setCodeProbsOpen]     = useState(false);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['reports', applied],
@@ -1155,11 +1360,11 @@ export default function SystemReports() {
     gcTime:    30 * 60 * 1000,
   });
 
-  // Code problems — lazy: only load when that tab is open
+  // Code problems — lazy: load when modal opens or tab is active
   const { data: codeProbs, isLoading: codeLoading } = useQuery({
     queryKey: ['code-problems', applied],
     queryFn: () => api.get('/reports/code-problems', { params: applied }).then(r => r.data),
-    enabled: errorsTab === 'lectures' && errorsOpen,
+    enabled: codeProbsOpen || (errorsTab === 'lectures' && errorsOpen),
     staleTime: 5 * 60 * 1000,
     gcTime:    15 * 60 * 1000,
   });
@@ -1184,13 +1389,11 @@ export default function SystemReports() {
 
   const totalErrors =
     (data?.groups_with_errors?.remarks_errors?.length ?? 0) +
-    codeProblemsTotal +
     (data?.groups_with_errors?.side_session_errors?.length ?? 0);
 
   const tabCounts = {
-    remarks:  data?.groups_with_errors?.remarks_errors?.length ?? 0,
-    lectures: codeProblemsTotal,
-    side:     data?.groups_with_errors?.side_session_errors?.length ?? 0,
+    remarks: data?.groups_with_errors?.remarks_errors?.length ?? 0,
+    side:    data?.groups_with_errors?.side_session_errors?.length ?? 0,
   };
 
   return (
@@ -1425,9 +1628,10 @@ export default function SystemReports() {
                 { key: 'assigned_to',   label: 'مسؤول' },
               ],
             })} />
-          <KpiCard label="مجموعات بها أخطاء" value={isLoading ? undefined : totalErrors} icon={AlertCircle}
+          <KpiCard label="مجموعات بها أخطاء" value={isLoading || codeLoading ? undefined : codeProblemsTotal} icon={AlertCircle}
             gradient="linear-gradient(135deg, #374151 0%, #6b7280 100%)"
-            loading={isLoading} />
+            loading={isLoading || codeLoading}
+            onClick={() => setCodeProbsOpen(true)} />
           <KpiCard label="ملحوظات الريماركات" value={kpis.remarks_notes} icon={FileText}
             gradient="linear-gradient(135deg, #4338ca 0%, #7c3aed 100%)"
             loading={isLoading}
@@ -1522,9 +1726,8 @@ export default function SystemReports() {
         {/* Tabs */}
         <div className="px-5 pt-4 pb-0 flex gap-1 border-b border-gray-100">
           {[
-            { key: 'remarks',  label: 'ملاحظات متأخرة',  color: 'text-red-600 border-red-500',    dot: 'bg-red-500' },
-            { key: 'lectures', label: 'أكواد فيها مشكلة', color: 'text-blue-700 border-blue-600',  dot: 'bg-blue-600' },
-            { key: 'side',     label: 'جلسات جانبية',    color: 'text-purple-700 border-purple-600', dot: 'bg-purple-600' },
+            { key: 'remarks', label: 'ملاحظات متأخرة', color: 'text-red-600 border-red-500',       dot: 'bg-red-500' },
+            { key: 'side',    label: 'جلسات جانبية',   color: 'text-purple-700 border-purple-600', dot: 'bg-purple-600' },
           ].map(tab => (
             <button key={tab.key} onClick={() => setErrorsTab(tab.key)}
               className={`relative flex items-center gap-2 px-4 py-3 text-sm font-bold border-b-2 -mb-px transition-all ${
@@ -1565,91 +1768,6 @@ export default function SystemReports() {
                  </tr>
                ))}
             </StyledTable>
-          )}
-
-          {/* Code problems */}
-          {errorsTab === 'lectures' && (
-            <div className="space-y-0">
-              {/* ── محاضرات أساسية ── */}
-              <div>
-                <div className="flex items-center gap-2 px-5 py-3 bg-blue-50/60 border-b border-blue-100">
-                  <span className="w-2 h-2 rounded-full bg-blue-500" />
-                  <span className="text-sm font-bold text-blue-800">مشاكل المحاضرات الأساسية</span>
-                  <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
-                    {codeProbs?.main_problems?.length ?? 0}
-                  </span>
-                </div>
-                <StyledTable headers={['اسم المجموعة','نوع المشكلة','التفاصيل','القسم','المنسق']} minWidth="800px">
-                  {codeLoading ? <SkeletonRows cols={5} /> :
-                   !codeProbs?.main_problems?.length
-                     ? <EmptyRow cols={5} msg="✓ لا توجد مشاكل في المحاضرات الأساسية" />
-                     : codeProbs.main_problems.map((p, i) => (
-                       <tr key={i} className="border-b border-gray-50 hover:bg-gray-50/70 transition-colors">
-                         <Td highlight>
-                           <span className="text-xs leading-snug" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere', display: 'inline-block', maxWidth: '260px' }}>
-                             {p.group_name}
-                           </span>
-                         </Td>
-                         <Td>
-                           <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${
-                             p.problem_type === 'عدد محاضرات زيادة'    ? 'bg-orange-100 text-orange-700 border-orange-200' :
-                             p.problem_type === 'تاريخ أول محاضرة غلط' ? 'bg-red-100 text-red-700 border-red-200' :
-                             'bg-yellow-100 text-yellow-800 border-yellow-200'
-                           }`}>
-                             {p.problem_type}
-                           </span>
-                         </Td>
-                         <Td className="text-xs text-gray-600 max-w-xs">
-                           <span style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.detail}</span>
-                         </Td>
-                         <Td><DeptBadge dept={p.dept_type} /></Td>
-                         <Td>{p.coordinators}</Td>
-                       </tr>
-                     ))
-                  }
-                </StyledTable>
-              </div>
-
-              {/* ── جلسات جانبية ── */}
-              <div>
-                <div className="flex items-center gap-2 px-5 py-3 bg-purple-50/60 border-b border-purple-100 border-t border-gray-100">
-                  <span className="w-2 h-2 rounded-full bg-purple-500" />
-                  <span className="text-sm font-bold text-purple-800">مشاكل الجلسات الجانبية</span>
-                  <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">
-                    {codeProbs?.side_problems?.length ?? 0}
-                  </span>
-                </div>
-                <StyledTable headers={['اسم المجموعة','نوع المشكلة','التفاصيل','القسم','المنسق']} minWidth="800px">
-                  {codeLoading ? <SkeletonRows cols={5} /> :
-                   !codeProbs?.side_problems?.length
-                     ? <EmptyRow cols={5} msg="✓ لا توجد مشاكل في الجلسات الجانبية" />
-                     : codeProbs.side_problems.map((p, i) => (
-                       <tr key={i} className="border-b border-gray-50 hover:bg-gray-50/70 transition-colors">
-                         <Td highlight>
-                           <span className="text-xs leading-snug" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere', display: 'inline-block', maxWidth: '260px' }}>
-                             {p.group_name}
-                           </span>
-                         </Td>
-                         <Td>
-                           <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${
-                             p.problem_type === 'جلسات جانبية زيادة'     ? 'bg-orange-100 text-orange-700 border-orange-200' :
-                             p.problem_type === 'جلسات جانبية ناقصة'     ? 'bg-red-100 text-red-700 border-red-200' :
-                             'bg-yellow-100 text-yellow-800 border-yellow-200'
-                           }`}>
-                             {p.problem_type}
-                           </span>
-                         </Td>
-                         <Td className="text-xs text-gray-600 max-w-xs">
-                           <span style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.detail}</span>
-                         </Td>
-                         <Td><DeptBadge dept={p.dept_type} /></Td>
-                         <Td>{p.coordinators}</Td>
-                       </tr>
-                     ))
-                  }
-                </StyledTable>
-              </div>
-            </div>
           )}
 
           {/* Side session errors */}
@@ -1707,6 +1825,12 @@ export default function SystemReports() {
         <RemarksNotesModal
           params={applied}
           onClose={() => setRemarksNotesOpen(false)}
+        />
+      )}
+      {codeProbsOpen && (
+        <CodeProblemsModal
+          params={applied}
+          onClose={() => setCodeProbsOpen(false)}
         />
       )}
     </div>
