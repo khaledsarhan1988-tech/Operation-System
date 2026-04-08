@@ -403,7 +403,7 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
   // Extra filters state
   const [modalF, setModalF] = useState({
     trainer: '', coordinator: '', modal_from: '', modal_to: '', modal_dept: '',
-    assigned_to: '', priority: '',
+    assigned_to: '', priority: '', category_search: '', status_filter: '',
   });
   const [appliedMF, setAppMF] = useState({});
   const LIMIT = 100;
@@ -423,7 +423,7 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
   };
   const handleClear = () => {
     setSearch(''); setApplied('');
-    setModalF({ trainer: '', coordinator: '', modal_from: '', modal_to: '', modal_dept: '', assigned_to: '', priority: '' });
+    setModalF({ trainer: '', coordinator: '', modal_from: '', modal_to: '', modal_dept: '', assigned_to: '', priority: '', category_search: '', status_filter: '' });
     setAppMF({});
     setPage(1);
   };
@@ -499,6 +499,19 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
       };
       return <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${pMap[val] ?? 'bg-gray-100 text-gray-600'}`}>{val ?? '—'}</span>;
     }
+    if (col.type === 'details') return val ? (
+      <div title={val} style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', maxWidth: '220px', fontSize: '12px', color: '#4b5563', lineHeight: '1.5' }}>
+        {val}
+      </div>
+    ) : <span className="text-gray-300">—</span>;
+    if (col.type === 'active_group') return val ? (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-semibold bg-emerald-100 text-emerald-700 max-w-[180px] truncate" title={val}>
+        ✓ {val}
+      </span>
+    ) : <span className="text-gray-300 text-xs">—</span>;
+    if (col.type === 'phone') return val ? (
+      <span className="font-mono text-xs text-blue-600 font-medium">{val}</span>
+    ) : <span className="text-gray-300 text-xs">—</span>;
     return val ?? '—';
   };
 
@@ -617,6 +630,29 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
                       <option value="عاجلة">عاجلة</option>
                       <option value="هامة">هامة</option>
                       <option value="عادية">عادية</option>
+                    </select>
+                  </div>
+                )}
+                {show.includes('category_search') && (
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1 font-semibold">التصنيف</label>
+                    <input type="text" value={modalF.category_search}
+                      onChange={e => setModalF(f => ({ ...f, category_search: e.target.value }))}
+                      placeholder="بحث في التصنيف..."
+                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
+                    />
+                  </div>
+                )}
+                {show.includes('status_filter') && (
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1 font-semibold">الحالة</label>
+                    <select value={modalF.status_filter}
+                      onChange={e => setModalF(f => ({ ...f, status_filter: e.target.value }))}
+                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
+                    >
+                      <option value="">الكل</option>
+                      <option value="غير منتهية">غير منتهية</option>
+                      <option value="إنتهت">إنتهت</option>
                     </select>
                   </div>
                 )}
@@ -939,16 +975,18 @@ export default function SystemReports() {
               title: 'الملاحظات المفتوحة',
               endpoint: '/reports/remarks-list',
               params: { ...applied },
-              extraFilters: ['assigned_to', 'priority', 'date', 'dept'],
+              extraFilters: ['assigned_to', 'priority', 'category_search', 'status_filter', 'date', 'dept'],
               columns: [
-                { key: 'client_name',   label: 'اسم العميل',     noWrap: true },
-                { key: 'details',       label: 'التفاصيل',        wrap: true },
-                { key: 'category',      label: 'التصنيف',         type: 'badge' },
+                { key: 'client_name',   label: 'اسم العميل',      noWrap: true },
+                { key: 'client_phone',  label: 'الموبايل',         type: 'phone' },
+                { key: 'details',       label: 'التفاصيل',         type: 'details' },
+                { key: 'active_group',  label: 'المجموعة النشطة',  type: 'active_group' },
+                { key: 'category',      label: 'التصنيف',          type: 'badge' },
                 { key: 'status',        label: 'الحالة' },
-                { key: 'priority',      label: 'الأهمية',         type: 'priority' },
-                { key: 'urgency_level', label: 'مستوى الإلحاح',   type: 'urgency' },
+                { key: 'priority',      label: 'الأهمية',          type: 'priority' },
+                { key: 'urgency_level', label: 'مستوى الإلحاح',    type: 'urgency' },
                 { key: 'hours_open',    label: 'ساعات مفتوحة' },
-                { key: 'last_updated',  label: 'آخر تحديث',       type: 'date' },
+                { key: 'last_updated',  label: 'آخر تحديث',        type: 'date' },
                 { key: 'assigned_to',   label: 'مسؤول' },
               ],
             })} />

@@ -373,7 +373,9 @@ router.get('/remarks-list', (req, res) => {
   const {
     from_date, to_date, department, employee,
     page = 1, limit = 100, search = '',
-    assigned_to = '', priority = '', modal_from = '', modal_to = '', modal_dept = '',
+    assigned_to = '', priority = '',
+    modal_from = '', modal_to = '', modal_dept = '',
+    category_search = '', status_filter = '',
   } = req.query;
   const offset = (Number(page) - 1) * Number(limit);
 
@@ -385,10 +387,12 @@ router.get('/remarks-list', (req, res) => {
   const dateFilter     = activeFrom && activeTo ? ` AND added_at BETWEEN '${activeFrom}' AND '${activeTo}'`
                        : activeFrom ? ` AND added_at >= '${activeFrom}'`
                        : activeTo   ? ` AND added_at <= '${activeTo}'` : '';
-  const empFilter      = employee    ? ` AND assigned_to LIKE '%${employee}%'` : '';
-  const assignFilter   = assigned_to ? ` AND assigned_to LIKE '%${assigned_to}%'` : '';
-  const priorityFilter = priority    ? ` AND priority = '${priority}'` : '';
-  const searchFilter   = search      ? ` AND (client_name LIKE '%${search}%' OR details LIKE '%${search}%')` : '';
+  const empFilter      = employee        ? ` AND assigned_to LIKE '%${employee}%'` : '';
+  const assignFilter   = assigned_to     ? ` AND assigned_to LIKE '%${assigned_to}%'` : '';
+  const priorityFilter = priority        ? ` AND priority = '${priority}'` : '';
+  const categoryFilter = category_search ? ` AND category LIKE '%${category_search}%'` : '';
+  const statusFilter   = status_filter   ? ` AND status = '${status_filter}'` : '';
+  const searchFilter   = search          ? ` AND (client_name LIKE '%${search}%' OR details LIKE '%${search}%')` : '';
   const deptFilter     = activeDept
     ? ` AND EXISTS (
           SELECT 1 FROM clients c
@@ -398,8 +402,24 @@ router.get('/remarks-list', (req, res) => {
         )`
     : '';
 
-  const baseWhere = `WHERE LOWER(status) NOT IN ('closed','مغلق','resolved')
-    ${dateFilter}${empFilter}${assignFilter}${priorityFilter}${deptFilter}${searchFilter}`;
+  // added_at is stored as "DD/MM/YYYY, HH:MM AM/PM"
+  // Convert to YYYY-MM-DD for date comparison with batches.start_date / end_date
+  const dateConvert = `(substr(remarks.added_at,7,4) || '-' || substr(remarks.added_at,4,2) || '-' || substr(remarks.added_at,1,2))`;
+
+  const activeGroupSubquery = `
+    (SELECT b2.group_name
+     FROM clients c2
+     INNER JOIN batches b2 ON c2.group_name = b2.group_name
+     WHERE c2.phone = remarks.client_phone
+       AND b2.status = 'نشطة'
+       AND b2.start_date IS NOT NULL AND b2.start_date != ''
+       AND b2.end_date   IS NOT NULL AND b2.end_date   != ''
+       AND b2.start_date <= ${dateConvert}
+       AND b2.end_date   >= ${dateConvert}
+     LIMIT 1) AS active_group`;
+
+  const baseWhere = `WHERE LOWER(remarks.status) NOT IN ('closed','مغلق','resolved')
+    ${dateFilter}${empFilter}${assignFilter}${priorityFilter}${categoryFilter}${statusFilter}${deptFilter}${searchFilter}`;
 
   try {
     const totalRow = db.prepare(
@@ -407,7 +427,7 @@ router.get('/remarks-list', (req, res) => {
     ).get();
 
     const rows = db.prepare(
-      `SELECT *,
+      `SELECT remarks.*,
          ROUND((julianday('now') - julianday(added_at)) * 24, 1) AS hours_open,
          CASE
            WHEN ROUND((julianday('now') - julianday(added_at)) * 24, 1) > 72  THEN 'overdue'
@@ -415,7 +435,8 @@ router.get('/remarks-list', (req, res) => {
            WHEN ROUND((julianday('now') - julianday(added_at)) * 24, 1) > 24  THEN 'important'
            WHEN ROUND((julianday('now') - julianday(added_at)) * 24, 1) >= 3  THEN 'urgent'
            ELSE 'ok'
-         END AS urgency_level
+         END AS urgency_level,
+         ${activeGroupSubquery}
        FROM remarks
        ${baseWhere}
        ORDER BY added_at DESC
