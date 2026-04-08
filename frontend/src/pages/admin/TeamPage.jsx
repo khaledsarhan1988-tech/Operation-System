@@ -248,22 +248,29 @@ function SectionGroup({ section, members, dept, onEdit, onDelete }) {
 
 // ─── MEMBER ROW ───────────────────────────────────────────────────────────────
 function MemberRow({ member: m, onEdit, onDelete }) {
+  const isActive = m.status === 'active';
   return (
-    <div className="flex items-center gap-4 px-5 py-3 hover:bg-gray-50/60 transition-colors group">
+    <div className={`flex items-center gap-4 px-5 py-3 hover:bg-gray-50/60 transition-colors ${!isActive ? 'opacity-60' : ''}`}>
       {/* Avatar */}
-      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-gray-300 to-gray-400 flex items-center justify-center flex-shrink-0 text-white text-xs font-bold">
+      <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-white text-xs font-bold ${isActive ? 'bg-gradient-to-br from-blue-400 to-blue-600' : 'bg-gradient-to-br from-gray-300 to-gray-400'}`}>
         {m.name.charAt(0)}
       </div>
 
       {/* Info */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="font-semibold text-gray-900 text-sm">{m.name}</span>
-          {m.status === 'inactive' && (
-            <span className="text-xs px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 font-medium">غير نشط</span>
-          )}
+          {/* Status badge — always visible */}
+          <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-bold border ${
+            isActive
+              ? 'bg-green-50 text-green-700 border-green-200'
+              : 'bg-red-50 text-red-600 border-red-200'
+          }`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-green-500' : 'bg-red-400'}`} />
+            {isActive ? 'نشط' : 'غير نشط'}
+          </span>
         </div>
-        <div className="flex items-center gap-3 mt-0.5">
+        <div className="flex items-center gap-3 mt-0.5 flex-wrap">
           {m.job_title && (
             <span className="flex items-center gap-1 text-xs text-gray-500">
               <Briefcase size={11} />{m.job_title}
@@ -278,13 +285,19 @@ function MemberRow({ member: m, onEdit, onDelete }) {
         </div>
       </div>
 
-      {/* Actions */}
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-        <button onClick={() => onEdit(m)} className="p-1.5 hover:bg-blue-100 rounded-lg text-blue-600 transition-all">
-          <Pencil size={14} />
+      {/* Actions — always visible */}
+      <div className="flex items-center gap-1 flex-shrink-0">
+        <button
+          onClick={() => onEdit(m)}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-600 text-xs font-semibold transition-all border border-blue-100"
+        >
+          <Pencil size={12} /> تعديل
         </button>
-        <button onClick={() => onDelete(m)} className="p-1.5 hover:bg-red-100 rounded-lg text-red-500 transition-all">
-          <Trash2 size={14} />
+        <button
+          onClick={() => onDelete(m)}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 text-xs font-semibold transition-all border border-red-100"
+        >
+          <Trash2 size={12} /> حذف
         </button>
       </div>
     </div>
