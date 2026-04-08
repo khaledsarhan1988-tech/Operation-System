@@ -26,13 +26,18 @@ router.get('/', (req, res) => {
 
 // ─── POST /api/team ───────────────────────────────────────────────────────────
 router.post('/', (req, res) => {
-  const { name, department, section, shift = null, job_title = null, phone = null, user_id = null, status = 'active', notes = null } = req.body;
+  const { name, department, section, status = 'active' } = req.body;
+  const shift     = req.body.shift     || null;
+  const job_title = req.body.job_title || null;
+  const phone     = req.body.phone     || null;
+  const user_id   = req.body.user_id   || null;
+  const notes     = req.body.notes     || null;
   if (!name || !department || !section) return res.status(400).json({ error: 'name, department, section required' });
   try {
     const r = db.prepare(
       `INSERT INTO team_members (name, department, section, shift, job_title, phone, user_id, status, notes)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(name, department, section, shift, job_title, phone, user_id || null, status, notes);
+    ).run(name, department, section, shift, job_title, phone, user_id, status, notes);
     const member = db.prepare('SELECT * FROM team_members WHERE id = ?').get(r.lastInsertRowid);
     return res.status(201).json(member);
   } catch (err) {
@@ -43,12 +48,17 @@ router.post('/', (req, res) => {
 // ─── PUT /api/team/:id ────────────────────────────────────────────────────────
 router.put('/:id', (req, res) => {
   const { id } = req.params;
-  const { name, department, section, shift, job_title, phone, user_id, status, notes } = req.body;
+  const { name, department, section, status } = req.body;
+  const shift     = req.body.shift     || null;
+  const job_title = req.body.job_title || null;
+  const phone     = req.body.phone     || null;
+  const user_id   = req.body.user_id   || null;
+  const notes     = req.body.notes     || null;
   if (!name || !department || !section) return res.status(400).json({ error: 'name, department, section required' });
   try {
     db.prepare(
       `UPDATE team_members SET name=?, department=?, section=?, shift=?, job_title=?, phone=?, user_id=?, status=?, notes=? WHERE id=?`
-    ).run(name, department, section, shift || null, job_title || null, phone || null, user_id || null, status || 'active', notes || null, id);
+    ).run(name, department, section, shift, job_title, phone, user_id, status || 'active', notes, id);
     const member = db.prepare('SELECT * FROM team_members WHERE id = ?').get(id);
     if (!member) return res.status(404).json({ error: 'Not found' });
     return res.json(member);
