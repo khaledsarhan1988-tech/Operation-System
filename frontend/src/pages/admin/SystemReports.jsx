@@ -433,7 +433,7 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
   const totalPages = data ? Math.ceil(data.total / LIMIT) : 1;
 
   function CopyBadge({ val }) {
-    const [copied, setCopied] = React.useState(false);
+    const [copied, setCopied] = useState(false);
     const handleCopy = () => {
       navigator.clipboard.writeText(val).then(() => {
         setCopied(true);
