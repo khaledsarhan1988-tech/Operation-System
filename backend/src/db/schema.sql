@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS team_members (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   name        TEXT NOT NULL,
   department  TEXT NOT NULL CHECK(department IN ('customer_services','education')),
-  section     TEXT NOT NULL CHECK(section IN ('general','private','semi','phone_call')),
+  section     TEXT NOT NULL CHECK(section IN ('all','general','private','semi','phone_call')),
   shift       TEXT CHECK(shift IN ('morning','evening') OR shift IS NULL),
   job_title   TEXT,
   phone       TEXT,

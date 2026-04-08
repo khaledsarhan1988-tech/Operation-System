@@ -32,7 +32,9 @@ router.post('/', (req, res) => {
   const phone     = req.body.phone     || null;
   const user_id   = req.body.user_id   || null;
   const notes     = req.body.notes     || null;
-  if (!name || !department || !section) return res.status(400).json({ error: 'name, department, section required' });
+  const validSections = ['all','general','private','semi','phone_call'];
+  if (!name || !department || !section || !validSections.includes(section))
+    return res.status(400).json({ error: 'name, department, section required' });
   try {
     const r = db.prepare(
       `INSERT INTO team_members (name, department, section, shift, job_title, phone, user_id, status, notes)

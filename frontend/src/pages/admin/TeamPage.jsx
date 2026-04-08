@@ -14,6 +14,7 @@ const DEPTS = {
 };
 
 const SECTIONS = {
+  all:        'الكل',
   general:    'عام',
   private:    'خاص',
   semi:       'شبه خاص',
@@ -26,8 +27,8 @@ const SHIFTS = {
 };
 
 const DEPT_SECTIONS = {
-  customer_services: ['general', 'private', 'semi'],
-  education:         ['general', 'private', 'semi', 'phone_call'],
+  customer_services: ['all', 'general', 'private', 'semi'],
+  education:         ['all', 'general', 'private', 'semi', 'phone_call'],
 };
 
 const DEPT_COLORS = {
