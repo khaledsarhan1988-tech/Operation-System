@@ -109,7 +109,11 @@ function MemberModal({ initial, onSave, onClose, loading }) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={labelCls}>المسمى الوظيفي</label>
-              <input className={inputCls} value={form.job_title} onChange={e => set('job_title', e.target.value)} placeholder="مثال: منسق، مدرب" />
+              <select className={inputCls} value={form.job_title} onChange={e => set('job_title', e.target.value)}>
+                <option value="">— اختر المسمى —</option>
+                <option value="منسق">منسق</option>
+                <option value="مدرب">مدرب</option>
+              </select>
             </div>
             <div>
               <label className={labelCls}>رقم التليفون</label>
