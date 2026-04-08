@@ -98,6 +98,28 @@ initDb().then(db => {
     console.log('team_members migration:', e.message);
   }
 
+  // Create code_problem_status table (persistent problem tracking)
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS code_problem_status (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_name   TEXT NOT NULL,
+        problem_type TEXT NOT NULL,
+        session_type TEXT NOT NULL DEFAULT 'main',
+        status       TEXT NOT NULL DEFAULT 'new',
+        note         TEXT,
+        updated_by   INTEGER,
+        updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(group_name, problem_type, session_type)
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cps_group  ON code_problem_status(group_name)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cps_status ON code_problem_status(status)`);
+    console.log('✅ Migration: code_problem_status table ready');
+  } catch(e) {
+    console.log('code_problem_status migration:', e.message);
+  }
+
   // Add composite performance indexes (safe — IF NOT EXISTS)
   const perfIndexes = [
     `CREATE INDEX IF NOT EXISTS idx_lectures_type_date  ON lectures(session_type, date)`,

@@ -224,6 +224,23 @@ CREATE TABLE IF NOT EXISTS excel_syncs (
 );
 
 -- =============================================
+-- CODE PROBLEM STATUS (persistent tracking)
+-- =============================================
+CREATE TABLE IF NOT EXISTS code_problem_status (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  group_name   TEXT NOT NULL,
+  problem_type TEXT NOT NULL,
+  session_type TEXT NOT NULL DEFAULT 'main',
+  status       TEXT NOT NULL DEFAULT 'new' CHECK(status IN ('new','reported','in_progress','exception')),
+  note         TEXT,
+  updated_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(group_name, problem_type, session_type)
+);
+CREATE INDEX IF NOT EXISTS idx_cps_group  ON code_problem_status(group_name);
+CREATE INDEX IF NOT EXISTS idx_cps_status ON code_problem_status(status);
+
+-- =============================================
 -- JWT REFRESH TOKENS
 -- =============================================
 CREATE TABLE IF NOT EXISTS refresh_tokens (

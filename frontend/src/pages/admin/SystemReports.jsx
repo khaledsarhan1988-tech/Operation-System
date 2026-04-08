@@ -1,12 +1,14 @@
 'use client';
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Users, AlertTriangle, BookOpen, Layers, UserX, AlertCircle,
   MessageSquare, RefreshCw, ChevronDown, ChevronUp, X, Clock,
   UserCheck, Eye, Search, Filter, TrendingUp, Calendar,
   CheckCircle, XCircle, AlertOctagon, BarChart2, Zap, FileText,
+  Edit3, Save, Bell, ShieldCheck, Loader2,
 } from 'lucide-react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
@@ -1129,34 +1131,80 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
 }
 
 // ─── CODE PROBLEMS MODAL ──────────────────────────────────────────────────────
-function CodeProblemsModal({ params, onClose }) {
-  const [search,      setSearch]      = useState('');
-  const [fSection,    setFSection]    = useState('all');   // all | main | side
-  const [fProbType,   setFProbType]   = useState('');
-  const [fDept,       setFDept]       = useState('');
-  const [fCoord,      setFCoord]      = useState('');
+// ─── STATUS CONFIG ────────────────────────────────────────────────────────────
+const STATUS_CFG = {
+  new:         { label: 'جديد',        emoji: '🆕', dot: 'bg-red-500',    badge: 'bg-red-100 text-red-700 border-red-200',       btn: 'hover:bg-red-50 hover:border-red-300'    },
+  reported:    { label: 'تم الإبلاغ',  emoji: '📨', dot: 'bg-blue-500',   badge: 'bg-blue-100 text-blue-700 border-blue-200',    btn: 'hover:bg-blue-50 hover:border-blue-300'  },
+  in_progress: { label: 'قيد الحل',    emoji: '⏳', dot: 'bg-amber-500',  badge: 'bg-amber-100 text-amber-700 border-amber-200', btn: 'hover:bg-amber-50 hover:border-amber-300'},
+  exception:   { label: 'استثناء',     emoji: '🔕', dot: 'bg-slate-400',  badge: 'bg-slate-100 text-slate-600 border-slate-200', btn: 'hover:bg-slate-50 hover:border-slate-300'},
+};
 
+function CodeProblemsModal({ params, onClose }) {
+  const qc = useQueryClient();
+
+  // ── filters
+  const [search,    setSearch]    = useState('');
+  const [fSection,  setFSection]  = useState('all');
+  const [fProbType, setFProbType] = useState('');
+  const [fDept,     setFDept]     = useState('');
+  const [fCoord,    setFCoord]    = useState('');
+  const [fStatus,   setFStatus]   = useState('');   // '' | 'new' | 'reported' | 'in_progress' | 'exception'
+
+  // ── status editor
+  const [editKey,  setEditKey]  = useState(null);   // { group_name, problem_type, session_type }
+  const [editForm, setEditForm] = useState({ status: 'new', note: '' });
+  const [saving,   setSaving]   = useState(false);
+
+  // ── data
   const { data, isLoading } = useQuery({
     queryKey: ['code-problems-modal', params],
-    queryFn: () => api.get('/reports/code-problems', { params }).then(r => r.data),
-    staleTime: 5 * 60 * 1000,
-    gcTime:    15 * 60 * 1000,
+    queryFn:  () => api.get('/reports/code-problems', { params }).then(r => r.data),
+    staleTime: 5 * 60 * 1000, gcTime: 15 * 60 * 1000,
+  });
+  const { data: statusData, isLoading: statusLoading } = useQuery({
+    queryKey: ['problem-statuses'],
+    queryFn:  () => api.get('/reports/problem-statuses').then(r => r.data),
+    staleTime: 1 * 60 * 1000,
   });
 
-  const mainProbs = data?.main_problems ?? [];
-  const sideProbs = data?.side_problems ?? [];
+  // Build status map: `group|type|session` → record
+  const statusMap = {};
+  (statusData ?? []).forEach(s => {
+    statusMap[`${s.group_name}|${s.problem_type}|${s.session_type}`] = s;
+  });
+  const getStatus = (p, sessionType) =>
+    statusMap[`${p.group_name}|${p.problem_type}|${sessionType}`] ?? null;
+  const getStatusKey = (p) => p._status?.status ?? 'new';
 
-  // Collect unique values for dropdowns
-  const allProbs   = [...mainProbs, ...sideProbs];
-  const probTypes  = [...new Set(allProbs.map(p => p.problem_type).filter(Boolean))].sort();
-  const depts      = [...new Set(allProbs.map(p => p.dept_type).filter(Boolean))].sort();
-  const coords     = [...new Set(allProbs.map(p => p.coordinators).filter(Boolean))].sort();
+  // ── enrich problems with status
+  const mainProbs = (data?.main_problems ?? []).map(p => ({
+    ...p, _session: 'main', _status: getStatus(p, 'main'),
+  }));
+  const sideProbs = (data?.side_problems ?? []).map(p => ({
+    ...p, _session: 'side', _status: getStatus(p, 'side'),
+  }));
+  const allEnriched = [...mainProbs, ...sideProbs];
 
+  // ── unique dropdown values
+  const probTypes = [...new Set(allEnriched.map(p => p.problem_type).filter(Boolean))].sort();
+  const depts     = [...new Set(allEnriched.map(p => p.dept_type).filter(Boolean))].sort();
+  const coords    = [...new Set(allEnriched.map(p => p.coordinators).filter(Boolean))].sort();
+
+  // ── status counts (before section / status filter)
+  const statusCounts = { new: 0, reported: 0, in_progress: 0, exception: 0 };
+  allEnriched.forEach(p => { statusCounts[getStatusKey(p)]++; });
+  const totalAll = allEnriched.length;
+
+  // ── filter logic
   const applyFilters = (rows) => rows.filter(p => {
     if (search    && !p.group_name?.toLowerCase().includes(search.toLowerCase())) return false;
-    if (fProbType && p.problem_type !== fProbType) return false;
-    if (fDept     && p.dept_type    !== fDept)     return false;
-    if (fCoord    && p.coordinators !== fCoord)    return false;
+    if (fProbType && p.problem_type !== fProbType)  return false;
+    if (fDept     && p.dept_type    !== fDept)       return false;
+    if (fCoord    && p.coordinators !== fCoord)      return false;
+    if (fStatus) {
+      if (fStatus === 'new' && getStatusKey(p) !== 'new')             return false;
+      if (fStatus !== 'new' && getStatusKey(p) !== fStatus)           return false;
+    }
     return true;
   });
 
@@ -1164,173 +1212,284 @@ function CodeProblemsModal({ params, onClose }) {
   const filteredSide = fSection === 'main' ? [] : applyFilters(sideProbs);
   const total        = filteredMain.length + filteredSide.length;
 
+  // ── open editor
+  const openEditor = (p) => {
+    const cur = p._status;
+    setEditKey({ group_name: p.group_name, problem_type: p.problem_type, session_type: p._session });
+    setEditForm({ status: cur?.status ?? 'new', note: cur?.note ?? '' });
+  };
+
+  // ── save status
+  const handleSave = async () => {
+    if (!editKey || saving) return;
+    setSaving(true);
+    try {
+      await api.put('/reports/problem-status', { ...editKey, ...editForm });
+      qc.invalidateQueries({ queryKey: ['problem-statuses'] });
+      setEditKey(null);
+    } catch(e) {
+      console.error(e);
+    } finally { setSaving(false); }
+  };
+
+  // ── UI helpers
   const problemBadge = (type) => {
     const cls =
-      type === 'عدد محاضرات زيادة'          || type === 'جلسات جانبية زيادة'           ? 'bg-orange-100 text-orange-700 border-orange-200' :
-      type === 'تاريخ أول محاضرة غلط'        || type === 'جلسات جانبية ناقصة'           ? 'bg-red-100 text-red-700 border-red-200' :
-      type === 'تاريخ آخر محاضرة غلط'        || type === 'تاريخ آخر جلسة جانبية غلط'   ? 'bg-purple-100 text-purple-700 border-purple-200' :
+      type === 'عدد محاضرات زيادة'       || type === 'جلسات جانبية زيادة'         ? 'bg-orange-100 text-orange-700 border-orange-200' :
+      type === 'تاريخ أول محاضرة غلط'    || type === 'جلسات جانبية ناقصة'         ? 'bg-red-100 text-red-700 border-red-200' :
+      type === 'تاريخ آخر محاضرة غلط'    || type === 'تاريخ آخر جلسة جانبية غلط' ? 'bg-purple-100 text-purple-700 border-purple-200' :
       'bg-yellow-100 text-yellow-800 border-yellow-200';
+    return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${cls}`}>{type}</span>;
+  };
+
+  const StatusBadge = ({ p }) => {
+    const key  = getStatusKey(p);
+    const cfg  = STATUS_CFG[key];
+    const note = p._status?.note;
+    const by   = p._status?.updated_by_name;
     return (
-      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${cls}`}>
-        {type}
-      </span>
+      <button
+        onClick={() => openEditor(p)}
+        title={note ? `ملاحظة: ${note}${by ? ` — ${by}` : ''}` : 'انقر لتغيير الحالة'}
+        className={`group inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold border transition-all
+          ${cfg.badge} ${cfg.btn} hover:shadow-sm`}
+      >
+        <span>{cfg.emoji}</span>
+        <span>{cfg.label}</span>
+        <Edit3 size={10} className="opacity-0 group-hover:opacity-60 transition-opacity" />
+      </button>
     );
   };
 
   const selectCls = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f] min-w-[130px]';
+  const hasFilters = search || fSection !== 'all' || fProbType || fDept || fCoord || fStatus;
+
+  const ProbTable = ({ rows, cols, sectionLabel, sectionColor, sectionBg, dotColor, labelFirst }) => (
+    <div>
+      <div className={`flex items-center gap-2 px-5 py-3 ${sectionBg} border-b ${sectionColor} sticky top-0 z-10`}>
+        <span className={`w-2 h-2 rounded-full ${dotColor} flex-shrink-0`} />
+        <span className={`text-sm font-bold`}>{sectionLabel}</span>
+        <span className={`mr-auto text-xs font-bold px-2 py-0.5 rounded-full ${sectionBg.replace('/70','')}`}>{rows.length}</span>
+      </div>
+      <table className="w-full text-sm text-right" style={{ minWidth: '1000px' }}>
+        <thead>
+          <tr className="bg-gray-50 border-b border-gray-100">
+            {['اسم المجموعة', labelFirst, 'نوع المشكلة', 'التفاصيل', 'القسم', 'المنسق', 'الحالة'].map(h => (
+              <th key={h} className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-50">
+          {isLoading || statusLoading ? <SkeletonRows cols={7} rows={5} /> :
+           !rows.length ? <EmptyRow cols={7} msg="✓ لا توجد مشاكل" /> :
+           rows.map((p, i) => {
+             const rowBg = getStatusKey(p) === 'exception' ? 'bg-slate-50/50' :
+                           getStatusKey(p) === 'in_progress' ? 'bg-amber-50/30' :
+                           getStatusKey(p) === 'reported' ? 'bg-blue-50/20' : '';
+             return (
+               <tr key={i} className={`border-b border-gray-50 hover:bg-gray-50/60 transition-colors ${rowBg}`}>
+                 <td className="px-4 py-3 font-semibold text-gray-900 text-xs" style={{ maxWidth: '240px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.group_name}</td>
+                 <td className="px-4 py-3 whitespace-nowrap text-xs font-mono text-gray-500">{p.first_date ?? '—'}</td>
+                 <td className="px-4 py-3 whitespace-nowrap">{problemBadge(p.problem_type)}</td>
+                 <td className="px-4 py-3 text-xs text-gray-600" style={{ maxWidth: '260px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.detail}</td>
+                 <td className="px-4 py-3 whitespace-nowrap"><DeptBadge dept={p.dept_type} /></td>
+                 <td className="px-4 py-3 text-gray-700 whitespace-nowrap text-xs">{p.coordinators ?? '—'}</td>
+                 <td className="px-4 py-3 whitespace-nowrap"><StatusBadge p={p} /></td>
+               </tr>
+             );
+           })}
+        </tbody>
+      </table>
+    </div>
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 backdrop-blur-sm overflow-y-auto p-4" dir="rtl">
       <div className="bg-white rounded-3xl shadow-2xl w-full max-w-7xl my-6 flex flex-col" style={{ maxHeight: '92vh' }}>
 
-        {/* Header */}
-        <div className="px-6 py-5 border-b border-gray-100 flex-shrink-0 bg-gradient-to-l from-gray-700/5 to-white rounded-t-3xl">
-          <div className="flex items-center justify-between mb-4">
+        {/* ── HEADER ── */}
+        <div className="px-6 pt-5 pb-4 border-b border-gray-100 flex-shrink-0 bg-gradient-to-l from-slate-50 to-white rounded-t-3xl">
+          <div className="flex items-center justify-between mb-5">
             <div>
               <h2 className="text-xl font-black text-gray-900 flex items-center gap-2">
-                <AlertCircle className="w-5 h-5 text-gray-600" />
+                <div className="p-2 bg-gray-100 rounded-xl"><AlertCircle className="w-5 h-5 text-gray-700" /></div>
                 أكواد فيها مشكلة
               </h2>
-              <p className="text-sm text-gray-400 mt-1">
-                {isLoading ? 'جاري التحميل...' : `${total} مشكلة — ${filteredMain.length} أساسية · ${filteredSide.length} جانبية`}
+              <p className="text-sm text-gray-400 mt-1 mr-10">
+                {isLoading ? 'جاري التحميل...' : `${total} مشكلة معروضة من إجمالي ${totalAll}`}
               </p>
             </div>
-            <button onClick={onClose} className="p-2.5 bg-gray-100 hover:bg-gray-200 rounded-xl transition-all">
-              <X size={18} className="text-gray-600" />
+            <button onClick={onClose} className="p-2.5 bg-gray-100 hover:bg-red-50 hover:text-red-500 rounded-xl transition-all">
+              <X size={18} />
             </button>
           </div>
 
-          {/* Filters */}
+          {/* ── STATUS TABS ── */}
+          <div className="flex flex-wrap gap-2 mb-4">
+            {/* All */}
+            <button
+              onClick={() => setFStatus('')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold border transition-all
+                ${!fStatus ? 'bg-[#1e3a5f] text-white border-[#1e3a5f] shadow-sm' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+            >
+              الكل
+              <span className={`text-xs px-2 py-0.5 rounded-full font-black ${!fStatus ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-600'}`}>{totalAll}</span>
+            </button>
+            {Object.entries(STATUS_CFG).map(([key, cfg]) => (
+              <button key={key}
+                onClick={() => setFStatus(fStatus === key ? '' : key)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold border transition-all
+                  ${fStatus === key ? cfg.badge + ' shadow-sm ring-2 ring-offset-1 ring-current' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+              >
+                <span>{cfg.emoji}</span> {cfg.label}
+                <span className={`text-xs px-2 py-0.5 rounded-full font-black
+                  ${fStatus === key ? 'bg-white/40' : statusCounts[key] > 0 ? 'bg-gray-100 text-gray-700' : 'bg-gray-50 text-gray-400'}`}>
+                  {statusCounts[key]}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {/* ── FILTER BAR ── */}
           <div className="flex flex-wrap gap-2 items-center">
-            {/* Search */}
             <div className="relative flex-1 min-w-[200px]">
               <Search className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input
-                type="text" value={search} onChange={e => setSearch(e.target.value)}
+              <input type="text" value={search} onChange={e => setSearch(e.target.value)}
                 placeholder="بحث باسم المجموعة..."
                 className="w-full bg-white border border-gray-200 rounded-xl pr-10 pl-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
               />
             </div>
-
-            {/* Section filter */}
             <select value={fSection} onChange={e => setFSection(e.target.value)} className={selectCls}>
               <option value="all">كل المشاكل</option>
               <option value="main">أساسية فقط</option>
               <option value="side">جانبية فقط</option>
             </select>
-
-            {/* Problem type */}
             <select value={fProbType} onChange={e => setFProbType(e.target.value)} className={selectCls}>
               <option value="">كل أنواع المشاكل</option>
               {probTypes.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
-
-            {/* Dept */}
             <select value={fDept} onChange={e => setFDept(e.target.value)} className={selectCls}>
               <option value="">كل الأقسام</option>
               {depts.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
-
-            {/* Coordinator */}
             <select value={fCoord} onChange={e => setFCoord(e.target.value)} className={selectCls}>
               <option value="">كل المنسقين</option>
               {coords.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
-
-            {/* Clear */}
-            {(search || fSection !== 'all' || fProbType || fDept || fCoord) && (
+            {hasFilters && (
               <button
-                onClick={() => { setSearch(''); setFSection('all'); setFProbType(''); setFDept(''); setFCoord(''); }}
-                className="px-3 py-2 text-xs text-gray-500 hover:text-red-600 border border-gray-200 rounded-xl hover:border-red-200 transition-all font-medium"
-              >مسح الفلاتر</button>
+                onClick={() => { setSearch(''); setFSection('all'); setFProbType(''); setFDept(''); setFCoord(''); setFStatus(''); }}
+                className="px-3 py-2 text-xs text-gray-500 hover:text-red-600 border border-gray-200 rounded-xl hover:border-red-200 transition-all font-medium whitespace-nowrap"
+              >✕ مسح الكل</button>
             )}
           </div>
         </div>
 
-        {/* Content */}
+        {/* ── TABLES ── */}
         <div className="overflow-auto flex-1">
-
-          {/* Main problems */}
           {fSection !== 'side' && (
-            <div>
-              <div className="flex items-center gap-2 px-5 py-3 bg-blue-50/70 border-b border-blue-100 sticky top-0 z-10">
-                <span className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
-                <span className="text-sm font-bold text-blue-800">مشاكل المحاضرات الأساسية</span>
-                <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">{filteredMain.length}</span>
-              </div>
-              <table className="w-full text-sm text-right" style={{ minWidth: '920px' }}>
-                <thead>
-                  <tr className="bg-gray-50 border-b border-gray-100">
-                    {['اسم المجموعة','تاريخ أول محاضرة','نوع المشكلة','التفاصيل','القسم','المنسق'].map(h => (
-                      <th key={h} className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {isLoading ? <SkeletonRows cols={6} rows={5} /> :
-                   !filteredMain.length
-                     ? <EmptyRow cols={6} msg="✓ لا توجد مشاكل في المحاضرات الأساسية" />
-                     : filteredMain.map((p, i) => (
-                       <tr key={i} className="border-b border-gray-50 hover:bg-gray-50/70 transition-colors">
-                         <td className="px-4 py-3 font-semibold text-gray-900 text-xs" style={{ maxWidth: '260px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.group_name}</td>
-                         <td className="px-4 py-3 whitespace-nowrap text-xs font-mono text-gray-600">{p.first_date ?? '—'}</td>
-                         <td className="px-4 py-3 whitespace-nowrap">{problemBadge(p.problem_type)}</td>
-                         <td className="px-4 py-3 text-xs text-gray-600" style={{ maxWidth: '280px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.detail}</td>
-                         <td className="px-4 py-3 whitespace-nowrap"><DeptBadge dept={p.dept_type} /></td>
-                         <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{p.coordinators ?? '—'}</td>
-                       </tr>
-                     ))
-                  }
-                </tbody>
-              </table>
-            </div>
+            <ProbTable rows={filteredMain} labelFirst="تاريخ أول محاضرة"
+              sectionLabel="مشاكل المحاضرات الأساسية"
+              sectionBg="bg-blue-50/70" sectionColor="border-blue-100"
+              dotColor="bg-blue-500" />
           )}
-
-          {/* Side problems */}
           {fSection !== 'main' && (
-            <div>
-              <div className="flex items-center gap-2 px-5 py-3 bg-purple-50/70 border-b border-purple-100 border-t border-gray-100 sticky top-0 z-10">
-                <span className="w-2 h-2 rounded-full bg-purple-500 flex-shrink-0" />
-                <span className="text-sm font-bold text-purple-800">مشاكل الجلسات الجانبية</span>
-                <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">{filteredSide.length}</span>
-              </div>
-              <table className="w-full text-sm text-right" style={{ minWidth: '920px' }}>
-                <thead>
-                  <tr className="bg-gray-50 border-b border-gray-100">
-                    {['اسم المجموعة','تاريخ أول جلسة','نوع المشكلة','التفاصيل','القسم','المنسق'].map(h => (
-                      <th key={h} className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {isLoading ? <SkeletonRows cols={6} rows={5} /> :
-                   !filteredSide.length
-                     ? <EmptyRow cols={6} msg="✓ لا توجد مشاكل في الجلسات الجانبية" />
-                     : filteredSide.map((p, i) => (
-                       <tr key={i} className="border-b border-gray-50 hover:bg-gray-50/70 transition-colors">
-                         <td className="px-4 py-3 font-semibold text-gray-900 text-xs" style={{ maxWidth: '260px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.group_name}</td>
-                         <td className="px-4 py-3 whitespace-nowrap text-xs font-mono text-gray-600">{p.first_date ?? '—'}</td>
-                         <td className="px-4 py-3 whitespace-nowrap">{problemBadge(p.problem_type)}</td>
-                         <td className="px-4 py-3 text-xs text-gray-600" style={{ maxWidth: '280px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.detail}</td>
-                         <td className="px-4 py-3 whitespace-nowrap"><DeptBadge dept={p.dept_type} /></td>
-                         <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{p.coordinators ?? '—'}</td>
-                       </tr>
-                     ))
-                  }
-                </tbody>
-              </table>
-            </div>
+            <ProbTable rows={filteredSide} labelFirst="تاريخ أول جلسة"
+              sectionLabel="مشاكل الجلسات الجانبية"
+              sectionBg="bg-purple-50/70" sectionColor="border-purple-100"
+              dotColor="bg-purple-500" />
           )}
         </div>
 
-        {/* Footer */}
-        <div className="px-6 py-4 border-t border-gray-100 bg-gray-50/50 rounded-b-3xl flex-shrink-0 flex justify-end">
+        {/* ── FOOTER ── */}
+        <div className="px-6 py-4 border-t border-gray-100 bg-gray-50/50 rounded-b-3xl flex-shrink-0 flex items-center justify-between">
+          <p className="text-xs text-gray-400 flex items-center gap-1.5">
+            <Bell size={12} />
+            انقر على أي حالة لتحديثها · التغييرات تُحفظ فوراً ولا تتأثر بإعادة رفع Excel
+          </p>
           <button onClick={onClose}
             className="px-6 py-2.5 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-xl text-sm font-semibold transition-all">
             إغلاق
           </button>
         </div>
       </div>
+
+      {/* ── STATUS EDITOR DIALOG ── */}
+      {editKey && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+          onClick={() => !saving && setEditKey(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
+
+            {/* Dialog header */}
+            <div className="px-5 py-4 bg-gradient-to-l from-[#1e3a5f]/10 to-[#1e3a5f]/5 border-b border-[#1e3a5f]/10">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold text-[#1e3a5f] uppercase tracking-wide mb-1">تحديث حالة المشكلة</p>
+                  <p className="text-sm font-black text-gray-900 leading-tight" style={{ wordBreak: 'break-all' }}>
+                    {editKey.group_name}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1">{editKey.problem_type}</p>
+                </div>
+                <button onClick={() => setEditKey(null)} className="p-1.5 rounded-lg hover:bg-gray-100 flex-shrink-0">
+                  <X size={15} className="text-gray-500" />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-5 space-y-4">
+              {/* Status options */}
+              <div>
+                <p className="text-xs font-bold text-gray-500 mb-2 uppercase tracking-wide">اختر الحالة</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {Object.entries(STATUS_CFG).map(([key, cfg]) => (
+                    <button key={key}
+                      onClick={() => setEditForm(f => ({ ...f, status: key }))}
+                      className={`flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-bold border-2 transition-all
+                        ${editForm.status === key
+                          ? cfg.badge + ' border-current shadow-sm scale-[1.02]'
+                          : 'border-gray-200 text-gray-600 bg-gray-50 hover:bg-gray-100'}`}
+                    >
+                      <span className="text-base">{cfg.emoji}</span>
+                      <span>{cfg.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Note */}
+              <div>
+                <label className="text-xs font-bold text-gray-500 mb-1.5 block uppercase tracking-wide">
+                  ملاحظة (اختياري)
+                </label>
+                <textarea
+                  value={editForm.note}
+                  onChange={e => setEditForm(f => ({ ...f, note: e.target.value }))}
+                  placeholder="مثال: تم إبلاغ علاء بالمشكلة، أو: استثناء بسبب محاضرة تعويضية..."
+                  rows={2}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f] resize-none bg-gray-50"
+                />
+              </div>
+
+              {/* Actions */}
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-[#1e3a5f] hover:bg-[#15294a] text-white rounded-xl text-sm font-bold transition-all disabled:opacity-60 shadow-sm"
+                >
+                  {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                  {saving ? 'جاري الحفظ...' : 'حفظ'}
+                </button>
+                <button
+                  onClick={() => setEditKey(null)}
+                  disabled={saving}
+                  className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-sm font-semibold transition-all"
+                >إلغاء</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1036,6 +1036,53 @@ router.get('/team-summary', (req, res) => {
   }
 });
 
+// ─── GET /api/reports/problem-statuses ───────────────────────────────────────
+router.get('/problem-statuses', (req, res) => {
+  try {
+    const rows = db.prepare(
+      `SELECT ps.*, u.full_name as updated_by_name
+       FROM code_problem_status ps
+       LEFT JOIN users u ON ps.updated_by = u.id
+       ORDER BY ps.updated_at DESC`
+    ).all();
+    return res.json(rows);
+  } catch (err) {
+    console.error('[reports] problem-statuses error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── PUT /api/reports/problem-status (upsert) ────────────────────────────────
+router.put('/problem-status', (req, res) => {
+  const { group_name, problem_type, session_type = 'main', status, note } = req.body;
+  if (!group_name || !problem_type || !status)
+    return res.status(400).json({ error: 'group_name, problem_type, status required' });
+  const validStatuses = ['new', 'reported', 'in_progress', 'exception'];
+  if (!validStatuses.includes(status))
+    return res.status(400).json({ error: 'Invalid status' });
+  try {
+    db.prepare(`
+      INSERT INTO code_problem_status (group_name, problem_type, session_type, status, note, updated_by, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(group_name, problem_type, session_type) DO UPDATE SET
+        status     = excluded.status,
+        note       = excluded.note,
+        updated_by = excluded.updated_by,
+        updated_at = excluded.updated_at
+    `).run(group_name, problem_type, session_type, status, note ?? null, req.user?.id ?? null);
+
+    const row = db.prepare(
+      `SELECT ps.*, u.full_name as updated_by_name
+       FROM code_problem_status ps LEFT JOIN users u ON ps.updated_by = u.id
+       WHERE ps.group_name=? AND ps.problem_type=? AND ps.session_type=?`
+    ).get(group_name, problem_type, session_type);
+    return res.json(row);
+  } catch (err) {
+    console.error('[reports] problem-status upsert error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/reports/group-trainees?group_name=xxx ──────────────────────────
 router.get('/group-trainees', (req, res) => {
   const { group_name } = req.query;
