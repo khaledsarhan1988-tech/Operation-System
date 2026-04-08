@@ -11,6 +11,7 @@ import api from '../../api/axios';
 const DEPTS = {
   customer_services: 'إدارة خدمة العملاء',
   education:         'الإدارة التعليمية',
+  appointments:      'إدارة المواعيد',
 };
 
 const SECTIONS = {
@@ -29,11 +30,13 @@ const SHIFTS = {
 const DEPT_SECTIONS = {
   customer_services: ['all', 'general', 'private', 'semi'],
   education:         ['all', 'general', 'private', 'semi', 'phone_call'],
+  appointments:      ['all', 'general', 'private', 'semi'],
 };
 
 const DEPT_COLORS = {
-  customer_services: { bg: 'bg-blue-600',   light: 'bg-blue-50',   border: 'border-blue-200',  text: 'text-blue-700',  dot: 'bg-blue-500' },
-  education:         { bg: 'bg-emerald-600', light: 'bg-emerald-50',border: 'border-emerald-200',text: 'text-emerald-700',dot: 'bg-emerald-500' },
+  customer_services: { bg: 'bg-blue-600',    light: 'bg-blue-50',    border: 'border-blue-200',    text: 'text-blue-700',    dot: 'bg-blue-500' },
+  education:         { bg: 'bg-emerald-600', light: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700', dot: 'bg-emerald-500' },
+  appointments:      { bg: 'bg-orange-500',  light: 'bg-orange-50',  border: 'border-orange-200',  text: 'text-orange-700',  dot: 'bg-orange-500' },
 };
 
 const SECTION_COLORS = {
