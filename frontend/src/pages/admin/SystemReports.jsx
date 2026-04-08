@@ -500,12 +500,12 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
       return <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${pMap[val] ?? 'bg-gray-100 text-gray-600'}`}>{val ?? '—'}</span>;
     }
     if (col.type === 'details') return val ? (
-      <div title={val} style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', maxWidth: '220px', fontSize: '12px', color: '#4b5563', lineHeight: '1.5' }}>
+      <div style={{ fontSize: '12px', color: '#4b5563', lineHeight: '1.6', whiteSpace: 'normal', wordBreak: 'break-word', maxWidth: '240px' }}>
         {val}
       </div>
     ) : <span className="text-gray-300">—</span>;
     if (col.type === 'active_group') return val ? (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-semibold bg-emerald-100 text-emerald-700 max-w-[180px] truncate" title={val}>
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-semibold bg-emerald-100 text-emerald-700" style={{ whiteSpace: 'normal', wordBreak: 'break-all', maxWidth: '200px' }}>
         ✓ {val}
       </span>
     ) : <span className="text-gray-300 text-xs">—</span>;
