@@ -793,8 +793,17 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
   const { data, isLoading } = useQuery({
     queryKey: [endpoint, params, page, appliedSearch, appliedMF],
     queryFn: () => api.get(endpoint, { params: allParams }).then(r => r.data),
-    staleTime: 2 * 60 * 1000,   // 2 min — don't re-fetch if data is fresh
-    gcTime:    5 * 60 * 1000,   // keep in cache 5 min
+    staleTime: 2 * 60 * 1000,
+    gcTime:    5 * 60 * 1000,
+  });
+
+  // Fetch dropdown options (only when category_search filter is shown)
+  const needsOpts = show.includes('category_search') || show.includes('assigned_to') || show.includes('coordinator');
+  const { data: filterOpts } = useQuery({
+    queryKey: ['rnOpts'],
+    queryFn: () => api.get('/reports/remarks-notes-options').then(r => r.data),
+    staleTime: 10 * 60 * 1000,
+    enabled: needsOpts,
   });
 
   const handleSearch = (e) => {
@@ -1017,11 +1026,13 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
                 {show.includes('assigned_to') && (
                   <div>
                     <label className="block text-xs text-gray-400 mb-1 font-semibold">المسؤول</label>
-                    <input type="text" value={modalF.assigned_to}
+                    <select value={modalF.assigned_to}
                       onChange={e => setModalF(f => ({ ...f, assigned_to: e.target.value }))}
-                      placeholder="اسم المسؤول..."
                       className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
-                    />
+                    >
+                      <option value="">الكل</option>
+                      {(filterOpts?.assignedTo ?? []).map(a => <option key={a} value={a}>{a}</option>)}
+                    </select>
                   </div>
                 )}
                 {show.includes('priority') && (
@@ -1041,11 +1052,13 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
                 {show.includes('category_search') && (
                   <div>
                     <label className="block text-xs text-gray-400 mb-1 font-semibold">التصنيف</label>
-                    <input type="text" value={modalF.category_search}
+                    <select value={modalF.category_search}
                       onChange={e => setModalF(f => ({ ...f, category_search: e.target.value }))}
-                      placeholder="بحث في التصنيف..."
                       className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
-                    />
+                    >
+                      <option value="">الكل</option>
+                      {(filterOpts?.categories ?? []).map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
                   </div>
                 )}
                 {show.includes('status_filter') && (
