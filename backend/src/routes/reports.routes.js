@@ -482,42 +482,61 @@ router.get('/remarks-list', (req, res) => {
 });
 
 // ─── GET /api/reports/remarks-notes-main ─────────────────────────────────────
-// Absent main session students vs "Attendance Main Session" remarks (remark date = absence date + 1)
 router.get('/remarks-notes-main', (req, res) => {
-  const { from_date, to_date, department, employee, page = 1, limit = 100, search = '' } = req.query;
+  const {
+    from_date, to_date, department, employee,
+    page = 1, limit = 100, search = '',
+    modal_from = '', modal_to = '', modal_dept = '',
+    coordinator = '', has_remark = '',
+  } = req.query;
   const offset = (Number(page) - 1) * Number(limit);
 
-  const deptFilter   = department && department !== 'All' ? ` AND b.dept_type = '${department}'` : '';
-  const empFilter    = employee ? ` AND b.coordinators LIKE '%${employee}%'` : '';
-  const searchFilter = search   ? ` AND (a.student_name LIKE '%${search}%' OR a.group_name LIKE '%${search}%' OR a.phone LIKE '%${search}%')` : '';
-  const dateFilter   = buildDateFilter('a.date', from_date, to_date);
+  const activeFrom = modal_from || from_date;
+  const activeTo   = modal_to   || to_date;
+  const activeDept = modal_dept && modal_dept !== 'All' ? modal_dept : (department && department !== 'All' ? department : '');
+
+  const deptFilter   = activeDept  ? ` AND b.dept_type = '${activeDept}'` : '';
+  const empFilter    = employee    ? ` AND b.coordinators LIKE '%${employee}%'` : '';
+  const coordFilter  = coordinator ? ` AND b.coordinators LIKE '%${coordinator}%'` : '';
+  const searchFilter = search      ? ` AND (a.student_name LIKE '%${search}%' OR a.group_name LIKE '%${search}%' OR a.phone LIKE '%${search}%')` : '';
+  const dateFilter   = buildDateFilter('a.date', activeFrom, activeTo);
+  const remarkFilter = has_remark === '1' ? ` AND r_check.id IS NOT NULL`
+                     : has_remark === '0' ? ` AND r_check.id IS NULL` : '';
 
   const baseWhere = `WHERE a.student_name IS NOT NULL AND TRIM(a.student_name) != ''
     AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
-    ${dateFilter}${deptFilter}${empFilter}${searchFilter}`;
+    ${dateFilter}${deptFilter}${empFilter}${coordFilter}${searchFilter}`;
+
+  // has_remark filter needs the JOIN result — wrap in subquery
+  const innerQ = `
+    SELECT a.id, a.student_name, a.phone AS student_phone, a.group_name, a.date AS absence_date,
+      b.coordinators, b.dept_type,
+      date(a.date, '+1 day') AS expected_remark_date,
+      r.id AS remark_id, r.details AS remark_details, r.added_at AS remark_date,
+      r.assigned_to, r.status AS remark_status,
+      CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END AS has_remark,
+      r.id AS r_check_id
+    FROM absent_students a
+    LEFT JOIN batches b ON a.group_name = b.group_name
+    LEFT JOIN remarks r
+      ON r.client_phone = a.phone
+      AND r.category = 'Attendance Main Session'
+      AND date(substr(r.added_at,7,4)||'-'||substr(r.added_at,4,2)||'-'||substr(r.added_at,1,2))
+          = date(a.date, '+1 day')
+    ${baseWhere}`;
+
+  // For has_remark filter, we need to filter after the LEFT JOIN
+  const havingFilter = has_remark === '1' ? ` AND has_remark = 1`
+                     : has_remark === '0' ? ` AND has_remark = 0` : '';
 
   try {
     const totalRow = db.prepare(
-      `SELECT COUNT(*) as cnt FROM absent_students a
-       LEFT JOIN batches b ON a.group_name = b.group_name ${baseWhere}`
+      `SELECT COUNT(*) as cnt FROM (${innerQ}) t WHERE 1=1 ${havingFilter}`
     ).get();
 
     const rows = db.prepare(
-      `SELECT a.id, a.student_name, a.phone AS student_phone, a.group_name, a.date AS absence_date,
-         b.coordinators, b.dept_type,
-         date(a.date, '+1 day') AS expected_remark_date,
-         r.id AS remark_id, r.details AS remark_details, r.added_at AS remark_date,
-         r.assigned_to, r.status AS remark_status,
-         CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END AS has_remark
-       FROM absent_students a
-       LEFT JOIN batches b ON a.group_name = b.group_name
-       LEFT JOIN remarks r
-         ON r.client_phone = a.phone
-         AND r.category = 'Attendance Main Session'
-         AND date(substr(r.added_at,7,4)||'-'||substr(r.added_at,4,2)||'-'||substr(r.added_at,1,2))
-             = date(a.date, '+1 day')
-       ${baseWhere}
-       ORDER BY a.date DESC
+      `SELECT * FROM (${innerQ}) t WHERE 1=1 ${havingFilter}
+       ORDER BY absence_date DESC
        LIMIT ${Number(limit)} OFFSET ${offset}`
     ).all();
 
@@ -529,47 +548,60 @@ router.get('/remarks-notes-main', (req, res) => {
 });
 
 // ─── GET /api/reports/remarks-notes-zoom ──────────────────────────────────────
-// "Attendance Zoom Call" remarks vs side sessions (session date = remark date - 1)
 router.get('/remarks-notes-zoom', (req, res) => {
-  const { from_date, to_date, department, employee, page = 1, limit = 100, search = '' } = req.query;
+  const {
+    from_date, to_date, department, employee,
+    page = 1, limit = 100, search = '',
+    modal_from = '', modal_to = '', modal_dept = '',
+    coordinator = '', has_session = '',
+  } = req.query;
   const offset = (Number(page) - 1) * Number(limit);
+
+  const activeFrom = modal_from || from_date;
+  const activeTo   = modal_to   || to_date;
+  const activeDept = modal_dept && modal_dept !== 'All' ? modal_dept : (department && department !== 'All' ? department : '');
 
   const remarkDateSQL      = `date(substr(r.added_at,7,4)||'-'||substr(r.added_at,4,2)||'-'||substr(r.added_at,1,2))`;
   const expectedSessionSQL = `date(${remarkDateSQL}, '-1 day')`;
 
-  const deptFilter   = department && department !== 'All' ? ` AND b.dept_type = '${department}'` : '';
-  const empFilter    = employee ? ` AND b.coordinators LIKE '%${employee}%'` : '';
-  const searchFilter = search   ? ` AND (r.client_name LIKE '%${search}%' OR r.client_phone LIKE '%${search}%' OR c.group_name LIKE '%${search}%')` : '';
-  const dateFilter   = from_date && to_date ? ` AND ${remarkDateSQL} BETWEEN '${from_date}' AND '${to_date}'`
-                     : from_date ? ` AND ${remarkDateSQL} >= '${from_date}'`
-                     : to_date   ? ` AND ${remarkDateSQL} <= '${to_date}'` : '';
+  const deptFilter   = activeDept  ? ` AND b.dept_type = '${activeDept}'` : '';
+  const empFilter    = employee    ? ` AND b.coordinators LIKE '%${employee}%'` : '';
+  const coordFilter  = coordinator ? ` AND b.coordinators LIKE '%${coordinator}%'` : '';
+  const searchFilter = search      ? ` AND (r.client_name LIKE '%${search}%' OR r.client_phone LIKE '%${search}%' OR c.group_name LIKE '%${search}%')` : '';
+  const dateFilter   = activeFrom && activeTo ? ` AND ${remarkDateSQL} BETWEEN '${activeFrom}' AND '${activeTo}'`
+                     : activeFrom ? ` AND ${remarkDateSQL} >= '${activeFrom}'`
+                     : activeTo   ? ` AND ${remarkDateSQL} <= '${activeTo}'` : '';
 
   const baseWhere = `WHERE r.category = 'Attendance Zoom Call'
-    ${dateFilter}${deptFilter}${empFilter}${searchFilter}`;
+    ${dateFilter}${deptFilter}${empFilter}${coordFilter}${searchFilter}`;
+
+  const innerQ = `
+    SELECT r.id, r.client_name, r.client_phone, r.details AS remark_details,
+      r.added_at AS remark_date, r.assigned_to, r.status AS remark_status,
+      c.group_name, b.coordinators, b.dept_type,
+      ${expectedSessionSQL} AS expected_session_date,
+      l.id AS session_id, l.date AS session_date,
+      CASE WHEN l.id IS NOT NULL THEN 1 ELSE 0 END AS has_session
+    FROM remarks r
+    LEFT JOIN clients c ON c.phone = r.client_phone
+    LEFT JOIN batches b ON b.group_name = c.group_name
+    LEFT JOIN lectures l
+      ON l.group_name = c.group_name
+      AND l.session_type = 'side'
+      AND l.date = ${expectedSessionSQL}
+    ${baseWhere}`;
+
+  const havingFilter = has_session === '1' ? ` AND has_session = 1`
+                     : has_session === '0' ? ` AND has_session = 0` : '';
 
   try {
     const totalRow = db.prepare(
-      `SELECT COUNT(*) as cnt FROM remarks r
-       LEFT JOIN clients c ON c.phone = r.client_phone
-       LEFT JOIN batches b ON b.group_name = c.group_name ${baseWhere}`
+      `SELECT COUNT(*) as cnt FROM (${innerQ}) t WHERE 1=1 ${havingFilter}`
     ).get();
 
     const rows = db.prepare(
-      `SELECT r.id, r.client_name, r.client_phone, r.details AS remark_details,
-         r.added_at AS remark_date, r.assigned_to, r.status AS remark_status,
-         c.group_name, b.coordinators, b.dept_type,
-         ${expectedSessionSQL} AS expected_session_date,
-         l.id AS session_id, l.date AS session_date,
-         CASE WHEN l.id IS NOT NULL THEN 1 ELSE 0 END AS has_session
-       FROM remarks r
-       LEFT JOIN clients c ON c.phone = r.client_phone
-       LEFT JOIN batches b ON b.group_name = c.group_name
-       LEFT JOIN lectures l
-         ON l.group_name = c.group_name
-         AND l.session_type = 'side'
-         AND l.date = ${expectedSessionSQL}
-       ${baseWhere}
-       ORDER BY r.added_at DESC
+      `SELECT * FROM (${innerQ}) t WHERE 1=1 ${havingFilter}
+       ORDER BY remark_date DESC
        LIMIT ${Number(limit)} OFFSET ${offset}`
     ).all();
 
@@ -581,21 +613,31 @@ router.get('/remarks-notes-zoom', (req, res) => {
 });
 
 // ─── GET /api/reports/remarks-categories ──────────────────────────────────────
-// All remark categories with counts + details, grouped by category
 router.get('/remarks-categories', (req, res) => {
-  const { from_date, to_date, department, employee, page = 1, limit = 100, search = '' } = req.query;
+  const {
+    from_date, to_date, department, employee,
+    page = 1, limit = 100, search = '',
+    modal_from = '', modal_to = '', modal_dept = '',
+    assigned_to = '', category_filter = '',
+  } = req.query;
   const offset = (Number(page) - 1) * Number(limit);
 
-  const remarkDateSQL = `date(substr(r.added_at,7,4)||'-'||substr(r.added_at,4,2)||'-'||substr(r.added_at,1,2))`;
-  const deptFilter   = department && department !== 'All'
-    ? ` AND EXISTS (SELECT 1 FROM clients cx INNER JOIN batches bx ON cx.group_name=bx.group_name WHERE cx.phone=r.client_phone AND bx.dept_type='${department}')`
+  const activeFrom = modal_from || from_date;
+  const activeTo   = modal_to   || to_date;
+  const activeDept = modal_dept && modal_dept !== 'All' ? modal_dept : (department && department !== 'All' ? department : '');
+
+  const remarkDateSQL  = `date(substr(r.added_at,7,4)||'-'||substr(r.added_at,4,2)||'-'||substr(r.added_at,1,2))`;
+  const deptFilter     = activeDept
+    ? ` AND EXISTS (SELECT 1 FROM clients cx INNER JOIN batches bx ON cx.group_name=bx.group_name WHERE cx.phone=r.client_phone AND bx.dept_type='${activeDept}')`
     : '';
-  const empFilter    = employee ? ` AND r.assigned_to LIKE '%${employee}%'` : '';
-  const searchFilter = search   ? ` AND (r.client_name LIKE '%${search}%' OR r.category LIKE '%${search}%' OR r.client_phone LIKE '%${search}%')` : '';
-  const dateFilter   = buildDateFilter(remarkDateSQL, from_date, to_date);
+  const empFilter      = employee       ? ` AND r.assigned_to LIKE '%${employee}%'` : '';
+  const assignFilter   = assigned_to    ? ` AND r.assigned_to LIKE '%${assigned_to}%'` : '';
+  const catFilter      = category_filter ? ` AND r.category LIKE '%${category_filter}%'` : '';
+  const searchFilter   = search         ? ` AND (r.client_name LIKE '%${search}%' OR r.category LIKE '%${search}%' OR r.client_phone LIKE '%${search}%')` : '';
+  const dateFilter     = buildDateFilter(remarkDateSQL, activeFrom, activeTo);
 
   const baseWhere = `WHERE r.category IS NOT NULL AND TRIM(r.category) != ''
-    ${dateFilter}${deptFilter}${empFilter}${searchFilter}`;
+    ${dateFilter}${deptFilter}${empFilter}${assignFilter}${catFilter}${searchFilter}`;
 
   try {
     const totalRow = db.prepare(

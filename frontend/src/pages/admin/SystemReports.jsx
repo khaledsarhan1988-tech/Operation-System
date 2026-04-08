@@ -398,39 +398,55 @@ function GroupsModal({ title, groups, allUsers = [], onClose }) {
 // ─── REMARKS NOTES MODAL ─────────────────────────────────────────────────────
 function RemarksNotesModal({ params, onClose }) {
   const LIMIT = 100;
-  const [tab, setTab]               = useState('main');
-  // main tab
-  const [pageM, setPageM]           = useState(1);
-  const [searchM, setSearchM]       = useState('');
-  const [appliedM, setAppliedM]     = useState('');
-  // zoom tab
-  const [pageZ, setPageZ]           = useState(1);
-  const [searchZ, setSearchZ]       = useState('');
-  const [appliedZ, setAppliedZ]     = useState('');
-  // categories section
-  const [pageC, setPageC]           = useState(1);
-  const [searchC, setSearchC]       = useState('');
-  const [appliedC, setAppliedC]     = useState('');
+  const [tab, setTab] = useState('main');
+
+  // main tab state
+  const [pageM, setPageM]   = useState(1);
+  const [searchM, setSearchM] = useState('');
+  const [fM, setFM]   = useState({ modal_from:'', modal_to:'', modal_dept:'', coordinator:'', has_remark:'' });
+  const [afM, setAfM] = useState({});
+
+  // zoom tab state
+  const [pageZ, setPageZ]   = useState(1);
+  const [searchZ, setSearchZ] = useState('');
+  const [fZ, setFZ]   = useState({ modal_from:'', modal_to:'', modal_dept:'', coordinator:'', has_session:'' });
+  const [afZ, setAfZ] = useState({});
+
+  // categories state
+  const [pageC, setPageC]   = useState(1);
+  const [searchC, setSearchC] = useState('');
+  const [fC, setFC]   = useState({ modal_from:'', modal_to:'', modal_dept:'', assigned_to:'', category_filter:'' });
+  const [afC, setAfC] = useState({});
+
+  const applyM = () => { const c={}; Object.entries(fM).forEach(([k,v])=>{if(v&&v!=='All')c[k]=v;}); setAfM(c); setPageM(1); };
+  const clearM = () => { setFM({modal_from:'',modal_to:'',modal_dept:'',coordinator:'',has_remark:''}); setAfM({}); setPageM(1); };
+  const applyZ = () => { const c={}; Object.entries(fZ).forEach(([k,v])=>{if(v&&v!=='All')c[k]=v;}); setAfZ(c); setPageZ(1); };
+  const clearZ = () => { setFZ({modal_from:'',modal_to:'',modal_dept:'',coordinator:'',has_session:''}); setAfZ({}); setPageZ(1); };
+  const applyC = () => { const c={}; Object.entries(fC).forEach(([k,v])=>{if(v&&v!=='All')c[k]=v;}); setAfC(c); setPageC(1); };
+  const clearC = () => { setFC({modal_from:'',modal_to:'',modal_dept:'',assigned_to:'',category_filter:''}); setAfC({}); setPageC(1); };
 
   const { data: mData, isLoading: mLoad } = useQuery({
-    queryKey: ['rnm', params, pageM, appliedM],
-    queryFn: () => api.get('/reports/remarks-notes-main', { params: { ...params, page: pageM, limit: LIMIT, search: appliedM } }).then(r => r.data),
+    queryKey: ['rnm', params, pageM, searchM, afM],
+    queryFn: () => api.get('/reports/remarks-notes-main', { params: { ...params, page: pageM, limit: LIMIT, search: searchM, ...afM } }).then(r => r.data),
     staleTime: 2 * 60 * 1000,
   });
   const { data: zData, isLoading: zLoad } = useQuery({
-    queryKey: ['rnz', params, pageZ, appliedZ],
-    queryFn: () => api.get('/reports/remarks-notes-zoom', { params: { ...params, page: pageZ, limit: LIMIT, search: appliedZ } }).then(r => r.data),
+    queryKey: ['rnz', params, pageZ, searchZ, afZ],
+    queryFn: () => api.get('/reports/remarks-notes-zoom', { params: { ...params, page: pageZ, limit: LIMIT, search: searchZ, ...afZ } }).then(r => r.data),
     staleTime: 2 * 60 * 1000,
   });
   const { data: cData, isLoading: cLoad } = useQuery({
-    queryKey: ['rnc', params, pageC, appliedC],
-    queryFn: () => api.get('/reports/remarks-categories', { params: { ...params, page: pageC, limit: LIMIT, search: appliedC } }).then(r => r.data),
+    queryKey: ['rnc', params, pageC, searchC, afC],
+    queryFn: () => api.get('/reports/remarks-categories', { params: { ...params, page: pageC, limit: LIMIT, search: searchC, ...afC } }).then(r => r.data),
     staleTime: 2 * 60 * 1000,
   });
 
   const tpM = mData ? Math.ceil(mData.total / LIMIT) : 1;
   const tpZ = zData ? Math.ceil(zData.total / LIMIT) : 1;
   const tpC = cData ? Math.ceil(cData.total / LIMIT) : 1;
+
+  const inputCls = 'w-full border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200 bg-gray-50';
+  const labelCls = 'block text-xs text-gray-400 mb-1 font-semibold';
 
   const PagBar = ({ page, setPage, total }) => total > 1 ? (
     <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100 bg-gray-50/60">
@@ -442,7 +458,7 @@ function RemarksNotesModal({ params, onClose }) {
 
   const SearchBar = ({ val, setVal, onApply, total, placeholder }) => (
     <div className="px-5 py-3 border-b border-gray-50 flex items-center gap-2">
-      <form onSubmit={e=>{e.preventDefault();onApply(val);}} className="flex gap-2 flex-1">
+      <form onSubmit={e=>{e.preventDefault();onApply();}} className="flex gap-2 flex-1">
         <input value={val} onChange={e=>setVal(e.target.value)} placeholder={placeholder}
           className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
         <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700">بحث</button>
@@ -489,7 +505,43 @@ function RemarksNotesModal({ params, onClose }) {
           {/* MAIN SESSION TAB */}
           {tab === 'main' && (
             <>
-              <SearchBar val={searchM} setVal={setSearchM} onApply={v=>{setAppliedM(v);setPageM(1);}} total={mData?.total} placeholder="بحث باسم الطالب، المجموعة، أو الموبايل..." />
+              <SearchBar val={searchM} setVal={setSearchM} onApply={applyM} total={mData?.total} placeholder="بحث باسم الطالب، المجموعة، أو الموبايل..." />
+              {/* Filters */}
+              <div className="px-5 py-3 bg-gray-50/50 border-b border-gray-100 grid grid-cols-2 md:grid-cols-5 gap-3">
+                <div>
+                  <label className={labelCls}>من تاريخ</label>
+                  <input type="date" value={fM.modal_from} onChange={e=>setFM(f=>({...f,modal_from:e.target.value}))} className={inputCls}/>
+                </div>
+                <div>
+                  <label className={labelCls}>إلى تاريخ</label>
+                  <input type="date" value={fM.modal_to} onChange={e=>setFM(f=>({...f,modal_to:e.target.value}))} className={inputCls}/>
+                </div>
+                <div>
+                  <label className={labelCls}>القسم</label>
+                  <select value={fM.modal_dept} onChange={e=>setFM(f=>({...f,modal_dept:e.target.value}))} className={inputCls}>
+                    <option value="">الكل</option>
+                    <option value="General">عام</option>
+                    <option value="Private">خاص</option>
+                    <option value="Semi">شبه خاص</option>
+                  </select>
+                </div>
+                <div>
+                  <label className={labelCls}>المنسق</label>
+                  <input value={fM.coordinator} onChange={e=>setFM(f=>({...f,coordinator:e.target.value}))} placeholder="اسم المنسق..." className={inputCls}/>
+                </div>
+                <div>
+                  <label className={labelCls}>حالة الريمارك</label>
+                  <select value={fM.has_remark} onChange={e=>setFM(f=>({...f,has_remark:e.target.value}))} className={inputCls}>
+                    <option value="">الكل</option>
+                    <option value="1">✅ موجود</option>
+                    <option value="0">❌ غير موجود</option>
+                  </select>
+                </div>
+                <div className="col-span-2 md:col-span-5 flex gap-2 justify-end">
+                  <button onClick={applyM} className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">تطبيق</button>
+                  <button onClick={clearM} className="px-4 py-1.5 bg-gray-200 text-gray-600 rounded-lg text-xs font-bold hover:bg-gray-300">مسح</button>
+                </div>
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm text-right" style={{minWidth:'1000px'}}>
                   <thead>
@@ -530,7 +582,43 @@ function RemarksNotesModal({ params, onClose }) {
           {/* ZOOM CALL TAB */}
           {tab === 'zoom' && (
             <>
-              <SearchBar val={searchZ} setVal={setSearchZ} onApply={v=>{setAppliedZ(v);setPageZ(1);}} total={zData?.total} placeholder="بحث باسم العميل، المجموعة، أو الموبايل..." />
+              <SearchBar val={searchZ} setVal={setSearchZ} onApply={applyZ} total={zData?.total} placeholder="بحث باسم العميل، المجموعة، أو الموبايل..." />
+              {/* Filters */}
+              <div className="px-5 py-3 bg-gray-50/50 border-b border-gray-100 grid grid-cols-2 md:grid-cols-5 gap-3">
+                <div>
+                  <label className={labelCls}>من تاريخ</label>
+                  <input type="date" value={fZ.modal_from} onChange={e=>setFZ(f=>({...f,modal_from:e.target.value}))} className={inputCls}/>
+                </div>
+                <div>
+                  <label className={labelCls}>إلى تاريخ</label>
+                  <input type="date" value={fZ.modal_to} onChange={e=>setFZ(f=>({...f,modal_to:e.target.value}))} className={inputCls}/>
+                </div>
+                <div>
+                  <label className={labelCls}>القسم</label>
+                  <select value={fZ.modal_dept} onChange={e=>setFZ(f=>({...f,modal_dept:e.target.value}))} className={inputCls}>
+                    <option value="">الكل</option>
+                    <option value="General">عام</option>
+                    <option value="Private">خاص</option>
+                    <option value="Semi">شبه خاص</option>
+                  </select>
+                </div>
+                <div>
+                  <label className={labelCls}>المنسق</label>
+                  <input value={fZ.coordinator} onChange={e=>setFZ(f=>({...f,coordinator:e.target.value}))} placeholder="اسم المنسق..." className={inputCls}/>
+                </div>
+                <div>
+                  <label className={labelCls}>حالة الجلسة</label>
+                  <select value={fZ.has_session} onChange={e=>setFZ(f=>({...f,has_session:e.target.value}))} className={inputCls}>
+                    <option value="">الكل</option>
+                    <option value="1">✅ موجودة</option>
+                    <option value="0">⚠️ غير موجودة</option>
+                  </select>
+                </div>
+                <div className="col-span-2 md:col-span-5 flex gap-2 justify-end">
+                  <button onClick={applyZ} className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">تطبيق</button>
+                  <button onClick={clearZ} className="px-4 py-1.5 bg-gray-200 text-gray-600 rounded-lg text-xs font-bold hover:bg-gray-300">مسح</button>
+                </div>
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm text-right" style={{minWidth:'1000px'}}>
                   <thead>
@@ -575,7 +663,39 @@ function RemarksNotesModal({ params, onClose }) {
             <h3 className="text-sm font-bold text-gray-700">القسم الثاني — ملخص التصنيفات</h3>
             <span className="text-xs text-gray-400">إجمالي: <b className="text-gray-700">{cData?.total ?? '—'}</b> سجل</span>
           </div>
-          <SearchBar val={searchC} setVal={setSearchC} onApply={v=>{setAppliedC(v);setPageC(1);}} total={cData?.total} placeholder="بحث بالتصنيف، اسم العميل، أو الموبايل..." />
+          <SearchBar val={searchC} setVal={setSearchC} onApply={applyC} total={cData?.total} placeholder="بحث بالتصنيف، اسم العميل، أو الموبايل..." />
+          {/* Filters */}
+          <div className="px-5 py-3 bg-gray-50/50 border-b border-gray-100 grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div>
+              <label className={labelCls}>من تاريخ</label>
+              <input type="date" value={fC.modal_from} onChange={e=>setFC(f=>({...f,modal_from:e.target.value}))} className={inputCls}/>
+            </div>
+            <div>
+              <label className={labelCls}>إلى تاريخ</label>
+              <input type="date" value={fC.modal_to} onChange={e=>setFC(f=>({...f,modal_to:e.target.value}))} className={inputCls}/>
+            </div>
+            <div>
+              <label className={labelCls}>القسم</label>
+              <select value={fC.modal_dept} onChange={e=>setFC(f=>({...f,modal_dept:e.target.value}))} className={inputCls}>
+                <option value="">الكل</option>
+                <option value="General">عام</option>
+                <option value="Private">خاص</option>
+                <option value="Semi">شبه خاص</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>التصنيف</label>
+              <input value={fC.category_filter} onChange={e=>setFC(f=>({...f,category_filter:e.target.value}))} placeholder="بحث في التصنيف..." className={inputCls}/>
+            </div>
+            <div>
+              <label className={labelCls}>المسؤول</label>
+              <input value={fC.assigned_to} onChange={e=>setFC(f=>({...f,assigned_to:e.target.value}))} placeholder="اسم المسؤول..." className={inputCls}/>
+            </div>
+            <div className="col-span-2 md:col-span-5 flex gap-2 justify-end">
+              <button onClick={applyC} className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">تطبيق</button>
+              <button onClick={clearC} className="px-4 py-1.5 bg-gray-200 text-gray-600 rounded-lg text-xs font-bold hover:bg-gray-300">مسح</button>
+            </div>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-right" style={{minWidth:'900px'}}>
               <thead>
