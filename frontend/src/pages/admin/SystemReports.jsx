@@ -424,6 +424,11 @@ function ListModal({ title, endpoint, params, columns, onClose }) {
         ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700"><XCircle size={11}/>غائب</span>
         : <span className="text-gray-400 text-xs">—</span>
     );
+    if (col.type === 'trainee_total') return (
+      <span className="inline-flex items-center justify-center w-8 h-8 rounded-full text-sm font-black bg-slate-100 text-slate-700">
+        {val ?? 0}
+      </span>
+    );
     if (col.type === 'absent_count') return (
       <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700">
         <XCircle size={11}/>{val ?? 0} غائب
@@ -783,14 +788,14 @@ export default function SystemReports() {
               endpoint: '/reports/absent-side-list',
               params: { ...applied },
               columns: [
-                { key: 'group_name',           label: 'اسم المجموعة',   noWrap: true },
-                { key: 'session_date',          label: 'التاريخ',         type: 'date' },
-                { key: 'lecture_start_time',    label: 'الوقت' },
-                { key: 'actual_duration',       label: 'المدة',          type: 'duration' },
-                { key: 'trainer',               label: 'المدرب' },
-                { key: 'coordinators',          label: 'المنسق' },
-                { key: 'dept_type',             label: 'القسم',           type: 'badge' },
-                { key: 'side_session_category', label: 'التصنيف',        type: 'category' },
+                { key: 'group_name',    label: 'اسم المجموعة',   noWrap: true },
+                { key: 'session_date',  label: 'التاريخ',         type: 'date' },
+                { key: 'trainer',       label: 'المدرب' },
+                { key: 'coordinators',  label: 'المنسق' },
+                { key: 'dept_type',     label: 'القسم',           type: 'badge' },
+                { key: 'trainee_count', label: 'إجمالي المتدربين', type: 'trainee_total' },
+                { key: 'present_count', label: 'عدد الحضور',      type: 'present_count' },
+                { key: 'absent_count',  label: 'عدد الغياب',      type: 'absent_count' },
               ],
             })} />
           <KpiCard label="ملاحظات مفتوحة" value={kpis.open_remarks} icon={MessageSquare}

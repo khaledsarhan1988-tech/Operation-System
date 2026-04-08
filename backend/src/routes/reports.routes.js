@@ -93,16 +93,23 @@ router.get('/dashboard', (req, res) => {
        ${deptBatches}${empFilter}`
     ).get();
 
-    // 6. Absent side — status=مؤكدة & attendance IS NULL & duration <= '00:15' (excludes Onboarding/Offboarding)
+    // 6. Absent side — grouped per group+date, absent = trainee_count - present sessions
     const absentSideRow = db.prepare(
-      `SELECT COUNT(*) as cnt FROM lectures l
-       INNER JOIN batches b ON l.group_name = b.group_name
-       WHERE l.session_type = 'side'
-         AND l.status = 'مؤكدة'
-         AND (l.attendance IS NULL OR l.attendance = '0')
-         AND (l.duration IS NULL OR l.duration <= '00:15')
-       ${buildDateFilter('l.date', from_date, to_date)}
-       ${deptBatches}${empFilter}`
+      `SELECT COALESCE(SUM(absent_count), 0) as cnt FROM (
+         SELECT
+           b.trainee_count,
+           SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != '' AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END) AS present_count,
+           MAX(b.trainee_count) - SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != '' AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END) AS absent_count
+         FROM lectures l
+         INNER JOIN batches b ON l.group_name = b.group_name
+         WHERE l.session_type = 'side'
+           AND l.status = 'مؤكدة'
+           AND (l.duration IS NULL OR l.duration <= '00:15')
+         ${buildDateFilter('l.date', from_date, to_date)}
+         ${deptBatches}${empFilter}
+         GROUP BY l.group_name, l.date
+         HAVING absent_count > 0
+       )`
     ).get();
 
     // 7. Open remarks
@@ -262,8 +269,10 @@ router.get('/absent-list', (req, res) => {
 });
 
 // ─── GET /api/reports/absent-side-list ────────────────────────────────────────
-// Source: lectures table (session_type='side', status='مؤكدة', attendance IS NULL)
-// Duration filter: duration <= '00:15' excludes Onboarding/Offboarding (> 15 min)
+// Grouped per group_name + date
+// present_count  = sessions where attendance > 0
+// absent_count   = trainee_count - present_count
+// Only valid side sessions: duration <= '00:15' (excludes Onboarding/Offboarding)
 router.get('/absent-side-list', (req, res) => {
   const { from_date, to_date, department, employee, page = 1, limit = 100, search = '' } = req.query;
   const offset       = (Number(page) - 1) * Number(limit);
@@ -278,34 +287,40 @@ router.get('/absent-side-list', (req, res) => {
   const baseWhere = `
     WHERE l.session_type = 'side'
       AND l.status = 'مؤكدة'
-      AND (l.attendance IS NULL OR l.attendance = '0')
       AND (l.duration IS NULL OR l.duration <= '00:15')
     ${dateFilter}${deptFilter}${empFilter}${searchFilter}`;
 
+  const groupedQuery = `
+    SELECT
+      l.group_name,
+      l.date                                                                    AS session_date,
+      MAX(l.trainer)                                                            AS trainer,
+      MAX(b.coordinators)                                                       AS coordinators,
+      MAX(b.dept_type)                                                          AS dept_type,
+      MAX(b.trainee_count)                                                      AS trainee_count,
+      SUM(CASE WHEN l.attendance IS NOT NULL
+               AND l.attendance != ''
+               AND CAST(l.attendance AS INTEGER) > 0
+               THEN 1 ELSE 0 END)                                               AS present_count,
+      MAX(b.trainee_count) -
+      SUM(CASE WHEN l.attendance IS NOT NULL
+               AND l.attendance != ''
+               AND CAST(l.attendance AS INTEGER) > 0
+               THEN 1 ELSE 0 END)                                               AS absent_count
+    FROM lectures l
+    LEFT JOIN batches b ON l.group_name = b.group_name
+    ${baseWhere}
+    GROUP BY l.group_name, l.date
+    HAVING absent_count > 0`;
+
   try {
     const totalRow = db.prepare(
-      `SELECT COUNT(*) as cnt
-       FROM lectures l
-       LEFT JOIN batches b ON l.group_name = b.group_name
-       ${baseWhere}`
+      `SELECT COUNT(*) as cnt FROM (${groupedQuery})`
     ).get();
 
     const rows = db.prepare(
-      `SELECT
-         l.id,
-         l.group_name,
-         l.date           AS session_date,
-         l.time           AS lecture_start_time,
-         l.duration       AS actual_duration,
-         l.trainer,
-         l.status,
-         l.side_session_category,
-         b.dept_type,
-         b.coordinators
-       FROM lectures l
-       LEFT JOIN batches b ON l.group_name = b.group_name
-       ${baseWhere}
-       ORDER BY l.date DESC
+      `${groupedQuery}
+       ORDER BY session_date DESC
        LIMIT ${Number(limit)} OFFSET ${offset}`
     ).all();
 
