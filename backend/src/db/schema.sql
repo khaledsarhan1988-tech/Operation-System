@@ -31,6 +31,24 @@ CREATE TABLE IF NOT EXISTS employees (
 CREATE INDEX IF NOT EXISTS idx_employees_name ON employees(name COLLATE NOCASE);
 
 -- =============================================
+-- TEAM MEMBERS (Academy Staff Directory)
+-- =============================================
+CREATE TABLE IF NOT EXISTS team_members (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  department  TEXT NOT NULL CHECK(department IN ('customer_services','education')),
+  section     TEXT NOT NULL CHECK(section IN ('general','private','semi','phone_call')),
+  shift       TEXT CHECK(shift IN ('morning','evening') OR shift IS NULL),
+  job_title   TEXT,
+  phone       TEXT,
+  user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  status      TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','inactive')),
+  notes       TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_team_dept_section ON team_members(department, section);
+
+-- =============================================
 -- CLIENTS (from Active Batches Trainees.xlsx)
 -- =============================================
 CREATE TABLE IF NOT EXISTS clients (

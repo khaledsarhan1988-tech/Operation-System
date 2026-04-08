@@ -62,6 +62,7 @@ initDb().then(db => {
   app.use('/api/admin',   require('./routes/admin.routes'));
   app.use('/api/export',  require('./routes/export.routes'));
   app.use('/api/reports', require('./routes/reports.routes'));
+  app.use('/api/team',    require('./routes/team.routes'));
 
   // 404
   app.use((req, res) => res.status(404).json({ error: 'Not found' }));

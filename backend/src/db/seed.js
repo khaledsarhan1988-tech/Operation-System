@@ -67,6 +67,29 @@ initDb().then(db => {
     console.log('dept_type Private migration:', e.message);
   }
 
+  // Create team_members table (migration)
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS team_members (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        name        TEXT NOT NULL,
+        department  TEXT NOT NULL,
+        section     TEXT NOT NULL,
+        shift       TEXT,
+        job_title   TEXT,
+        phone       TEXT,
+        user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        status      TEXT NOT NULL DEFAULT 'active',
+        notes       TEXT,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_team_dept_section ON team_members(department, section)`);
+    console.log('✅ Migration: team_members table ready');
+  } catch(e) {
+    console.log('team_members migration:', e.message);
+  }
+
   // Add composite performance indexes (safe — IF NOT EXISTS)
   const perfIndexes = [
     `CREATE INDEX IF NOT EXISTS idx_lectures_type_date  ON lectures(session_type, date)`,
