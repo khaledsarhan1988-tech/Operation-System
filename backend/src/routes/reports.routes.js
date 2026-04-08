@@ -728,41 +728,86 @@ router.get('/code-problems', (req, res) => {
        FROM batches b WHERE status='نشطة'${deptFilter}${empFilter}`
     ).all();
 
-    // fetch all main sessions at once
+    // fetch all main sessions with time + duration
     const mainRaw = db.prepare(
-      `SELECT l.group_name, l.date FROM lectures l
+      `SELECT l.group_name, l.date, l.time, l.duration FROM lectures l
        INNER JOIN batches b ON l.group_name=b.group_name
        WHERE b.status='نشطة' AND l.session_type='main'
        ${deptFilter}${empFilter} ORDER BY l.group_name, l.date ASC`
     ).all();
 
-    // fetch all valid side sessions (exclude onboarding/offboarding)
+    // fetch all valid side sessions with time + duration (exclude onboarding/offboarding)
     const sideRaw = db.prepare(
-      `SELECT l.group_name, l.date FROM lectures l
+      `SELECT l.group_name, l.date, l.time, l.duration FROM lectures l
        INNER JOIN batches b ON l.group_name=b.group_name
        WHERE b.status='نشطة' AND l.session_type='side'
          AND LOWER(COALESCE(l.side_session_category,'')) NOT IN ('onboarding','offboarding')
        ${deptFilter}${empFilter} ORDER BY l.group_name, l.date ASC`
     ).all();
 
-    // group by group_name
+    // group by group_name (store full rows)
     const mainByGroup = {}, sideByGroup = {};
-    mainRaw.forEach(r => { (mainByGroup[r.group_name] = mainByGroup[r.group_name]||[]).push(r.date); });
-    sideRaw.forEach(r => { (sideByGroup[r.group_name] = sideByGroup[r.group_name]||[]).push(r.date); });
+    mainRaw.forEach(r => { (mainByGroup[r.group_name] = mainByGroup[r.group_name]||[]).push(r); });
+    sideRaw.forEach(r => { (sideByGroup[r.group_name] = sideByGroup[r.group_name]||[]).push(r); });
+
+    // ── midnight rule helpers ──────────────────────────────────────────
+    const parseTimeMins = t => {
+      if (!t) return -1;
+      const m = String(t).match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+      if (!m) return -1;
+      let h = parseInt(m[1]), min = parseInt(m[2]);
+      if (m[3]?.toUpperCase() === 'PM' && h < 12) h += 12;
+      if (m[3]?.toUpperCase() === 'AM' && h === 12) h = 0;
+      return h * 60 + min;
+    };
+    const parseDurMins = d => {
+      if (!d) return 0;
+      const m = String(d).match(/(\d{1,2}):(\d{2})/);
+      return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : 0;
+    };
+    const addDays = (dateStr, n) => {
+      const d = new Date(dateStr + 'T12:00:00');
+      d.setDate(d.getDate() + n);
+      return d.toISOString().slice(0,10);
+    };
+    // Returns effective date (next day if session ends after midnight)
+    const effectiveDate = (date, time, duration) => {
+      const start = parseTimeMins(time);
+      if (start < 0) return date;
+      return (start + parseDurMins(duration)) >= 1440 ? addDays(date, 1) : date;
+    };
+
+    // Expected last date for MAIN (8 sessions, 2/week)
+    // First day of pair (Sat/Sun/Mon) → +24 days; second day (Tue/Wed/Thu) → +25 days
+    const FIRST_IN_PAIR = new Set([6, 0, 1]); // Sat, Sun, Mon
+    const expectedMainLast = firstDate => {
+      const dow = getDow(firstDate);
+      return addDays(firstDate, FIRST_IN_PAIR.has(dow) ? 24 : 25);
+    };
+    // Expected last date for SIDE (7 slot-dates, 2/week) → always +21 days
+    const expectedSideLast = firstDate => addDays(firstDate, 21);
 
     const mainProblems = [], sideProblems = [];
 
     for (const batch of batches) {
-      const gn          = batch.group_name;
-      const parsed      = parseGroupName(gn);
-      const mainDates   = mainByGroup[gn] || [];
-      const sideDates   = sideByGroup[gn] || [];
-      const meta        = { group_name: gn, dept_type: batch.dept_type, coordinators: batch.coordinators };
+      const gn        = batch.group_name;
+      const parsed    = parseGroupName(gn);
+      const mainRows  = mainByGroup[gn] || [];
+      const sideRows  = sideByGroup[gn] || [];
+      const mainDates = mainRows.map(r => r.date);
+      const sideDates = sideRows.map(r => r.date);
+      // Unique sorted side slot-dates (multiple sessions per day → deduplicate)
+      const sideSlotDates = [...new Set(sideDates)].sort();
+      const meta = { group_name: gn, dept_type: batch.dept_type, coordinators: batch.coordinators };
+
+      // first dates for display
+      const firstMainDate = mainDates[0] || null;
+      const firstSideDate = sideSlotDates[0] || null;
 
       // ── MAIN CHECKS ──────────────────────────────────────────────
       // 1. Count > 8
       if (mainDates.length > 8) {
-        mainProblems.push({ ...meta,
+        mainProblems.push({ ...meta, first_date: firstMainDate,
           problem_type: 'عدد محاضرات زيادة',
           detail: `الموجود: ${mainDates.length} محاضرة — المفروض: 8`,
           actual: mainDates.length, expected: 8,
@@ -772,12 +817,12 @@ router.get('/code-problems', (req, res) => {
       if (parsed) {
         // 2. First session date ≠ name date
         if (mainDates.length > 0) {
-          const first     = mainDates[0];
-          const year      = first.substring(0,4);
-          const expected  = `${year}-${pad(parsed.monthNum)}-${pad(parsed.dayNum)}`;
-          const firstDow  = getDow(first);
+          const first    = mainDates[0];
+          const year     = first.substring(0,4);
+          const expected = `${year}-${pad(parsed.monthNum)}-${pad(parsed.dayNum)}`;
+          const firstDow = getDow(first);
           if (first !== expected) {
-            mainProblems.push({ ...meta,
+            mainProblems.push({ ...meta, first_date: firstMainDate,
               problem_type: 'تاريخ أول محاضرة غلط',
               detail: `الاسم: ${expected} (${DAY_EN[parsed.dow]}) | الفعلي: ${first} (${DAY_EN[firstDow]||'?'})`,
               expected_date: expected, actual_date: first,
@@ -790,7 +835,7 @@ router.get('/code-problems', (req, res) => {
         if (mainPair && mainDates.length > 0) {
           const wrong = mainDates.filter(d => !mainPair.includes(getDow(d)));
           if (wrong.length > 0) {
-            mainProblems.push({ ...meta,
+            mainProblems.push({ ...meta, first_date: firstMainDate,
               problem_type: 'محاضرات على أيام غلط',
               detail: `${wrong.length} محاضرة خارج أيام (${mainPair.map(d=>DAY_AR[d]).join(' و')}) | أمثلة: ${wrong.slice(0,3).join(', ')}`,
               wrong_count: wrong.length,
@@ -804,7 +849,7 @@ router.get('/code-problems', (req, res) => {
         if (sidePair && sideDates.length > 0) {
           const wrong = sideDates.filter(d => !sidePair.includes(getDow(d)));
           if (wrong.length > 0) {
-            sideProblems.push({ ...meta, trainee_count: batch.trainee_count,
+            sideProblems.push({ ...meta, trainee_count: batch.trainee_count, first_date: firstSideDate,
               problem_type: 'جلسات جانبية على أيام غلط',
               detail: `${wrong.length} جلسة خارج أيام (${sidePair.map(d=>DAY_AR[d]).join(' و')}) | أمثلة: ${wrong.slice(0,3).join(', ')}`,
               wrong_count: wrong.length,
@@ -816,11 +861,41 @@ router.get('/code-problems', (req, res) => {
       // 2. Side count ≠ trainee_count × 7
       const expectedSide = (batch.trainee_count || 0) * 7;
       if (expectedSide > 0 && sideDates.length !== expectedSide) {
-        sideProblems.push({ ...meta, trainee_count: batch.trainee_count,
+        sideProblems.push({ ...meta, trainee_count: batch.trainee_count, first_date: firstSideDate,
           problem_type: sideDates.length < expectedSide ? 'جلسات جانبية ناقصة' : 'جلسات جانبية زيادة',
           detail: `الموجود: ${sideDates.length} | المطلوب: ${expectedSide} (${batch.trainee_count}×7)`,
           actual: sideDates.length, expected: expectedSide,
         });
+      }
+
+      // 3. MAIN — last session date mismatch
+      if (mainDates.length > 0 && firstMainDate) {
+        const lastMainRow   = mainRows[mainRows.length - 1];
+        const actualLast    = effectiveDate(lastMainRow.date, lastMainRow.time, lastMainRow.duration);
+        const calcLast      = expectedMainLast(firstMainDate);
+        if (actualLast !== calcLast) {
+          const midnight = effectiveDate(lastMainRow.date, lastMainRow.time, lastMainRow.duration) !== lastMainRow.date;
+          mainProblems.push({ ...meta, first_date: firstMainDate,
+            problem_type: 'تاريخ آخر محاضرة غلط',
+            detail: `المحسوب: ${calcLast} | الفعلي: ${actualLast}${midnight ? ' (تعدى منتصف الليل)' : ''}`,
+            expected_date: calcLast, actual_date: actualLast,
+          });
+        }
+      }
+
+      // 4. SIDE — last session date mismatch
+      if (sideSlotDates.length > 0 && firstSideDate) {
+        const lastSideRow   = sideRows[sideRows.length - 1];
+        const actualSideLast = effectiveDate(lastSideRow.date, lastSideRow.time, lastSideRow.duration);
+        const calcSideLast   = expectedSideLast(firstSideDate);
+        if (actualSideLast !== calcSideLast) {
+          const midnight = effectiveDate(lastSideRow.date, lastSideRow.time, lastSideRow.duration) !== lastSideRow.date;
+          sideProblems.push({ ...meta, trainee_count: batch.trainee_count, first_date: firstSideDate,
+            problem_type: 'تاريخ آخر جلسة جانبية غلط',
+            detail: `المحسوب: ${calcSideLast} | الفعلي: ${actualSideLast}${midnight ? ' (تعدى منتصف الليل)' : ''}`,
+            expected_date: calcSideLast, actual_date: actualSideLast,
+          });
+        }
       }
     }
 

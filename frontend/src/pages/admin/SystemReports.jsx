@@ -1166,8 +1166,9 @@ function CodeProblemsModal({ params, onClose }) {
 
   const problemBadge = (type) => {
     const cls =
-      type === 'عدد محاضرات زيادة'    || type === 'جلسات جانبية زيادة'  ? 'bg-orange-100 text-orange-700 border-orange-200' :
-      type === 'تاريخ أول محاضرة غلط' || type === 'جلسات جانبية ناقصة'  ? 'bg-red-100 text-red-700 border-red-200' :
+      type === 'عدد محاضرات زيادة'          || type === 'جلسات جانبية زيادة'           ? 'bg-orange-100 text-orange-700 border-orange-200' :
+      type === 'تاريخ أول محاضرة غلط'        || type === 'جلسات جانبية ناقصة'           ? 'bg-red-100 text-red-700 border-red-200' :
+      type === 'تاريخ آخر محاضرة غلط'        || type === 'تاريخ آخر جلسة جانبية غلط'   ? 'bg-purple-100 text-purple-700 border-purple-200' :
       'bg-yellow-100 text-yellow-800 border-yellow-200';
     return (
       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${cls}`}>
@@ -1257,23 +1258,24 @@ function CodeProblemsModal({ params, onClose }) {
                 <span className="text-sm font-bold text-blue-800">مشاكل المحاضرات الأساسية</span>
                 <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">{filteredMain.length}</span>
               </div>
-              <table className="w-full text-sm text-right" style={{ minWidth: '820px' }}>
+              <table className="w-full text-sm text-right" style={{ minWidth: '920px' }}>
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-100">
-                    {['اسم المجموعة','نوع المشكلة','التفاصيل','القسم','المنسق'].map(h => (
+                    {['اسم المجموعة','تاريخ أول محاضرة','نوع المشكلة','التفاصيل','القسم','المنسق'].map(h => (
                       <th key={h} className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {isLoading ? <SkeletonRows cols={5} rows={5} /> :
+                  {isLoading ? <SkeletonRows cols={6} rows={5} /> :
                    !filteredMain.length
-                     ? <EmptyRow cols={5} msg="✓ لا توجد مشاكل في المحاضرات الأساسية" />
+                     ? <EmptyRow cols={6} msg="✓ لا توجد مشاكل في المحاضرات الأساسية" />
                      : filteredMain.map((p, i) => (
                        <tr key={i} className="border-b border-gray-50 hover:bg-gray-50/70 transition-colors">
-                         <td className="px-4 py-3 font-semibold text-gray-900 text-xs" style={{ maxWidth: '280px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.group_name}</td>
+                         <td className="px-4 py-3 font-semibold text-gray-900 text-xs" style={{ maxWidth: '260px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.group_name}</td>
+                         <td className="px-4 py-3 whitespace-nowrap text-xs font-mono text-gray-600">{p.first_date ?? '—'}</td>
                          <td className="px-4 py-3 whitespace-nowrap">{problemBadge(p.problem_type)}</td>
-                         <td className="px-4 py-3 text-xs text-gray-600" style={{ maxWidth: '300px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.detail}</td>
+                         <td className="px-4 py-3 text-xs text-gray-600" style={{ maxWidth: '280px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.detail}</td>
                          <td className="px-4 py-3 whitespace-nowrap"><DeptBadge dept={p.dept_type} /></td>
                          <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{p.coordinators ?? '—'}</td>
                        </tr>
@@ -1292,23 +1294,24 @@ function CodeProblemsModal({ params, onClose }) {
                 <span className="text-sm font-bold text-purple-800">مشاكل الجلسات الجانبية</span>
                 <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">{filteredSide.length}</span>
               </div>
-              <table className="w-full text-sm text-right" style={{ minWidth: '820px' }}>
+              <table className="w-full text-sm text-right" style={{ minWidth: '920px' }}>
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-100">
-                    {['اسم المجموعة','نوع المشكلة','التفاصيل','القسم','المنسق'].map(h => (
+                    {['اسم المجموعة','تاريخ أول جلسة','نوع المشكلة','التفاصيل','القسم','المنسق'].map(h => (
                       <th key={h} className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {isLoading ? <SkeletonRows cols={5} rows={5} /> :
+                  {isLoading ? <SkeletonRows cols={6} rows={5} /> :
                    !filteredSide.length
-                     ? <EmptyRow cols={5} msg="✓ لا توجد مشاكل في الجلسات الجانبية" />
+                     ? <EmptyRow cols={6} msg="✓ لا توجد مشاكل في الجلسات الجانبية" />
                      : filteredSide.map((p, i) => (
                        <tr key={i} className="border-b border-gray-50 hover:bg-gray-50/70 transition-colors">
-                         <td className="px-4 py-3 font-semibold text-gray-900 text-xs" style={{ maxWidth: '280px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.group_name}</td>
+                         <td className="px-4 py-3 font-semibold text-gray-900 text-xs" style={{ maxWidth: '260px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.group_name}</td>
+                         <td className="px-4 py-3 whitespace-nowrap text-xs font-mono text-gray-600">{p.first_date ?? '—'}</td>
                          <td className="px-4 py-3 whitespace-nowrap">{problemBadge(p.problem_type)}</td>
-                         <td className="px-4 py-3 text-xs text-gray-600" style={{ maxWidth: '300px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.detail}</td>
+                         <td className="px-4 py-3 text-xs text-gray-600" style={{ maxWidth: '280px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.detail}</td>
                          <td className="px-4 py-3 whitespace-nowrap"><DeptBadge dept={p.dept_type} /></td>
                          <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{p.coordinators ?? '—'}</td>
                        </tr>
