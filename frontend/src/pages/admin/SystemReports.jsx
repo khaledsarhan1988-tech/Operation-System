@@ -418,6 +418,15 @@ function RemarksNotesModal({ params, onClose }) {
   const [fC, setFC]   = useState({ modal_from:'', modal_to:'', modal_dept:'', assigned_to:'', category_filter:'' });
   const [afC, setAfC] = useState({});
 
+  const { data: opts } = useQuery({
+    queryKey: ['rnOpts'],
+    queryFn: () => api.get('/reports/remarks-notes-options').then(r => r.data),
+    staleTime: 10 * 60 * 1000,
+  });
+  const coordinators = opts?.coordinators ?? [];
+  const categories   = opts?.categories   ?? [];
+  const assignedTo   = opts?.assignedTo   ?? [];
+
   const applyM = () => { const c={}; Object.entries(fM).forEach(([k,v])=>{if(v&&v!=='All')c[k]=v;}); setAfM(c); setPageM(1); };
   const clearM = () => { setFM({modal_from:'',modal_to:'',modal_dept:'',coordinator:'',has_remark:''}); setAfM({}); setPageM(1); };
   const applyZ = () => { const c={}; Object.entries(fZ).forEach(([k,v])=>{if(v&&v!=='All')c[k]=v;}); setAfZ(c); setPageZ(1); };
@@ -527,7 +536,10 @@ function RemarksNotesModal({ params, onClose }) {
                 </div>
                 <div>
                   <label className={labelCls}>المنسق</label>
-                  <input value={fM.coordinator} onChange={e=>setFM(f=>({...f,coordinator:e.target.value}))} placeholder="اسم المنسق..." className={inputCls}/>
+                  <select value={fM.coordinator} onChange={e=>setFM(f=>({...f,coordinator:e.target.value}))} className={inputCls}>
+                    <option value="">الكل</option>
+                    {coordinators.map(c=><option key={c} value={c}>{c}</option>)}
+                  </select>
                 </div>
                 <div>
                   <label className={labelCls}>حالة الريمارك</label>
@@ -604,7 +616,10 @@ function RemarksNotesModal({ params, onClose }) {
                 </div>
                 <div>
                   <label className={labelCls}>المنسق</label>
-                  <input value={fZ.coordinator} onChange={e=>setFZ(f=>({...f,coordinator:e.target.value}))} placeholder="اسم المنسق..." className={inputCls}/>
+                  <select value={fZ.coordinator} onChange={e=>setFZ(f=>({...f,coordinator:e.target.value}))} className={inputCls}>
+                    <option value="">الكل</option>
+                    {coordinators.map(c=><option key={c} value={c}>{c}</option>)}
+                  </select>
                 </div>
                 <div>
                   <label className={labelCls}>حالة الجلسة</label>
@@ -685,11 +700,17 @@ function RemarksNotesModal({ params, onClose }) {
             </div>
             <div>
               <label className={labelCls}>التصنيف</label>
-              <input value={fC.category_filter} onChange={e=>setFC(f=>({...f,category_filter:e.target.value}))} placeholder="بحث في التصنيف..." className={inputCls}/>
+              <select value={fC.category_filter} onChange={e=>setFC(f=>({...f,category_filter:e.target.value}))} className={inputCls}>
+                <option value="">الكل</option>
+                {categories.map(c=><option key={c} value={c}>{c}</option>)}
+              </select>
             </div>
             <div>
               <label className={labelCls}>المسؤول</label>
-              <input value={fC.assigned_to} onChange={e=>setFC(f=>({...f,assigned_to:e.target.value}))} placeholder="اسم المسؤول..." className={inputCls}/>
+              <select value={fC.assigned_to} onChange={e=>setFC(f=>({...f,assigned_to:e.target.value}))} className={inputCls}>
+                <option value="">الكل</option>
+                {assignedTo.map(a=><option key={a} value={a}>{a}</option>)}
+              </select>
             </div>
             <div className="col-span-2 md:col-span-5 flex gap-2 justify-end">
               <button onClick={applyC} className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">تطبيق</button>

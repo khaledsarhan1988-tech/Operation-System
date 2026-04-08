@@ -683,6 +683,35 @@ router.get('/remarks-categories', (req, res) => {
   }
 });
 
+// ─── GET /api/reports/remarks-notes-options ──────────────────────────────────
+// Returns dropdown options for coordinator, category, assigned_to
+router.get('/remarks-notes-options', (req, res) => {
+  try {
+    const coordinators = db.prepare(
+      `SELECT DISTINCT TRIM(coordinators) as val FROM batches
+       WHERE coordinators IS NOT NULL AND TRIM(coordinators) != ''
+       ORDER BY val`
+    ).all().map(r => r.val);
+
+    const categories = db.prepare(
+      `SELECT DISTINCT TRIM(category) as val FROM remarks
+       WHERE category IS NOT NULL AND TRIM(category) != ''
+       ORDER BY val`
+    ).all().map(r => r.val);
+
+    const assignedTo = db.prepare(
+      `SELECT DISTINCT TRIM(assigned_to) as val FROM remarks
+       WHERE assigned_to IS NOT NULL AND TRIM(assigned_to) != ''
+       ORDER BY val`
+    ).all().map(r => r.val);
+
+    return res.json({ coordinators, categories, assignedTo });
+  } catch (err) {
+    console.error('[reports] remarks-notes-options error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/reports/group-trainees?group_name=xxx ──────────────────────────
 router.get('/group-trainees', (req, res) => {
   const { group_name } = req.query;
