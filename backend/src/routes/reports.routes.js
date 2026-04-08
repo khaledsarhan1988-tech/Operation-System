@@ -195,14 +195,24 @@ router.get('/dashboard', (req, res) => {
 
 // ─── GET /api/reports/lectures-list ──────────────────────────────────────────
 router.get('/lectures-list', (req, res) => {
-  const { from_date, to_date, department, employee, session_type = 'main', page = 1, limit = 100, search = '' } = req.query;
+  const {
+    from_date, to_date, department, employee,
+    session_type = 'main', page = 1, limit = 100,
+    search = '', trainer = '', coordinator = '',
+    modal_from = '', modal_to = '',
+  } = req.query;
   const offset = (Number(page) - 1) * Number(limit);
-  const deptFilter   = department && department !== 'All' ? ` AND b.dept_type = '${department}'` : '';
-  const empFilter    = employee ? ` AND b.coordinators LIKE '%${employee}%'` : '';
-  const searchFilter = search   ? ` AND l.group_name LIKE '%${search}%'` : '';
-  const dateFilter   = from_date && to_date ? ` AND l.date BETWEEN '${from_date}' AND '${to_date}'`
-                     : from_date ? ` AND l.date >= '${from_date}'`
-                     : to_date   ? ` AND l.date <= '${to_date}'` : '';
+  const deptFilter        = department && department !== 'All' ? ` AND b.dept_type = '${department}'` : '';
+  const empFilter         = employee    ? ` AND b.coordinators LIKE '%${employee}%'` : '';
+  const searchFilter      = search      ? ` AND l.group_name LIKE '%${search}%'` : '';
+  const trainerFilter     = trainer     ? ` AND l.trainer LIKE '%${trainer}%'` : '';
+  const coordFilter       = coordinator ? ` AND b.coordinators LIKE '%${coordinator}%'` : '';
+  // Modal date overrides outer date if provided
+  const activFrom  = modal_from || from_date;
+  const activTo    = modal_to   || to_date;
+  const dateFilter = activFrom && activTo ? ` AND l.date BETWEEN '${activFrom}' AND '${activTo}'`
+                   : activFrom ? ` AND l.date >= '${activFrom}'`
+                   : activTo   ? ` AND l.date <= '${activTo}'` : '';
 
   // For side sessions: add onboarding/offboarding counts per group
   const sideExtraFields = session_type === 'side' ? `,
@@ -215,18 +225,20 @@ router.get('/lectures-list', (req, res) => {
        AND lx.session_type = 'side'
        AND lx.side_session_category = 'offboarding') AS offboarding_count` : '';
 
+  const allFilters = `${dateFilter}${deptFilter}${empFilter}${trainerFilter}${coordFilter}${searchFilter}`;
+
   try {
     const totalRow = db.prepare(
       `SELECT COUNT(*) as cnt FROM lectures l
        LEFT JOIN batches b ON l.group_name = b.group_name
-       WHERE l.session_type = '${session_type}'${dateFilter}${deptFilter}${empFilter}${searchFilter}`
+       WHERE l.session_type = '${session_type}'${allFilters}`
     ).get();
 
     const rows = db.prepare(
       `SELECT l.*, b.dept_type, b.coordinators, b.lecture_duration_min${sideExtraFields}
        FROM lectures l
        LEFT JOIN batches b ON l.group_name = b.group_name
-       WHERE l.session_type = '${session_type}'${dateFilter}${deptFilter}${empFilter}${searchFilter}
+       WHERE l.session_type = '${session_type}'${allFilters}
        ORDER BY l.date DESC LIMIT ${Number(limit)} OFFSET ${offset}`
     ).all();
 

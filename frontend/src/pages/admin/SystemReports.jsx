@@ -392,19 +392,35 @@ function GroupsModal({ title, groups, allUsers = [], onClose }) {
 }
 
 // ─── LIST MODAL ───────────────────────────────────────────────────────────────
-function ListModal({ title, endpoint, params, columns, onClose }) {
-  const [page, setPage]               = useState(1);
-  const [search, setSearch]           = useState('');
-  const [appliedSearch, setApplied]   = useState('');
+function ListModal({ title, endpoint, params, columns, onClose, extraFilters = false }) {
+  const [page, setPage]             = useState(1);
+  const [search, setSearch]         = useState('');
+  const [appliedSearch, setApplied] = useState('');
+
+  // Extra filters (trainer, coordinator, date)
+  const [modalF, setModalF]   = useState({ trainer: '', coordinator: '', modal_from: '', modal_to: '' });
+  const [appliedMF, setAppMF] = useState({});
   const LIMIT = 100;
 
+  const allParams = { ...params, page, limit: LIMIT, search: appliedSearch, ...appliedMF };
+
   const { data, isLoading } = useQuery({
-    queryKey: [endpoint, params, page, appliedSearch],
-    queryFn: () => api.get(endpoint, { params: { ...params, page, limit: LIMIT, search: appliedSearch } }).then(r => r.data),
+    queryKey: [endpoint, params, page, appliedSearch, appliedMF],
+    queryFn: () => api.get(endpoint, { params: allParams }).then(r => r.data),
   });
 
-  const handleSearch = (e) => { e.preventDefault(); setPage(1); setApplied(search); };
-  const handleClear  = ()    => { setSearch(''); setApplied(''); setPage(1); };
+  const handleSearch = (e) => {
+    e.preventDefault();
+    setPage(1);
+    setApplied(search);
+    setAppMF(Object.fromEntries(Object.entries(modalF).filter(([, v]) => v !== '')));
+  };
+  const handleClear = () => {
+    setSearch(''); setApplied('');
+    setModalF({ trainer: '', coordinator: '', modal_from: '', modal_to: '' });
+    setAppMF({});
+    setPage(1);
+  };
 
   const totalPages = data ? Math.ceil(data.total / LIMIT) : 1;
 
@@ -474,23 +490,62 @@ function ListModal({ title, endpoint, params, columns, onClose }) {
               <X size={18} className="text-gray-600" />
             </button>
           </div>
-          <form onSubmit={handleSearch} className="flex gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input type="text" value={search} onChange={e => setSearch(e.target.value)}
-                placeholder="بحث باسم المجموعة..."
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl pr-10 pl-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
-              />
-            </div>
-            <button type="submit"
-              className="px-5 py-2.5 bg-[#1e3a5f] text-white rounded-xl text-sm font-semibold hover:bg-[#15294a] transition-all">
-              بحث
-            </button>
-            {appliedSearch && (
-              <button type="button" onClick={handleClear}
-                className="px-4 py-2.5 bg-gray-100 text-gray-600 rounded-xl text-sm font-medium hover:bg-gray-200 transition-all">
-                مسح
+          <form onSubmit={handleSearch} className="space-y-3">
+            {/* Search bar */}
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input type="text" value={search} onChange={e => setSearch(e.target.value)}
+                  placeholder="بحث باسم المجموعة..."
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl pr-10 pl-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
+                />
+              </div>
+              <button type="submit"
+                className="px-5 py-2.5 bg-[#1e3a5f] text-white rounded-xl text-sm font-semibold hover:bg-[#15294a] transition-all whitespace-nowrap">
+                بحث
               </button>
+              {(appliedSearch || Object.keys(appliedMF).length > 0) && (
+                <button type="button" onClick={handleClear}
+                  className="px-4 py-2.5 bg-gray-100 text-gray-600 rounded-xl text-sm font-medium hover:bg-gray-200 transition-all whitespace-nowrap">
+                  مسح الكل
+                </button>
+              )}
+            </div>
+
+            {/* Extra filters row — trainer / coordinator / date */}
+            {extraFilters && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 pt-1">
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1 font-medium">المدرب</label>
+                  <input type="text" value={modalF.trainer}
+                    onChange={e => setModalF(f => ({ ...f, trainer: e.target.value }))}
+                    placeholder="اسم المدرب..."
+                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1 font-medium">المنسق</label>
+                  <input type="text" value={modalF.coordinator}
+                    onChange={e => setModalF(f => ({ ...f, coordinator: e.target.value }))}
+                    placeholder="اسم المنسق..."
+                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1 font-medium">من تاريخ</label>
+                  <input type="date" value={modalF.modal_from}
+                    onChange={e => setModalF(f => ({ ...f, modal_from: e.target.value }))}
+                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1 font-medium">إلى تاريخ</label>
+                  <input type="date" value={modalF.modal_to}
+                    onChange={e => setModalF(f => ({ ...f, modal_to: e.target.value }))}
+                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
+                  />
+                </div>
+              </div>
             )}
           </form>
         </div>
@@ -720,6 +775,7 @@ export default function SystemReports() {
               title: 'المحاضرات الأساسية',
               endpoint: '/reports/lectures-list',
               params: { session_type: 'main', ...applied },
+              extraFilters: true,
               columns: [
                 { key: 'group_name',          label: 'المجموعة',    noWrap: true },
                 { key: 'date',                label: 'التاريخ',     type: 'date' },
@@ -1015,6 +1071,7 @@ export default function SystemReports() {
           endpoint={listModal.endpoint}
           params={listModal.params}
           columns={listModal.columns}
+          extraFilters={listModal.extraFilters ?? false}
           onClose={() => setListModal(null)}
         />
       )}
