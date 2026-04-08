@@ -507,22 +507,24 @@ router.get('/remarks-notes-main', (req, res) => {
     AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
     ${dateFilter}${deptFilter}${empFilter}${coordFilter}${searchFilter}`;
 
-  // has_remark filter needs the JOIN result — wrap in subquery
+  // Pre-deduplicate remarks: one row per phone+date to avoid duplicate rows in JOIN
   const innerQ = `
     SELECT a.id, a.student_name, a.phone AS student_phone, a.group_name, a.date AS absence_date,
       b.coordinators, b.dept_type,
       date(a.date, '+1 day') AS expected_remark_date,
       r.id AS remark_id, r.details AS remark_details, r.added_at AS remark_date,
       r.assigned_to, r.status AS remark_status,
-      CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END AS has_remark,
-      r.id AS r_check_id
+      CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END AS has_remark
     FROM absent_students a
     LEFT JOIN batches b ON a.group_name = b.group_name
-    LEFT JOIN remarks r
-      ON r.client_phone = a.phone
-      AND r.category = 'Attendance Main Session'
-      AND date(substr(r.added_at,7,4)||'-'||substr(r.added_at,4,2)||'-'||substr(r.added_at,1,2))
-          = date(a.date, '+1 day')
+    LEFT JOIN (
+      SELECT client_phone,
+        date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2)) AS rdate,
+        MAX(id) AS id, MAX(details) AS details, MAX(added_at) AS added_at,
+        MAX(assigned_to) AS assigned_to, MAX(status) AS status
+      FROM remarks WHERE category = 'Attendance Main Session'
+      GROUP BY client_phone, date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2))
+    ) r ON r.client_phone = a.phone AND r.rdate = date(a.date, '+1 day')
     ${baseWhere}`;
 
   // For has_remark filter, we need to filter after the LEFT JOIN
@@ -575,6 +577,7 @@ router.get('/remarks-notes-zoom', (req, res) => {
   const baseWhere = `WHERE r.category = 'Attendance Zoom Call'
     ${dateFilter}${deptFilter}${empFilter}${coordFilter}${searchFilter}`;
 
+  // Deduplicate clients: one row per phone to avoid multiplication when client is in multiple groups
   const innerQ = `
     SELECT r.id, r.client_name, r.client_phone, r.details AS remark_details,
       r.added_at AS remark_date, r.assigned_to, r.status AS remark_status,
@@ -583,7 +586,8 @@ router.get('/remarks-notes-zoom', (req, res) => {
       l.id AS session_id, l.date AS session_date,
       CASE WHEN l.id IS NOT NULL THEN 1 ELSE 0 END AS has_session
     FROM remarks r
-    LEFT JOIN clients c ON c.phone = r.client_phone
+    LEFT JOIN (SELECT phone, MIN(group_name) AS group_name FROM clients GROUP BY phone) c
+      ON c.phone = r.client_phone
     LEFT JOIN batches b ON b.group_name = c.group_name
     LEFT JOIN lectures l
       ON l.group_name = c.group_name
