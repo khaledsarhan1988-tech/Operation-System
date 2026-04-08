@@ -67,10 +67,12 @@ initDb().then(db => {
     console.log('dept_type Private migration:', e.message);
   }
 
-  // Create team_members table (migration)
+  // Create / migrate team_members table
   try {
+    // Always recreate with updated CHECK (SQLite can't ALTER CHECK constraints)
+    // Use temp table → copy data → drop old → rename
     db._raw.run(`
-      CREATE TABLE IF NOT EXISTS team_members (
+      CREATE TABLE IF NOT EXISTS team_members_new (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         name        TEXT NOT NULL,
         department  TEXT NOT NULL,
@@ -84,8 +86,14 @@ initDb().then(db => {
         created_at  TEXT NOT NULL DEFAULT (datetime('now'))
       )
     `);
+    // Copy existing data if old table exists
+    try {
+      db._raw.run(`INSERT OR IGNORE INTO team_members_new SELECT * FROM team_members`);
+      db._raw.run(`DROP TABLE IF EXISTS team_members`);
+    } catch(_) {}
+    db._raw.run(`ALTER TABLE team_members_new RENAME TO team_members`);
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_team_dept_section ON team_members(department, section)`);
-    console.log('✅ Migration: team_members table ready');
+    console.log('✅ Migration: team_members table ready (section constraint updated)');
   } catch(e) {
     console.log('team_members migration:', e.message);
   }
