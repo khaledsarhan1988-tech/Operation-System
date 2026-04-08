@@ -1133,10 +1133,11 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
 // ─── CODE PROBLEMS MODAL ──────────────────────────────────────────────────────
 // ─── STATUS CONFIG ────────────────────────────────────────────────────────────
 const STATUS_CFG = {
-  new:         { label: 'جديد',        emoji: '🆕', dot: 'bg-red-500',    badge: 'bg-red-100 text-red-700 border-red-200',       btn: 'hover:bg-red-50 hover:border-red-300'    },
-  reported:    { label: 'تم الإبلاغ',  emoji: '📨', dot: 'bg-blue-500',   badge: 'bg-blue-100 text-blue-700 border-blue-200',    btn: 'hover:bg-blue-50 hover:border-blue-300'  },
-  in_progress: { label: 'قيد الحل',    emoji: '⏳', dot: 'bg-amber-500',  badge: 'bg-amber-100 text-amber-700 border-amber-200', btn: 'hover:bg-amber-50 hover:border-amber-300'},
-  exception:   { label: 'استثناء',     emoji: '🔕', dot: 'bg-slate-400',  badge: 'bg-slate-100 text-slate-600 border-slate-200', btn: 'hover:bg-slate-50 hover:border-slate-300'},
+  new:         { label: 'جديد',        emoji: '🆕', dot: 'bg-red-500',     badge: 'bg-red-100 text-red-700 border-red-200',         btn: 'hover:bg-red-50 hover:border-red-300'      },
+  reported:    { label: 'تم الإبلاغ',  emoji: '📨', dot: 'bg-blue-500',    badge: 'bg-blue-100 text-blue-700 border-blue-200',      btn: 'hover:bg-blue-50 hover:border-blue-300'    },
+  in_progress: { label: 'قيد الحل',    emoji: '⏳', dot: 'bg-amber-500',   badge: 'bg-amber-100 text-amber-700 border-amber-200',   btn: 'hover:bg-amber-50 hover:border-amber-300'  },
+  wont_repeat: { label: 'لن تتكرر',    emoji: '✋', dot: 'bg-emerald-500', badge: 'bg-emerald-100 text-emerald-700 border-emerald-200', btn: 'hover:bg-emerald-50 hover:border-emerald-300' },
+  exception:   { label: 'استثناء',     emoji: '🔕', dot: 'bg-slate-400',   badge: 'bg-slate-100 text-slate-600 border-slate-200',   btn: 'hover:bg-slate-50 hover:border-slate-300'  },
 };
 
 function CodeProblemsModal({ params, onClose }) {
@@ -1283,9 +1284,10 @@ function CodeProblemsModal({ params, onClose }) {
           {isLoading || statusLoading ? <SkeletonRows cols={7} rows={5} /> :
            !rows.length ? <EmptyRow cols={7} msg="✓ لا توجد مشاكل" /> :
            rows.map((p, i) => {
-             const rowBg = getStatusKey(p) === 'exception' ? 'bg-slate-50/50' :
-                           getStatusKey(p) === 'in_progress' ? 'bg-amber-50/30' :
-                           getStatusKey(p) === 'reported' ? 'bg-blue-50/20' : '';
+             const rowBg = getStatusKey(p) === 'exception'   ? 'bg-slate-50/50'   :
+                           getStatusKey(p) === 'wont_repeat'  ? 'bg-emerald-50/30' :
+                           getStatusKey(p) === 'in_progress'  ? 'bg-amber-50/30'   :
+                           getStatusKey(p) === 'reported'     ? 'bg-blue-50/20'    : '';
              return (
                <tr key={i} className={`border-b border-gray-50 hover:bg-gray-50/60 transition-colors ${rowBg}`}>
                  <td className="px-4 py-3 font-semibold text-gray-900 text-xs" style={{ maxWidth: '240px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.group_name}</td>

@@ -1057,7 +1057,7 @@ router.put('/problem-status', (req, res) => {
   const { group_name, problem_type, session_type = 'main', status, note } = req.body;
   if (!group_name || !problem_type || !status)
     return res.status(400).json({ error: 'group_name, problem_type, status required' });
-  const validStatuses = ['new', 'reported', 'in_progress', 'exception'];
+  const validStatuses = ['new', 'reported', 'in_progress', 'exception', 'wont_repeat'];
   if (!validStatuses.includes(status))
     return res.status(400).json({ error: 'Invalid status' });
   try {
