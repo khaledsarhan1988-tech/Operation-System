@@ -432,6 +432,31 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
 
   const totalPages = data ? Math.ceil(data.total / LIMIT) : 1;
 
+  function CopyBadge({ val }) {
+    const [copied, setCopied] = React.useState(false);
+    const handleCopy = () => {
+      navigator.clipboard.writeText(val).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      });
+    };
+    return (
+      <span
+        onClick={handleCopy}
+        title="اضغط للنسخ"
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-semibold cursor-pointer select-all transition-all duration-150"
+        style={{
+          minWidth: '140px', maxWidth: '220px', overflowWrap: 'anywhere', whiteSpace: 'normal',
+          background: copied ? '#d1fae5' : '#ecfdf5',
+          color: copied ? '#065f46' : '#065f46',
+          border: copied ? '1px solid #6ee7b7' : '1px solid #a7f3d0',
+        }}
+      >
+        {copied ? '✅ تم النسخ!' : `✓ ${val}`}
+      </span>
+    );
+  }
+
   const renderCell = (row, col) => {
     const val = row[col.key];
     if (col.type === 'date') return fmtDate(val);
@@ -505,9 +530,7 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
       </div>
     ) : <span className="text-gray-300">—</span>;
     if (col.type === 'active_group') return val ? (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-semibold bg-emerald-100 text-emerald-700" style={{ minWidth: '140px', maxWidth: '220px', overflowWrap: 'anywhere', whiteSpace: 'normal' }}>
-        ✓ {val}
-      </span>
+      <CopyBadge val={val} />
     ) : <span className="text-gray-300 text-xs">—</span>;
     if (col.type === 'phone') return val ? (
       <span className="font-mono text-xs text-blue-600 font-medium">{val}</span>
