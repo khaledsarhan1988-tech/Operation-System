@@ -67,6 +67,21 @@ initDb().then(db => {
     console.log('dept_type Private migration:', e.message);
   }
 
+  // Add composite performance indexes (safe — IF NOT EXISTS)
+  const perfIndexes = [
+    `CREATE INDEX IF NOT EXISTS idx_lectures_type_date  ON lectures(session_type, date)`,
+    `CREATE INDEX IF NOT EXISTS idx_lectures_type_group ON lectures(session_type, group_name)`,
+    `CREATE INDEX IF NOT EXISTS idx_lectures_group_cat  ON lectures(group_name, session_type, side_session_category)`,
+    `CREATE INDEX IF NOT EXISTS idx_batches_status_end  ON batches(status, end_date)`,
+    `CREATE INDEX IF NOT EXISTS idx_batches_status_sched ON batches(status, scheduled_lectures, completed_lectures)`,
+    `CREATE INDEX IF NOT EXISTS idx_remarks_status_date ON remarks(status, added_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_clients_phone_group ON clients(phone, group_name)`,
+  ];
+  perfIndexes.forEach(sql => {
+    try { db._raw.run(sql); } catch(e) { /* already exists */ }
+  });
+  console.log('✅ Performance indexes applied');
+
   // Create admin user
   const username = process.env.ADMIN_USERNAME || 'admin';
   const password = process.env.ADMIN_PASSWORD || 'Admin@2024';

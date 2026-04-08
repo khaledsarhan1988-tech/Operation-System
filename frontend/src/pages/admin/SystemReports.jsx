@@ -211,11 +211,15 @@ function GroupsModal({ title, groups, allUsers = [], onClose }) {
     queryKey: ['group-lectures', expandedGroup],
     queryFn: () => api.get('/reports/group-lectures', { params: { group_name: expandedGroup } }).then(r => r.data),
     enabled: !!expandedGroup,
+    staleTime: 5 * 60 * 1000,
+    gcTime:    15 * 60 * 1000,
   });
   const { data: traineesData, isLoading: traineesLoading } = useQuery({
     queryKey: ['group-trainees', traineesGroup],
     queryFn: () => api.get('/reports/group-trainees', { params: { group_name: traineesGroup } }).then(r => r.data),
     enabled: !!traineesGroup,
+    staleTime: 5 * 60 * 1000,
+    gcTime:    15 * 60 * 1000,
   });
 
   const hasLectures = (g) => (g.scheduled_lectures ?? 0) > 0 || (g.completed_lectures ?? 0) > 0;
@@ -413,6 +417,8 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
   const { data, isLoading } = useQuery({
     queryKey: [endpoint, params, page, appliedSearch, appliedMF],
     queryFn: () => api.get(endpoint, { params: allParams }).then(r => r.data),
+    staleTime: 2 * 60 * 1000,   // 2 min — don't re-fetch if data is fresh
+    gcTime:    5 * 60 * 1000,   // keep in cache 5 min
   });
 
   const handleSearch = (e) => {
@@ -749,10 +755,14 @@ export default function SystemReports() {
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['reports', applied],
     queryFn: () => api.get('/reports/dashboard', { params: applied }).then(r => r.data),
+    staleTime: 3 * 60 * 1000,   // 3 min — dashboard stays fresh
+    gcTime:    10 * 60 * 1000,  // keep in cache 10 min
   });
   const { data: usersData } = useQuery({
     queryKey: ['users-agents'],
     queryFn: () => api.get('/admin/users').then(r => r.data),
+    staleTime: 10 * 60 * 1000,  // 10 min — users list rarely changes
+    gcTime:    30 * 60 * 1000,
   });
   const agents = (usersData ?? []).filter(u => u.role === 'agent');
   const kpis = data?.kpis ?? {};

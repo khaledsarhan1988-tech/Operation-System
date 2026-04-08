@@ -76,10 +76,14 @@ CREATE TABLE IF NOT EXISTS batches (
   lecture_duration_min INTEGER,  -- 90=General, 60=Private/Semi
   synced_at            TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_batches_group        ON batches(group_name);
-CREATE INDEX IF NOT EXISTS idx_batches_status       ON batches(status);
-CREATE INDEX IF NOT EXISTS idx_batches_coordinators ON batches(coordinators);
-CREATE INDEX IF NOT EXISTS idx_batches_external     ON batches(external_id);
+CREATE INDEX IF NOT EXISTS idx_batches_group          ON batches(group_name);
+CREATE INDEX IF NOT EXISTS idx_batches_status         ON batches(status);
+CREATE INDEX IF NOT EXISTS idx_batches_coordinators   ON batches(coordinators);
+CREATE INDEX IF NOT EXISTS idx_batches_external       ON batches(external_id);
+-- Composite: expired groups query (status + end_date)
+CREATE INDEX IF NOT EXISTS idx_batches_status_end     ON batches(status, end_date);
+-- Composite: lecture errors query (status + scheduled vs completed)
+CREATE INDEX IF NOT EXISTS idx_batches_status_sched   ON batches(status, scheduled_lectures, completed_lectures);
 
 -- =============================================
 -- REMARKS (from Remarks.xlsx)
@@ -105,13 +109,15 @@ CREATE TABLE IF NOT EXISTS remarks (
   resolved_at   TEXT,
   synced_at     TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_remarks_external  ON remarks(external_id);
-CREATE INDEX IF NOT EXISTS idx_remarks_assigned  ON remarks(assigned_to COLLATE NOCASE);
-CREATE INDEX IF NOT EXISTS idx_remarks_status    ON remarks(status);
-CREATE INDEX IF NOT EXISTS idx_remarks_client    ON remarks(client_name COLLATE NOCASE);
-CREATE INDEX IF NOT EXISTS idx_remarks_phone     ON remarks(client_phone);
-CREATE INDEX IF NOT EXISTS idx_remarks_priority  ON remarks(priority);
-CREATE INDEX IF NOT EXISTS idx_remarks_added_at  ON remarks(added_at);
+CREATE INDEX IF NOT EXISTS idx_remarks_external    ON remarks(external_id);
+CREATE INDEX IF NOT EXISTS idx_remarks_assigned    ON remarks(assigned_to COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_remarks_status      ON remarks(status);
+CREATE INDEX IF NOT EXISTS idx_remarks_client      ON remarks(client_name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_remarks_phone       ON remarks(client_phone);
+CREATE INDEX IF NOT EXISTS idx_remarks_priority    ON remarks(priority);
+CREATE INDEX IF NOT EXISTS idx_remarks_added_at    ON remarks(added_at);
+-- Composite: open remarks filter (status + added_at for date range)
+CREATE INDEX IF NOT EXISTS idx_remarks_status_date ON remarks(status, added_at);
 
 -- =============================================
 -- LECTURES (from Lectures.xlsx + Side Session.xlsx combined)
@@ -130,10 +136,14 @@ CREATE TABLE IF NOT EXISTS lectures (
   side_session_category TEXT,  -- 'onboarding'|'regular'|'offboarding'|'compensatory'|NULL
   synced_at             TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_lectures_group  ON lectures(group_name);
-CREATE INDEX IF NOT EXISTS idx_lectures_date   ON lectures(date);
-CREATE INDEX IF NOT EXISTS idx_lectures_type   ON lectures(session_type);
-CREATE INDEX IF NOT EXISTS idx_lectures_status ON lectures(status);
+CREATE INDEX IF NOT EXISTS idx_lectures_group      ON lectures(group_name);
+CREATE INDEX IF NOT EXISTS idx_lectures_date       ON lectures(date);
+CREATE INDEX IF NOT EXISTS idx_lectures_type       ON lectures(session_type);
+CREATE INDEX IF NOT EXISTS idx_lectures_status     ON lectures(status);
+-- Composite indexes for common multi-column queries
+CREATE INDEX IF NOT EXISTS idx_lectures_type_date  ON lectures(session_type, date);
+CREATE INDEX IF NOT EXISTS idx_lectures_type_group ON lectures(session_type, group_name);
+CREATE INDEX IF NOT EXISTS idx_lectures_group_cat  ON lectures(group_name, session_type, side_session_category);
 
 -- =============================================
 -- ABSENT STUDENTS (from Absent Student.xlsx)

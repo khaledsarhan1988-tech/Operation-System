@@ -112,31 +112,41 @@ router.get('/dashboard', (req, res) => {
        )`
     ).get();
 
-    // 7. Open remarks
+    // 7. Open remarks — count only for KPI, limited list for dashboard table
+    const openRemarksCount = db.prepare(
+      `SELECT COUNT(*) as cnt FROM remarks
+       WHERE LOWER(status) NOT IN ('closed','مغلق','resolved')
+       ${buildDateFilter('remarks.added_at', from_date, to_date)}
+       ${empRemark}${deptRemark}`
+    ).get();
+
     const openRemarksList = db.prepare(
-      `SELECT * FROM remarks
+      `SELECT id, client_name, client_phone, details, category, status, priority, assigned_to, added_at, last_updated
+       FROM remarks
        WHERE LOWER(status) NOT IN ('closed','مغلق','resolved')
        ${buildDateFilter('remarks.added_at', from_date, to_date)}
        ${empRemark}${deptRemark}
-       ORDER BY added_at DESC`
+       ORDER BY added_at DESC
+       LIMIT 150`
     ).all();
 
-    // 8a. Remarks errors (open >= 3 hours)
+    // 8a. Remarks errors (open >= 3 hours) — limited to 200 rows
     const remarksErrors = db.prepare(
-      `SELECT *,
+      `SELECT id, client_name, client_phone, status, assigned_to, added_at, last_updated,
          ROUND((julianday('now') - julianday(added_at)) * 24, 1) as hours_open,
          CASE
-           WHEN ROUND((julianday('now') - julianday(added_at)) * 24, 1) BETWEEN 3 AND 24 THEN 'urgent'
-           WHEN ROUND((julianday('now') - julianday(added_at)) * 24, 1) BETWEEN 24 AND 48 THEN 'important'
-           WHEN ROUND((julianday('now') - julianday(added_at)) * 24, 1) BETWEEN 48 AND 72 THEN 'normal'
-           WHEN ROUND((julianday('now') - julianday(added_at)) * 24, 1) > 72 THEN 'overdue'
+           WHEN ROUND((julianday('now') - julianday(added_at)) * 24, 1) > 72  THEN 'overdue'
+           WHEN ROUND((julianday('now') - julianday(added_at)) * 24, 1) > 48  THEN 'normal'
+           WHEN ROUND((julianday('now') - julianday(added_at)) * 24, 1) > 24  THEN 'important'
+           WHEN ROUND((julianday('now') - julianday(added_at)) * 24, 1) >= 3  THEN 'urgent'
            ELSE 'ok'
          END as urgency_level
        FROM remarks
        WHERE LOWER(status) NOT IN ('closed','مغلق','resolved')
          AND ROUND((julianday('now') - julianday(added_at)) * 24, 1) >= 3
          ${deptRemark}
-       ORDER BY hours_open DESC`
+       ORDER BY hours_open DESC
+       LIMIT 200`
     ).all();
 
     // 8b. Lectures errors (completed < scheduled)
@@ -174,7 +184,7 @@ router.get('/dashboard', (req, res) => {
         side_sessions:         sideLecturesRow?.cnt ?? 0,
         absent_main:           absentMainRow?.cnt ?? 0,
         absent_side:           absentSideRow?.cnt ?? 0,
-        open_remarks:          openRemarksList.length,
+        open_remarks:          openRemarksCount?.cnt ?? 0,
       },
       active_groups_list:     activeGroupsList,
       waiting_trainees_list:  waitingTraineesList,
@@ -214,18 +224,21 @@ router.get('/lectures-list', (req, res) => {
                    : activFrom ? ` AND l.date >= '${activFrom}'`
                    : activTo   ? ` AND l.date <= '${activTo}'` : '';
 
-  // For side sessions: add onboarding/offboarding counts per group
-  const sideExtraFields = session_type === 'side' ? `,
-    (SELECT COUNT(*) FROM lectures lx
-     WHERE lx.group_name = l.group_name
-       AND lx.session_type = 'side'
-       AND lx.side_session_category = 'onboarding') AS onboarding_count,
-    (SELECT COUNT(*) FROM lectures lx
-     WHERE lx.group_name = l.group_name
-       AND lx.session_type = 'side'
-       AND lx.side_session_category = 'offboarding') AS offboarding_count` : '';
-
   const allFilters = `${dateFilter}${deptFilter}${empFilter}${trainerFilter}${coordFilter}${searchFilter}`;
+
+  // For side sessions: pre-aggregate onboarding/offboarding per group (one JOIN instead of N subqueries)
+  const sideJoin = session_type === 'side'
+    ? `LEFT JOIN (
+         SELECT group_name,
+           SUM(CASE WHEN side_session_category='onboarding'  THEN 1 ELSE 0 END) AS onboarding_count,
+           SUM(CASE WHEN side_session_category='offboarding' THEN 1 ELSE 0 END) AS offboarding_count
+         FROM lectures WHERE session_type='side'
+         GROUP BY group_name
+       ) lx_counts ON lx_counts.group_name = l.group_name`
+    : '';
+  const sideExtraFields = session_type === 'side'
+    ? `, COALESCE(lx_counts.onboarding_count,0) AS onboarding_count, COALESCE(lx_counts.offboarding_count,0) AS offboarding_count`
+    : '';
 
   try {
     const totalRow = db.prepare(
@@ -238,6 +251,7 @@ router.get('/lectures-list', (req, res) => {
       `SELECT l.*, b.dept_type, b.coordinators, b.lecture_duration_min${sideExtraFields}
        FROM lectures l
        LEFT JOIN batches b ON l.group_name = b.group_name
+       ${sideJoin}
        WHERE l.session_type = '${session_type}'${allFilters}
        ORDER BY l.date DESC LIMIT ${Number(limit)} OFFSET ${offset}`
     ).all();
@@ -404,42 +418,48 @@ router.get('/remarks-list', (req, res) => {
 
   // added_at is stored as "DD/MM/YYYY, HH:MM AM/PM"
   // Convert to YYYY-MM-DD for date comparison with batches.start_date / end_date
-  const dateConvert = `(substr(remarks.added_at,7,4) || '-' || substr(remarks.added_at,4,2) || '-' || substr(remarks.added_at,1,2))`;
-
-  const activeGroupSubquery = `
-    (SELECT b2.group_name
-     FROM clients c2
-     INNER JOIN batches b2 ON c2.group_name = b2.group_name
-     WHERE c2.phone = remarks.client_phone
-       AND b2.status = 'نشطة'
-       AND b2.start_date IS NOT NULL AND b2.start_date != ''
-       AND b2.end_date   IS NOT NULL AND b2.end_date   != ''
-       AND b2.start_date <= ${dateConvert}
-       AND b2.end_date   >= ${dateConvert}
-     LIMIT 1) AS active_group`;
+  const dateConvert = `(substr(r.added_at,7,4) || '-' || substr(r.added_at,4,2) || '-' || substr(r.added_at,1,2))`;
 
   const baseWhere = `WHERE LOWER(remarks.status) NOT IN ('closed','مغلق','resolved')
     ${dateFilter}${empFilter}${assignFilter}${priorityFilter}${categoryFilter}${statusFilter}${deptFilter}${searchFilter}`;
 
+  // Use CTE to pre-compute active batches per phone — avoids N+1 correlated subquery
+  const withCte = `
+    WITH active_batches AS (
+      SELECT c.phone, b.group_name, b.start_date, b.end_date
+      FROM clients c
+      INNER JOIN batches b ON c.group_name = b.group_name
+      WHERE b.status = 'نشطة'
+        AND b.start_date IS NOT NULL AND b.start_date != ''
+        AND b.end_date   IS NOT NULL AND b.end_date   != ''
+    )`;
+
+  const baseWhereR = baseWhere.replace(/\bremarks\b/g, 'r');
+
   try {
     const totalRow = db.prepare(
-      `SELECT COUNT(*) as cnt FROM remarks ${baseWhere}`
+      `SELECT COUNT(*) as cnt FROM remarks r ${baseWhereR}`
     ).get();
 
     const rows = db.prepare(
-      `SELECT remarks.*,
-         ROUND((julianday('now') - julianday(added_at)) * 24, 1) AS hours_open,
+      `${withCte}
+       SELECT r.*,
+         ROUND((julianday('now') - julianday(r.added_at)) * 24, 1) AS hours_open,
          CASE
-           WHEN ROUND((julianday('now') - julianday(added_at)) * 24, 1) > 72  THEN 'overdue'
-           WHEN ROUND((julianday('now') - julianday(added_at)) * 24, 1) > 48  THEN 'normal'
-           WHEN ROUND((julianday('now') - julianday(added_at)) * 24, 1) > 24  THEN 'important'
-           WHEN ROUND((julianday('now') - julianday(added_at)) * 24, 1) >= 3  THEN 'urgent'
+           WHEN ROUND((julianday('now') - julianday(r.added_at)) * 24, 1) > 72  THEN 'overdue'
+           WHEN ROUND((julianday('now') - julianday(r.added_at)) * 24, 1) > 48  THEN 'normal'
+           WHEN ROUND((julianday('now') - julianday(r.added_at)) * 24, 1) > 24  THEN 'important'
+           WHEN ROUND((julianday('now') - julianday(r.added_at)) * 24, 1) >= 3  THEN 'urgent'
            ELSE 'ok'
          END AS urgency_level,
-         ${activeGroupSubquery}
-       FROM remarks
-       ${baseWhere}
-       ORDER BY added_at DESC
+         (SELECT ab.group_name FROM active_batches ab
+          WHERE ab.phone = r.client_phone
+            AND ab.start_date <= ${dateConvert}
+            AND ab.end_date   >= ${dateConvert}
+          LIMIT 1) AS active_group
+       FROM remarks r
+       ${baseWhereR}
+       ORDER BY r.added_at DESC
        LIMIT ${Number(limit)} OFFSET ${offset}`
     ).all();
 
