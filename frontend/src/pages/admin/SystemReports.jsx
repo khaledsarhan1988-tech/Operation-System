@@ -1335,6 +1335,170 @@ function CodeProblemsModal({ params, onClose }) {
   );
 }
 
+// ─── TEAM SUMMARY SECTION ─────────────────────────────────────────────────────
+const DEPT_META = {
+  customer_services: { label: 'إدارة خدمة العملاء', gradient: 'from-blue-600 to-blue-500',   dot: 'bg-blue-500'   },
+  appointments:      { label: 'إدارة المواعيد',      gradient: 'from-orange-500 to-amber-400', dot: 'bg-orange-500' },
+};
+const SECTION_LABELS = {
+  all: 'الكل', general: 'عام', private: 'خاص', semi: 'شبه خاص', phone_call: 'فون كول',
+};
+
+function MetricCell({ value, warnColor = 'red', label }) {
+  const isOk = (value ?? 0) === 0;
+  const colorMap = {
+    red:    'bg-red-100 text-red-800 border-red-200',
+    orange: 'bg-orange-100 text-orange-800 border-orange-200',
+    amber:  'bg-amber-100 text-amber-800 border-amber-200',
+    purple: 'bg-purple-100 text-purple-800 border-purple-200',
+    slate:  'bg-slate-100 text-slate-700 border-slate-200',
+  };
+  const cls = isOk ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : colorMap[warnColor];
+  return (
+    <td className="px-3 py-2.5 text-center">
+      <span className={`inline-flex items-center justify-center min-w-[36px] px-2.5 py-0.5 rounded-full text-xs font-black border ${cls}`}
+        title={label}>
+        {value ?? 0}
+      </span>
+    </td>
+  );
+}
+
+function TeamSummarySection({ data, loading }) {
+  const byDept = {};
+  (data ?? []).forEach(m => {
+    if (!byDept[m.department]) byDept[m.department] = [];
+    byDept[m.department].push(m);
+  });
+
+  const allZero = m =>
+    !m.expired_groups && !m.overdue_remarks &&
+    !m.main_absence_no_remark && !m.side_absence_no_remark && !m.groups_with_errors;
+
+  const COLS = [
+    { key: 'expired_groups',         label: 'منتهية ونشطة',          color: 'red'    },
+    { key: 'overdue_remarks',         label: 'ريماركات متأخرة',        color: 'orange' },
+    { key: 'main_absence_no_remark',  label: 'غياب أساسي بلا ريمارك', color: 'amber'  },
+    { key: 'side_absence_no_remark',  label: 'غياب جانبي بلا ريمارك', color: 'purple' },
+    { key: 'groups_with_errors',      label: 'مجموعات بها أخطاء',     color: 'slate'  },
+  ];
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+      {/* Header */}
+      <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-3 bg-gradient-to-l from-[#1e3a5f]/5 to-white">
+        <div className="p-2 rounded-xl bg-[#1e3a5f]/10">
+          <Users className="w-4 h-4 text-[#1e3a5f]" />
+        </div>
+        <div>
+          <h2 className="text-base font-bold text-gray-900">ملخص فريق العمل</h2>
+          <p className="text-xs text-gray-400 mt-0.5">خدمة العملاء + المواعيد — مؤشرات لكل موظف</p>
+        </div>
+        {loading && (
+          <div className="mr-auto flex items-center gap-1.5 text-xs text-gray-400">
+            <RefreshCw size={12} className="animate-spin" /> جاري التحميل...
+          </div>
+        )}
+      </div>
+
+      {/* Column legend */}
+      <div className="px-5 py-2.5 bg-gray-50 border-b border-gray-100 flex flex-wrap gap-x-5 gap-y-1">
+        {COLS.map(c => {
+          const dotColors = { red:'bg-red-400', orange:'bg-orange-400', amber:'bg-amber-400', purple:'bg-purple-400', slate:'bg-slate-400' };
+          return (
+            <span key={c.key} className="flex items-center gap-1.5 text-xs text-gray-500">
+              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColors[c.color]}`} />
+              {c.label}
+            </span>
+          );
+        })}
+        <span className="flex items-center gap-1.5 text-xs text-gray-500">
+          <span className="w-2 h-2 rounded-full flex-shrink-0 bg-emerald-400" />
+          صفر = بخير
+        </span>
+      </div>
+
+      <div className="divide-y divide-gray-50">
+        {loading ? (
+          /* Skeleton */
+          Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-3 px-5 py-3 animate-pulse">
+              <div className="h-4 w-32 bg-gray-100 rounded-full" />
+              <div className="flex gap-2 mr-auto">
+                {COLS.map((_, j) => <div key={j} className="h-6 w-10 bg-gray-100 rounded-full" />)}
+              </div>
+            </div>
+          ))
+        ) : !data?.length ? (
+          <div className="text-center py-10 text-gray-400 text-sm">
+            <Users className="w-8 h-8 mx-auto mb-2 text-gray-200" />
+            لا يوجد موظفون في هذين القسمين
+          </div>
+        ) : (
+          Object.entries(byDept).map(([dept, members]) => {
+            const meta = DEPT_META[dept] ?? { label: dept, gradient: 'from-gray-500 to-gray-400', dot: 'bg-gray-400' };
+            return (
+              <div key={dept}>
+                {/* Dept header row */}
+                <div className={`bg-gradient-to-l ${meta.gradient} px-5 py-2 flex items-center gap-2`}>
+                  <span className="w-2 h-2 rounded-full bg-white/60" />
+                  <span className="text-xs font-black text-white tracking-wide uppercase">{meta.label}</span>
+                  <span className="mr-auto text-[11px] text-white/70 font-semibold">{members.length} موظف</span>
+                </div>
+
+                {/* Table */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm text-right" style={{ minWidth: '700px' }}>
+                    <thead>
+                      <tr className="bg-gray-50/60 border-b border-gray-100">
+                        <th className="px-5 py-2 text-xs font-semibold text-gray-500 text-right">الاسم</th>
+                        <th className="px-3 py-2 text-xs font-semibold text-gray-400 text-center whitespace-nowrap">القسم</th>
+                        {COLS.map(c => (
+                          <th key={c.key} className="px-3 py-2 text-xs font-semibold text-gray-400 text-center whitespace-nowrap">
+                            {c.label}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {members.map((m, idx) => (
+                        <tr key={m.id ?? idx}
+                          className={`transition-colors hover:bg-gray-50/70 ${allZero(m) ? '' : 'bg-red-50/20'}`}>
+                          <td className="px-5 py-2.5">
+                            <div className="flex items-center gap-2">
+                              <div className="w-6 h-6 rounded-full bg-[#1e3a5f]/10 flex items-center justify-center text-[10px] font-black text-[#1e3a5f] flex-shrink-0">
+                                {m.name?.charAt(0) ?? '؟'}
+                              </div>
+                              <div>
+                                <p className="font-semibold text-gray-900 text-sm">{m.name}</p>
+                                {m.job_title && (
+                                  <p className="text-[11px] text-gray-400">{m.job_title}</p>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-3 py-2.5 text-center">
+                            <span className="inline-block px-2 py-0.5 rounded-md text-[11px] font-semibold bg-gray-100 text-gray-600">
+                              {SECTION_LABELS[m.section] ?? m.section ?? '—'}
+                            </span>
+                          </td>
+                          {COLS.map(c => (
+                            <MetricCell key={c.key} value={m[c.key]} warnColor={c.color} label={c.label} />
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 export default function SystemReports() {
   const today = new Date().toISOString().slice(0, 10);
@@ -1368,6 +1532,14 @@ export default function SystemReports() {
     queryKey: ['code-problems', applied],
     queryFn: () => api.get('/reports/code-problems', { params: applied }).then(r => r.data),
     enabled: codeProbsOpen || (errorsTab === 'lectures' && errorsOpen),
+    staleTime: 5 * 60 * 1000,
+    gcTime:    15 * 60 * 1000,
+  });
+
+  // Team summary — always load (refreshes with page)
+  const { data: teamSummary, isLoading: teamSummaryLoading } = useQuery({
+    queryKey: ['team-summary'],
+    queryFn: () => api.get('/reports/team-summary').then(r => r.data),
     staleTime: 5 * 60 * 1000,
     gcTime:    15 * 60 * 1000,
   });
@@ -1641,6 +1813,9 @@ export default function SystemReports() {
             onClick={() => setRemarksNotesOpen(true)} />
         </div>
       </div>
+
+      {/* ── TEAM SUMMARY ── */}
+      <TeamSummarySection data={teamSummary} loading={teamSummaryLoading} />
 
       {/* ── MODALS ── */}
       {groupsModal && (
