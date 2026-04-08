@@ -1154,6 +1154,16 @@ export default function SystemReports() {
     staleTime: 10 * 60 * 1000,  // 10 min — users list rarely changes
     gcTime:    30 * 60 * 1000,
   });
+
+  // Code problems — lazy: only load when that tab is open
+  const { data: codeProbs, isLoading: codeLoading } = useQuery({
+    queryKey: ['code-problems', applied],
+    queryFn: () => api.get('/reports/code-problems', { params: applied }).then(r => r.data),
+    enabled: errorsTab === 'lectures' && errorsOpen,
+    staleTime: 5 * 60 * 1000,
+    gcTime:    15 * 60 * 1000,
+  });
+
   const agents = (usersData ?? []).filter(u => u.role === 'agent');
   const kpis = data?.kpis ?? {};
 
@@ -1170,14 +1180,16 @@ export default function SystemReports() {
     setApplied({});
   };
 
+  const codeProblemsTotal = codeProbs?.total ?? 0;
+
   const totalErrors =
     (data?.groups_with_errors?.remarks_errors?.length ?? 0) +
-    (data?.groups_with_errors?.lectures_errors?.length ?? 0) +
+    codeProblemsTotal +
     (data?.groups_with_errors?.side_session_errors?.length ?? 0);
 
   const tabCounts = {
     remarks:  data?.groups_with_errors?.remarks_errors?.length ?? 0,
-    lectures: data?.groups_with_errors?.lectures_errors?.length ?? 0,
+    lectures: codeProblemsTotal,
     side:     data?.groups_with_errors?.side_session_errors?.length ?? 0,
   };
 
@@ -1511,7 +1523,7 @@ export default function SystemReports() {
         <div className="px-5 pt-4 pb-0 flex gap-1 border-b border-gray-100">
           {[
             { key: 'remarks',  label: 'ملاحظات متأخرة',  color: 'text-red-600 border-red-500',    dot: 'bg-red-500' },
-            { key: 'lectures', label: 'محاضرات ناقصة',   color: 'text-blue-700 border-blue-600',  dot: 'bg-blue-600' },
+            { key: 'lectures', label: 'أكواد فيها مشكلة', color: 'text-blue-700 border-blue-600',  dot: 'bg-blue-600' },
             { key: 'side',     label: 'جلسات جانبية',    color: 'text-purple-700 border-purple-600', dot: 'bg-purple-600' },
           ].map(tab => (
             <button key={tab.key} onClick={() => setErrorsTab(tab.key)}
@@ -1555,33 +1567,89 @@ export default function SystemReports() {
             </StyledTable>
           )}
 
-          {/* Lectures errors */}
+          {/* Code problems */}
           {errorsTab === 'lectures' && (
-            <StyledTable headers={['اسم المجموعة','المجدولة','المكتملة','الناقصة','التقدم','القسم','المنسق']} minWidth="750px">
-              {isLoading ? <SkeletonRows cols={7} /> :
-               !data?.groups_with_errors?.lectures_errors?.length ? <EmptyRow cols={7} msg="✓ لا توجد محاضرات ناقصة" /> :
-               data.groups_with_errors.lectures_errors.map((g, i) => (
-                 <tr key={g.group_name ?? i} className="border-b border-gray-50 hover:bg-gray-50/70 transition-colors">
-                   <Td highlight className="whitespace-nowrap">{g.group_name}</Td>
-                   <Td>{g.scheduled_lectures}</Td>
-                   <Td>{g.completed_lectures}</Td>
-                   <Td>
-                     <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700">
-                       -{g.missing_lectures}
-                     </span>
-                   </Td>
-                   <Td style={{ minWidth: '140px' }}>
-                     <ProgressBar
-                       done={g.completed_lectures}
-                       total={g.scheduled_lectures}
-                       colorClass="bg-blue-500"
-                     />
-                   </Td>
-                   <Td><DeptBadge dept={g.dept_type} /></Td>
-                   <Td>{g.coordinators}</Td>
-                 </tr>
-               ))}
-            </StyledTable>
+            <div className="space-y-0">
+              {/* ── محاضرات أساسية ── */}
+              <div>
+                <div className="flex items-center gap-2 px-5 py-3 bg-blue-50/60 border-b border-blue-100">
+                  <span className="w-2 h-2 rounded-full bg-blue-500" />
+                  <span className="text-sm font-bold text-blue-800">مشاكل المحاضرات الأساسية</span>
+                  <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                    {codeProbs?.main_problems?.length ?? 0}
+                  </span>
+                </div>
+                <StyledTable headers={['اسم المجموعة','نوع المشكلة','التفاصيل','القسم','المنسق']} minWidth="800px">
+                  {codeLoading ? <SkeletonRows cols={5} /> :
+                   !codeProbs?.main_problems?.length
+                     ? <EmptyRow cols={5} msg="✓ لا توجد مشاكل في المحاضرات الأساسية" />
+                     : codeProbs.main_problems.map((p, i) => (
+                       <tr key={i} className="border-b border-gray-50 hover:bg-gray-50/70 transition-colors">
+                         <Td highlight>
+                           <span className="text-xs leading-snug" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere', display: 'inline-block', maxWidth: '260px' }}>
+                             {p.group_name}
+                           </span>
+                         </Td>
+                         <Td>
+                           <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${
+                             p.problem_type === 'عدد محاضرات زيادة'    ? 'bg-orange-100 text-orange-700 border-orange-200' :
+                             p.problem_type === 'تاريخ أول محاضرة غلط' ? 'bg-red-100 text-red-700 border-red-200' :
+                             'bg-yellow-100 text-yellow-800 border-yellow-200'
+                           }`}>
+                             {p.problem_type}
+                           </span>
+                         </Td>
+                         <Td className="text-xs text-gray-600 max-w-xs">
+                           <span style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.detail}</span>
+                         </Td>
+                         <Td><DeptBadge dept={p.dept_type} /></Td>
+                         <Td>{p.coordinators}</Td>
+                       </tr>
+                     ))
+                  }
+                </StyledTable>
+              </div>
+
+              {/* ── جلسات جانبية ── */}
+              <div>
+                <div className="flex items-center gap-2 px-5 py-3 bg-purple-50/60 border-b border-purple-100 border-t border-gray-100">
+                  <span className="w-2 h-2 rounded-full bg-purple-500" />
+                  <span className="text-sm font-bold text-purple-800">مشاكل الجلسات الجانبية</span>
+                  <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">
+                    {codeProbs?.side_problems?.length ?? 0}
+                  </span>
+                </div>
+                <StyledTable headers={['اسم المجموعة','نوع المشكلة','التفاصيل','القسم','المنسق']} minWidth="800px">
+                  {codeLoading ? <SkeletonRows cols={5} /> :
+                   !codeProbs?.side_problems?.length
+                     ? <EmptyRow cols={5} msg="✓ لا توجد مشاكل في الجلسات الجانبية" />
+                     : codeProbs.side_problems.map((p, i) => (
+                       <tr key={i} className="border-b border-gray-50 hover:bg-gray-50/70 transition-colors">
+                         <Td highlight>
+                           <span className="text-xs leading-snug" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere', display: 'inline-block', maxWidth: '260px' }}>
+                             {p.group_name}
+                           </span>
+                         </Td>
+                         <Td>
+                           <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${
+                             p.problem_type === 'جلسات جانبية زيادة'     ? 'bg-orange-100 text-orange-700 border-orange-200' :
+                             p.problem_type === 'جلسات جانبية ناقصة'     ? 'bg-red-100 text-red-700 border-red-200' :
+                             'bg-yellow-100 text-yellow-800 border-yellow-200'
+                           }`}>
+                             {p.problem_type}
+                           </span>
+                         </Td>
+                         <Td className="text-xs text-gray-600 max-w-xs">
+                           <span style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.detail}</span>
+                         </Td>
+                         <Td><DeptBadge dept={p.dept_type} /></Td>
+                         <Td>{p.coordinators}</Td>
+                       </tr>
+                     ))
+                  }
+                </StyledTable>
+              </div>
+            </div>
           )}
 
           {/* Side session errors */}

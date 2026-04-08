@@ -683,6 +683,155 @@ router.get('/remarks-categories', (req, res) => {
   }
 });
 
+// ─── GET /api/reports/code-problems ──────────────────────────────────────────
+// Validates groups against business rules for main & side sessions
+router.get('/code-problems', (req, res) => {
+  const { department, employee } = req.query;
+  const deptFilter = department && department !== 'All' ? ` AND b.dept_type = '${department}'` : '';
+  const empFilter  = employee ? ` AND b.coordinators LIKE '%${employee}%'` : '';
+
+  // ── helpers ──
+  const MONTHS  = { Jan:1,Feb:2,Mar:3,Apr:4,May:5,Jun:6,Jul:7,Aug:8,Sep:9,Oct:10,Nov:11,Dec:12 };
+  const DAY_NUM = { Sun:0,Mon:1,Tue:2,Wed:3,Thu:4,Fri:5,Sat:6 };
+  const DAY_AR  = ['أحد','اثنين','ثلاثاء','أربعاء','خميس','جمعة','سبت'];
+  const DAY_EN  = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+  // Sat(6)+Tue(2) / Sun(0)+Wed(3) / Mon(1)+Thu(4)
+  const getMainPair = d => {
+    if (d===6||d===2) return [6,2];
+    if (d===0||d===3) return [0,3];
+    if (d===1||d===4) return [1,4];
+    return null;
+  };
+  const getSidePair = d => {
+    if (d===6||d===2) return [1,4]; // Sat+Tue main → Mon+Thu side
+    if (d===0||d===3) return [6,2]; // Sun+Wed main → Sat+Tue side
+    if (d===1||d===4) return [0,3]; // Mon+Thu main → Sun+Wed side
+    return null;
+  };
+  const getDow = s => { if (!s) return -1; return new Date(s+'T12:00:00').getDay(); };
+  const pad    = n => String(n).padStart(2,'0');
+
+  const parseGroupName = name => {
+    const m = name.match(/^([A-Za-z]{3})_(\d{1,2})_([A-Za-z]{2,4})_/);
+    if (!m) return null;
+    const monthNum = MONTHS[m[1]];
+    const dayStr   = m[3];
+    const dow      = DAY_NUM[dayStr];
+    if (!monthNum || dow === undefined) return null;
+    return { monthNum, dayNum: parseInt(m[2]), dayStr, dow };
+  };
+
+  try {
+    const batches = db.prepare(
+      `SELECT group_name, trainee_count, dept_type, coordinators, start_date
+       FROM batches b WHERE status='نشطة'${deptFilter}${empFilter}`
+    ).all();
+
+    // fetch all main sessions at once
+    const mainRaw = db.prepare(
+      `SELECT l.group_name, l.date FROM lectures l
+       INNER JOIN batches b ON l.group_name=b.group_name
+       WHERE b.status='نشطة' AND l.session_type='main'
+       ${deptFilter}${empFilter} ORDER BY l.group_name, l.date ASC`
+    ).all();
+
+    // fetch all valid side sessions (exclude onboarding/offboarding)
+    const sideRaw = db.prepare(
+      `SELECT l.group_name, l.date FROM lectures l
+       INNER JOIN batches b ON l.group_name=b.group_name
+       WHERE b.status='نشطة' AND l.session_type='side'
+         AND LOWER(COALESCE(l.side_session_category,'')) NOT IN ('onboarding','offboarding')
+       ${deptFilter}${empFilter} ORDER BY l.group_name, l.date ASC`
+    ).all();
+
+    // group by group_name
+    const mainByGroup = {}, sideByGroup = {};
+    mainRaw.forEach(r => { (mainByGroup[r.group_name] = mainByGroup[r.group_name]||[]).push(r.date); });
+    sideRaw.forEach(r => { (sideByGroup[r.group_name] = sideByGroup[r.group_name]||[]).push(r.date); });
+
+    const mainProblems = [], sideProblems = [];
+
+    for (const batch of batches) {
+      const gn          = batch.group_name;
+      const parsed      = parseGroupName(gn);
+      const mainDates   = mainByGroup[gn] || [];
+      const sideDates   = sideByGroup[gn] || [];
+      const meta        = { group_name: gn, dept_type: batch.dept_type, coordinators: batch.coordinators };
+
+      // ── MAIN CHECKS ──────────────────────────────────────────────
+      // 1. Count > 8
+      if (mainDates.length > 8) {
+        mainProblems.push({ ...meta,
+          problem_type: 'عدد محاضرات زيادة',
+          detail: `الموجود: ${mainDates.length} محاضرة — المفروض: 8`,
+          actual: mainDates.length, expected: 8,
+        });
+      }
+
+      if (parsed) {
+        // 2. First session date ≠ name date
+        if (mainDates.length > 0) {
+          const first     = mainDates[0];
+          const year      = first.substring(0,4);
+          const expected  = `${year}-${pad(parsed.monthNum)}-${pad(parsed.dayNum)}`;
+          const firstDow  = getDow(first);
+          if (first !== expected) {
+            mainProblems.push({ ...meta,
+              problem_type: 'تاريخ أول محاضرة غلط',
+              detail: `الاسم: ${expected} (${DAY_EN[parsed.dow]}) | الفعلي: ${first} (${DAY_EN[firstDow]||'?'})`,
+              expected_date: expected, actual_date: first,
+            });
+          }
+        }
+
+        // 3. Sessions on wrong days
+        const mainPair = getMainPair(parsed.dow);
+        if (mainPair && mainDates.length > 0) {
+          const wrong = mainDates.filter(d => !mainPair.includes(getDow(d)));
+          if (wrong.length > 0) {
+            mainProblems.push({ ...meta,
+              problem_type: 'محاضرات على أيام غلط',
+              detail: `${wrong.length} محاضرة خارج أيام (${mainPair.map(d=>DAY_AR[d]).join(' و')}) | أمثلة: ${wrong.slice(0,3).join(', ')}`,
+              wrong_count: wrong.length,
+            });
+          }
+        }
+
+        // ── SIDE CHECKS ──────────────────────────────────────────────
+        // 1. Side sessions on wrong days
+        const sidePair = getSidePair(parsed.dow);
+        if (sidePair && sideDates.length > 0) {
+          const wrong = sideDates.filter(d => !sidePair.includes(getDow(d)));
+          if (wrong.length > 0) {
+            sideProblems.push({ ...meta, trainee_count: batch.trainee_count,
+              problem_type: 'جلسات جانبية على أيام غلط',
+              detail: `${wrong.length} جلسة خارج أيام (${sidePair.map(d=>DAY_AR[d]).join(' و')}) | أمثلة: ${wrong.slice(0,3).join(', ')}`,
+              wrong_count: wrong.length,
+            });
+          }
+        }
+      }
+
+      // 2. Side count ≠ trainee_count × 7
+      const expectedSide = (batch.trainee_count || 0) * 7;
+      if (expectedSide > 0 && sideDates.length !== expectedSide) {
+        sideProblems.push({ ...meta, trainee_count: batch.trainee_count,
+          problem_type: sideDates.length < expectedSide ? 'جلسات جانبية ناقصة' : 'جلسات جانبية زيادة',
+          detail: `الموجود: ${sideDates.length} | المطلوب: ${expectedSide} (${batch.trainee_count}×7)`,
+          actual: sideDates.length, expected: expectedSide,
+        });
+      }
+    }
+
+    return res.json({ main_problems: mainProblems, side_problems: sideProblems,
+      total: mainProblems.length + sideProblems.length });
+  } catch (err) {
+    console.error('[reports] code-problems error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/reports/remarks-notes-options ──────────────────────────────────
 // Returns dropdown options for coordinator, category, assigned_to
 router.get('/remarks-notes-options', (req, res) => {
