@@ -247,18 +247,19 @@ router.get('/lectures-list', (req, res) => {
 
   const allFilters = `${sessionTypeFilter}${minDurFilter}${maxDurFilter}${dateFilter}${deptFilter}${empFilter}${trainerFilter}${coordFilter}${searchFilter}`;
 
-  // For side sessions: pre-aggregate onboarding/offboarding per group (one JOIN instead of N subqueries)
+  // For side sessions: pre-aggregate onboarding/offboarding/compensatory per group (one JOIN instead of N subqueries)
   const sideJoin = (!min_duration && session_type === 'side')
     ? `LEFT JOIN (
          SELECT group_name,
-           SUM(CASE WHEN side_session_category='onboarding'  THEN 1 ELSE 0 END) AS onboarding_count,
-           SUM(CASE WHEN side_session_category='offboarding' THEN 1 ELSE 0 END) AS offboarding_count
+           SUM(CASE WHEN side_session_category='onboarding'    THEN 1 ELSE 0 END) AS onboarding_count,
+           SUM(CASE WHEN side_session_category='offboarding'   THEN 1 ELSE 0 END) AS offboarding_count,
+           SUM(CASE WHEN side_session_category='compensatory'  THEN 1 ELSE 0 END) AS compensatory_count
          FROM lectures WHERE session_type='side'
          GROUP BY group_name
        ) lx_counts ON lx_counts.group_name = l.group_name`
     : '';
   const sideExtraFields = (!min_duration && session_type === 'side')
-    ? `, COALESCE(lx_counts.onboarding_count,0) AS onboarding_count, COALESCE(lx_counts.offboarding_count,0) AS offboarding_count`
+    ? `, COALESCE(lx_counts.onboarding_count,0) AS onboarding_count, COALESCE(lx_counts.offboarding_count,0) AS offboarding_count, COALESCE(lx_counts.compensatory_count,0) AS compensatory_count`
     : '';
 
   try {
