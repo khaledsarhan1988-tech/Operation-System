@@ -6,7 +6,7 @@ import {
   MessageSquare, RefreshCw, ChevronDown, ChevronUp, X, Clock,
   UserCheck, Eye, Search, Filter, TrendingUp, Calendar,
   CheckCircle, XCircle, AlertOctagon, BarChart2, Zap, FileText,
-  Edit3, Save, Bell, ShieldCheck, Loader2, Copy, Check,
+  Edit3, Save, Bell, ShieldCheck, Loader2, Copy, Check, Video,
 } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
@@ -2184,6 +2184,25 @@ export default function SystemReports() {
                 { key: 'compensatory_count',    label: 'تعويضية',     type: 'ob_count' },
                 { key: 'dept_type',             label: 'القسم',      type: 'badge' },
                 { key: 'coordinators',          label: 'المنسق' },
+              ],
+              extraFilters: ['trainer', 'coordinator', 'date', 'dept'],
+            })} />
+          <KpiCard label="زووم كول" value={kpis.zoom_calls} icon={Video}
+            gradient="linear-gradient(135deg, #0891b2 0%, #06b6d4 100%)"
+            loading={isLoading}
+            onClick={() => setListModal({
+              title: 'زووم كول (جلسات 15 دقيقة)',
+              endpoint: '/reports/lectures-list',
+              params: { session_type: 'side', category: 'regular', ...applied },
+              columns: [
+                { key: 'group_name',  label: 'المجموعة',  noWrap: true },
+                { key: 'date',        label: 'التاريخ',   type: 'date' },
+                { key: 'time',        label: 'الوقت' },
+                { key: 'duration',    label: 'المدة',     type: 'duration' },
+                { key: 'trainer',     label: 'المدرب' },
+                { key: 'status',      label: 'الحالة' },
+                { key: 'dept_type',   label: 'القسم',     type: 'badge' },
+                { key: 'coordinators',label: 'المنسق' },
               ],
               extraFilters: ['trainer', 'coordinator', 'date', 'dept'],
             })} />

@@ -75,11 +75,21 @@ router.get('/dashboard', (req, res) => {
        ${deptBatches}${empFilter}`
     ).get();
 
-    // 4. Side sessions count — session_type='side' (uploaded from "Lectures of Side Session" Excel sheet, always 15 min)
+    // 4. Side sessions count — all side sessions
     const sideLecturesRow = db.prepare(
       `SELECT COUNT(*) as cnt FROM lectures
        INNER JOIN batches ON lectures.group_name = batches.group_name
        WHERE lectures.session_type = 'side'
+       ${buildDateFilter('lectures.date', from_date, to_date)}
+       ${deptBatches}${empFilter}`
+    ).get();
+
+    // 4b. Zoom calls count — side sessions that are regular (15 min only)
+    const zoomCallsRow = db.prepare(
+      `SELECT COUNT(*) as cnt FROM lectures
+       INNER JOIN batches ON lectures.group_name = batches.group_name
+       WHERE lectures.session_type = 'side'
+         AND lectures.side_session_category = 'regular'
        ${buildDateFilter('lectures.date', from_date, to_date)}
        ${deptBatches}${empFilter}`
     ).get();
@@ -185,6 +195,7 @@ router.get('/dashboard', (req, res) => {
         expired_active_groups: expiredGroupsList.length,
         main_lectures:         mainLecturesRow?.cnt ?? 0,
         side_sessions:         sideLecturesRow?.cnt ?? 0,
+        zoom_calls:            zoomCallsRow?.cnt ?? 0,
         absent_main:           absentMainRow?.cnt ?? 0,
         absent_side:           absentSideRow?.cnt ?? 0,
         open_remarks:          openRemarksCount?.cnt ?? 0,
