@@ -936,12 +936,25 @@ router.get('/remarks-notes-options', (req, res) => {
   }
 });
 
+// ─── TEAM SUMMARY FILTER HELPERS ─────────────────────────────────────────────
+function tsFilters(q) {
+  const { from_date, to_date, department } = q;
+  const deptF  = department && department !== 'All' ? ` AND b.dept_type = '${department}'`   : '';
+  const dateA  = from_date ? ` AND a.date >= '${from_date}'` : '';
+  const dateAe = to_date   ? ` AND a.date <= '${to_date}'`   : '';
+  const dateL  = from_date ? ` AND l.date >= '${from_date}'` : '';
+  const dateLe = to_date   ? ` AND l.date <= '${to_date}'`   : '';
+  const dateR  = from_date ? ` AND r2.added_at >= '${from_date}'` : '';
+  const dateRe = to_date   ? ` AND r2.added_at <= '${to_date}'`   : '';
+  return { deptF, dateA: dateA+dateAe, dateL: dateL+dateLe, dateR: dateR+dateRe };
+}
+
 // ─── GET /api/reports/team-summary-detail ────────────────────────────────────
-// Returns the rows behind a single metric cell: ?employee=X&metric=Y
 router.get('/team-summary-detail', (req, res) => {
-  const { employee, metric } = req.query;
+  const { employee, metric, from_date, to_date, department } = req.query;
   if (!employee || !metric) return res.status(400).json({ error: 'employee and metric required' });
   const like = `%${employee}%`;
+  const { deptF, dateA, dateL, dateR } = tsFilters(req.query);
 
   try {
     let rows = [];
@@ -954,10 +967,13 @@ router.get('/team-summary-detail', (req, res) => {
            AND end_date IS NOT NULL AND end_date != ''
            AND end_date < date('now')
            AND coordinators LIKE ?
+           ${deptF.replace('b.','').replace('AND b.','AND ')}
          ORDER BY end_date ASC`
       ).all(like);
 
     } else if (metric === 'overdue_remarks') {
+      const dateRBase = from_date ? ` AND added_at >= '${from_date}'` : '';
+      const dateREnd  = to_date   ? ` AND added_at <= '${to_date}'`   : '';
       rows = db.prepare(
         `SELECT id, client_name, client_phone, details, priority, status,
            added_at, last_updated,
@@ -965,6 +981,7 @@ router.get('/team-summary-detail', (req, res) => {
          FROM remarks
          WHERE LOWER(status) NOT IN ('closed','مغلق','resolved')
            AND assigned_to LIKE ?
+           ${dateRBase}${dateREnd}
            AND ROUND((julianday('now')-julianday(COALESCE(added_at,'2000-01-01')))*24,1) >=
                CASE WHEN priority='عاجلة' THEN 3
                     WHEN priority='هامة'  THEN 24
@@ -980,6 +997,7 @@ router.get('/team-summary-detail', (req, res) => {
          FROM absent_students a
          INNER JOIN batches b ON a.group_name = b.group_name
          WHERE b.coordinators LIKE ?
+           ${deptF}${dateA}
            AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
            AND NOT EXISTS (
              SELECT 1 FROM remarks r
@@ -997,6 +1015,7 @@ router.get('/team-summary-detail', (req, res) => {
          FROM lectures l
          INNER JOIN batches b ON l.group_name = b.group_name
          WHERE b.coordinators LIKE ?
+           ${deptF}${dateL}
            AND l.session_type = 'side'
            AND l.status = 'مؤكدة'
            AND l.attendance IS NOT NULL
@@ -1019,6 +1038,7 @@ router.get('/team-summary-detail', (req, res) => {
          FROM batches
          WHERE status = 'نشطة'
            AND coordinators LIKE ?
+           ${deptF.replace('b.','').replace('AND b.','AND ')}
            AND scheduled_lectures IS NOT NULL
            AND completed_lectures IS NOT NULL
            AND scheduled_lectures != completed_lectures
@@ -1034,14 +1054,23 @@ router.get('/team-summary-detail', (req, res) => {
 });
 
 // ─── GET /api/reports/team-summary ──────────────────────────────────────────
-// Returns per-employee metrics for customer_services + appointments departments
+// Returns per-employee metrics — supports from_date, to_date, department, employee filters
 router.get('/team-summary', (req, res) => {
+  const { from_date, to_date, department, employee: empFilter } = req.query;
+  const { deptF, dateA, dateL } = tsFilters(req.query);
+  const dateRBase = from_date ? ` AND added_at >= '${from_date}'` : '';
+  const dateREnd  = to_date   ? ` AND added_at <= '${to_date}'`   : '';
+  const deptFNoB  = deptF.replace('b.dept_type','dept_type').replace('AND b.','AND ');
+
   try {
+    // Filter team members by name if employee filter set
+    const empWhere = empFilter ? ` AND LOWER(name) LIKE LOWER('%${empFilter}%')` : '';
     const members = db.prepare(
       `SELECT id, name, department, section, job_title
        FROM team_members
        WHERE department IN ('customer_services', 'appointments')
          AND status = 'active'
+         ${empWhere}
        ORDER BY department, section, name`
     ).all();
 
@@ -1050,13 +1079,15 @@ router.get('/team-summary', (req, res) => {
        WHERE status='نشطة'
          AND end_date IS NOT NULL AND end_date != ''
          AND end_date < date('now')
-         AND coordinators LIKE ?`
+         AND coordinators LIKE ?
+         ${deptFNoB}`
     );
 
     const stmtOverdue = db.prepare(
       `SELECT COUNT(*) as cnt FROM remarks
        WHERE LOWER(status) NOT IN ('closed','مغلق','resolved')
          AND assigned_to LIKE ?
+         ${dateRBase}${dateREnd}
          AND ROUND((julianday('now') - julianday(COALESCE(added_at,'2000-01-01'))) * 24, 1) >=
              CASE WHEN priority='عاجلة' THEN 3
                   WHEN priority='هامة'  THEN 24
@@ -1071,6 +1102,7 @@ router.get('/team-summary', (req, res) => {
        FROM absent_students a
        INNER JOIN batches b ON a.group_name = b.group_name
        WHERE b.coordinators LIKE ?
+         ${deptF}${dateA}
          AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
          AND NOT EXISTS (
            SELECT 1 FROM remarks r
@@ -1086,6 +1118,7 @@ router.get('/team-summary', (req, res) => {
          FROM lectures l
          INNER JOIN batches b ON l.group_name = b.group_name
          WHERE b.coordinators LIKE ?
+           ${deptF}${dateL}
            AND l.session_type = 'side'
            AND l.status = 'مؤكدة'
            AND l.attendance IS NOT NULL
@@ -1105,6 +1138,7 @@ router.get('/team-summary', (req, res) => {
       `SELECT COUNT(*) as cnt FROM batches
        WHERE status = 'نشطة'
          AND coordinators LIKE ?
+         ${deptFNoB}
          AND scheduled_lectures IS NOT NULL
          AND completed_lectures IS NOT NULL
          AND scheduled_lectures != completed_lectures`

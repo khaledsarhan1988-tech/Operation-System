@@ -1539,13 +1539,13 @@ const METRIC_META = {
   groups_with_errors:      { label: 'مجموعات بها أخطاء',          color: 'slate'  },
 };
 
-function MetricDetailModal({ employee, metric, onClose }) {
+function MetricDetailModal({ employee, metric, applied = {}, onClose }) {
   const [copied, setCopied] = useState(false);
   const meta = METRIC_META[metric] ?? { label: metric, color: 'slate' };
 
   const { data, isLoading } = useQuery({
-    queryKey: ['team-detail', employee, metric],
-    queryFn: () => api.get('/reports/team-summary-detail', { params: { employee, metric } }).then(r => r.data),
+    queryKey: ['team-detail', employee, metric, applied],
+    queryFn: () => api.get('/reports/team-summary-detail', { params: { employee, metric, ...applied } }).then(r => r.data),
     staleTime: 2 * 60 * 1000,
   });
 
@@ -1741,7 +1741,7 @@ function MetricDetailModal({ employee, metric, onClose }) {
   );
 }
 
-function TeamSummarySection({ data, loading }) {
+function TeamSummarySection({ data, loading, applied = {} }) {
   const [detailModal, setDetailModal] = useState(null); // { employee, metric }
   const byDept = {};
   (data ?? []).forEach(m => {
@@ -1879,6 +1879,7 @@ function TeamSummarySection({ data, loading }) {
         <MetricDetailModal
           employee={detailModal.employee}
           metric={detailModal.metric}
+          applied={applied}
           onClose={() => setDetailModal(null)}
         />
       )}
@@ -1923,10 +1924,10 @@ export default function SystemReports() {
     gcTime:    15 * 60 * 1000,
   });
 
-  // Team summary — always load (refreshes with page)
+  // Team summary — reloads when top-page filters change
   const { data: teamSummary, isLoading: teamSummaryLoading } = useQuery({
-    queryKey: ['team-summary'],
-    queryFn: () => api.get('/reports/team-summary').then(r => r.data),
+    queryKey: ['team-summary', applied],
+    queryFn: () => api.get('/reports/team-summary', { params: applied }).then(r => r.data),
     staleTime: 5 * 60 * 1000,
     gcTime:    15 * 60 * 1000,
   });
@@ -2202,7 +2203,7 @@ export default function SystemReports() {
       </div>
 
       {/* ── TEAM SUMMARY ── */}
-      <TeamSummarySection data={teamSummary} loading={teamSummaryLoading} />
+      <TeamSummarySection data={teamSummary} loading={teamSummaryLoading} applied={applied} />
 
       {/* ── MODALS ── */}
       {groupsModal && (
