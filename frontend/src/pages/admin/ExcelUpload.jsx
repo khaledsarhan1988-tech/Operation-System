@@ -123,7 +123,7 @@ function UploadZone({ fileType, onSuccess }) {
 }
 
 function SyncHistory() {
-  const { t, i18n } = useTranslation();
+  const { i18n } = useTranslation();
   const isAr = i18n.language === 'ar';
 
   const { data, isLoading, refetch } = useQuery({
@@ -133,64 +133,53 @@ function SyncHistory() {
 
   const fileLabel = (key) => {
     const ft = FILE_TYPES.find(f => f.key === key);
-    return ft ? (isAr ? ft.labelAr : ft.labelEn) : key;
+    return ft ? ft.labelAr : key;
   };
 
   const formatDate = (iso) => {
     if (!iso) return '—';
-    return new Date(iso).toLocaleString(isAr ? 'ar-EG' : 'en-GB');
+    try { return new Date(iso).toLocaleString('ar-EG', { dateStyle: 'short', timeStyle: 'short' }); }
+    catch { return iso; }
   };
+
+  const syncs = data?.syncs ?? [];
 
   return (
     <div className="card">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="font-semibold text-gray-800">
-          {isAr ? 'سجل المزامنة' : 'Sync History'}
-        </h3>
+        <h3 className="font-semibold text-gray-800">سجل المزامنة</h3>
         <button onClick={() => refetch()} className="btn-secondary text-xs flex items-center gap-1">
           <RefreshCw className="w-3 h-3" />
-          {isAr ? 'تحديث' : 'Refresh'}
+          تحديث
         </button>
       </div>
 
       {isLoading ? (
-        <div className="text-center py-8 text-gray-400 text-sm">
-          {isAr ? 'جارٍ التحميل...' : 'Loading...'}
-        </div>
-      ) : !data?.syncs?.length ? (
-        <div className="text-center py-8 text-gray-400 text-sm">
-          {isAr ? 'لا توجد عمليات مزامنة بعد' : 'No syncs yet'}
-        </div>
+        <div className="text-center py-8 text-gray-400 text-sm">جارٍ التحميل...</div>
+      ) : !syncs.length ? (
+        <div className="text-center py-8 text-gray-400 text-sm">لا توجد عمليات مزامنة بعد</div>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-primary text-white">
-                <th className="table-header">{isAr ? 'الملف' : 'File'}</th>
-                <th className="table-header">{isAr ? 'السجلات' : 'Records'}</th>
-                <th className="table-header">{isAr ? 'الحالة' : 'Status'}</th>
-                <th className="table-header">{isAr ? 'المستخدم' : 'User'}</th>
-                <th className="table-header">{isAr ? 'التاريخ' : 'Date'}</th>
+                <th className="table-header">الملف</th>
+                <th className="table-header">السجلات</th>
+                <th className="table-header">الحالة</th>
+                <th className="table-header">التاريخ والوقت</th>
               </tr>
             </thead>
             <tbody>
-              {data.syncs.map((s) => (
+              {syncs.map((s) => (
                 <tr key={s.id} className="border-b hover:bg-gray-50">
                   <td className="table-cell font-medium">{fileLabel(s.file_type)}</td>
-                  <td className="table-cell">{s.records_inserted ?? '—'}</td>
+                  <td className="table-cell">{s.rows_imported ?? '—'}</td>
                   <td className="table-cell">
-                    {s.status === 'success' ? (
-                      <span className="badge badge-success">
-                        {isAr ? 'ناجح' : 'Success'}
-                      </span>
-                    ) : (
-                      <span className="badge badge-danger">
-                        {isAr ? 'فشل' : 'Failed'}
-                      </span>
-                    )}
+                    {s.status === 'success'
+                      ? <span className="badge badge-success">ناجح ✅</span>
+                      : <span className="badge badge-danger">فشل ❌</span>}
                   </td>
-                  <td className="table-cell">{s.synced_by ?? '—'}</td>
-                  <td className="table-cell text-gray-500">{formatDate(s.synced_at)}</td>
+                  <td className="table-cell text-gray-500 font-mono text-xs">{formatDate(s.created_at)}</td>
                 </tr>
               ))}
             </tbody>
@@ -206,8 +195,15 @@ function FilesStatusPanel({ onClearSuccess }) {
   const { i18n } = useTranslation();
   const isAr = i18n.language === 'ar';
   const queryClient = useQueryClient();
-  const [confirmClear, setConfirmClear] = useState(false);
-  const [clearing, setClearing] = useState(false);
+
+  // Clear-all state
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
+  const [clearingAll, setClearingAll] = useState(false);
+
+  // Per-file clear state: key → 'confirm' | 'clearing' | null
+  const [fileAction, setFileAction] = useState({});
+
+  // Global feedback message
   const [clearMsg, setClearMsg] = useState(null);
 
   const { data: statusData, isLoading, refetch } = useQuery({
@@ -222,20 +218,40 @@ function FilesStatusPanel({ onClearSuccess }) {
     catch { return iso; }
   };
 
-  const handleClear = async () => {
-    setClearing(true);
+  const refresh = () => {
+    refetch();
+    queryClient.invalidateQueries({ queryKey: ['syncs'] });
+    onClearSuccess?.();
+  };
+
+  // Clear ALL
+  const handleClearAll = async () => {
+    setClearingAll(true);
     setClearMsg(null);
     try {
       await api.delete('/admin/clear-excel-data');
       setClearMsg({ ok: true, text: 'تم مسح كل البيانات بنجاح ✅' });
-      setConfirmClear(false);
-      refetch();
-      queryClient.invalidateQueries({ queryKey: ['syncs'] });
-      onClearSuccess?.();
+      setConfirmClearAll(false);
+      refresh();
     } catch (err) {
       setClearMsg({ ok: false, text: err.response?.data?.error || 'فشل المسح' });
     } finally {
-      setClearing(false);
+      setClearingAll(false);
+    }
+  };
+
+  // Clear SINGLE file
+  const handleClearFile = async (key) => {
+    setFileAction(prev => ({ ...prev, [key]: 'clearing' }));
+    setClearMsg(null);
+    try {
+      await api.delete(`/admin/clear-excel-data/${key}`);
+      setClearMsg({ ok: true, text: `تم مسح البيانات بنجاح ✅` });
+      setFileAction(prev => ({ ...prev, [key]: null }));
+      refresh();
+    } catch (err) {
+      setClearMsg({ ok: false, text: err.response?.data?.error || 'فشل المسح' });
+      setFileAction(prev => ({ ...prev, [key]: null }));
     }
   };
 
@@ -269,45 +285,87 @@ function FilesStatusPanel({ onClearSuccess }) {
 
       {/* File list */}
       <div className="divide-y divide-gray-50 px-1 py-1">
-        {fileInfo.map(ft => (
-          <div key={ft.key} className={`flex items-start gap-2.5 px-3 py-2.5 rounded-xl my-0.5 transition-colors
-            ${ft.hasData ? 'hover:bg-green-50/50' : 'hover:bg-red-50/50 bg-red-50/30'}`}>
-            {/* Status dot */}
-            <div className={`mt-0.5 w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0
-              ${ft.hasData ? 'bg-emerald-100' : 'bg-red-100'}`}>
-              {ft.hasData
-                ? <CheckCircle size={12} className="text-emerald-600" />
-                : <AlertCircle size={12} className="text-red-500" />}
-            </div>
-            {/* Info */}
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-gray-800 truncate">{ft.labelAr}</p>
-              <p className="text-[10px] text-gray-400 font-mono truncate">{ft.file}</p>
-              {ft.hasData ? (
-                <p className="text-[10px] text-emerald-600 mt-0.5 font-medium">
-                  {ft.count.toLocaleString('ar-EG')} سجل
-                  {ft.lastUpload && <span className="text-gray-400 mr-1">· {ft.lastUpload}</span>}
-                </p>
-              ) : (
-                <p className="text-[10px] text-red-500 mt-0.5 font-medium">لم يُرفع بعد</p>
+        {fileInfo.map(ft => {
+          const action = fileAction[ft.key];
+          const isConfirming = action === 'confirm';
+          const isClearing = action === 'clearing';
+
+          return (
+            <div key={ft.key} className={`px-3 py-2.5 rounded-xl my-0.5 transition-colors
+              ${ft.hasData ? 'hover:bg-green-50/50' : 'hover:bg-red-50/50 bg-red-50/30'}`}>
+
+              <div className="flex items-start gap-2.5">
+                {/* Status dot */}
+                <div className={`mt-0.5 w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0
+                  ${ft.hasData ? 'bg-emerald-100' : 'bg-red-100'}`}>
+                  {isClearing
+                    ? <RefreshCw size={10} className="text-gray-400 animate-spin" />
+                    : ft.hasData
+                      ? <CheckCircle size={12} className="text-emerald-600" />
+                      : <AlertCircle size={12} className="text-red-500" />}
+                </div>
+
+                {/* Info */}
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-gray-800 truncate">{ft.labelAr}</p>
+                  <p className="text-[10px] text-gray-400 font-mono truncate">{ft.file}</p>
+                  {ft.hasData ? (
+                    <p className="text-[10px] text-emerald-600 mt-0.5 font-medium">
+                      {ft.count.toLocaleString('ar-EG')} سجل
+                      {ft.lastUpload && <span className="text-gray-400 mr-1">· {ft.lastUpload}</span>}
+                    </p>
+                  ) : (
+                    <p className="text-[10px] text-red-500 mt-0.5 font-medium">لم يُرفع بعد</p>
+                  )}
+                </div>
+
+                {/* Per-file delete button (only if has data) */}
+                {ft.hasData && !isConfirming && !isClearing && (
+                  <button
+                    onClick={() => setFileAction(prev => ({ ...prev, [ft.key]: 'confirm' }))}
+                    title="مسح بيانات هذا الملف"
+                    className="flex-shrink-0 p-1 rounded-md hover:bg-red-100 text-gray-300 hover:text-red-500 transition-colors">
+                    <Trash2 size={11} />
+                  </button>
+                )}
+              </div>
+
+              {/* Inline confirm for single file */}
+              {isConfirming && (
+                <div className="mt-2 flex gap-1.5 items-center">
+                  <span className="text-[10px] text-red-600 font-semibold flex-1">مسح نهائياً؟</span>
+                  <button
+                    onClick={() => handleClearFile(ft.key)}
+                    className="px-2 py-0.5 rounded-md bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold transition-colors">
+                    تأكيد
+                  </button>
+                  <button
+                    onClick={() => setFileAction(prev => ({ ...prev, [ft.key]: null }))}
+                    className="px-2 py-0.5 rounded-md bg-gray-100 hover:bg-gray-200 text-gray-600 text-[10px] font-bold transition-colors">
+                    إلغاء
+                  </button>
+                </div>
               )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
-      {/* Clear button */}
+      {/* Clear ALL button */}
       <div className="px-4 py-3 border-t border-gray-100 space-y-2">
         {clearMsg && (
           <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg
             ${clearMsg.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
             {clearMsg.ok ? <CheckCircle size={12} /> : <AlertCircle size={12} />}
             {clearMsg.text}
+            <button onClick={() => setClearMsg(null)} className="mr-auto">
+              <X size={11} />
+            </button>
           </div>
         )}
 
-        {!confirmClear ? (
-          <button onClick={() => setConfirmClear(true)}
+        {!confirmClearAll ? (
+          <button onClick={() => setConfirmClearAll(true)}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl
               bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold transition-colors border border-red-200">
             <Trash2 size={13} />
@@ -319,13 +377,13 @@ function FilesStatusPanel({ onClearSuccess }) {
               ⚠️ هيتم مسح كل البيانات نهائياً!
             </p>
             <div className="flex gap-2">
-              <button onClick={handleClear} disabled={clearing}
+              <button onClick={handleClearAll} disabled={clearingAll}
                 className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg
                   bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition-colors disabled:opacity-60">
-                {clearing ? <RefreshCw size={11} className="animate-spin" /> : <Trash2 size={11} />}
-                {clearing ? 'جاري المسح...' : 'تأكيد المسح'}
+                {clearingAll ? <RefreshCw size={11} className="animate-spin" /> : <Trash2 size={11} />}
+                {clearingAll ? 'جاري المسح...' : 'تأكيد المسح'}
               </button>
-              <button onClick={() => setConfirmClear(false)}
+              <button onClick={() => setConfirmClearAll(false)}
                 className="flex-1 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-bold transition-colors">
                 إلغاء
               </button>

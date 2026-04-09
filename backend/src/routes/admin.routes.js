@@ -103,32 +103,41 @@ router.delete('/side-session-checks/:id', (req, res) => {
 
 // ─── SYNC HISTORY ────────────────────────────────────────────────────────────
 router.get('/syncs', (req, res) => {
-  const syncs = db.prepare(`
-    SELECT es.*, u.full_name AS uploaded_by_name
-    FROM excel_syncs es
-    LEFT JOIN users u ON u.id = es.uploaded_by
-    ORDER BY es.created_at DESC
-    LIMIT 50
-  `).all();
-  return res.json(syncs);
+  try {
+    const syncs = db.prepare(`
+      SELECT es.*, u.full_name AS uploaded_by_name
+      FROM excel_syncs es
+      LEFT JOIN users u ON u.id = es.uploaded_by
+      ORDER BY es.created_at DESC
+      LIMIT 50
+    `).all();
+    return res.json({ syncs }); // wrapped so frontend data.syncs works
+  } catch (err) {
+    return res.json({ syncs: [] });
+  }
 });
 
-// ─── UPLOAD STATUS (last upload per file type + record counts) ────────────────
+// ─── helper ──────────────────────────────────────────────────────────────────
+function safeCount(db, sql) {
+  try { return db.prepare(sql).get()?.c ?? 0; } catch { return 0; }
+}
+
+// ─── UPLOAD STATUS (last upload per file type + live counts) ─────────────────
 router.get('/upload-status', (req, res) => {
   try {
-    // Last successful upload per file_type from excel_syncs
-    const lastUploads = db.prepare(`
-      SELECT file_type, MAX(created_at) as last_upload, records_inserted
-      FROM excel_syncs
-      WHERE status = 'success'
-      GROUP BY file_type
-    `).all();
-    const uploadMap = {};
-    lastUploads.forEach(r => { uploadMap[r.file_type] = r; });
+    // Last successful upload per file_type — uses rows_imported (correct column name)
+    let uploadMap = {};
+    try {
+      db.prepare(`
+        SELECT file_type, MAX(created_at) as last_upload, rows_imported
+        FROM excel_syncs WHERE status = 'success'
+        GROUP BY file_type
+      `).all().forEach(r => { uploadMap[r.file_type] = r; });
+    } catch {}  // excel_syncs might be empty or missing — silently skip
 
-    // Live record counts per table
+    // Live counts from actual tables (correct table per file_type)
     const counts = {
-      data:          safeCount(db, "SELECT COUNT(*) as c FROM team_members"),
+      data:          safeCount(db, "SELECT COUNT(*) as c FROM employees"),
       trainees:      safeCount(db, "SELECT COUNT(*) as c FROM clients"),
       batches:       safeCount(db, "SELECT COUNT(*) as c FROM batches"),
       remarks:       safeCount(db, "SELECT COUNT(*) as c FROM remarks"),
@@ -138,49 +147,54 @@ router.get('/upload-status', (req, res) => {
     };
 
     const FILE_KEYS = ['data','trainees','batches','remarks','lectures','side_sessions','absent'];
-    const result = FILE_KEYS.map(key => ({
+    return res.json(FILE_KEYS.map(key => ({
       key,
-      last_upload:       uploadMap[key]?.last_upload    ?? null,
-      records_inserted:  uploadMap[key]?.records_inserted ?? null,
-      current_count:     counts[key],
-    }));
-
-    return res.json(result);
+      last_upload:    uploadMap[key]?.last_upload    ?? null,
+      rows_imported:  uploadMap[key]?.rows_imported  ?? null,
+      current_count:  counts[key],
+    })));
   } catch (err) {
     console.error('[admin] upload-status error:', err);
     return res.status(500).json({ error: err.message });
   }
 });
 
-function safeCount(db, sql) {
-  try { return db.prepare(sql).get()?.c ?? 0; } catch { return 0; }
+// ─── CLEAR SINGLE FILE TYPE DATA ─────────────────────────────────────────────
+router.delete('/clear-excel-data/:fileType', (req, res) => {
+  const { fileType } = req.params;
+  const FILE_DELETE = {
+    data:          () => { safeRun(db, 'DELETE FROM employees'); },
+    trainees:      () => { safeRun(db, 'DELETE FROM clients'); },
+    batches:       () => { safeRun(db, 'DELETE FROM batches'); },
+    remarks:       () => { safeRun(db, 'DELETE FROM remarks'); },
+    lectures:      () => { safeRun(db, "DELETE FROM lectures WHERE session_type='main'"); },
+    side_sessions: () => { safeRun(db, "DELETE FROM lectures WHERE session_type='side'"); },
+    absent:        () => { safeRun(db, 'DELETE FROM absent_students'); },
+  };
+  if (!FILE_DELETE[fileType])
+    return res.status(400).json({ error: `Unknown fileType: ${fileType}` });
+  try {
+    FILE_DELETE[fileType]();
+    // Remove that file's sync history too
+    try { db.prepare("DELETE FROM excel_syncs WHERE file_type = ?").run(fileType); } catch {}
+    return res.json({ message: `Cleared: ${fileType}` });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+function safeRun(db, sql) {
+  try { db.prepare(sql).run(); } catch {}
 }
 
 // ─── CLEAR ALL EXCEL DATA ─────────────────────────────────────────────────────
 router.delete('/clear-excel-data', (req, res) => {
   try {
-    const tables = ['lectures', 'absent_students', 'clients', 'batches', 'remarks'];
-    let cleared = {};
-    tables.forEach(t => {
-      try {
-        const before = db.prepare(`SELECT COUNT(*) as c FROM ${t}`).get()?.c ?? 0;
-        db.prepare(`DELETE FROM ${t}`).run();
-        cleared[t] = before;
-      } catch (e) {
-        cleared[t] = `error: ${e.message}`;
-      }
-    });
-    // Also try team_members
-    try {
-      const before = db.prepare('SELECT COUNT(*) as c FROM team_members').get()?.c ?? 0;
-      db.prepare('DELETE FROM team_members').run();
-      cleared['team_members'] = before;
-    } catch (e) { cleared['team_members'] = 0; }
-
-    // Clear sync history
-    try { db.prepare('DELETE FROM excel_syncs').run(); } catch {}
-
-    return res.json({ message: 'All Excel data cleared', cleared });
+    ['lectures','absent_students','clients','batches','remarks'].forEach(t => safeRun(db, `DELETE FROM ${t}`));
+    safeRun(db, 'DELETE FROM employees');
+    safeRun(db, 'DELETE FROM team_members');
+    safeRun(db, 'DELETE FROM excel_syncs');
+    return res.json({ message: 'All Excel data cleared' });
   } catch (err) {
     console.error('[admin] clear-excel-data error:', err);
     return res.status(500).json({ error: err.message });
