@@ -1512,7 +1512,7 @@ function MetricCell({ value, warnColor = 'red', label, onClick }) {
     orange: 'bg-orange-100 text-orange-800 border-orange-200',
     amber:  'bg-amber-100 text-amber-800 border-amber-200',
     purple: 'bg-purple-100 text-purple-800 border-purple-200',
-    slate:  'bg-slate-100 text-slate-700 border-slate-200',
+    slate:  'bg-slate-300 text-slate-800 border-slate-400',
   };
   const cls = isOk ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : colorMap[warnColor];
   const canClick = !isOk && !!onClick;
