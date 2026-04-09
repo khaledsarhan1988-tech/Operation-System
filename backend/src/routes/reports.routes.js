@@ -66,19 +66,20 @@ router.get('/dashboard', (req, res) => {
        ORDER BY end_date DESC`
     ).all();
 
-    // 3. Main lectures count — tracked as batches.completed_lectures (no per-session records in lectures table)
+    // 3. Main lectures count — sessions with duration >= 01:00 (1 hour = أساسية), regardless of session_type label
     const mainLecturesRow = db.prepare(
-      `SELECT COALESCE(SUM(completed_lectures), 0) as cnt
-       FROM batches
-       WHERE completed_lectures IS NOT NULL
+      `SELECT COUNT(*) as cnt FROM lectures
+       INNER JOIN batches ON lectures.group_name = batches.group_name
+       WHERE lectures.duration >= '01:00'
+       ${buildDateFilter('lectures.date', from_date, to_date)}
        ${deptBatches}${empFilter}`
     ).get();
 
-    // 4. Side sessions count
+    // 4. Side sessions count — short sessions (duration < 01:00 OR no duration, typically 00:15)
     const sideLecturesRow = db.prepare(
       `SELECT COUNT(*) as cnt FROM lectures
        INNER JOIN batches ON lectures.group_name = batches.group_name
-       WHERE lectures.session_type='side'
+       WHERE (lectures.duration IS NULL OR lectures.duration < '01:00')
        ${buildDateFilter('lectures.date', from_date, to_date)}
        ${deptBatches}${empFilter}`
     ).get();
@@ -223,6 +224,7 @@ router.get('/lectures-list', (req, res) => {
     session_type = 'main', page = 1, limit = 100,
     search = '', trainer = '', coordinator = '',
     modal_from = '', modal_to = '',
+    min_duration = '', max_duration = '',  // optional duration range filters
   } = req.query;
   const offset = (Number(page) - 1) * Number(limit);
   const deptFilter        = department && department !== 'All' ? ` AND b.dept_type = '${department}'` : '';
@@ -230,6 +232,9 @@ router.get('/lectures-list', (req, res) => {
   const searchFilter      = search      ? ` AND l.group_name LIKE '%${search}%'` : '';
   const trainerFilter     = trainer     ? ` AND l.trainer LIKE '%${trainer}%'` : '';
   const coordFilter       = coordinator ? ` AND b.coordinators LIKE '%${coordinator}%'` : '';
+  // Duration filters (HH:MM string comparison works correctly for same-format values)
+  const minDurFilter      = min_duration ? ` AND l.duration >= '${min_duration}'` : '';
+  const maxDurFilter      = max_duration ? ` AND l.duration <= '${max_duration}'` : '';
   // Modal date overrides outer date if provided
   const activFrom  = modal_from || from_date;
   const activTo    = modal_to   || to_date;
@@ -237,10 +242,13 @@ router.get('/lectures-list', (req, res) => {
                    : activFrom ? ` AND l.date >= '${activFrom}'`
                    : activTo   ? ` AND l.date <= '${activTo}'` : '';
 
-  const allFilters = `${dateFilter}${deptFilter}${empFilter}${trainerFilter}${coordFilter}${searchFilter}`;
+  // When min_duration is set (main lectures mode), ignore session_type filter — use duration to identify them
+  const sessionTypeFilter = min_duration ? '' : ` AND l.session_type = '${session_type}'`;
+
+  const allFilters = `${sessionTypeFilter}${minDurFilter}${maxDurFilter}${dateFilter}${deptFilter}${empFilter}${trainerFilter}${coordFilter}${searchFilter}`;
 
   // For side sessions: pre-aggregate onboarding/offboarding per group (one JOIN instead of N subqueries)
-  const sideJoin = session_type === 'side'
+  const sideJoin = (!min_duration && session_type === 'side')
     ? `LEFT JOIN (
          SELECT group_name,
            SUM(CASE WHEN side_session_category='onboarding'  THEN 1 ELSE 0 END) AS onboarding_count,
@@ -249,7 +257,7 @@ router.get('/lectures-list', (req, res) => {
          GROUP BY group_name
        ) lx_counts ON lx_counts.group_name = l.group_name`
     : '';
-  const sideExtraFields = session_type === 'side'
+  const sideExtraFields = (!min_duration && session_type === 'side')
     ? `, COALESCE(lx_counts.onboarding_count,0) AS onboarding_count, COALESCE(lx_counts.offboarding_count,0) AS offboarding_count`
     : '';
 
@@ -257,7 +265,7 @@ router.get('/lectures-list', (req, res) => {
     const totalRow = db.prepare(
       `SELECT COUNT(*) as cnt FROM lectures l
        LEFT JOIN batches b ON l.group_name = b.group_name
-       WHERE l.session_type = '${session_type}'${allFilters}`
+       WHERE 1=1${allFilters}`
     ).get();
 
     const rows = db.prepare(
@@ -265,7 +273,7 @@ router.get('/lectures-list', (req, res) => {
        FROM lectures l
        LEFT JOIN batches b ON l.group_name = b.group_name
        ${sideJoin}
-       WHERE l.session_type = '${session_type}'${allFilters}
+       WHERE 1=1${allFilters}
        ORDER BY l.date DESC LIMIT ${Number(limit)} OFFSET ${offset}`
     ).all();
 

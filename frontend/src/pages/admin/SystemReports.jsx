@@ -2082,13 +2082,22 @@ export default function SystemReports() {
           <KpiCard label="المحاضرات الأساسية" value={kpis.main_lectures} icon={BookOpen}
             gradient="linear-gradient(135deg, #0369a1 0%, #0ea5e9 100%)"
             loading={isLoading}
-            onClick={() => setGroupsModal({
-              title: 'المجموعات — إجمالي المحاضرات الأساسية',
-              groups: (data?.active_groups_list ?? [])
-                .filter(g => applied.employee ? g.coordinators?.includes(applied.employee) : true)
-                .filter(g => !applied.department || g.dept_type === applied.department)
-                .filter(g => (g.completed_lectures ?? 0) > 0)
-                .sort((a, b) => (b.completed_lectures ?? 0) - (a.completed_lectures ?? 0)),
+            onClick={() => setListModal({
+              title: 'المحاضرات الأساسية (مدة ≥ ساعة)',
+              endpoint: '/reports/lectures-list',
+              params: { min_duration: '01:00', ...applied },
+              extraFilters: ['trainer', 'coordinator', 'date', 'dept'],
+              columns: [
+                { key: 'group_name',   label: 'المجموعة',   noWrap: true },
+                { key: 'date',         label: 'التاريخ',    type: 'date' },
+                { key: 'time',         label: 'الوقت' },
+                { key: 'duration',     label: 'المدة',      type: 'duration' },
+                { key: 'trainer',      label: 'المدرب' },
+                { key: 'status',       label: 'الحالة' },
+                { key: 'attendance',   label: 'الحضور' },
+                { key: 'dept_type',    label: 'القسم',      type: 'badge' },
+                { key: 'coordinators', label: 'المنسق' },
+              ],
             })} />
           <KpiCard label="الجلسات الجانبية" value={kpis.side_sessions} icon={Layers}
             gradient="linear-gradient(135deg, #7c3aed 0%, #a855f7 100%)"
@@ -2096,7 +2105,7 @@ export default function SystemReports() {
             onClick={() => setListModal({
               title: 'الجلسات الجانبية',
               endpoint: '/reports/lectures-list',
-              params: { session_type: 'side', ...applied },
+              params: { max_duration: '00:59', ...applied },
               columns: [
                 { key: 'group_name',           label: 'المجموعة',    noWrap: true },
                 { key: 'date',                  label: 'التاريخ',    type: 'date' },
