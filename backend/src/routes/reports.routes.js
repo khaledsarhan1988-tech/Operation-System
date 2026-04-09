@@ -94,11 +94,12 @@ router.get('/dashboard', (req, res) => {
        ${deptBatches}${empFilter}`
     ).get();
 
-    // 5. Absent main
+    // 5. Absent main — only valid rows (same filter as modal)
     const absentMainRow = db.prepare(
       `SELECT COUNT(*) as cnt FROM absent_students
        INNER JOIN batches ON absent_students.group_name = batches.group_name
-       WHERE 1=1
+       WHERE absent_students.student_name IS NOT NULL AND TRIM(absent_students.student_name) != ''
+         AND absent_students.phone IS NOT NULL AND TRIM(absent_students.phone) != ''
        ${buildDateFilter('absent_students.date', from_date, to_date)}
        ${deptBatches}${empFilter}`
     ).get();
