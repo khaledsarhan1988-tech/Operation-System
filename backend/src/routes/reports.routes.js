@@ -106,7 +106,7 @@ router.get('/dashboard', (req, res) => {
            AND l.status = 'مؤكدة'
            AND (l.duration IS NULL OR l.duration <= '00:15')
          ${buildDateFilter('l.date', from_date, to_date)}
-         ${deptBatches}${empFilter}
+         ${deptB}${empBFilter}
          GROUP BY l.group_name, l.date
          HAVING absent_count > 0
        )`
