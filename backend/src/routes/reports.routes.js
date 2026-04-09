@@ -936,6 +936,103 @@ router.get('/remarks-notes-options', (req, res) => {
   }
 });
 
+// ─── GET /api/reports/team-summary-detail ────────────────────────────────────
+// Returns the rows behind a single metric cell: ?employee=X&metric=Y
+router.get('/team-summary-detail', (req, res) => {
+  const { employee, metric } = req.query;
+  if (!employee || !metric) return res.status(400).json({ error: 'employee and metric required' });
+  const like = `%${employee}%`;
+
+  try {
+    let rows = [];
+
+    if (metric === 'expired_groups') {
+      rows = db.prepare(
+        `SELECT group_name, end_date, dept_type, trainee_count
+         FROM batches
+         WHERE status='نشطة'
+           AND end_date IS NOT NULL AND end_date != ''
+           AND end_date < date('now')
+           AND coordinators LIKE ?
+         ORDER BY end_date ASC`
+      ).all(like);
+
+    } else if (metric === 'overdue_remarks') {
+      rows = db.prepare(
+        `SELECT id, client_name, client_phone, details, priority, status,
+           added_at, last_updated,
+           ROUND((julianday('now')-julianday(COALESCE(added_at,'2000-01-01')))*24,1) as hours_open
+         FROM remarks
+         WHERE LOWER(status) NOT IN ('closed','مغلق','resolved')
+           AND assigned_to LIKE ?
+           AND ROUND((julianday('now')-julianday(COALESCE(added_at,'2000-01-01')))*24,1) >=
+               CASE WHEN priority='عاجلة' THEN 3
+                    WHEN priority='هامة'  THEN 24
+                    ELSE 48 END
+           AND (last_updated IS NULL
+             OR ROUND((julianday('now')-julianday(last_updated))*24,1) >= 24)
+         ORDER BY hours_open DESC`
+      ).all(like);
+
+    } else if (metric === 'main_absence_no_remark') {
+      rows = db.prepare(
+        `SELECT DISTINCT a.student_name, a.phone, a.group_name, a.date
+         FROM absent_students a
+         INNER JOIN batches b ON a.group_name = b.group_name
+         WHERE b.coordinators LIKE ?
+           AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
+           AND NOT EXISTS (
+             SELECT 1 FROM remarks r
+             WHERE r.client_phone = a.phone
+               AND r.category = 'Attendance Main Session'
+               AND LOWER(r.status) NOT IN ('closed','مغلق','resolved')
+           )
+         ORDER BY a.group_name, a.date DESC`
+      ).all(like);
+
+    } else if (metric === 'side_absence_no_remark') {
+      rows = db.prepare(
+        `SELECT DISTINCT l.group_name, l.date, b.trainee_count,
+           CAST(l.attendance AS INTEGER) as attendance
+         FROM lectures l
+         INNER JOIN batches b ON l.group_name = b.group_name
+         WHERE b.coordinators LIKE ?
+           AND l.session_type = 'side'
+           AND l.status = 'مؤكدة'
+           AND l.attendance IS NOT NULL
+           AND CAST(l.attendance AS INTEGER) < b.trainee_count
+           AND b.trainee_count > 0
+           AND NOT EXISTS (
+             SELECT 1 FROM remarks r
+             INNER JOIN clients c ON r.client_phone = c.phone
+             WHERE c.group_name = l.group_name
+               AND r.category = 'Attendance Zoom Call'
+               AND LOWER(r.status) NOT IN ('closed','مغلق','resolved')
+           )
+         ORDER BY l.group_name, l.date DESC`
+      ).all(like);
+
+    } else if (metric === 'groups_with_errors') {
+      rows = db.prepare(
+        `SELECT group_name, scheduled_lectures, completed_lectures, dept_type,
+           ABS(scheduled_lectures - completed_lectures) as diff
+         FROM batches
+         WHERE status = 'نشطة'
+           AND coordinators LIKE ?
+           AND scheduled_lectures IS NOT NULL
+           AND completed_lectures IS NOT NULL
+           AND scheduled_lectures != completed_lectures
+         ORDER BY diff DESC`
+      ).all(like);
+    }
+
+    return res.json({ employee, metric, rows });
+  } catch (err) {
+    console.error('[reports] team-summary-detail error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/reports/team-summary ──────────────────────────────────────────
 // Returns per-employee metrics for customer_services + appointments departments
 router.get('/team-summary', (req, res) => {

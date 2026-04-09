@@ -6,7 +6,7 @@ import {
   MessageSquare, RefreshCw, ChevronDown, ChevronUp, X, Clock,
   UserCheck, Eye, Search, Filter, TrendingUp, Calendar,
   CheckCircle, XCircle, AlertOctagon, BarChart2, Zap, FileText,
-  Edit3, Save, Bell, ShieldCheck, Loader2,
+  Edit3, Save, Bell, ShieldCheck, Loader2, Copy, Check,
 } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
@@ -1505,7 +1505,7 @@ const SECTION_LABELS = {
   all: 'الكل', general: 'عام', private: 'خاص', semi: 'شبه خاص', phone_call: 'فون كول',
 };
 
-function MetricCell({ value, warnColor = 'red', label }) {
+function MetricCell({ value, warnColor = 'red', label, onClick }) {
   const isOk = (value ?? 0) === 0;
   const colorMap = {
     red:    'bg-red-100 text-red-800 border-red-200',
@@ -1515,17 +1515,234 @@ function MetricCell({ value, warnColor = 'red', label }) {
     slate:  'bg-slate-100 text-slate-700 border-slate-200',
   };
   const cls = isOk ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : colorMap[warnColor];
+  const canClick = !isOk && !!onClick;
   return (
     <td className="px-3 py-2.5 text-center">
-      <span className={`inline-flex items-center justify-center min-w-[36px] px-2.5 py-0.5 rounded-full text-xs font-black border ${cls}`}
-        title={label}>
+      <span
+        onClick={canClick ? onClick : undefined}
+        title={canClick ? `عرض تفاصيل ${label}` : label}
+        className={`inline-flex items-center justify-center min-w-[36px] px-2.5 py-0.5 rounded-full text-xs font-black border transition-all
+          ${cls} ${canClick ? 'cursor-pointer hover:scale-110 hover:shadow-sm active:scale-95' : ''}`}
+      >
         {value ?? 0}
       </span>
     </td>
   );
 }
 
+// ─── METRIC DETAIL MODAL ──────────────────────────────────────────────────────
+const METRIC_META = {
+  expired_groups:          { label: 'مجموعات منتهية ونشطة',       color: 'red'    },
+  overdue_remarks:         { label: 'ريماركات متأخرة',             color: 'orange' },
+  main_absence_no_remark:  { label: 'غياب أساسي بلا ريمارك',      color: 'amber'  },
+  side_absence_no_remark:  { label: 'غياب جانبي بلا ريمارك',      color: 'purple' },
+  groups_with_errors:      { label: 'مجموعات بها أخطاء',          color: 'slate'  },
+};
+
+function MetricDetailModal({ employee, metric, onClose }) {
+  const [copied, setCopied] = useState(false);
+  const meta = METRIC_META[metric] ?? { label: metric, color: 'slate' };
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['team-detail', employee, metric],
+    queryFn: () => api.get('/reports/team-summary-detail', { params: { employee, metric } }).then(r => r.data),
+    staleTime: 2 * 60 * 1000,
+  });
+
+  const rows = data?.rows ?? [];
+
+  // Extract the main "code" from each row (group_name or client identifier)
+  const getCodes = () => {
+    if (!rows.length) return '';
+    if (metric === 'overdue_remarks') {
+      return rows.map(r => `${r.client_name ?? '—'} | ${r.client_phone ?? '—'} | ${r.priority ?? '—'} | ${r.hours_open} ساعة`).join('\n');
+    }
+    if (metric === 'main_absence_no_remark') {
+      return [...new Set(rows.map(r => r.group_name))].join('\n');
+    }
+    return rows.map(r => r.group_name).join('\n');
+  };
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(getCodes()).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  const headerColors = {
+    red:    'from-red-600 to-red-500',
+    orange: 'from-orange-500 to-amber-400',
+    amber:  'from-amber-500 to-yellow-400',
+    purple: 'from-purple-600 to-purple-500',
+    slate:  'from-slate-600 to-slate-500',
+  };
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+      onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden"
+        onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div className={`bg-gradient-to-l ${headerColors[meta.color]} px-5 py-4`}>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-white/70 text-xs font-semibold mb-0.5">{employee}</p>
+              <h3 className="text-white font-black text-base">{meta.label}</h3>
+              <p className="text-white/60 text-xs mt-0.5">
+                {isLoading ? 'جاري التحميل...' : `${rows.length} سجل`}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              {rows.length > 0 && (
+                <button onClick={handleCopy}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white/20 hover:bg-white/30 text-white rounded-xl text-xs font-bold transition-all">
+                  {copied ? <Check size={12} /> : <Copy size={12} />}
+                  {copied ? 'تم النسخ!' : 'نسخ الكل'}
+                </button>
+              )}
+              <button onClick={onClose} className="p-1.5 bg-white/20 hover:bg-white/30 rounded-xl transition-all">
+                <X size={15} className="text-white" />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="overflow-y-auto" style={{ maxHeight: '60vh' }}>
+          {isLoading ? (
+            <div className="flex items-center justify-center py-12 text-gray-400 text-sm">
+              <Loader2 size={18} className="animate-spin ml-2" /> جاري التحميل...
+            </div>
+          ) : !rows.length ? (
+            <div className="flex flex-col items-center py-12 text-gray-400">
+              <CheckCircle className="w-8 h-8 text-emerald-300 mb-2" />
+              <p className="text-sm">لا توجد بيانات</p>
+            </div>
+          ) : metric === 'expired_groups' ? (
+            <table className="w-full text-sm text-right">
+              <thead><tr className="bg-gray-50 border-b border-gray-100">
+                {['اسم المجموعة','تاريخ النهاية','القسم','المتدربين'].map(h => (
+                  <th key={h} className="px-4 py-2.5 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
+                ))}
+              </tr></thead>
+              <tbody className="divide-y divide-gray-50">
+                {rows.map((r, i) => (
+                  <tr key={i} className="hover:bg-gray-50/70">
+                    <td className="px-4 py-2.5 text-xs font-semibold text-gray-900" style={{ maxWidth: 220, wordBreak: 'break-all' }}>{r.group_name}</td>
+                    <td className="px-4 py-2.5 text-xs text-red-600 font-mono whitespace-nowrap">{r.end_date}</td>
+                    <td className="px-4 py-2.5 text-xs text-gray-600 whitespace-nowrap">{r.dept_type ?? '—'}</td>
+                    <td className="px-4 py-2.5 text-xs text-gray-600 text-center">{r.trainee_count ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : metric === 'overdue_remarks' ? (
+            <table className="w-full text-sm text-right">
+              <thead><tr className="bg-gray-50 border-b border-gray-100">
+                {['العميل','الموبايل','الأهمية','ساعات مفتوحة'].map(h => (
+                  <th key={h} className="px-4 py-2.5 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
+                ))}
+              </tr></thead>
+              <tbody className="divide-y divide-gray-50">
+                {rows.map((r, i) => (
+                  <tr key={i} className="hover:bg-gray-50/70">
+                    <td className="px-4 py-2.5 text-xs font-semibold text-gray-900 whitespace-nowrap">{r.client_name ?? '—'}</td>
+                    <td className="px-4 py-2.5 text-xs font-mono text-blue-600 whitespace-nowrap">{r.client_phone ?? '—'}</td>
+                    <td className="px-4 py-2.5 text-xs whitespace-nowrap">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-bold border
+                        ${r.priority === 'عاجلة' ? 'bg-red-100 text-red-700 border-red-200' :
+                          r.priority === 'هامة'  ? 'bg-orange-100 text-orange-700 border-orange-200' :
+                          'bg-gray-100 text-gray-600 border-gray-200'}`}>
+                        {r.priority ?? '—'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-xs font-black text-red-600 text-center">{r.hours_open}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : metric === 'main_absence_no_remark' ? (
+            <table className="w-full text-sm text-right">
+              <thead><tr className="bg-gray-50 border-b border-gray-100">
+                {['اسم الطالب','الموبايل','المجموعة','تاريخ الغياب'].map(h => (
+                  <th key={h} className="px-4 py-2.5 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
+                ))}
+              </tr></thead>
+              <tbody className="divide-y divide-gray-50">
+                {rows.map((r, i) => (
+                  <tr key={i} className="hover:bg-gray-50/70">
+                    <td className="px-4 py-2.5 text-xs font-semibold text-gray-900 whitespace-nowrap">{r.student_name ?? '—'}</td>
+                    <td className="px-4 py-2.5 text-xs font-mono text-blue-600 whitespace-nowrap">{r.phone ?? '—'}</td>
+                    <td className="px-4 py-2.5 text-xs text-gray-600" style={{ maxWidth: 180, wordBreak: 'break-all' }}>{r.group_name ?? '—'}</td>
+                    <td className="px-4 py-2.5 text-xs text-gray-500 whitespace-nowrap font-mono">{r.date ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : metric === 'side_absence_no_remark' ? (
+            <table className="w-full text-sm text-right">
+              <thead><tr className="bg-gray-50 border-b border-gray-100">
+                {['المجموعة','تاريخ الجلسة','الحضور','المتدربين'].map(h => (
+                  <th key={h} className="px-4 py-2.5 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
+                ))}
+              </tr></thead>
+              <tbody className="divide-y divide-gray-50">
+                {rows.map((r, i) => (
+                  <tr key={i} className="hover:bg-gray-50/70">
+                    <td className="px-4 py-2.5 text-xs font-semibold text-gray-900" style={{ maxWidth: 220, wordBreak: 'break-all' }}>{r.group_name}</td>
+                    <td className="px-4 py-2.5 text-xs text-gray-500 whitespace-nowrap font-mono">{r.date ?? '—'}</td>
+                    <td className="px-4 py-2.5 text-xs text-red-600 font-black text-center">{r.attendance ?? '—'}</td>
+                    <td className="px-4 py-2.5 text-xs text-gray-600 text-center">{r.trainee_count ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            /* groups_with_errors */
+            <table className="w-full text-sm text-right">
+              <thead><tr className="bg-gray-50 border-b border-gray-100">
+                {['اسم المجموعة','مجدول','مسجل','الفرق'].map(h => (
+                  <th key={h} className="px-4 py-2.5 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
+                ))}
+              </tr></thead>
+              <tbody className="divide-y divide-gray-50">
+                {rows.map((r, i) => (
+                  <tr key={i} className="hover:bg-gray-50/70">
+                    <td className="px-4 py-2.5 text-xs font-semibold text-gray-900" style={{ maxWidth: 220, wordBreak: 'break-all' }}>{r.group_name}</td>
+                    <td className="px-4 py-2.5 text-xs text-gray-600 text-center">{r.scheduled_lectures ?? '—'}</td>
+                    <td className="px-4 py-2.5 text-xs text-gray-600 text-center">{r.completed_lectures ?? '—'}</td>
+                    <td className="px-4 py-2.5 text-center">
+                      <span className="text-xs font-black text-red-600 bg-red-50 px-2 py-0.5 rounded-full border border-red-200">
+                        {r.diff > 0 ? `+${r.diff}` : r.diff}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-3 bg-gray-50 border-t border-gray-100 flex items-center justify-between">
+          <p className="text-xs text-gray-400">اضغط خارج النافذة للإغلاق</p>
+          {rows.length > 0 && (
+            <button onClick={handleCopy}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1e3a5f] text-white rounded-xl text-xs font-bold transition-all hover:bg-[#15294a]">
+              {copied ? <Check size={11} /> : <Copy size={11} />}
+              {copied ? 'تم النسخ!' : 'نسخ الأكواد'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TeamSummarySection({ data, loading }) {
+  const [detailModal, setDetailModal] = useState(null); // { employee, metric }
   const byDept = {};
   (data ?? []).forEach(m => {
     if (!byDept[m.department]) byDept[m.department] = [];
@@ -1644,7 +1861,8 @@ function TeamSummarySection({ data, loading }) {
                             </span>
                           </td>
                           {COLS.map(c => (
-                            <MetricCell key={c.key} value={m[c.key]} warnColor={c.color} label={c.label} />
+                            <MetricCell key={c.key} value={m[c.key]} warnColor={c.color} label={c.label}
+                              onClick={() => setDetailModal({ employee: m.name, metric: c.key })} />
                           ))}
                         </tr>
                       ))}
@@ -1656,6 +1874,14 @@ function TeamSummarySection({ data, loading }) {
           })
         )}
       </div>
+
+      {detailModal && (
+        <MetricDetailModal
+          employee={detailModal.employee}
+          metric={detailModal.metric}
+          onClose={() => setDetailModal(null)}
+        />
+      )}
     </div>
   );
 }
