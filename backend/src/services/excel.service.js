@@ -29,24 +29,36 @@ const MONTH_MAP = {
  * Parse group name code to extract metadata
  * e.g. "Mar_30_Mon_9pm_Con_4_SP(Israa Hafiz)Amira"
  */
-function parseGroupCode(groupName) {
+function parseGroupCode(groupName, trainerHint = '') {
   if (!groupName || typeof groupName !== 'string') return {};
   try {
     const result = { dept_type: null, level_code: null, main_days: null, side_days: null, lecture_duration_min: null };
 
-    // Detect department type
-    // Semi: group name contains _SP( or _SP_ or _Sp( etc.
-    if (/_SP[^a-zA-Z]/i.test(groupName) || /semi/i.test(groupName)) {
+    // Detect department type from group name segments (underscore-separated)
+    // We split by _ and check segments to avoid matching partial words like shoroukG → G
+    const segments = groupName.split('_').map(s => s.trim());
+
+    // Semi: explicit _SP segment (standalone), or keyword in group name, or trainer hint "(semi)"
+    const hasSPSegment = segments.some(seg => /^SP$/i.test(seg) || /^SP\(/i.test(seg));
+    const hasSemiKeyword = /\bsemi\b/i.test(groupName);
+    const trainerIsSemi = /\(semi\)/i.test(trainerHint) || /\(sp\)/i.test(trainerHint);
+
+    if (hasSPSegment || hasSemiKeyword || trainerIsSemi) {
       result.dept_type = 'Semi';
       result.lecture_duration_min = 60;
-    // Private: group name contains _P( or _4P( or _5P( etc. (but NOT _SP)
-    } else if (/\bPrivate\b/i.test(groupName) || /_\d*P\(/i.test(groupName)) {
+
+    // Private: explicit segment or trainer hint "(private)" / "(p)"
+    } else if (/\bPrivate\b/i.test(groupName) || segments.some(seg => /^\d*P\(/.test(seg)) || /\(private\)/i.test(trainerHint)) {
       result.dept_type = 'Private';
       result.lecture_duration_min = 60;
-    } else if (/General/i.test(groupName)) {
+
+    // General: explicit keyword in group name
+    } else if (/\bGeneral\b/i.test(groupName) || trainerIsSemi === false && /\(general\)/i.test(trainerHint)) {
       result.dept_type = 'General';
       result.lecture_duration_min = 90;
+
     } else {
+      // Default fallback — no reliable indicator found
       result.dept_type = 'General';
       result.lecture_duration_min = 90;
     }
@@ -190,13 +202,14 @@ function parseBatches(buffer) {
     .filter(r => r[1])
     .map(r => {
       const groupName = String(r[1]).trim();
-      const parsed = parseGroupCode(groupName);
+      const trainersStr = r[4] ? String(r[4]).trim() : '';
+      const parsed = parseGroupCode(groupName, trainersStr);
       return {
         external_id: r[0] ? Number(r[0]) : null,
         group_name: groupName,
         course: r[2] ? String(r[2]).trim() : null,
         status: r[3] ? String(r[3]).trim() : null,
-        trainers: r[4] ? String(r[4]).trim() : null,
+        trainers: trainersStr || null,
         trainee_count: r[5] ? Number(r[5]) : 0,
         max_trainees: r[6] ? Number(r[6]) : 0,
         scheduled_lectures: r[7] ? Number(r[7]) : 0,
