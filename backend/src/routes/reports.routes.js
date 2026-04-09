@@ -640,7 +640,9 @@ router.get('/remarks-notes-main', (req, res) => {
 
   // Pre-deduplicate remarks: one row per phone+date to avoid duplicate rows in JOIN
   const innerQ = `
-    SELECT a.id, a.student_name, a.phone AS student_phone, a.group_name, a.date AS absence_date,
+    SELECT a.id,
+      COALESCE(c_lu.name, a.student_name) AS student_name,
+      a.phone AS student_phone, a.group_name, a.date AS absence_date,
       b.coordinators, b.dept_type,
       date(a.date, '+1 day') AS expected_remark_date,
       r.id AS remark_id, r.details AS remark_details, r.added_at AS remark_date,
@@ -648,6 +650,7 @@ router.get('/remarks-notes-main', (req, res) => {
       CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END AS has_remark
     FROM absent_students a
     LEFT JOIN batches b ON a.group_name = b.group_name
+    LEFT JOIN clients c_lu ON a.phone IS NOT NULL AND TRIM(a.phone) != '' AND c_lu.phone = a.phone
     LEFT JOIN (
       SELECT client_phone,
         date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2)) AS rdate,
@@ -711,14 +714,14 @@ router.get('/remarks-notes-zoom', (req, res) => {
   // Deduplicate clients (one row per phone) AND lectures (one row per group+date)
   // to prevent row multiplication from either join
   const innerQ = `
-    SELECT r.id, r.client_name, r.client_phone, r.details AS remark_details,
+    SELECT r.id, COALESCE(c.name, r.client_name) AS client_name, r.client_phone, r.details AS remark_details,
       r.added_at AS remark_date, r.assigned_to, r.status AS remark_status,
       c.group_name, b.coordinators, b.dept_type,
       ${expectedSessionSQL} AS expected_session_date,
       l.session_date,
       CASE WHEN l.group_name IS NOT NULL THEN 1 ELSE 0 END AS has_session
     FROM remarks r
-    LEFT JOIN (SELECT phone, MIN(group_name) AS group_name FROM clients GROUP BY phone) c
+    LEFT JOIN (SELECT phone, MIN(group_name) AS group_name, MIN(name) AS name FROM clients GROUP BY phone) c
       ON c.phone = r.client_phone
     LEFT JOIN batches b ON b.group_name = c.group_name
     LEFT JOIN (
