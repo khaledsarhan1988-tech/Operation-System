@@ -66,20 +66,20 @@ router.get('/dashboard', (req, res) => {
        ORDER BY end_date DESC`
     ).all();
 
-    // 3. Main lectures count — sessions with duration >= 01:00 (1 hour = أساسية), regardless of session_type label
+    // 3. Main lectures count — session_type='main' (uploaded from "Lecture" Excel sheet)
     const mainLecturesRow = db.prepare(
       `SELECT COUNT(*) as cnt FROM lectures
        INNER JOIN batches ON lectures.group_name = batches.group_name
-       WHERE lectures.duration >= '01:00'
+       WHERE lectures.session_type = 'main'
        ${buildDateFilter('lectures.date', from_date, to_date)}
        ${deptBatches}${empFilter}`
     ).get();
 
-    // 4. Side sessions count — short sessions (duration < 01:00 OR no duration, typically 00:15)
+    // 4. Side sessions count — session_type='side' (uploaded from "Lectures of Side Session" Excel sheet, always 15 min)
     const sideLecturesRow = db.prepare(
       `SELECT COUNT(*) as cnt FROM lectures
        INNER JOIN batches ON lectures.group_name = batches.group_name
-       WHERE (lectures.duration IS NULL OR lectures.duration < '01:00')
+       WHERE lectures.session_type = 'side'
        ${buildDateFilter('lectures.date', from_date, to_date)}
        ${deptBatches}${empFilter}`
     ).get();

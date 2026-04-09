@@ -2083,9 +2083,9 @@ export default function SystemReports() {
             gradient="linear-gradient(135deg, #0369a1 0%, #0ea5e9 100%)"
             loading={isLoading}
             onClick={() => setListModal({
-              title: 'المحاضرات الأساسية (مدة ≥ ساعة)',
+              title: 'المحاضرات الأساسية',
               endpoint: '/reports/lectures-list',
-              params: { min_duration: '01:00', ...applied },
+              params: { session_type: 'main', ...applied },
               extraFilters: ['trainer', 'coordinator', 'date', 'dept'],
               columns: [
                 { key: 'group_name',   label: 'المجموعة',   noWrap: true },
@@ -2105,7 +2105,7 @@ export default function SystemReports() {
             onClick={() => setListModal({
               title: 'الجلسات الجانبية',
               endpoint: '/reports/lectures-list',
-              params: { max_duration: '00:59', ...applied },
+              params: { session_type: 'side', ...applied },
               columns: [
                 { key: 'group_name',           label: 'المجموعة',    noWrap: true },
                 { key: 'date',                  label: 'التاريخ',    type: 'date' },
