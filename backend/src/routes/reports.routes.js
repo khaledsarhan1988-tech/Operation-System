@@ -1042,6 +1042,7 @@ router.get('/team-summary-detail', (req, res) => {
          WHERE b.coordinators LIKE ?
            ${deptF}${dateL}
            AND l.session_type = 'side'
+           AND l.side_session_category = 'regular'
            AND l.status = 'مؤكدة'
            AND l.attendance IS NOT NULL
            AND CAST(l.attendance AS INTEGER) < b.trainee_count
@@ -1145,6 +1146,7 @@ router.get('/team-summary', (req, res) => {
          WHERE b.coordinators LIKE ?
            ${deptF}${dateL}
            AND l.session_type = 'side'
+           AND l.side_session_category = 'regular'
            AND l.status = 'مؤكدة'
            AND l.attendance IS NOT NULL
            AND CAST(l.attendance AS INTEGER) < b.trainee_count

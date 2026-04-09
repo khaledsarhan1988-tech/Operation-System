@@ -1600,7 +1600,7 @@ const METRIC_META = {
   expired_groups:          { label: 'مجموعات منتهية ونشطة',       color: 'red'    },
   overdue_remarks:         { label: 'ريماركات متأخرة',             color: 'orange' },
   main_absence_no_remark:  { label: 'غياب أساسي بلا ريمارك',      color: 'amber'  },
-  side_absence_no_remark:  { label: 'غياب جانبي بلا ريمارك',      color: 'purple' },
+  side_absence_no_remark:  { label: 'غياب زووم بلا ريمارك',      color: 'purple' },
   groups_with_errors:      { label: 'مجموعات بها أخطاء',          color: 'slate'  },
 };
 
@@ -1822,7 +1822,7 @@ function TeamSummarySection({ data, loading, applied = {} }) {
     { key: 'expired_groups',         label: 'منتهية ونشطة',          color: 'red'    },
     { key: 'overdue_remarks',         label: 'ريماركات متأخرة',        color: 'orange' },
     { key: 'main_absence_no_remark',  label: 'غياب أساسي بلا ريمارك', color: 'amber'  },
-    { key: 'side_absence_no_remark',  label: 'غياب جانبي بلا ريمارك', color: 'purple' },
+    { key: 'side_absence_no_remark',  label: 'غياب زووم بلا ريمارك', color: 'purple' },
     { key: 'groups_with_errors',      label: 'مجموعات بها أخطاء',     color: 'slate'  },
   ];
 
