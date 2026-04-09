@@ -66,12 +66,11 @@ router.get('/dashboard', (req, res) => {
        ORDER BY end_date DESC`
     ).all();
 
-    // 3. Main lectures count
+    // 3. Main lectures count — tracked as batches.completed_lectures (no per-session records in lectures table)
     const mainLecturesRow = db.prepare(
-      `SELECT COUNT(*) as cnt FROM lectures
-       INNER JOIN batches ON lectures.group_name = batches.group_name
-       WHERE lectures.session_type='main'
-       ${buildDateFilter('lectures.date', from_date, to_date)}
+      `SELECT COALESCE(SUM(completed_lectures), 0) as cnt
+       FROM batches
+       WHERE completed_lectures IS NOT NULL
        ${deptBatches}${empFilter}`
     ).get();
 
