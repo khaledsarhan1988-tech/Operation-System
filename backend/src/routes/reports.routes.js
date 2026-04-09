@@ -129,7 +129,7 @@ router.get('/dashboard', (req, res) => {
            )
            ${absentDeptB}${absentEmpB}
          ) p1_inner
-         WHERE 1=1${absentDateFP1}
+         WHERE resolved_date IS NULL OR (1=1${absentDateFP1})
          UNION ALL
          SELECT l.group_name FROM lectures l
          INNER JOIN batches b2 ON l.group_name = b2.group_name
@@ -417,7 +417,7 @@ router.get('/absent-list', (req, res) => {
       )
       ${deptFilter}${empFilter}${coordFilter}${searchFilter}
     ) p1_inner
-    WHERE 1=1${dateFilterP1}`;
+    WHERE date IS NULL OR (1=1${dateFilterP1})`;
 
   // Part2: main lectures with NO absence records → all students in group treated as absent
   const part2 = `
