@@ -103,7 +103,7 @@ router.get('/dashboard', (req, res) => {
        ${deptBatches}${empFilter}`
     ).get();
 
-    // 6. Absent side — grouped per group+date, absent = trainee_count - present sessions
+    // 6. Absent zoom call — grouped per group+date, absent = trainee_count - present sessions (15 min only)
     const absentSideRow = db.prepare(
       `SELECT COALESCE(SUM(absent_count), 0) as cnt FROM (
          SELECT
@@ -197,7 +197,7 @@ router.get('/dashboard', (req, res) => {
         side_sessions:         sideLecturesRow?.cnt ?? 0,
         zoom_calls:            zoomCallsRow?.cnt ?? 0,
         absent_main:           absentMainRow?.cnt ?? 0,
-        absent_side:           absentSideRow?.cnt ?? 0,
+        absent_zoom:           absentSideRow?.cnt ?? 0,
         open_remarks:          openRemarksCount?.cnt ?? 0,
         remarks_notes:         (() => {
           try {

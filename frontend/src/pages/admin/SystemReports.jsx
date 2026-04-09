@@ -2234,11 +2234,11 @@ export default function SystemReports() {
           <Zap size={11} /> التنبيهات
         </p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <KpiCard label="غياب الجلسات الجانبية" value={kpis.absent_side} icon={UserX}
+          <KpiCard label="غياب الزووم كول" value={kpis.absent_zoom} icon={UserX}
             gradient="linear-gradient(135deg, #ca8a04 0%, #eab308 100%)"
             loading={isLoading}
             onClick={() => setListModal({
-              title: 'غياب الجلسات الجانبية',
+              title: 'غياب الزووم كول',
               endpoint: '/reports/absent-side-list',
               params: { ...applied },
               columns: [
