@@ -38,8 +38,8 @@ function parseGroupCode(groupName, trainerHint = '') {
     // We split by _ and check segments to avoid matching partial words like shoroukG → G
     const segments = groupName.split('_').map(s => s.trim());
 
-    // Semi: explicit _SP segment (standalone), or keyword in group name, or trainer hint "(semi)"
-    const hasSPSegment = segments.some(seg => /^SP$/i.test(seg) || /^SP\(/i.test(seg));
+    // Semi: explicit _SP segment (standalone or with leading digit like 1SP(), or keyword, or trainer hint
+    const hasSPSegment = segments.some(seg => /^\d*SP(\(|$)/i.test(seg));
     const hasSemiKeyword = /\bsemi\b/i.test(groupName);
     const trainerIsSemi = /\(semi\)/i.test(trainerHint) || /\(sp\)/i.test(trainerHint);
 
