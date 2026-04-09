@@ -192,7 +192,6 @@ router.delete('/clear-excel-data', (req, res) => {
   try {
     ['lectures','absent_students','clients','batches','remarks'].forEach(t => safeRun(db, `DELETE FROM ${t}`));
     safeRun(db, 'DELETE FROM employees');
-    safeRun(db, 'DELETE FROM team_members');
     safeRun(db, 'DELETE FROM excel_syncs');
     return res.json({ message: 'All Excel data cleared' });
   } catch (err) {
