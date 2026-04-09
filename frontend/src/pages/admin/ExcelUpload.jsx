@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Upload, CheckCircle, AlertCircle, Clock, FileSpreadsheet, RefreshCw } from 'lucide-react';
+import { Upload, CheckCircle, AlertCircle, Clock, FileSpreadsheet, RefreshCw, Trash2, X } from 'lucide-react';
 import api from '../../api/axios';
 
 const FILE_TYPES = [
@@ -201,6 +201,143 @@ function SyncHistory() {
   );
 }
 
+// ─── FILES STATUS PANEL ───────────────────────────────────────────────────────
+function FilesStatusPanel({ onClearSuccess }) {
+  const { i18n } = useTranslation();
+  const isAr = i18n.language === 'ar';
+  const queryClient = useQueryClient();
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [clearMsg, setClearMsg] = useState(null);
+
+  const { data: statusData, isLoading, refetch } = useQuery({
+    queryKey: ['upload-status'],
+    queryFn: () => api.get('/admin/upload-status').then(r => r.data),
+    staleTime: 30 * 1000,
+  });
+
+  const fmtDate = (iso) => {
+    if (!iso) return null;
+    try { return new Date(iso).toLocaleString('ar-EG', { dateStyle: 'short', timeStyle: 'short' }); }
+    catch { return iso; }
+  };
+
+  const handleClear = async () => {
+    setClearing(true);
+    setClearMsg(null);
+    try {
+      await api.delete('/admin/clear-excel-data');
+      setClearMsg({ ok: true, text: 'تم مسح كل البيانات بنجاح ✅' });
+      setConfirmClear(false);
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ['syncs'] });
+      onClearSuccess?.();
+    } catch (err) {
+      setClearMsg({ ok: false, text: err.response?.data?.error || 'فشل المسح' });
+    } finally {
+      setClearing(false);
+    }
+  };
+
+  const fileInfo = FILE_TYPES.map(ft => {
+    const s = statusData?.find(x => x.key === ft.key);
+    const hasData = (s?.current_count ?? 0) > 0;
+    const lastUpload = s?.last_upload ? fmtDate(s.last_upload) : null;
+    return { ...ft, hasData, lastUpload, count: s?.current_count ?? 0 };
+  });
+
+  const allUploaded = fileInfo.every(f => f.hasData);
+  const missingCount = fileInfo.filter(f => !f.hasData).length;
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden h-fit">
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-gray-100 bg-gradient-to-l from-[#1e3a5f]/5 to-white flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-bold text-gray-800">حالة الملفات</h3>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {isLoading ? 'جاري التحميل...' : allUploaded
+              ? 'جميع الملفات مرفوعة ✅'
+              : `${missingCount} ملف ناقص`}
+          </p>
+        </div>
+        <button onClick={() => refetch()}
+          className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-400 hover:text-gray-600">
+          <RefreshCw size={13} className={isLoading ? 'animate-spin' : ''} />
+        </button>
+      </div>
+
+      {/* File list */}
+      <div className="divide-y divide-gray-50 px-1 py-1">
+        {fileInfo.map(ft => (
+          <div key={ft.key} className={`flex items-start gap-2.5 px-3 py-2.5 rounded-xl my-0.5 transition-colors
+            ${ft.hasData ? 'hover:bg-green-50/50' : 'hover:bg-red-50/50 bg-red-50/30'}`}>
+            {/* Status dot */}
+            <div className={`mt-0.5 w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0
+              ${ft.hasData ? 'bg-emerald-100' : 'bg-red-100'}`}>
+              {ft.hasData
+                ? <CheckCircle size={12} className="text-emerald-600" />
+                : <AlertCircle size={12} className="text-red-500" />}
+            </div>
+            {/* Info */}
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold text-gray-800 truncate">{ft.labelAr}</p>
+              <p className="text-[10px] text-gray-400 font-mono truncate">{ft.file}</p>
+              {ft.hasData ? (
+                <p className="text-[10px] text-emerald-600 mt-0.5 font-medium">
+                  {ft.count.toLocaleString('ar-EG')} سجل
+                  {ft.lastUpload && <span className="text-gray-400 mr-1">· {ft.lastUpload}</span>}
+                </p>
+              ) : (
+                <p className="text-[10px] text-red-500 mt-0.5 font-medium">لم يُرفع بعد</p>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Clear button */}
+      <div className="px-4 py-3 border-t border-gray-100 space-y-2">
+        {clearMsg && (
+          <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg
+            ${clearMsg.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
+            {clearMsg.ok ? <CheckCircle size={12} /> : <AlertCircle size={12} />}
+            {clearMsg.text}
+          </div>
+        )}
+
+        {!confirmClear ? (
+          <button onClick={() => setConfirmClear(true)}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl
+              bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold transition-colors border border-red-200">
+            <Trash2 size={13} />
+            مسح كل البيانات
+          </button>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-xs text-center text-red-600 font-semibold">
+              ⚠️ هيتم مسح كل البيانات نهائياً!
+            </p>
+            <div className="flex gap-2">
+              <button onClick={handleClear} disabled={clearing}
+                className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg
+                  bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition-colors disabled:opacity-60">
+                {clearing ? <RefreshCw size={11} className="animate-spin" /> : <Trash2 size={11} />}
+                {clearing ? 'جاري المسح...' : 'تأكيد المسح'}
+              </button>
+              <button onClick={() => setConfirmClear(false)}
+                className="flex-1 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-bold transition-colors">
+                إلغاء
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 export default function ExcelUpload() {
   const { t, i18n } = useTranslation();
   const isAr = i18n.language === 'ar';
@@ -209,6 +346,7 @@ export default function ExcelUpload() {
 
   const handleSuccess = () => {
     queryClient.invalidateQueries({ queryKey: ['syncs'] });
+    queryClient.invalidateQueries({ queryKey: ['upload-status'] });
   };
 
   return (
@@ -225,38 +363,50 @@ export default function ExcelUpload() {
         </p>
       </div>
 
-      {/* Tab bar */}
-      <div className="flex flex-wrap gap-2 border-b border-gray-200 pb-0">
-        {FILE_TYPES.map((ft, i) => (
-          <button
-            key={ft.key}
-            onClick={() => setActiveTab(i)}
-            className={`px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors
-              ${activeTab === i
-                ? 'border-primary text-primary bg-blue-50'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
-          >
-            {isAr ? ft.labelAr : ft.labelEn}
-          </button>
-        ))}
-      </div>
+      {/* Two-column layout: status panel + upload area */}
+      <div className="flex gap-5 items-start">
 
-      {/* Active tab content */}
-      <div className="card">
-        <div className="mb-6">
-          <h2 className="text-lg font-semibold text-gray-800">
-            {isAr ? FILE_TYPES[activeTab].labelAr : FILE_TYPES[activeTab].labelEn}
-          </h2>
-          <p className="text-xs text-gray-400 mt-0.5">
-            {isAr ? 'الملف المتوقع:' : 'Expected file:'}{' '}
-            <code className="bg-gray-100 px-1 rounded">{FILE_TYPES[activeTab].file}</code>
-          </p>
+        {/* ── LEFT: Files status panel ── */}
+        <div className="w-64 flex-shrink-0">
+          <FilesStatusPanel onClearSuccess={handleSuccess} />
         </div>
-        <UploadZone fileType={FILE_TYPES[activeTab]} onSuccess={handleSuccess} />
-      </div>
 
-      {/* Sync history */}
-      <SyncHistory />
+        {/* ── RIGHT: Tab upload area ── */}
+        <div className="flex-1 space-y-5">
+          {/* Tab bar */}
+          <div className="flex flex-wrap gap-2 border-b border-gray-200 pb-0">
+            {FILE_TYPES.map((ft, i) => (
+              <button
+                key={ft.key}
+                onClick={() => setActiveTab(i)}
+                className={`px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors
+                  ${activeTab === i
+                    ? 'border-primary text-primary bg-blue-50'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+              >
+                {isAr ? ft.labelAr : ft.labelEn}
+              </button>
+            ))}
+          </div>
+
+          {/* Active tab content */}
+          <div className="card">
+            <div className="mb-6">
+              <h2 className="text-lg font-semibold text-gray-800">
+                {isAr ? FILE_TYPES[activeTab].labelAr : FILE_TYPES[activeTab].labelEn}
+              </h2>
+              <p className="text-xs text-gray-400 mt-0.5">
+                {isAr ? 'الملف المتوقع:' : 'Expected file:'}{' '}
+                <code className="bg-gray-100 px-1 rounded">{FILE_TYPES[activeTab].file}</code>
+              </p>
+            </div>
+            <UploadZone fileType={FILE_TYPES[activeTab]} onSuccess={handleSuccess} />
+          </div>
+
+          {/* Sync history */}
+          <SyncHistory />
+        </div>
+      </div>
     </div>
   );
 }

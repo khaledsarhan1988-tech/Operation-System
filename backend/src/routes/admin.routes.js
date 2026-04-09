@@ -113,6 +113,80 @@ router.get('/syncs', (req, res) => {
   return res.json(syncs);
 });
 
+// ─── UPLOAD STATUS (last upload per file type + record counts) ────────────────
+router.get('/upload-status', (req, res) => {
+  try {
+    // Last successful upload per file_type from excel_syncs
+    const lastUploads = db.prepare(`
+      SELECT file_type, MAX(created_at) as last_upload, records_inserted
+      FROM excel_syncs
+      WHERE status = 'success'
+      GROUP BY file_type
+    `).all();
+    const uploadMap = {};
+    lastUploads.forEach(r => { uploadMap[r.file_type] = r; });
+
+    // Live record counts per table
+    const counts = {
+      data:          safeCount(db, "SELECT COUNT(*) as c FROM team_members"),
+      trainees:      safeCount(db, "SELECT COUNT(*) as c FROM clients"),
+      batches:       safeCount(db, "SELECT COUNT(*) as c FROM batches"),
+      remarks:       safeCount(db, "SELECT COUNT(*) as c FROM remarks"),
+      lectures:      safeCount(db, "SELECT COUNT(*) as c FROM lectures WHERE session_type='main'"),
+      side_sessions: safeCount(db, "SELECT COUNT(*) as c FROM lectures WHERE session_type='side'"),
+      absent:        safeCount(db, "SELECT COUNT(*) as c FROM absent_students"),
+    };
+
+    const FILE_KEYS = ['data','trainees','batches','remarks','lectures','side_sessions','absent'];
+    const result = FILE_KEYS.map(key => ({
+      key,
+      last_upload:       uploadMap[key]?.last_upload    ?? null,
+      records_inserted:  uploadMap[key]?.records_inserted ?? null,
+      current_count:     counts[key],
+    }));
+
+    return res.json(result);
+  } catch (err) {
+    console.error('[admin] upload-status error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+function safeCount(db, sql) {
+  try { return db.prepare(sql).get()?.c ?? 0; } catch { return 0; }
+}
+
+// ─── CLEAR ALL EXCEL DATA ─────────────────────────────────────────────────────
+router.delete('/clear-excel-data', (req, res) => {
+  try {
+    const tables = ['lectures', 'absent_students', 'clients', 'batches', 'remarks'];
+    let cleared = {};
+    tables.forEach(t => {
+      try {
+        const before = db.prepare(`SELECT COUNT(*) as c FROM ${t}`).get()?.c ?? 0;
+        db.prepare(`DELETE FROM ${t}`).run();
+        cleared[t] = before;
+      } catch (e) {
+        cleared[t] = `error: ${e.message}`;
+      }
+    });
+    // Also try team_members
+    try {
+      const before = db.prepare('SELECT COUNT(*) as c FROM team_members').get()?.c ?? 0;
+      db.prepare('DELETE FROM team_members').run();
+      cleared['team_members'] = before;
+    } catch (e) { cleared['team_members'] = 0; }
+
+    // Clear sync history
+    try { db.prepare('DELETE FROM excel_syncs').run(); } catch {}
+
+    return res.json({ message: 'All Excel data cleared', cleared });
+  } catch (err) {
+    console.error('[admin] clear-excel-data error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── SYSTEM KPIs ─────────────────────────────────────────────────────────────
 router.get('/kpis', (req, res) => {
   const kpis = {
