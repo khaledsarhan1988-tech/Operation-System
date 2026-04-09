@@ -117,6 +117,7 @@ router.get('/dashboard', (req, res) => {
          INNER JOIN batches b2 ON l.group_name = b2.group_name
          INNER JOIN clients c ON c.group_name = l.group_name
          WHERE l.session_type = 'main'
+           AND (l.attendance IS NULL OR TRIM(l.attendance) = '')
            AND c.name IS NOT NULL AND TRIM(c.name)!=''
            AND c.phone IS NOT NULL AND TRIM(c.phone)!=''
            AND NOT EXISTS (
@@ -395,6 +396,7 @@ router.get('/absent-list', (req, res) => {
     INNER JOIN batches b2 ON l.group_name = b2.group_name
     INNER JOIN clients c ON c.group_name = l.group_name
     WHERE l.session_type = 'main'
+      AND (l.attendance IS NULL OR TRIM(l.attendance) = '')
       AND c.name IS NOT NULL AND TRIM(c.name)!=''
       AND c.phone IS NOT NULL AND TRIM(c.phone)!=''
       AND NOT EXISTS (
