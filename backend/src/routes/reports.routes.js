@@ -225,6 +225,7 @@ router.get('/lectures-list', (req, res) => {
     search = '', trainer = '', coordinator = '',
     modal_from = '', modal_to = '',
     min_duration = '', max_duration = '',  // optional duration range filters
+    group_name = '', category = '',        // for ob_count popup: exact group + category
   } = req.query;
   const offset = (Number(page) - 1) * Number(limit);
   const deptFilter        = department && department !== 'All' ? ` AND b.dept_type = '${department}'` : '';
@@ -232,6 +233,8 @@ router.get('/lectures-list', (req, res) => {
   const searchFilter      = search      ? ` AND l.group_name LIKE '%${search}%'` : '';
   const trainerFilter     = trainer     ? ` AND l.trainer LIKE '%${trainer}%'` : '';
   const coordFilter       = coordinator ? ` AND b.coordinators LIKE '%${coordinator}%'` : '';
+  const groupFilter       = group_name  ? ` AND l.group_name = '${group_name.replace(/'/g, "''")}'` : '';
+  const categoryFilter    = category    ? ` AND l.side_session_category = '${category}'` : '';
   // Duration filters (HH:MM string comparison works correctly for same-format values)
   const minDurFilter      = min_duration ? ` AND l.duration >= '${min_duration}'` : '';
   const maxDurFilter      = max_duration ? ` AND l.duration <= '${max_duration}'` : '';
@@ -245,7 +248,7 @@ router.get('/lectures-list', (req, res) => {
   // When min_duration is set (main lectures mode), ignore session_type filter — use duration to identify them
   const sessionTypeFilter = min_duration ? '' : ` AND l.session_type = '${session_type}'`;
 
-  const allFilters = `${sessionTypeFilter}${minDurFilter}${maxDurFilter}${dateFilter}${deptFilter}${empFilter}${trainerFilter}${coordFilter}${searchFilter}`;
+  const allFilters = `${sessionTypeFilter}${minDurFilter}${maxDurFilter}${dateFilter}${deptFilter}${empFilter}${trainerFilter}${coordFilter}${searchFilter}${groupFilter}${categoryFilter}`;
 
   // For side sessions: pre-aggregate onboarding/offboarding/compensatory per group (one JOIN instead of N subqueries)
   const sideJoin = (!min_duration && session_type === 'side')

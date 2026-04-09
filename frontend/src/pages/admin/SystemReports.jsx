@@ -775,10 +775,58 @@ function RemarksNotesModal({ params, onClose }) {
 
 // ─── LIST MODAL ───────────────────────────────────────────────────────────────
 // extraFilters: array of keys to show → ['trainer','coordinator','date','dept']
+function ObDatesPopup({ groupName, category, label, onClose }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['ob-dates', groupName, category],
+    queryFn: () => api.get('/reports/lectures-list', {
+      params: { session_type: 'side', group_name: groupName, category, limit: 200 }
+    }).then(r => r.data),
+    staleTime: 60000,
+  });
+  const rows = data?.rows ?? [];
+  const fmtD = (d) => { try { return new Date(d).toLocaleDateString('ar-EG', { weekday:'short', year:'numeric', month:'short', day:'numeric' }); } catch { return d; } };
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/30" />
+      <div className="relative bg-white rounded-2xl shadow-2xl border border-gray-100 w-80 max-h-96 flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 bg-amber-50 border-b border-amber-100">
+          <div>
+            <p className="text-xs font-bold text-amber-800">جلسات {label}</p>
+            <p className="text-[10px] text-amber-600 truncate max-w-[200px]">{groupName}</p>
+          </div>
+          <button onClick={onClose} className="p-1 rounded-lg hover:bg-amber-100 text-amber-600"><X size={14}/></button>
+        </div>
+        {/* Body */}
+        <div className="overflow-y-auto flex-1 p-3 space-y-1.5">
+          {isLoading ? (
+            <p className="text-center text-gray-400 text-xs py-4">جاري التحميل...</p>
+          ) : rows.length === 0 ? (
+            <p className="text-center text-gray-400 text-xs py-4">لا توجد جلسات</p>
+          ) : rows.map((r, i) => (
+            <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-50/60 border border-amber-100">
+              <span className="w-5 h-5 rounded-full bg-amber-200 text-amber-800 text-[10px] font-black flex items-center justify-center flex-shrink-0">{i+1}</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-gray-800">{fmtD(r.date)}</p>
+                <p className="text-[10px] text-gray-400">{r.time} · {r.trainer}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="px-4 py-2 border-t border-gray-100 text-center">
+          <span className="text-[10px] text-gray-400">{rows.length} جلسة</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [] }) {
   const [page, setPage]             = useState(1);
   const [search, setSearch]         = useState('');
   const [appliedSearch, setApplied] = useState('');
+  const [obPopup, setObPopup]       = useState(null); // { groupName, category, label }
 
   const show = Array.isArray(extraFilters) ? extraFilters : (extraFilters ? ['trainer','coordinator','date'] : []);
 
@@ -894,11 +942,19 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
       const cfg = catMap[val?.toLowerCase()] ?? { label: val ?? '—', cls: 'bg-gray-100 text-gray-600' };
       return <span className={`inline-block px-2 py-0.5 rounded-lg text-xs font-semibold ${cfg.cls}`}>{cfg.label}</span>;
     }
-    if (col.type === 'ob_count') return (
-      <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-black ${
-        (val ?? 0) > 0 ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-400'
-      }`}>{val ?? 0}</span>
-    );
+    if (col.type === 'ob_count') {
+      const count = val ?? 0;
+      const catKey = col.key.replace('_count', ''); // onboarding / offboarding / compensatory
+      return (
+        <button
+          disabled={count === 0}
+          onClick={() => count > 0 && setObPopup({ groupName: row.group_name, category: catKey, label: col.label })}
+          className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-black transition-transform ${
+            count > 0 ? 'bg-amber-100 text-amber-700 hover:scale-110 hover:bg-amber-200 cursor-pointer' : 'bg-gray-100 text-gray-400 cursor-default'
+          }`}
+        >{count}</button>
+      );
+    }
     if (col.type === 'urgency') {
       const uMap = {
         overdue:  { label: '🔴 متأخر جداً', cls: 'bg-red-200 text-red-900 border-red-300' },
@@ -1126,6 +1182,15 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
             className="px-6 py-2.5 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-xl text-sm font-semibold transition-all">إغلاق</button>
         </div>
       </div>
+      {/* Ob-count dates popup */}
+      {obPopup && (
+        <ObDatesPopup
+          groupName={obPopup.groupName}
+          category={obPopup.category}
+          label={obPopup.label}
+          onClose={() => setObPopup(null)}
+        />
+      )}
     </div>
   );
 }
