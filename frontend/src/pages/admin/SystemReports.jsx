@@ -1915,11 +1915,10 @@ export default function SystemReports() {
     gcTime:    30 * 60 * 1000,
   });
 
-  // Code problems — lazy: load when modal opens or tab is active
+  // Code problems — always fetch so KPI shows correct count immediately
   const { data: codeProbs, isLoading: codeLoading } = useQuery({
     queryKey: ['code-problems', applied],
     queryFn: () => api.get('/reports/code-problems', { params: applied }).then(r => r.data),
-    enabled: codeProbsOpen || (errorsTab === 'lectures' && errorsOpen),
     staleTime: 5 * 60 * 1000,
     gcTime:    15 * 60 * 1000,
   });

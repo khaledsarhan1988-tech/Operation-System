@@ -112,11 +112,14 @@ router.get('/dashboard', (req, res) => {
        )`
     ).get();
 
+    // added_at is stored as "DD/MM/YYYY, HH:MM AM/PM" — convert to ISO date for comparison
+    const remarkDateExpr = `date(substr(remarks.added_at,7,4)||'-'||substr(remarks.added_at,4,2)||'-'||substr(remarks.added_at,1,2))`;
+
     // 7. Open remarks — count only for KPI, limited list for dashboard table
     const openRemarksCount = db.prepare(
       `SELECT COUNT(*) as cnt FROM remarks
        WHERE LOWER(status) NOT IN ('closed','مغلق','resolved')
-       ${buildDateFilter('remarks.added_at', from_date, to_date)}
+       ${buildDateFilter(remarkDateExpr, from_date, to_date)}
        ${empRemark}${deptRemark}`
     ).get();
 
@@ -124,7 +127,7 @@ router.get('/dashboard', (req, res) => {
       `SELECT id, client_name, client_phone, details, category, status, priority, assigned_to, added_at, last_updated
        FROM remarks
        WHERE LOWER(status) NOT IN ('closed','مغلق','resolved')
-       ${buildDateFilter('remarks.added_at', from_date, to_date)}
+       ${buildDateFilter(remarkDateExpr, from_date, to_date)}
        ${empRemark}${deptRemark}
        ORDER BY added_at DESC
        LIMIT 150`
@@ -191,7 +194,7 @@ router.get('/dashboard', (req, res) => {
               `SELECT COUNT(*) as cnt FROM remarks
                WHERE category IN ('Attendance Main Session','Attendance Zoom Call')
                AND LOWER(status) NOT IN ('closed','مغلق','resolved')
-               ${buildDateFilter('remarks.added_at', from_date, to_date)}
+               ${buildDateFilter(remarkDateExpr, from_date, to_date)}
                ${empRemark}${deptRemark}`
             ).get()?.cnt ?? 0;
           } catch(e) { return 0; }
