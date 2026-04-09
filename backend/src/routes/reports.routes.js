@@ -94,24 +94,42 @@ router.get('/dashboard', (req, res) => {
        ${deptBatches}${empFilter}`
     ).get();
 
-    // 5. Absent main — Part1: absent_students with name lookup + Part2: main lectures with no absences
-    const absentDateF = buildDateFilter('a.date', from_date, to_date);
-    const absentDateL = buildDateFilter('l.date', from_date, to_date);
-    const absentDeptB = buildDeptFilter('b', department);
+    // 5. Absent main — Part1: absent_students with name lookup + date inference from lecture_no
+    //                   Part2: main lectures with no absences
+    // Date inference: if a.date is NULL but lecture_no is set, infer date from Nth main lecture for group
+    const absentDateFP1 = from_date && to_date
+      ? ` AND resolved_date BETWEEN '${from_date}' AND '${to_date}'`
+      : from_date ? ` AND resolved_date >= '${from_date}'`
+      : to_date   ? ` AND resolved_date <= '${to_date}'` : '';
+    const absentDateL  = buildDateFilter('l.date', from_date, to_date);
+    const absentDeptB  = buildDeptFilter('b', department);
     const absentDeptB2 = buildDeptFilter('b2', department);
-    const absentEmpB  = employee ? ` AND b.coordinators LIKE '%${employee}%'` : '';
-    const absentEmpB2 = employee ? ` AND b2.coordinators LIKE '%${employee}%'` : '';
+    const absentEmpB   = employee ? ` AND b.coordinators LIKE '%${employee}%'` : '';
+    const absentEmpB2  = employee ? ` AND b2.coordinators LIKE '%${employee}%'` : '';
     const absentMainRow = db.prepare(
       `SELECT COUNT(*) as cnt FROM (
-         SELECT a.group_name FROM absent_students a
-         LEFT JOIN batches b ON a.group_name = b.group_name
-         LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
-           AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone
-         WHERE (
-           (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
-           OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
-         )
-         ${absentDateF}${absentDeptB}${absentEmpB}
+         SELECT group_name FROM (
+           SELECT a.group_name,
+             COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS resolved_date
+           FROM absent_students a
+           LEFT JOIN batches b ON a.group_name = b.group_name
+           LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
+             AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone
+           LEFT JOIN (
+             SELECT group_name, date,
+               ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
+             FROM lectures WHERE session_type = 'main'
+           ) lec_inf ON (a.date IS NULL OR TRIM(a.date)='')
+             AND lec_inf.group_name = a.group_name
+             AND a.lecture_no IS NOT NULL
+             AND lec_inf.lec_num = a.lecture_no
+           WHERE (
+             (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
+             OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+           )
+           ${absentDeptB}${absentEmpB}
+         ) p1_inner
+         WHERE 1=1${absentDateFP1}
          UNION ALL
          SELECT l.group_name FROM lectures l
          INNER JOIN batches b2 ON l.group_name = b2.group_name
@@ -357,9 +375,10 @@ router.get('/absent-list', (req, res) => {
   const empFilter    = employee   ? ` AND b.coordinators LIKE '%${employee}%'` : '';
   const coordFilter  = coordinator ? ` AND b.coordinators LIKE '%${coordinator}%'` : '';
   const searchFilter = search     ? ` AND a.group_name LIKE '%${search}%'` : '';
-  const dateFilter   = activeFrom && activeTo ? ` AND a.date BETWEEN '${activeFrom}' AND '${activeTo}'`
-                     : activeFrom ? ` AND a.date >= '${activeFrom}'`
-                     : activeTo   ? ` AND a.date <= '${activeTo}'` : '';
+  // Part1 date filter uses computed 'date' column (after inference), not raw a.date
+  const dateFilterP1 = activeFrom && activeTo ? ` AND date BETWEEN '${activeFrom}' AND '${activeTo}'`
+                     : activeFrom ? ` AND date >= '${activeFrom}'`
+                     : activeTo   ? ` AND date <= '${activeTo}'` : '';
 
   // Part2 filters use l/b2 aliases
   const dateFilter2  = activeFrom && activeTo ? ` AND l.date BETWEEN '${activeFrom}' AND '${activeTo}'`
@@ -370,21 +389,35 @@ router.get('/absent-list', (req, res) => {
   const coordFilter2 = coordinator ? ` AND b2.coordinators LIKE '%${coordinator}%'` : '';
   const searchFilter2= search      ? ` AND l.group_name LIKE '%${search}%'` : '';
 
-  // Part1: absent_students — with name lookup from clients if name missing
+  // Part1: absent_students — with name lookup + date inference from lecture_no when date is missing
   const part1 = `
-    SELECT
-      COALESCE(NULLIF(TRIM(a.student_name),''), c_lu.name) AS student_name,
-      a.phone, a.group_name, a.date, a.time, a.lecture_no,
-      b.dept_type, b.coordinators
-    FROM absent_students a
-    LEFT JOIN batches b ON a.group_name = b.group_name
-    LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
-      AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone
-    WHERE (
-      (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
-      OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
-    )
-    ${dateFilter}${deptFilter}${empFilter}${coordFilter}${searchFilter}`;
+    SELECT student_name, phone, group_name, date, time, lecture_no, dept_type, coordinators
+    FROM (
+      SELECT
+        COALESCE(NULLIF(TRIM(a.student_name),''), c_lu.name) AS student_name,
+        a.phone, a.group_name,
+        COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS date,
+        a.time, a.lecture_no,
+        b.dept_type, b.coordinators
+      FROM absent_students a
+      LEFT JOIN batches b ON a.group_name = b.group_name
+      LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
+        AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone
+      LEFT JOIN (
+        SELECT group_name, date,
+          ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
+        FROM lectures WHERE session_type = 'main'
+      ) lec_inf ON (a.date IS NULL OR TRIM(a.date)='')
+        AND lec_inf.group_name = a.group_name
+        AND a.lecture_no IS NOT NULL
+        AND lec_inf.lec_num = a.lecture_no
+      WHERE (
+        (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
+        OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+      )
+      ${deptFilter}${empFilter}${coordFilter}${searchFilter}
+    ) p1_inner
+    WHERE 1=1${dateFilterP1}`;
 
   // Part2: main lectures with NO absence records → all students in group treated as absent
   const part2 = `
