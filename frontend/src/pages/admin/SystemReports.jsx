@@ -2225,15 +2225,6 @@ export default function SystemReports() {
               ],
               extraFilters: ['coordinator', 'date', 'dept'],
             })} />
-        </div>
-      </div>
-
-      {/* ── KPI — ROW 3: Alerts ── */}
-      <div>
-        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-          <Zap size={11} /> التنبيهات
-        </p>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <KpiCard label="غياب الزووم كول" value={kpis.absent_zoom} icon={UserX}
             gradient="linear-gradient(135deg, #ca8a04 0%, #eab308 100%)"
             loading={isLoading}
@@ -2253,6 +2244,15 @@ export default function SystemReports() {
               ],
               extraFilters: ['trainer', 'coordinator', 'date', 'dept'],
             })} />
+        </div>
+      </div>
+
+      {/* ── KPI — ROW 3: Alerts ── */}
+      <div>
+        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+          <Zap size={11} /> التنبيهات
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <KpiCard label="ملاحظات مفتوحة" value={kpis.open_remarks} icon={MessageSquare}
             gradient="linear-gradient(135deg, #b91c1c 0%, #f87171 100%)"
             loading={isLoading} pulse={(kpis.open_remarks ?? 0) > 0}
