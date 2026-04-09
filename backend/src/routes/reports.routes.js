@@ -394,7 +394,7 @@ router.get('/absent-list', (req, res) => {
     SELECT student_name, phone, group_name, date, time, lecture_no, dept_type, coordinators
     FROM (
       SELECT
-        COALESCE(NULLIF(TRIM(a.student_name),''), c_lu.name) AS student_name,
+        COALESCE(c_lu.name, NULLIF(TRIM(a.student_name),'')) AS student_name,
         a.phone, a.group_name,
         COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS date,
         a.time, a.lecture_no,
