@@ -201,13 +201,29 @@ router.get('/dashboard', (req, res) => {
         open_remarks:          openRemarksCount?.cnt ?? 0,
         remarks_notes:         (() => {
           try {
-            return db.prepare(
-              `SELECT COUNT(*) as cnt FROM remarks
-               WHERE category IN ('Attendance Main Session','Attendance Zoom Call')
-               AND LOWER(status) NOT IN ('closed','مغلق','resolved')
-               ${buildDateFilter(remarkDateExpr, from_date, to_date)}
-               ${empRemark}${deptRemark}`
+            // Count total absence records (main + zoom) shown in the modal
+            const mainCnt = db.prepare(
+              `SELECT COUNT(*) as cnt FROM absent_students a
+               LEFT JOIN batches b ON a.group_name = b.group_name
+               WHERE a.student_name IS NOT NULL AND TRIM(a.student_name) != ''
+               AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
+               ${buildDateFilter('a.date', from_date, to_date)}
+               ${department && department !== 'All' ? ` AND b.dept_type = '${department}'` : ''}
+               ${employee ? ` AND b.coordinators LIKE '%${employee}%'` : ''}`
             ).get()?.cnt ?? 0;
+            const zoomCnt = db.prepare(
+              `SELECT COUNT(*) as cnt FROM (
+                 SELECT DISTINCT l.group_name, l.date
+                 FROM lectures l
+                 INNER JOIN batches b ON l.group_name = b.group_name
+                 WHERE l.session_type = 'side'
+                   AND l.side_session_category = 'regular'
+                   AND l.status = 'مؤكدة'
+                 ${buildDateFilter('l.date', from_date, to_date)}
+                 ${deptB}${empBFilter}
+               )`
+            ).get()?.cnt ?? 0;
+            return mainCnt + zoomCnt;
           } catch(e) { return 0; }
         })(),
       },
