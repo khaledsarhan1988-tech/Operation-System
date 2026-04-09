@@ -94,14 +94,37 @@ router.get('/dashboard', (req, res) => {
        ${deptBatches}${empFilter}`
     ).get();
 
-    // 5. Absent main — only valid rows (same filter as modal)
+    // 5. Absent main — Part1: absent_students with name lookup + Part2: main lectures with no absences
+    const absentDateF = buildDateFilter('a.date', from_date, to_date);
+    const absentDateL = buildDateFilter('l.date', from_date, to_date);
+    const absentDeptB = buildDeptFilter('b', department);
+    const absentDeptB2 = buildDeptFilter('b2', department);
+    const absentEmpB  = employee ? ` AND b.coordinators LIKE '%${employee}%'` : '';
+    const absentEmpB2 = employee ? ` AND b2.coordinators LIKE '%${employee}%'` : '';
     const absentMainRow = db.prepare(
-      `SELECT COUNT(*) as cnt FROM absent_students
-       INNER JOIN batches ON absent_students.group_name = batches.group_name
-       WHERE absent_students.student_name IS NOT NULL AND TRIM(absent_students.student_name) != ''
-         AND absent_students.phone IS NOT NULL AND TRIM(absent_students.phone) != ''
-       ${buildDateFilter('absent_students.date', from_date, to_date)}
-       ${deptBatches}${empFilter}`
+      `SELECT COUNT(*) as cnt FROM (
+         SELECT a.group_name FROM absent_students a
+         LEFT JOIN batches b ON a.group_name = b.group_name
+         LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
+           AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone
+         WHERE (
+           (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
+           OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+         )
+         ${absentDateF}${absentDeptB}${absentEmpB}
+         UNION ALL
+         SELECT l.group_name FROM lectures l
+         INNER JOIN batches b2 ON l.group_name = b2.group_name
+         INNER JOIN clients c ON c.group_name = l.group_name
+         WHERE l.session_type = 'main'
+           AND c.name IS NOT NULL AND TRIM(c.name)!=''
+           AND c.phone IS NOT NULL AND TRIM(c.phone)!=''
+           AND NOT EXISTS (
+             SELECT 1 FROM absent_students a2
+             WHERE a2.group_name = l.group_name AND a2.date = l.date
+           )
+         ${absentDateL}${absentDeptB2}${absentEmpB2}
+       )`
     ).get();
 
     // 6. Absent zoom call — grouped per group+date, absent = trainee_count - present sessions (15 min only)
@@ -337,26 +360,57 @@ router.get('/absent-list', (req, res) => {
                      : activeFrom ? ` AND a.date >= '${activeFrom}'`
                      : activeTo   ? ` AND a.date <= '${activeTo}'` : '';
 
-  // استبعاد الصفوف التي لا يوجد بها اسم الطالب أو رقم الموبايل
-  const validFilter = ` AND a.student_name IS NOT NULL AND TRIM(a.student_name) != ''
-                        AND a.phone IS NOT NULL AND TRIM(a.phone) != ''`;
+  // Part2 filters use l/b2 aliases
+  const dateFilter2  = activeFrom && activeTo ? ` AND l.date BETWEEN '${activeFrom}' AND '${activeTo}'`
+                     : activeFrom ? ` AND l.date >= '${activeFrom}'`
+                     : activeTo   ? ` AND l.date <= '${activeTo}'` : '';
+  const deptFilter2  = activeDept  ? ` AND b2.dept_type = '${activeDept}'` : '';
+  const empFilter2   = employee    ? ` AND b2.coordinators LIKE '%${employee}%'` : '';
+  const coordFilter2 = coordinator ? ` AND b2.coordinators LIKE '%${coordinator}%'` : '';
+  const searchFilter2= search      ? ` AND l.group_name LIKE '%${search}%'` : '';
 
-  const allFilters = `${validFilter}${dateFilter}${deptFilter}${empFilter}${coordFilter}${searchFilter}`;
+  // Part1: absent_students — with name lookup from clients if name missing
+  const part1 = `
+    SELECT
+      COALESCE(NULLIF(TRIM(a.student_name),''), c_lu.name) AS student_name,
+      a.phone, a.group_name, a.date, a.time, a.lecture_no,
+      b.dept_type, b.coordinators
+    FROM absent_students a
+    LEFT JOIN batches b ON a.group_name = b.group_name
+    LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
+      AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone
+    WHERE (
+      (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
+      OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+    )
+    ${dateFilter}${deptFilter}${empFilter}${coordFilter}${searchFilter}`;
+
+  // Part2: main lectures with NO absence records → all students in group treated as absent
+  const part2 = `
+    SELECT
+      c.name AS student_name,
+      c.phone, l.group_name, l.date, l.time, NULL AS lecture_no,
+      b2.dept_type, b2.coordinators
+    FROM lectures l
+    INNER JOIN batches b2 ON l.group_name = b2.group_name
+    INNER JOIN clients c ON c.group_name = l.group_name
+    WHERE l.session_type = 'main'
+      AND c.name IS NOT NULL AND TRIM(c.name)!=''
+      AND c.phone IS NOT NULL AND TRIM(c.phone)!=''
+      AND NOT EXISTS (
+        SELECT 1 FROM absent_students a2
+        WHERE a2.group_name = l.group_name AND a2.date = l.date
+      )
+    ${dateFilter2}${deptFilter2}${empFilter2}${coordFilter2}${searchFilter2}`;
+
+  const unionQ = `SELECT * FROM (${part1} UNION ALL ${part2}) t`;
 
   try {
-    const totalRow = db.prepare(
-      `SELECT COUNT(*) as cnt FROM absent_students a
-       LEFT JOIN batches b ON a.group_name = b.group_name
-       WHERE 1=1${allFilters}`
-    ).get();
-    const rows = db.prepare(
-      `SELECT a.*, b.dept_type, b.coordinators FROM absent_students a
-       LEFT JOIN batches b ON a.group_name = b.group_name
-       WHERE 1=1${allFilters}
-       ORDER BY a.date DESC LIMIT ${Number(limit)} OFFSET ${offset}`
-    ).all();
+    const totalRow = db.prepare(`SELECT COUNT(*) as cnt FROM (${part1} UNION ALL ${part2}) t`).get();
+    const rows     = db.prepare(`${unionQ} ORDER BY date DESC LIMIT ${Number(limit)} OFFSET ${offset}`).all();
     return res.json({ total: totalRow.cnt, page: Number(page), limit: Number(limit), rows });
   } catch (err) {
+    console.error('[absent-list]', err.message);
     return res.status(500).json({ error: err.message });
   }
 });
