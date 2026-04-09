@@ -140,10 +140,11 @@ function normalizeDuration(val) {
 function classifySideSession(durationStr, positionInGroup, totalInGroup) {
   const dur = normalizeDuration(durationStr);
   if (dur === null) return 'regular';
-  if (positionInGroup === 1 && dur > 15) return 'onboarding';
-  if (positionInGroup === totalInGroup && dur > 15) return 'offboarding';
   if (dur === 15) return 'regular';
-  return 'compensatory';
+  if (positionInGroup === 1 && dur > 50) return 'compensatory';
+  if (positionInGroup === 1 && dur > 15) return 'onboarding';
+  if (positionInGroup > 1 && dur > 15) return 'offboarding';
+  return 'regular';
 }
 
 // ─── SLA HELPER ──────────────────────────────────────────────────────────────
