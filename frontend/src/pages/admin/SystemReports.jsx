@@ -1512,7 +1512,7 @@ function MetricCell({ value, warnColor = 'red', label, onClick }) {
     orange: 'bg-orange-100 text-orange-800 border-orange-200',
     amber:  'bg-amber-100 text-amber-800 border-amber-200',
     purple: 'bg-purple-100 text-purple-800 border-purple-200',
-    slate:  'bg-slate-300 text-slate-800 border-slate-400',
+    slate:  'bg-indigo-100 text-indigo-800 border-indigo-300',
   };
   const cls = isOk ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : colorMap[warnColor];
   const canClick = !isOk && !!onClick;
@@ -1782,7 +1782,7 @@ function TeamSummarySection({ data, loading }) {
       {/* Column legend */}
       <div className="px-5 py-2.5 bg-gray-50 border-b border-gray-100 flex flex-wrap gap-x-5 gap-y-1">
         {COLS.map(c => {
-          const dotColors = { red:'bg-red-400', orange:'bg-orange-400', amber:'bg-amber-400', purple:'bg-purple-400', slate:'bg-slate-400' };
+          const dotColors = { red:'bg-red-400', orange:'bg-orange-400', amber:'bg-amber-400', purple:'bg-purple-400', slate:'bg-indigo-400' };
           return (
             <span key={c.key} className="flex items-center gap-1.5 text-xs text-gray-500">
               <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColors[c.color]}`} />
