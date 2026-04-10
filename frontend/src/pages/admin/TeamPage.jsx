@@ -194,7 +194,7 @@ function SectionGroup({ section, members, dept, onEdit, onDelete }) {
   const grouped = {};
   if (dept === 'education') {
     members.forEach(m => {
-      const key = m.shift || 'none';
+      const key = m.shift ? m.shift.toLowerCase() : 'none';
       (grouped[key] = grouped[key] || []).push(m);
     });
   }
