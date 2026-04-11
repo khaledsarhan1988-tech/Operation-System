@@ -18,8 +18,12 @@ function buildDateFilter(field, from_date, to_date) {
 
 function buildDeptFilter(table, department) {
   if (!department || department === 'All') return '';
-  return ` AND ${table}.dept_type = '${department}'`;
-}
+  const safe = department.replace(/'/g, "''");
+  return ` AND (${table}.dept_type = '${safe}' OR EXISTS (
+    SELECT 1 FROM users u
+    WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(${table}.coordinators))
+    AND u.department = '${safe}'
+  ))`;
 
 function buildCoordFilter(table, value) {
   if (!value) return '';
