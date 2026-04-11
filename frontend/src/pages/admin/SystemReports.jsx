@@ -665,8 +665,10 @@ function RemarksNotesModal({ params, onClose }) {
                          <td className="px-4 py-3 text-xs text-gray-500" style={{maxWidth:'200px',overflowWrap:'break-word'}}>{row.remark_details??'—'}</td>
                          <td className="px-4 py-3 text-xs whitespace-nowrap text-gray-600">
                            {row.assigned_to ?? '—'}
-                           {row.has_remark && row.assigned_to && row.coordinators &&
-                            row.assigned_to.trim().toLowerCase() !== row.coordinators.trim().toLowerCase() && (
+                           {row.has_remark && row.assigned_to && (
+                             (row.coordinators && row.assigned_to.trim().toLowerCase() !== row.coordinators.trim().toLowerCase()) ||
+                             !row.dept_type
+                           ) && (
                              <span className="mr-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-yellow-100 text-yellow-700 border border-yellow-200" title={`الريمارك عمله: ${row.assigned_to}`}>
                                ⚠ موظف آخر
                              </span>
