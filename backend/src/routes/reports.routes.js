@@ -24,6 +24,7 @@ function buildDeptFilter(table, department) {
     WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(${table}.coordinators))
     AND u.department = '${safe}'
   ))`;
+}
 
 function buildCoordFilter(table, value) {
   if (!value) return '';
