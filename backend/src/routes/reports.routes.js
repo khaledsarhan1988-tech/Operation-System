@@ -718,9 +718,10 @@ router.get('/remarks-notes-zoom', (req, res) => {
   const empFilter    = buildCoordFilter('b', employee);
   const coordFilter  = buildCoordFilter('b', coordinator);
   const searchFilter = search      ? ` AND (r.client_name LIKE '%${search}%' OR r.client_phone LIKE '%${search}%' OR c.group_name LIKE '%${search}%')` : '';
-  const dateFilter   = activeFrom && activeTo ? ` AND ${remarkDateSQL} BETWEEN '${activeFrom}' AND '${activeTo}'`
-                     : activeFrom ? ` AND ${remarkDateSQL} >= '${activeFrom}'`
-                     : activeTo   ? ` AND ${remarkDateSQL} <= '${activeTo}'` : '';
+  const sessionDateSQL = `date(${remarkDateSQL}, '-1 day')`;
+  const dateFilter   = activeFrom && activeTo ? ` AND ${sessionDateSQL} BETWEEN '${activeFrom}' AND '${activeTo}'`
+                     : activeFrom ? ` AND ${sessionDateSQL} >= '${activeFrom}'`
+                     : activeTo   ? ` AND ${sessionDateSQL} <= '${activeTo}'` : '';
 
   const baseWhere = `WHERE r.category = 'Attendance Zoom Call'
     ${dateFilter}${deptFilter}${empFilter}${coordFilter}${searchFilter}`;
