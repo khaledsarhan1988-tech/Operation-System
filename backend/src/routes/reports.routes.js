@@ -767,19 +767,25 @@ router.get('/remarks-notes-zoom', (req, res) => {
   const remarkDateSQL      = `date(substr(r.added_at,7,4)||'-'||substr(r.added_at,4,2)||'-'||substr(r.added_at,1,2))`;
   const expectedSessionSQL = `date(${remarkDateSQL}, '-1 day')`;
 
-  // Use buildDeptFilter for proper OR EXISTS fallback on b.dept_type
-  const deptFilter   = buildDeptFilter('b', activeDept);
-  const empFilter    = buildCoordFilter('b', employee);
-  const coordFilter  = buildCoordFilter('b', coordinator);
-  const searchFilter = search ? ` AND (r.client_name LIKE '%${search}%' OR r.client_phone LIKE '%${search}%' OR c.group_name LIKE '%${search}%')` : '';
-  // Filter by session date (= remark date - 1 day) so it matches the same day filter as main sessions
+  // Filter by session date (= remark date - 1 day) — same convention as main sessions
   const sessionDateSQL = `date(${remarkDateSQL}, '-1 day')`;
-  const dateFilter   = activeFrom && activeTo ? ` AND ${sessionDateSQL} BETWEEN '${activeFrom}' AND '${activeTo}'`
-                     : activeFrom ? ` AND ${sessionDateSQL} >= '${activeFrom}'`
-                     : activeTo   ? ` AND ${sessionDateSQL} <= '${activeTo}'` : '';
+  const dateFilter = activeFrom && activeTo ? ` AND ${sessionDateSQL} BETWEEN '${activeFrom}' AND '${activeTo}'`
+                   : activeFrom ? ` AND ${sessionDateSQL} >= '${activeFrom}'`
+                   : activeTo   ? ` AND ${sessionDateSQL} <= '${activeTo}'` : '';
 
-  // Join clients to their ACTIVE batch to get correct group/coordinator
-  // (a client can appear in multiple batches; pick the active one)
+  // Dept filter: use buildDeptFilter OR EXISTS fallback on batch
+  const deptFilter = buildDeptFilter('b', activeDept);
+
+  // Employee/coordinator filter:
+  // Primary: check batch coordinator (when client IS found in clients/batches)
+  // Fallback: check remarks.assigned_to (when client NOT in clients — b.coordinators is NULL)
+  const safeEmp   = employee    ? employee.replace(/'/g, "''")    : '';
+  const safeCoord = coordinator ? coordinator.replace(/'/g, "''") : '';
+  const empFilter   = employee    ? ` AND (b.coordinators LIKE '%${safeEmp}%'   OR (b.coordinators IS NULL AND r.assigned_to LIKE '%${safeEmp}%'))` : '';
+  const coordFilter = coordinator ? ` AND (b.coordinators LIKE '%${safeCoord}%' OR (b.coordinators IS NULL AND r.assigned_to LIKE '%${safeCoord}%'))` : '';
+
+  const searchFilter = search ? ` AND (r.client_name LIKE '%${search}%' OR r.client_phone LIKE '%${search}%' OR c.group_name LIKE '%${search}%')` : '';
+
   const baseWhere = `WHERE r.category = 'Attendance Zoom Call'
     ${dateFilter}${deptFilter}${empFilter}${coordFilter}${searchFilter}`;
 
