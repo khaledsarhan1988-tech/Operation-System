@@ -779,10 +779,11 @@ router.get('/remarks-notes-zoom', (req, res) => {
   const srch1  = search ? ` AND (c.name LIKE '%${search}%' OR c.phone LIKE '%${search}%' OR c.group_name LIKE '%${search}%')` : '';
 
   // Part 2 filters — b2 = batches via LEFT JOIN (may be NULL when client not in clients table)
-  // Falls back to r2.assigned_to for emp/coord when batch unknown
-  const dept2  = safeDept  ? ` AND (b2.dept_type = '${safeDept}' OR EXISTS (SELECT 1 FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b2.coordinators)) AND u.department='${safeDept}'))` : '';
-  const emp2   = safeEmp   ? ` AND (b2.coordinators LIKE '%${safeEmp}%'   OR (b2.coordinators IS NULL AND r2.assigned_to LIKE '%${safeEmp}%'))` : '';
-  const coord2 = safeCoord ? ` AND (b2.coordinators LIKE '%${safeCoord}%' OR (b2.coordinators IS NULL AND r2.assigned_to LIKE '%${safeCoord}%'))` : '';
+  // If b2 is NULL (client not in clients table), include the record regardless of who made the remark.
+  // This handles group transfers: remark may be by old employee but group now belongs to new employee.
+  const dept2  = safeDept  ? ` AND (b2.dept_type = '${safeDept}' OR EXISTS (SELECT 1 FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b2.coordinators)) AND u.department='${safeDept}') OR b2.coordinators IS NULL)` : '';
+  const emp2   = safeEmp   ? ` AND (b2.coordinators LIKE '%${safeEmp}%'   OR b2.coordinators IS NULL)` : '';
+  const coord2 = safeCoord ? ` AND (b2.coordinators LIKE '%${safeCoord}%' OR b2.coordinators IS NULL)` : '';
   const srch2  = search ? ` AND (r2.client_name LIKE '%${search}%' OR r2.client_phone LIKE '%${search}%')` : '';
 
   // Date filter applied on the UNION result
