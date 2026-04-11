@@ -551,9 +551,10 @@ router.get('/remarks-list', (req, res) => {
   const activeDept = modal_dept && modal_dept !== 'All' ? modal_dept
                    : department && department !== 'All' ? department : '';
 
-  const dateFilter     = activeFrom && activeTo ? ` AND added_at BETWEEN '${activeFrom}' AND '${activeTo}'`
-                       : activeFrom ? ` AND added_at >= '${activeFrom}'`
-                       : activeTo   ? ` AND added_at <= '${activeTo}'` : '';
+  const remarkDate     = `date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2))`;
+  const dateFilter     = activeFrom && activeTo ? ` AND ${remarkDate} BETWEEN '${activeFrom}' AND '${activeTo}'`
+                       : activeFrom ? ` AND ${remarkDate} >= '${activeFrom}'`
+                       : activeTo   ? ` AND ${remarkDate} <= '${activeTo}'` : '';
   const empFilter      = employee        ? ` AND assigned_to LIKE '%${employee}%'` : '';
   const assignFilter   = assigned_to     ? ` AND assigned_to LIKE '%${assigned_to}%'` : '';
   const priorityFilter = priority        ? ` AND priority = '${priority}'` : '';
