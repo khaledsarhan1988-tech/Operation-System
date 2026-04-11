@@ -665,7 +665,11 @@ router.get('/remarks-notes-main', (req, res) => {
       COALESCE(c_lu.name, NULLIF(TRIM(a.student_name),'')) AS student_name,
       a.phone AS student_phone, a.group_name,
       COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS absence_date,
-      b.coordinators, b.dept_type
+      b.coordinators,
+      COALESCE(
+        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) LIMIT 1),
+        b.dept_type
+      ) AS dept_type
     FROM absent_students a
     LEFT JOIN batches b ON a.group_name = b.group_name
     LEFT JOIN (SELECT phone, MIN(name) AS name FROM clients GROUP BY phone) c_lu
@@ -690,7 +694,11 @@ router.get('/remarks-notes-main', (req, res) => {
     SELECT
       c.name AS student_name, c.phone AS student_phone,
       l.group_name, l.date AS absence_date,
-      b2.coordinators, b2.dept_type
+      b2.coordinators,
+      COALESCE(
+        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b2.coordinators)) LIMIT 1),
+        b2.dept_type
+      ) AS dept_type
     FROM lectures l
     INNER JOIN batches b2 ON l.group_name = b2.group_name
     INNER JOIN clients c ON c.group_name = l.group_name
@@ -799,7 +807,11 @@ router.get('/remarks-notes-zoom', (req, res) => {
   // Safe to expand all group clients because everyone is confirmed absent
   const part1 = `
     SELECT DISTINCT c.name AS client_name, c.phone AS client_phone,
-      c.group_name, grp.session_date, b.coordinators, b.dept_type
+      c.group_name, grp.session_date, b.coordinators,
+      COALESCE(
+        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) LIMIT 1),
+        b.dept_type
+      ) AS dept_type
     FROM (
       SELECT l.group_name, l.date AS session_date
       FROM lectures l
@@ -827,7 +839,10 @@ router.get('/remarks-notes-zoom', (req, res) => {
       c2.group_name,
       date(${rdSQL}, '-1 day')                AS session_date,
       COALESCE(b2.coordinators, r2.assigned_to) AS coordinators,
-      b2.dept_type
+      COALESCE(
+        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(COALESCE(b2.coordinators, r2.assigned_to))) LIMIT 1),
+        b2.dept_type
+      ) AS dept_type
     FROM remarks r2
     LEFT JOIN (SELECT phone, MIN(group_name) AS group_name, MIN(name) AS name
                FROM clients GROUP BY phone) c2 ON c2.phone = r2.client_phone
