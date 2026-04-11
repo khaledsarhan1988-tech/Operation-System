@@ -1246,7 +1246,7 @@ function CodeProblemsModal({ params, onClose }) {
   const mainProbs = (data?.main_problems ?? []).map(p => ({
     ...p, _session: 'main', _status: getStatus(p, 'main'),
   }));
-  const sideProbs = (data?.side_problems ?? []).map(p => ({
+  const sideProbs = (data?.zoom_problems ?? []).map(p => ({
     ...p, _session: 'side', _status: getStatus(p, 'side'),
   }));
   const allEnriched = [...mainProbs, ...sideProbs];
@@ -1301,9 +1301,9 @@ function CodeProblemsModal({ params, onClose }) {
   // ── UI helpers
   const problemBadge = (type) => {
     const cls =
-      type === 'عدد محاضرات زيادة'       || type === 'جلسات جانبية زيادة'         ? 'bg-orange-100 text-orange-700 border-orange-200' :
-      type === 'تاريخ أول محاضرة غلط'    || type === 'جلسات جانبية ناقصة'         ? 'bg-red-100 text-red-700 border-red-200' :
-      type === 'تاريخ آخر محاضرة غلط'    || type === 'تاريخ آخر جلسة جانبية غلط' ? 'bg-purple-100 text-purple-700 border-purple-200' :
+      type === 'عدد محاضرات زيادة'       || type === 'زووم كول زيادة'         ? 'bg-orange-100 text-orange-700 border-orange-200' :
+      type === 'تاريخ أول محاضرة غلط'    || type === 'زووم كول ناقصة'         ? 'bg-red-100 text-red-700 border-red-200' :
+      type === 'تاريخ آخر محاضرة غلط'    || type === 'تاريخ آخر زووم كول غلط' ? 'bg-purple-100 text-purple-700 border-purple-200' :
       'bg-yellow-100 text-yellow-800 border-yellow-200';
     return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${cls}`}>{type}</span>;
   };
@@ -1462,7 +1462,7 @@ function CodeProblemsModal({ params, onClose }) {
           )}
           {fSection !== 'main' && (
             <ProbTable rows={filteredSide} labelFirst="تاريخ أول جلسة"
-              sectionLabel="مشاكل الجلسات الجانبية"
+              sectionLabel="مشاكل الزووم كول"
               sectionBg="bg-purple-50/70" sectionColor="border-purple-100"
               dotColor="bg-purple-500" />
           )}

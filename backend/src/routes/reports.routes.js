@@ -21,15 +21,21 @@ function buildDeptFilter(table, department) {
   return ` AND ${table}.dept_type = '${department}'`;
 }
 
+function buildCoordFilter(table, value) {
+  if (!value) return '';
+  const safe = value.replace(/'/g, "''");
+  return ` AND ${table}.coordinators LIKE '%${safe}%'`;
+}
+
 // ─── GET /api/reports/dashboard ───────────────────────────────────────────────
 router.get('/dashboard', (req, res) => {
   const { from_date, to_date, department, employee } = req.query;
 
   const deptBatches = buildDeptFilter('batches', department);
   const deptB       = buildDeptFilter('b', department);
-  const empFilter   = employee ? ` AND batches.coordinators LIKE '%${employee}%'` : '';
-  const empBFilter  = employee ? ` AND b.coordinators LIKE '%${employee}%'` : '';
-  const empRemark   = employee ? ` AND remarks.assigned_to LIKE '%${employee}%'` : '';
+  const empFilter   = buildCoordFilter('batches', employee);
+  const empBFilter  = buildCoordFilter('b', employee);
+  const empRemark   = employee ? ` AND remarks.assigned_to LIKE '%${employee.replace(/'/g,"''")}%'` : '';
 
   // للملاحظات: ربط العميل بالمجموعة للفلترة بالقسم
   const deptRemark  = department && department !== 'All'
@@ -104,8 +110,8 @@ router.get('/dashboard', (req, res) => {
     const absentDateL  = buildDateFilter('l.date', from_date, to_date);
     const absentDeptB  = buildDeptFilter('b', department);
     const absentDeptB2 = buildDeptFilter('b2', department);
-    const absentEmpB   = employee ? ` AND b.coordinators LIKE '%${employee}%'` : '';
-    const absentEmpB2  = employee ? ` AND b2.coordinators LIKE '%${employee}%'` : '';
+    const absentEmpB   = buildCoordFilter('b', employee);
+    const absentEmpB2  = buildCoordFilter('b2', employee);
     const absentMainRow = db.prepare(
       `SELECT COUNT(*) as cnt FROM (
          SELECT group_name FROM (
@@ -252,7 +258,7 @@ router.get('/dashboard', (req, res) => {
                AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
                ${buildDateFilter('a.date', from_date, to_date)}
                ${department && department !== 'All' ? ` AND b.dept_type = '${department}'` : ''}
-               ${employee ? ` AND b.coordinators LIKE '%${employee}%'` : ''}`
+               ${buildCoordFilter('b', employee)}`
             ).get()?.cnt ?? 0;
             const zoomCnt = db.prepare(
               `SELECT COUNT(*) as cnt FROM (
@@ -299,10 +305,10 @@ router.get('/lectures-list', (req, res) => {
   } = req.query;
   const offset = (Number(page) - 1) * Number(limit);
   const deptFilter        = department && department !== 'All' ? ` AND b.dept_type = '${department}'` : '';
-  const empFilter         = employee    ? ` AND b.coordinators LIKE '%${employee}%'` : '';
+  const empFilter         = buildCoordFilter('b', employee);
   const searchFilter      = search      ? ` AND l.group_name LIKE '%${search}%'` : '';
   const trainerFilter     = trainer     ? ` AND l.trainer LIKE '%${trainer}%'` : '';
-  const coordFilter       = coordinator ? ` AND b.coordinators LIKE '%${coordinator}%'` : '';
+  const coordFilter       = buildCoordFilter('b', coordinator);
   const groupFilter       = group_name  ? ` AND l.group_name = '${group_name.replace(/'/g, "''")}'` : '';
   const categoryFilter    = category    ? ` AND l.side_session_category = '${category}'` : '';
   // Duration filters (HH:MM string comparison works correctly for same-format values)
@@ -372,8 +378,8 @@ router.get('/absent-list', (req, res) => {
   const activeTo    = modal_to    || to_date;
 
   const deptFilter   = activeDept ? ` AND b.dept_type = '${activeDept}'` : '';
-  const empFilter    = employee   ? ` AND b.coordinators LIKE '%${employee}%'` : '';
-  const coordFilter  = coordinator ? ` AND b.coordinators LIKE '%${coordinator}%'` : '';
+  const empFilter    = buildCoordFilter('b', employee);
+  const coordFilter  = buildCoordFilter('b', coordinator);
   const searchFilter = search     ? ` AND a.group_name LIKE '%${search}%'` : '';
   // Part1 date filter uses computed 'date' column (after inference), not raw a.date
   const dateFilterP1 = activeFrom && activeTo ? ` AND date BETWEEN '${activeFrom}' AND '${activeTo}'`
@@ -385,8 +391,8 @@ router.get('/absent-list', (req, res) => {
                      : activeFrom ? ` AND l.date >= '${activeFrom}'`
                      : activeTo   ? ` AND l.date <= '${activeTo}'` : '';
   const deptFilter2  = activeDept  ? ` AND b2.dept_type = '${activeDept}'` : '';
-  const empFilter2   = employee    ? ` AND b2.coordinators LIKE '%${employee}%'` : '';
-  const coordFilter2 = coordinator ? ` AND b2.coordinators LIKE '%${coordinator}%'` : '';
+  const empFilter2   = buildCoordFilter('b2', employee);
+  const coordFilter2 = buildCoordFilter('b2', coordinator);
   const searchFilter2= search      ? ` AND l.group_name LIKE '%${search}%'` : '';
 
   // Part1: absent_students — with name lookup + date inference from lecture_no when date is missing
@@ -468,9 +474,9 @@ router.get('/absent-side-list', (req, res) => {
   const activeTo   = modal_to   || to_date;
 
   const deptFilter    = activeDept  ? ` AND b.dept_type = '${activeDept}'` : '';
-  const empFilter     = employee    ? ` AND b.coordinators LIKE '%${employee}%'` : '';
+  const empFilter     = buildCoordFilter('b', employee);
   const trainerFilter = trainer     ? ` AND l.trainer LIKE '%${trainer}%'` : '';
-  const coordFilter   = coordinator ? ` AND b.coordinators LIKE '%${coordinator}%'` : '';
+  const coordFilter   = buildCoordFilter('b', coordinator);
   const searchFilter  = search      ? ` AND l.group_name LIKE '%${search}%'` : '';
   const dateFilter    = activeFrom && activeTo
     ? ` AND l.date BETWEEN '${activeFrom}' AND '${activeTo}'`
@@ -627,8 +633,8 @@ router.get('/remarks-notes-main', (req, res) => {
   const activeDept = modal_dept && modal_dept !== 'All' ? modal_dept : (department && department !== 'All' ? department : '');
 
   const deptFilter   = activeDept  ? ` AND b.dept_type = '${activeDept}'` : '';
-  const empFilter    = employee    ? ` AND b.coordinators LIKE '%${employee}%'` : '';
-  const coordFilter  = coordinator ? ` AND b.coordinators LIKE '%${coordinator}%'` : '';
+  const empFilter    = buildCoordFilter('b', employee);
+  const coordFilter  = buildCoordFilter('b', coordinator);
   const searchFilter = search      ? ` AND (a.student_name LIKE '%${search}%' OR a.group_name LIKE '%${search}%' OR a.phone LIKE '%${search}%')` : '';
   const dateFilter   = buildDateFilter('a.date', activeFrom, activeTo);
   const remarkFilter = has_remark === '1' ? ` AND r_check.id IS NOT NULL`
@@ -701,8 +707,8 @@ router.get('/remarks-notes-zoom', (req, res) => {
   const expectedSessionSQL = `date(${remarkDateSQL}, '-1 day')`;
 
   const deptFilter   = activeDept  ? ` AND b.dept_type = '${activeDept}'` : '';
-  const empFilter    = employee    ? ` AND b.coordinators LIKE '%${employee}%'` : '';
-  const coordFilter  = coordinator ? ` AND b.coordinators LIKE '%${coordinator}%'` : '';
+  const empFilter    = buildCoordFilter('b', employee);
+  const coordFilter  = buildCoordFilter('b', coordinator);
   const searchFilter = search      ? ` AND (r.client_name LIKE '%${search}%' OR r.client_phone LIKE '%${search}%' OR c.group_name LIKE '%${search}%')` : '';
   const dateFilter   = activeFrom && activeTo ? ` AND ${remarkDateSQL} BETWEEN '${activeFrom}' AND '${activeTo}'`
                      : activeFrom ? ` AND ${remarkDateSQL} >= '${activeFrom}'`
@@ -822,7 +828,7 @@ router.get('/remarks-categories', (req, res) => {
 router.get('/code-problems', (req, res) => {
   const { department, employee } = req.query;
   const deptFilter = department && department !== 'All' ? ` AND b.dept_type = '${department}'` : '';
-  const empFilter  = employee ? ` AND b.coordinators LIKE '%${employee}%'` : '';
+  const empFilter  = buildCoordFilter('b', employee);
 
   // ── helpers ──
   const MONTHS  = { Jan:1,Feb:2,Mar:3,Apr:4,May:5,Jun:6,Jul:7,Aug:8,Sep:9,Oct:10,Nov:11,Dec:12 };
@@ -870,12 +876,12 @@ router.get('/code-problems', (req, res) => {
        ${deptFilter}${empFilter} ORDER BY l.group_name, l.date ASC`
     ).all();
 
-    // fetch all valid side sessions with time + duration (exclude onboarding/offboarding)
+    // fetch only zoom call sessions (regular 15-min) for zoom-call problem checks
     const sideRaw = db.prepare(
       `SELECT l.group_name, l.date, l.time, l.duration FROM lectures l
        INNER JOIN batches b ON l.group_name=b.group_name
        WHERE b.status='نشطة' AND l.session_type='side'
-         AND LOWER(COALESCE(l.side_session_category,'')) NOT IN ('onboarding','offboarding')
+         AND LOWER(COALESCE(l.side_session_category,'regular')) = 'regular'
        ${deptFilter}${empFilter} ORDER BY l.group_name, l.date ASC`
     ).all();
 
@@ -921,7 +927,7 @@ router.get('/code-problems', (req, res) => {
     // Expected last date for SIDE (7 slot-dates, 2/week) → always +21 days
     const expectedSideLast = firstDate => addDays(firstDate, 21);
 
-    const mainProblems = [], sideProblems = [];
+    const mainProblems = [], zoomProblems = [];
 
     for (const batch of batches) {
       const gn        = batch.group_name;
@@ -977,14 +983,14 @@ router.get('/code-problems', (req, res) => {
           }
         }
 
-        // ── SIDE CHECKS ──────────────────────────────────────────────
-        // 1. Side sessions on wrong days
+        // ── ZOOM CALL CHECKS ──────────────────────────────────────────────
+        // 1. Zoom calls on wrong days
         const sidePair = getSidePair(parsed.dow);
         if (sidePair && sideDates.length > 0) {
           const wrong = sideDates.filter(d => !sidePair.includes(getDow(d)));
           if (wrong.length > 0) {
-            sideProblems.push({ ...meta, trainee_count: batch.trainee_count, first_date: firstSideDate,
-              problem_type: 'جلسات جانبية على أيام غلط',
+            zoomProblems.push({ ...meta, trainee_count: batch.trainee_count, first_date: firstSideDate,
+              problem_type: 'زووم كول على أيام غلط',
               detail: `${wrong.length} جلسة خارج أيام (${sidePair.map(d=>DAY_AR[d]).join(' و')}) | أمثلة: ${wrong.slice(0,3).join(', ')}`,
               wrong_count: wrong.length,
             });
@@ -992,11 +998,11 @@ router.get('/code-problems', (req, res) => {
         }
       }
 
-      // 2. Side count ≠ trainee_count × 7
+      // 2. Zoom call count ≠ trainee_count × 7
       const expectedSide = (batch.trainee_count || 0) * 7;
       if (expectedSide > 0 && sideDates.length !== expectedSide) {
-        sideProblems.push({ ...meta, trainee_count: batch.trainee_count, first_date: firstSideDate,
-          problem_type: sideDates.length < expectedSide ? 'جلسات جانبية ناقصة' : 'جلسات جانبية زيادة',
+        zoomProblems.push({ ...meta, trainee_count: batch.trainee_count, first_date: firstSideDate,
+          problem_type: sideDates.length < expectedSide ? 'زووم كول ناقصة' : 'زووم كول زيادة',
           detail: `الموجود: ${sideDates.length} | المطلوب: ${expectedSide} (${batch.trainee_count}×7)`,
           actual: sideDates.length, expected: expectedSide,
         });
@@ -1017,15 +1023,15 @@ router.get('/code-problems', (req, res) => {
         }
       }
 
-      // 4. SIDE — last session date mismatch
+      // 4. ZOOM CALL — last session date mismatch
       if (sideSlotDates.length > 0 && firstSideDate) {
         const lastSideRow   = sideRows[sideRows.length - 1];
         const actualSideLast = effectiveDate(lastSideRow.date, lastSideRow.time, lastSideRow.duration);
         const calcSideLast   = expectedSideLast(firstSideDate);
         if (actualSideLast !== calcSideLast) {
           const midnight = effectiveDate(lastSideRow.date, lastSideRow.time, lastSideRow.duration) !== lastSideRow.date;
-          sideProblems.push({ ...meta, trainee_count: batch.trainee_count, first_date: firstSideDate,
-            problem_type: 'تاريخ آخر جلسة جانبية غلط',
+          zoomProblems.push({ ...meta, trainee_count: batch.trainee_count, first_date: firstSideDate,
+            problem_type: 'تاريخ آخر زووم كول غلط',
             detail: `المحسوب: ${calcSideLast} | الفعلي: ${actualSideLast}${midnight ? ' (تعدى منتصف الليل)' : ''}`,
             expected_date: calcSideLast, actual_date: actualSideLast,
           });
@@ -1033,8 +1039,8 @@ router.get('/code-problems', (req, res) => {
       }
     }
 
-    return res.json({ main_problems: mainProblems, side_problems: sideProblems,
-      total: mainProblems.length + sideProblems.length });
+    return res.json({ main_problems: mainProblems, zoom_problems: zoomProblems,
+      total: mainProblems.length + zoomProblems.length });
   } catch (err) {
     console.error('[reports] code-problems error:', err);
     return res.status(500).json({ error: err.message });
@@ -1087,8 +1093,10 @@ function tsFilters(q) {
 router.get('/team-summary-detail', (req, res) => {
   const { employee, metric, from_date, to_date, department } = req.query;
   if (!employee || !metric) return res.status(400).json({ error: 'employee and metric required' });
-  const like = `%${employee}%`;
   const { deptF, dateA, dateL, dateR } = tsFilters(req.query);
+  const empFBatches = buildCoordFilter('batches', employee);
+  const empFB       = buildCoordFilter('b', employee);
+  const empFRemarks = employee ? ` AND assigned_to LIKE '%${employee.replace(/'/g,"''")}%'` : '';
 
   try {
     let rows = [];
@@ -1100,10 +1108,10 @@ router.get('/team-summary-detail', (req, res) => {
          WHERE status='نشطة'
            AND end_date IS NOT NULL AND end_date != ''
            AND end_date < date('now')
-           AND coordinators LIKE ?
+           ${empFBatches}
            ${deptF.replace('b.','').replace('AND b.','AND ')}
          ORDER BY end_date ASC`
-      ).all(like);
+      ).all();
 
     } else if (metric === 'overdue_remarks') {
       const dateRBase = from_date ? ` AND added_at >= '${from_date}'` : '';
@@ -1114,7 +1122,7 @@ router.get('/team-summary-detail', (req, res) => {
            ROUND((julianday('now')-julianday(COALESCE(added_at,'2000-01-01')))*24,1) as hours_open
          FROM remarks
          WHERE LOWER(status) NOT IN ('closed','مغلق','resolved')
-           AND assigned_to LIKE ?
+           ${empFRemarks}
            ${dateRBase}${dateREnd}
            AND ROUND((julianday('now')-julianday(COALESCE(added_at,'2000-01-01')))*24,1) >=
                CASE WHEN priority='عاجلة' THEN 3
@@ -1123,14 +1131,15 @@ router.get('/team-summary-detail', (req, res) => {
            AND (last_updated IS NULL
              OR ROUND((julianday('now')-julianday(last_updated))*24,1) >= 24)
          ORDER BY hours_open DESC`
-      ).all(like);
+      ).all();
 
     } else if (metric === 'main_absence_no_remark') {
       rows = db.prepare(
         `SELECT DISTINCT a.student_name, a.phone, a.group_name, a.date
          FROM absent_students a
          INNER JOIN batches b ON a.group_name = b.group_name
-         WHERE b.coordinators LIKE ?
+         WHERE 1=1
+           ${empFB}
            ${deptF}${dateA}
            AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
            AND NOT EXISTS (
@@ -1140,7 +1149,7 @@ router.get('/team-summary-detail', (req, res) => {
                AND LOWER(r.status) NOT IN ('closed','مغلق','resolved')
            )
          ORDER BY a.group_name, a.date DESC`
-      ).all(like);
+      ).all();
 
     } else if (metric === 'side_absence_no_remark') {
       rows = db.prepare(
@@ -1148,7 +1157,8 @@ router.get('/team-summary-detail', (req, res) => {
            CAST(l.attendance AS INTEGER) as attendance
          FROM lectures l
          INNER JOIN batches b ON l.group_name = b.group_name
-         WHERE b.coordinators LIKE ?
+         WHERE 1=1
+           ${empFB}
            ${deptF}${dateL}
            AND l.session_type = 'side'
            AND l.side_session_category = 'regular'
@@ -1164,7 +1174,7 @@ router.get('/team-summary-detail', (req, res) => {
                AND LOWER(r.status) NOT IN ('closed','مغلق','resolved')
            )
          ORDER BY l.group_name, l.date DESC`
-      ).all(like);
+      ).all();
 
     } else if (metric === 'groups_with_errors') {
       rows = db.prepare(
@@ -1172,13 +1182,13 @@ router.get('/team-summary-detail', (req, res) => {
            ABS(scheduled_lectures - completed_lectures) as diff
          FROM batches
          WHERE status = 'نشطة'
-           AND coordinators LIKE ?
+           ${empFBatches}
            ${deptF.replace('b.','').replace('AND b.','AND ')}
            AND scheduled_lectures IS NOT NULL
            AND completed_lectures IS NOT NULL
            AND scheduled_lectures != completed_lectures
          ORDER BY diff DESC`
-      ).all(like);
+      ).all();
     }
 
     return res.json({ employee, metric, rows });
