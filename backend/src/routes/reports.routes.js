@@ -638,33 +638,57 @@ router.get('/remarks-notes-main', (req, res) => {
   const activeTo   = modal_to   || to_date;
   const activeDept = modal_dept && modal_dept !== 'All' ? modal_dept : (department && department !== 'All' ? department : '');
 
-  const deptFilter   = activeDept  ? ` AND b.dept_type = '${activeDept}'` : '';
+  // Use buildDeptFilter for proper OR EXISTS fallback
+  const deptFilter   = buildDeptFilter('b', activeDept);
   const empFilter    = buildCoordFilter('b', employee);
   const coordFilter  = buildCoordFilter('b', coordinator);
-  const searchFilter = search      ? ` AND (a.student_name LIKE '%${search}%' OR a.group_name LIKE '%${search}%' OR a.phone LIKE '%${search}%')` : '';
-  const dateFilter   = buildDateFilter('a.date', activeFrom, activeTo);
-  const remarkFilter = has_remark === '1' ? ` AND r_check.id IS NOT NULL`
-                     : has_remark === '0' ? ` AND r_check.id IS NULL` : '';
+  const searchFilter = search ? ` AND (a.student_name LIKE '%${search}%' OR a.group_name LIKE '%${search}%' OR a.phone LIKE '%${search}%')` : '';
 
-  const baseWhere = `WHERE (
-      (a.student_name IS NOT NULL AND TRIM(a.student_name) != '')
-      OR c_lu.name IS NOT NULL
-    )
-    ${dateFilter}${deptFilter}${empFilter}${coordFilter}${searchFilter}`;
+  // Date filter applied on effective date (after inference) — applied at outer level
+  const dateFilter = activeFrom && activeTo
+    ? ` AND base.eff_date BETWEEN '${activeFrom}' AND '${activeTo}'`
+    : activeFrom ? ` AND base.eff_date >= '${activeFrom}'`
+    : activeTo   ? ` AND base.eff_date <= '${activeTo}'` : '';
 
-  // Pre-deduplicate remarks: one row per phone+date to avoid duplicate rows in JOIN
+  const havingFilter = has_remark === '1' ? ` AND has_remark = 1`
+                     : has_remark === '0' ? ` AND has_remark = 0` : '';
+
+  // Inner subquery: compute eff_date by inferring from lecture_no when a.date is empty
+  // This mirrors absent-list Part1 logic so both routes always agree on which students appear
   const innerQ = `
-    SELECT a.id,
-      COALESCE(c_lu.name, a.student_name) AS student_name,
-      a.phone AS student_phone, a.group_name, a.date AS absence_date,
-      b.coordinators, b.dept_type,
-      date(a.date, '+1 day') AS expected_remark_date,
+    SELECT
+      base.id,
+      COALESCE(base.client_name, base.student_name) AS student_name,
+      base.phone AS student_phone, base.group_name,
+      base.eff_date AS absence_date,
+      base.coordinators, base.dept_type,
+      date(base.eff_date, '+1 day') AS expected_remark_date,
       r.id AS remark_id, r.details AS remark_details, r.added_at AS remark_date,
       r.assigned_to, r.status AS remark_status,
       CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END AS has_remark
-    FROM absent_students a
-    LEFT JOIN batches b ON a.group_name = b.group_name
-    LEFT JOIN (SELECT phone, MIN(name) AS name FROM clients GROUP BY phone) c_lu ON a.phone IS NOT NULL AND TRIM(a.phone) != '' AND c_lu.phone = a.phone
+    FROM (
+      SELECT a.id, a.group_name, a.phone, a.student_name,
+        COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS eff_date,
+        b.coordinators, b.dept_type,
+        c_lu.name AS client_name
+      FROM absent_students a
+      LEFT JOIN batches b ON a.group_name = b.group_name
+      LEFT JOIN (SELECT phone, MIN(name) AS name FROM clients GROUP BY phone) c_lu
+        ON a.phone IS NOT NULL AND TRIM(a.phone) != '' AND c_lu.phone = a.phone
+      LEFT JOIN (
+        SELECT group_name, date,
+          ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
+        FROM lectures WHERE session_type = 'main'
+      ) lec_inf ON (a.date IS NULL OR TRIM(a.date) = '')
+        AND lec_inf.group_name = a.group_name
+        AND a.lecture_no IS NOT NULL
+        AND lec_inf.lec_num = a.lecture_no
+      WHERE (
+        (a.student_name IS NOT NULL AND TRIM(a.student_name) != '')
+        OR c_lu.name IS NOT NULL
+      )
+      ${deptFilter}${empFilter}${coordFilter}${searchFilter}
+    ) base
     LEFT JOIN (
       SELECT client_phone,
         date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2)) AS rdate,
@@ -672,12 +696,8 @@ router.get('/remarks-notes-main', (req, res) => {
         MAX(assigned_to) AS assigned_to, MAX(status) AS status
       FROM remarks WHERE category = 'Attendance Main Session'
       GROUP BY client_phone, date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2))
-    ) r ON r.client_phone = a.phone AND r.rdate = date(a.date, '+1 day')
-    ${baseWhere}`;
-
-  // For has_remark filter, we need to filter after the LEFT JOIN
-  const havingFilter = has_remark === '1' ? ` AND has_remark = 1`
-                     : has_remark === '0' ? ` AND has_remark = 0` : '';
+    ) r ON r.client_phone = base.phone AND r.rdate = date(base.eff_date, '+1 day')
+    WHERE base.eff_date IS NOT NULL ${dateFilter}`;
 
   try {
     const totalRow = db.prepare(
@@ -714,19 +734,23 @@ router.get('/remarks-notes-zoom', (req, res) => {
   const remarkDateSQL      = `date(substr(r.added_at,7,4)||'-'||substr(r.added_at,4,2)||'-'||substr(r.added_at,1,2))`;
   const expectedSessionSQL = `date(${remarkDateSQL}, '-1 day')`;
 
-  const deptFilter   = activeDept  ? ` AND b.dept_type = '${activeDept}'` : '';
+  // Use buildDeptFilter for proper OR EXISTS fallback on b.dept_type
+  const deptFilter   = buildDeptFilter('b', activeDept);
   const empFilter    = buildCoordFilter('b', employee);
   const coordFilter  = buildCoordFilter('b', coordinator);
-  const searchFilter = search      ? ` AND (r.client_name LIKE '%${search}%' OR r.client_phone LIKE '%${search}%' OR c.group_name LIKE '%${search}%')` : '';
+  const searchFilter = search ? ` AND (r.client_name LIKE '%${search}%' OR r.client_phone LIKE '%${search}%' OR c.group_name LIKE '%${search}%')` : '';
+  // Filter by session date (= remark date - 1 day) so it matches the same day filter as main sessions
   const sessionDateSQL = `date(${remarkDateSQL}, '-1 day')`;
   const dateFilter   = activeFrom && activeTo ? ` AND ${sessionDateSQL} BETWEEN '${activeFrom}' AND '${activeTo}'`
                      : activeFrom ? ` AND ${sessionDateSQL} >= '${activeFrom}'`
                      : activeTo   ? ` AND ${sessionDateSQL} <= '${activeTo}'` : '';
 
+  // Join clients to their ACTIVE batch to get correct group/coordinator
+  // (a client can appear in multiple batches; pick the active one)
   const baseWhere = `WHERE r.category = 'Attendance Zoom Call'
     ${dateFilter}${deptFilter}${empFilter}${coordFilter}${searchFilter}`;
 
-  // Deduplicate clients (one row per phone) AND lectures (one row per group+date)
+  // Deduplicate clients (one row per phone, prefer active batch) AND lectures
   // to prevent row multiplication from either join
   const innerQ = `
     SELECT r.id, COALESCE(c.name, r.client_name) AS client_name, r.client_phone, r.details AS remark_details,
@@ -736,8 +760,16 @@ router.get('/remarks-notes-zoom', (req, res) => {
       l.session_date,
       CASE WHEN l.group_name IS NOT NULL THEN 1 ELSE 0 END AS has_session
     FROM remarks r
-    LEFT JOIN (SELECT phone, MIN(group_name) AS group_name, MIN(name) AS name FROM clients GROUP BY phone) c
-      ON c.phone = r.client_phone
+    LEFT JOIN (
+      SELECT cx.phone, MIN(cx.name) AS name,
+        COALESCE(
+          (SELECT cx2.group_name FROM clients cx2
+           INNER JOIN batches bx ON cx2.group_name = bx.group_name AND bx.status = 'نشطة'
+           WHERE cx2.phone = cx.phone LIMIT 1),
+          MIN(cx.group_name)
+        ) AS group_name
+      FROM clients cx GROUP BY cx.phone
+    ) c ON c.phone = r.client_phone
     LEFT JOIN batches b ON b.group_name = c.group_name
     LEFT JOIN (
       SELECT group_name, date AS session_date
