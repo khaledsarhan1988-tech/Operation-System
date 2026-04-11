@@ -751,8 +751,10 @@ router.get('/remarks-notes-main', (req, res) => {
 });
 
 // ─── GET /api/reports/remarks-notes-zoom ──────────────────────────────────────
-// Base: clients in groups with absent side sessions (mirrors absent-side-list logic)
-// LEFT JOIN: 'Attendance Zoom Call' remarks per client per date
+// Two-source UNION approach:
+//   Part 1: clients in FULLY-absent sessions (all attendance=0) → all clients in group are absent
+//   Part 2: clients confirmed absent via 'Attendance Zoom Call' remarks
+//           (covers partial-attendance groups + groups missing from clients table)
 router.get('/remarks-notes-zoom', (req, res) => {
   const {
     from_date, to_date, department, employee,
@@ -766,41 +768,73 @@ router.get('/remarks-notes-zoom', (req, res) => {
   const activeTo   = modal_to   || to_date;
   const activeDept = modal_dept && modal_dept !== 'All' ? modal_dept : (department && department !== 'All' ? department : '');
 
-  const deptFilter   = buildDeptFilter('b', activeDept);
-  const empFilter    = buildCoordFilter('b', employee);
-  const coordFilter  = buildCoordFilter('b', coordinator);
-  const searchFilter = search ? ` AND (c.name LIKE '%${search}%' OR c.phone LIKE '%${search}%' OR c.group_name LIKE '%${search}%')` : '';
+  const safeEmp   = employee    ? employee.replace(/'/g, "''")    : '';
+  const safeCoord = coordinator ? coordinator.replace(/'/g, "''") : '';
+  const safeDept  = activeDept  ? activeDept.replace(/'/g, "''")  : '';
 
-  // Date filter on session_date (applied at outer WHERE level)
+  // Part 1 filters — b = batches via INNER JOIN
+  const dept1  = buildDeptFilter('b', activeDept);
+  const emp1   = buildCoordFilter('b', employee);
+  const coord1 = buildCoordFilter('b', coordinator);
+  const srch1  = search ? ` AND (c.name LIKE '%${search}%' OR c.phone LIKE '%${search}%' OR c.group_name LIKE '%${search}%')` : '';
+
+  // Part 2 filters — b2 = batches via LEFT JOIN (may be NULL when client not in clients table)
+  // Falls back to r2.assigned_to for emp/coord when batch unknown
+  const dept2  = safeDept  ? ` AND (b2.dept_type = '${safeDept}' OR EXISTS (SELECT 1 FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b2.coordinators)) AND u.department='${safeDept}'))` : '';
+  const emp2   = safeEmp   ? ` AND (b2.coordinators LIKE '%${safeEmp}%'   OR (b2.coordinators IS NULL AND r2.assigned_to LIKE '%${safeEmp}%'))` : '';
+  const coord2 = safeCoord ? ` AND (b2.coordinators LIKE '%${safeCoord}%' OR (b2.coordinators IS NULL AND r2.assigned_to LIKE '%${safeCoord}%'))` : '';
+  const srch2  = search ? ` AND (r2.client_name LIKE '%${search}%' OR r2.client_phone LIKE '%${search}%')` : '';
+
+  // Date filter applied on the UNION result
   const dateFilter = activeFrom && activeTo
-    ? ` AND session_date BETWEEN '${activeFrom}' AND '${activeTo}'`
-    : activeFrom ? ` AND session_date >= '${activeFrom}'`
-    : activeTo   ? ` AND session_date <= '${activeTo}'` : '';
+    ? ` AND abs_union.session_date BETWEEN '${activeFrom}' AND '${activeTo}'`
+    : activeFrom ? ` AND abs_union.session_date >= '${activeFrom}'`
+    : activeTo   ? ` AND abs_union.session_date <= '${activeTo}'` : '';
 
   const havingFilter = has_remark === '1' ? ` AND has_remark = 1`
                      : has_remark === '0' ? ` AND has_remark = 0` : '';
 
-  // Base: all clients in groups that had at least one absent side session (attendance=0/null)
-  // Uses same absence logic as absent-side-list KPI
-  const absentBase = `
+  // Part 1: clients in groups where ALL side sessions were absent (no one attended)
+  // Safe to expand all group clients because everyone is confirmed absent
+  const part1 = `
     SELECT DISTINCT c.name AS client_name, c.phone AS client_phone,
       c.group_name, grp.session_date, b.coordinators, b.dept_type
     FROM (
       SELECT l.group_name, l.date AS session_date
       FROM lectures l
-      WHERE l.session_type = 'side'
-        AND l.status = 'مؤكدة'
+      WHERE l.session_type = 'side' AND l.status = 'مؤكدة'
         AND (l.duration IS NULL OR l.duration <= '00:15')
-        AND (l.attendance IS NULL OR TRIM(l.attendance) = '' OR CAST(l.attendance AS INTEGER) = 0)
       GROUP BY l.group_name, l.date
+      HAVING SUM(CASE WHEN l.attendance IS NOT NULL AND TRIM(l.attendance) != ''
+                 AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END) = 0
+        AND COUNT(*) > 0
     ) grp
     INNER JOIN clients c ON c.group_name = grp.group_name
     INNER JOIN batches b ON b.group_name = grp.group_name
     WHERE c.name IS NOT NULL AND TRIM(c.name) != ''
       AND c.phone IS NOT NULL AND TRIM(c.phone) != ''
-    ${deptFilter}${empFilter}${coordFilter}${searchFilter}`;
+    ${dept1}${emp1}${coord1}${srch1}`;
 
-  // Deduplicated Attendance Zoom Call remarks: one per client per day
+  // Part 2: clients confirmed absent via 'Attendance Zoom Call' remarks
+  // Covers: (a) partial-attendance groups where only specific clients are absent
+  //         (b) groups not in clients table (uses remark's built-in client info)
+  const rdSQL = `date(substr(r2.added_at,7,4)||'-'||substr(r2.added_at,4,2)||'-'||substr(r2.added_at,1,2))`;
+  const part2 = `
+    SELECT DISTINCT
+      COALESCE(c2.name, r2.client_name)       AS client_name,
+      r2.client_phone,
+      c2.group_name,
+      date(${rdSQL}, '-1 day')                AS session_date,
+      COALESCE(b2.coordinators, r2.assigned_to) AS coordinators,
+      b2.dept_type
+    FROM remarks r2
+    LEFT JOIN (SELECT phone, MIN(group_name) AS group_name, MIN(name) AS name
+               FROM clients GROUP BY phone) c2 ON c2.phone = r2.client_phone
+    LEFT JOIN batches b2 ON b2.group_name = c2.group_name
+    WHERE r2.category = 'Attendance Zoom Call'
+    ${dept2}${emp2}${coord2}${srch2}`;
+
+  // Deduplicated remarks: one per client per day
   const remarksSubQ = `
     SELECT client_phone,
       date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2)) AS rdate,
@@ -809,20 +843,24 @@ router.get('/remarks-notes-zoom', (req, res) => {
     FROM remarks WHERE category = 'Attendance Zoom Call'
     GROUP BY client_phone, date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2))`;
 
-  // Final query: absent clients + matched remark (remark expected on session_date + 1 day)
+  // Combine sources → LEFT JOIN remarks → apply date & having filters
   const innerQ = `
     SELECT
-      abs.client_name, abs.client_phone, abs.group_name,
-      abs.session_date, abs.coordinators, abs.dept_type,
-      date(abs.session_date, '+1 day') AS expected_remark_date,
+      abs_union.client_name, abs_union.client_phone, abs_union.group_name,
+      abs_union.session_date, abs_union.coordinators, abs_union.dept_type,
+      date(abs_union.session_date, '+1 day') AS expected_remark_date,
       r.id AS remark_id, r.details AS remark_details, r.added_at AS remark_date,
       r.assigned_to, r.status AS remark_status,
       CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END AS has_remark
-    FROM (${absentBase}) abs
+    FROM (
+      SELECT * FROM (${part1}) p1
+      UNION
+      SELECT * FROM (${part2}) p2
+    ) abs_union
     LEFT JOIN (${remarksSubQ}) r
-      ON r.client_phone = abs.client_phone
-      AND r.rdate = date(abs.session_date, '+1 day')
-    WHERE abs.session_date IS NOT NULL ${dateFilter}`;
+      ON r.client_phone = abs_union.client_phone
+      AND r.rdate = date(abs_union.session_date, '+1 day')
+    WHERE abs_union.session_date IS NOT NULL ${dateFilter}`;
 
   try {
     const totalRow = db.prepare(
