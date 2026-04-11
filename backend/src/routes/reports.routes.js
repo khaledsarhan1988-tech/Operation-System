@@ -638,66 +638,99 @@ router.get('/remarks-notes-main', (req, res) => {
   const activeTo   = modal_to   || to_date;
   const activeDept = modal_dept && modal_dept !== 'All' ? modal_dept : (department && department !== 'All' ? department : '');
 
-  // Use buildDeptFilter for proper OR EXISTS fallback
-  const deptFilter   = buildDeptFilter('b', activeDept);
-  const empFilter    = buildCoordFilter('b', employee);
-  const coordFilter  = buildCoordFilter('b', coordinator);
-  const searchFilter = search ? ` AND (a.student_name LIKE '%${search}%' OR a.group_name LIKE '%${search}%' OR a.phone LIKE '%${search}%')` : '';
+  // Part1 filters (alias b)
+  const deptFilter1  = buildDeptFilter('b', activeDept);
+  const empFilter1   = buildCoordFilter('b', employee);
+  const coord1       = buildCoordFilter('b', coordinator);
+  const search1      = search ? ` AND (a.student_name LIKE '%${search}%' OR a.group_name LIKE '%${search}%' OR a.phone LIKE '%${search}%')` : '';
 
-  // Date filter applied on effective date (after inference) — applied at outer level
+  // Part2 filters (alias b2)
+  const deptFilter2  = buildDeptFilter('b2', activeDept);
+  const empFilter2   = buildCoordFilter('b2', employee);
+  const coord2       = buildCoordFilter('b2', coordinator);
+  const search2      = search ? ` AND (c.name LIKE '%${search}%' OR l.group_name LIKE '%${search}%' OR c.phone LIKE '%${search}%')` : '';
+
+  // Date filter applied on the UNION result
   const dateFilter = activeFrom && activeTo
-    ? ` AND base.eff_date BETWEEN '${activeFrom}' AND '${activeTo}'`
-    : activeFrom ? ` AND base.eff_date >= '${activeFrom}'`
-    : activeTo   ? ` AND base.eff_date <= '${activeTo}'` : '';
+    ? ` AND absence_date BETWEEN '${activeFrom}' AND '${activeTo}'`
+    : activeFrom ? ` AND absence_date >= '${activeFrom}'`
+    : activeTo   ? ` AND absence_date <= '${activeTo}'` : '';
 
   const havingFilter = has_remark === '1' ? ` AND has_remark = 1`
                      : has_remark === '0' ? ` AND has_remark = 0` : '';
 
-  // Inner subquery: compute eff_date by inferring from lecture_no when a.date is empty
-  // This mirrors absent-list Part1 logic so both routes always agree on which students appear
+  // Part1: students in absent_students table (with date inference from lecture_no)
+  const part1 = `
+    SELECT
+      COALESCE(c_lu.name, NULLIF(TRIM(a.student_name),'')) AS student_name,
+      a.phone AS student_phone, a.group_name,
+      COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS absence_date,
+      b.coordinators, b.dept_type
+    FROM absent_students a
+    LEFT JOIN batches b ON a.group_name = b.group_name
+    LEFT JOIN (SELECT phone, MIN(name) AS name FROM clients GROUP BY phone) c_lu
+      ON (a.student_name IS NULL OR TRIM(a.student_name)='')
+      AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone
+    LEFT JOIN (
+      SELECT group_name, date,
+        ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
+      FROM lectures WHERE session_type = 'main'
+    ) lec_inf ON (a.date IS NULL OR TRIM(a.date)='')
+      AND lec_inf.group_name = a.group_name
+      AND a.lecture_no IS NOT NULL AND lec_inf.lec_num = a.lecture_no
+    WHERE (
+      (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
+      OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+    )
+    ${deptFilter1}${empFilter1}${coord1}${search1}`;
+
+  // Part2: clients in groups where lecture has no attendance — treated as absent
+  // (mirrors absent-list Part2 so totals always match)
+  const part2 = `
+    SELECT
+      c.name AS student_name, c.phone AS student_phone,
+      l.group_name, l.date AS absence_date,
+      b2.coordinators, b2.dept_type
+    FROM lectures l
+    INNER JOIN batches b2 ON l.group_name = b2.group_name
+    INNER JOIN clients c ON c.group_name = l.group_name
+    WHERE l.session_type = 'main'
+      AND (l.attendance IS NULL OR TRIM(l.attendance) = '')
+      AND c.name IS NOT NULL AND TRIM(c.name)!=''
+      AND c.phone IS NOT NULL AND TRIM(c.phone)!=''
+      AND NOT EXISTS (
+        SELECT 1 FROM absent_students a2
+        WHERE a2.group_name = l.group_name AND a2.date = l.date
+      )
+    ${deptFilter2}${empFilter2}${coord2}${search2}`;
+
+  // Deduplicated remarks: one remark per client per date (Attendance Main Session only)
+  const remarksSubQ = `
+    SELECT client_phone,
+      date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2)) AS rdate,
+      MAX(id) AS id, MAX(details) AS details, MAX(added_at) AS added_at,
+      MAX(assigned_to) AS assigned_to, MAX(status) AS status
+    FROM remarks WHERE category = 'Attendance Main Session'
+    GROUP BY client_phone, date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2))`;
+
+  // Combine both parts, join with remarks, apply date filter
   const innerQ = `
     SELECT
-      base.id,
-      COALESCE(base.client_name, base.student_name) AS student_name,
-      base.phone AS student_phone, base.group_name,
-      base.eff_date AS absence_date,
-      base.coordinators, base.dept_type,
-      date(base.eff_date, '+1 day') AS expected_remark_date,
+      abs_base.student_name, abs_base.student_phone, abs_base.group_name,
+      abs_base.absence_date, abs_base.coordinators, abs_base.dept_type,
+      date(abs_base.absence_date, '+1 day') AS expected_remark_date,
       r.id AS remark_id, r.details AS remark_details, r.added_at AS remark_date,
       r.assigned_to, r.status AS remark_status,
       CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END AS has_remark
     FROM (
-      SELECT a.id, a.group_name, a.phone, a.student_name,
-        COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS eff_date,
-        b.coordinators, b.dept_type,
-        c_lu.name AS client_name
-      FROM absent_students a
-      LEFT JOIN batches b ON a.group_name = b.group_name
-      LEFT JOIN (SELECT phone, MIN(name) AS name FROM clients GROUP BY phone) c_lu
-        ON a.phone IS NOT NULL AND TRIM(a.phone) != '' AND c_lu.phone = a.phone
-      LEFT JOIN (
-        SELECT group_name, date,
-          ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
-        FROM lectures WHERE session_type = 'main'
-      ) lec_inf ON (a.date IS NULL OR TRIM(a.date) = '')
-        AND lec_inf.group_name = a.group_name
-        AND a.lecture_no IS NOT NULL
-        AND lec_inf.lec_num = a.lecture_no
-      WHERE (
-        (a.student_name IS NOT NULL AND TRIM(a.student_name) != '')
-        OR c_lu.name IS NOT NULL
-      )
-      ${deptFilter}${empFilter}${coordFilter}${searchFilter}
-    ) base
-    LEFT JOIN (
-      SELECT client_phone,
-        date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2)) AS rdate,
-        MAX(id) AS id, MAX(details) AS details, MAX(added_at) AS added_at,
-        MAX(assigned_to) AS assigned_to, MAX(status) AS status
-      FROM remarks WHERE category = 'Attendance Main Session'
-      GROUP BY client_phone, date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2))
-    ) r ON r.client_phone = base.phone AND r.rdate = date(base.eff_date, '+1 day')
-    WHERE base.eff_date IS NOT NULL ${dateFilter}`;
+      SELECT * FROM (${part1}) p1 WHERE absence_date IS NOT NULL
+      UNION ALL
+      SELECT * FROM (${part2}) p2
+    ) abs_base
+    LEFT JOIN (${remarksSubQ}) r
+      ON r.client_phone = abs_base.student_phone
+      AND r.rdate = date(abs_base.absence_date, '+1 day')
+    WHERE abs_base.absence_date IS NOT NULL ${dateFilter}`;
 
   try {
     const totalRow = db.prepare(
