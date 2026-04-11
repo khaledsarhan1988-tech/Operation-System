@@ -646,8 +646,7 @@ router.get('/remarks-notes-main', (req, res) => {
   const remarkFilter = has_remark === '1' ? ` AND r_check.id IS NOT NULL`
                      : has_remark === '0' ? ` AND r_check.id IS NULL` : '';
 
-  const baseWhere = `WHERE a.phone IS NOT NULL AND TRIM(a.phone) != ''
-    AND (
+  const baseWhere = `WHERE (
       (a.student_name IS NOT NULL AND TRIM(a.student_name) != '')
       OR c_lu.name IS NOT NULL
     )
