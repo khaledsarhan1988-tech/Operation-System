@@ -16,7 +16,7 @@ router.get('/team', (req, res) => {
       SUM(CASE WHEN r.status != 'إنتهت' THEN 1 ELSE 0 END) AS pending,
       SUM(CASE WHEN r.status = 'إنتهت' THEN 1 ELSE 0 END) AS done,
       SUM(CASE WHEN r.status = 'إنتهت' AND date(r.last_updated) = date('now') THEN 1 ELSE 0 END) AS completed_today,
-      SUM(CASE WHEN r.status != 'إنتهت' AND r.sla_deadline < datetime('now') THEN 1 ELSE 0 END) AS overdue
+      SUM(CASE WHEN r.status != 'إنتهت' AND r.sla_deadline < datetime('now', '+2 hours') THEN 1 ELSE 0 END) AS overdue
     FROM remarks r
     GROUP BY r.assigned_to
     ORDER BY pending DESC
@@ -72,7 +72,7 @@ router.get('/performance', (req, res) => {
       COUNT(*) AS total,
       SUM(CASE WHEN status = 'إنتهت' THEN 1 ELSE 0 END) AS done,
       SUM(CASE WHEN status != 'إنتهت' THEN 1 ELSE 0 END) AS pending,
-      SUM(CASE WHEN status != 'إنتهت' AND sla_deadline < datetime('now') THEN 1 ELSE 0 END) AS overdue,
+      SUM(CASE WHEN status != 'إنتهت' AND sla_deadline < datetime('now', '+2 hours') THEN 1 ELSE 0 END) AS overdue,
       SUM(CASE WHEN priority = 'عاجلة' THEN 1 ELSE 0 END) AS urgent
     FROM remarks
     ${where}
@@ -91,7 +91,7 @@ router.post('/assign', (req, res) => {
   const remark = db.prepare('SELECT id FROM remarks WHERE id = ?').get(remark_id);
   if (!remark) return res.status(404).json({ error: 'Remark not found' });
 
-  db.prepare("UPDATE remarks SET assigned_to = ?, last_updated = datetime('now') WHERE id = ?")
+  db.prepare("UPDATE remarks SET assigned_to = ?, last_updated = datetime('now', '+2 hours') WHERE id = ?")
     .run(agent_name, remark_id);
   return res.json({ message: 'Assigned', remark_id, agent_name });
 });

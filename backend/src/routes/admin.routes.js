@@ -50,7 +50,7 @@ router.put('/users/:id', (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   if (password) {
-    db.prepare("UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?")
+    db.prepare("UPDATE users SET password_hash = ?, updated_at = datetime('now', '+2 hours') WHERE id = ?")
       .run(bcrypt.hashSync(password, 12), id);
   }
 
@@ -64,7 +64,7 @@ router.put('/users/:id', (req, res) => {
   if (management !== undefined) { fields.push('management = ?'); params.push(management); }
 
   if (fields.length) {
-    fields.push("updated_at = datetime('now')");
+    fields.push("updated_at = datetime('now', '+2 hours')");
     db.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).run(...params, id);
   }
 
@@ -79,7 +79,7 @@ router.patch('/users/:id/status', (req, res) => {
   const user = db.prepare('SELECT id, is_active FROM users WHERE id = ?').get(id);
   if (!user) return res.status(404).json({ error: 'User not found' });
   const newStatus = user.is_active ? 0 : 1;
-  db.prepare("UPDATE users SET is_active = ?, updated_at = datetime('now') WHERE id = ?").run(newStatus, id);
+  db.prepare("UPDATE users SET is_active = ?, updated_at = datetime('now', '+2 hours') WHERE id = ?").run(newStatus, id);
   return res.json({ is_active: newStatus });
 });
 
@@ -207,7 +207,7 @@ router.get('/kpis', (req, res) => {
     total_batches:   db.prepare("SELECT COUNT(*) AS c FROM batches WHERE status = 'نشطة'").get().c,
     total_remarks:   db.prepare('SELECT COUNT(*) AS c FROM remarks').get().c,
     pending_remarks: db.prepare("SELECT COUNT(*) AS c FROM remarks WHERE status != 'إنتهت'").get().c,
-    overdue_remarks: db.prepare("SELECT COUNT(*) AS c FROM remarks WHERE status != 'إنتهت' AND sla_deadline < datetime('now')").get().c,
+    overdue_remarks: db.prepare("SELECT COUNT(*) AS c FROM remarks WHERE status != 'إنتهت' AND sla_deadline < datetime('now', '+2 hours')").get().c,
     total_agents:    db.prepare("SELECT COUNT(*) AS c FROM users WHERE role = 'agent' AND is_active = 1").get().c,
     absent_pending:  db.prepare("SELECT COUNT(*) AS c FROM absent_students WHERE follow_up_status = 'pending'").get().c,
     last_sync:       db.prepare("SELECT created_at FROM excel_syncs WHERE status = 'success' ORDER BY created_at DESC LIMIT 1").get()?.created_at || null,

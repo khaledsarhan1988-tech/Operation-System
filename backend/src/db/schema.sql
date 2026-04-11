@@ -14,8 +14,8 @@ CREATE TABLE IF NOT EXISTS users (
   management    TEXT NOT NULL DEFAULT 'Customer Services',
   language      TEXT NOT NULL DEFAULT 'ar' CHECK(language IN ('ar','en')),
   is_active     INTEGER NOT NULL DEFAULT 1,
-  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at    TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
 );
 
 -- =============================================
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS team_members (
   user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
   status      TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','inactive')),
   notes       TEXT,
-  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at  TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
 );
 CREATE INDEX IF NOT EXISTS idx_team_dept_section ON team_members(department, section);
 
@@ -201,7 +201,7 @@ CREATE TABLE IF NOT EXISTS side_session_checks (
   actual_duration_min  INTEGER,
   notes                TEXT,
   checked_by           INTEGER REFERENCES users(id),
-  checked_at           TEXT NOT NULL DEFAULT (datetime('now')),
+  checked_at           TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
   updated_by           INTEGER REFERENCES users(id),
   updated_at           TEXT
 );
@@ -220,7 +220,7 @@ CREATE TABLE IF NOT EXISTS excel_syncs (
   status        TEXT NOT NULL CHECK(status IN ('success','error')),
   error_msg     TEXT,
   uploaded_by   INTEGER REFERENCES users(id),
-  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at    TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
 );
 
 -- =============================================
@@ -234,7 +234,7 @@ CREATE TABLE IF NOT EXISTS code_problem_status (
   status       TEXT NOT NULL DEFAULT 'new' CHECK(status IN ('new','reported','in_progress','exception','wont_repeat')),
   note         TEXT,
   updated_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at   TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
   UNIQUE(group_name, problem_type, session_type)
 );
 CREATE INDEX IF NOT EXISTS idx_cps_group  ON code_problem_status(group_name);
@@ -248,7 +248,7 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
   user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   token_hash TEXT NOT NULL UNIQUE,
   expires_at TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
 );
 CREATE INDEX IF NOT EXISTS idx_refresh_user    ON refresh_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_refresh_expires ON refresh_tokens(expires_at);

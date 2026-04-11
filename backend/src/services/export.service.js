@@ -150,7 +150,7 @@ async function exportTeamPerformance({ from, to }) {
       SUM(CASE WHEN priority = 'عاجلة' THEN 1 ELSE 0 END) AS urgent,
       SUM(CASE WHEN priority = 'هامة' THEN 1 ELSE 0 END) AS important,
       SUM(CASE WHEN priority = 'عادية' THEN 1 ELSE 0 END) AS normal,
-      SUM(CASE WHEN status != 'إنتهت' AND sla_deadline < datetime('now') THEN 1 ELSE 0 END) AS breached
+      SUM(CASE WHEN status != 'إنتهت' AND sla_deadline < datetime('now', '+2 hours') THEN 1 ELSE 0 END) AS breached
     FROM remarks
     WHERE 1=1
   `;

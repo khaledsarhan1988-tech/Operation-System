@@ -1346,7 +1346,7 @@ router.put('/problem-status', (req, res) => {
   try {
     db.prepare(`
       INSERT INTO code_problem_status (group_name, problem_type, session_type, status, note, updated_by, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+      VALUES (?, ?, ?, ?, ?, ?, datetime('now', '+2 hours'))
       ON CONFLICT(group_name, problem_type, session_type) DO UPDATE SET
         status     = excluded.status,
         note       = excluded.note,

@@ -28,7 +28,7 @@ router.get('/stats', (req, res) => {
       COUNT(*) AS total,
       SUM(CASE WHEN status != 'إنتهت' THEN 1 ELSE 0 END) AS pending,
       SUM(CASE WHEN status = 'إنتهت' AND date(last_updated) = date('now') THEN 1 ELSE 0 END) AS completed_today,
-      SUM(CASE WHEN status != 'إنتهت' AND sla_deadline < datetime('now') THEN 1 ELSE 0 END) AS overdue,
+      SUM(CASE WHEN status != 'إنتهت' AND sla_deadline < datetime('now', '+2 hours') THEN 1 ELSE 0 END) AS overdue,
       SUM(CASE WHEN status != 'إنتهت' AND priority = 'عاجلة' THEN 1 ELSE 0 END) AS urgent_pending
     FROM remarks
     WHERE assigned_to = ?
@@ -88,7 +88,7 @@ router.put('/tasks/:id', (req, res) => {
         status = COALESCE(?, status),
         resolved_at = COALESCE(?, resolved_at),
         sla_deadline = ?,
-        last_updated = datetime('now')
+        last_updated = datetime('now', '+2 hours')
     WHERE id = ?
   `).run(agent_notes || null, status || null, resolved_at || null, newSlaDeadline, id);
 
@@ -156,7 +156,7 @@ router.put('/absent/:id', (req, res) => {
 
   db.prepare(`
     UPDATE absent_students
-    SET follow_up_status = ?, follow_up_note = ?, follow_up_by = ?, follow_up_at = datetime('now')
+    SET follow_up_status = ?, follow_up_note = ?, follow_up_by = ?, follow_up_at = datetime('now', '+2 hours')
     WHERE id = ?
   `).run(follow_up_status, follow_up_note || null, req.user.full_name, id);
 
@@ -235,7 +235,7 @@ router.put('/side-session-check/:id', (req, res) => {
         recording_start_time = COALESCE(?, recording_start_time),
         actual_duration_min = COALESCE(?, actual_duration_min),
         notes = COALESCE(?, notes),
-        updated_by = ?, updated_at = datetime('now')
+        updated_by = ?, updated_at = datetime('now', '+2 hours')
     WHERE id = ?
   `).run(
     trainer_present !== undefined ? (trainer_present ? 1 : 0) : null,
