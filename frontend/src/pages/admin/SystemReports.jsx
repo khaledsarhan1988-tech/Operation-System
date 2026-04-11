@@ -411,7 +411,7 @@ function RemarksNotesModal({ params, onClose }) {
   // zoom tab state
   const [pageZ, setPageZ]   = useState(1);
   const [searchZ, setSearchZ] = useState('');
-  const [fZ, setFZ]   = useState({ modal_from:'', modal_to:'', modal_dept:'', coordinator:'', has_session:'' });
+  const [fZ, setFZ]   = useState({ modal_from:'', modal_to:'', modal_dept:'', coordinator:'', has_remark:'' });
   const [afZ, setAfZ] = useState({});
 
   // categories state
@@ -432,7 +432,7 @@ function RemarksNotesModal({ params, onClose }) {
   const applyM = () => { const c={}; Object.entries(fM).forEach(([k,v])=>{if(v&&v!=='All')c[k]=v;}); setAfM(c); setPageM(1); };
   const clearM = () => { setFM({modal_from:'',modal_to:'',modal_dept:'',coordinator:'',has_remark:''}); setAfM({}); setPageM(1); };
   const applyZ = () => { const c={}; Object.entries(fZ).forEach(([k,v])=>{if(v&&v!=='All')c[k]=v;}); setAfZ(c); setPageZ(1); };
-  const clearZ = () => { setFZ({modal_from:'',modal_to:'',modal_dept:'',coordinator:'',has_session:''}); setAfZ({}); setPageZ(1); };
+  const clearZ = () => { setFZ({modal_from:'',modal_to:'',modal_dept:'',coordinator:'',has_remark:''}); setAfZ({}); setPageZ(1); };
   const applyC = () => { const c={}; Object.entries(fC).forEach(([k,v])=>{if(v&&v!=='All')c[k]=v;}); setAfC(c); setPageC(1); };
   const clearC = () => { setFC({modal_from:'',modal_to:'',modal_dept:'',assigned_to:'',category_filter:''}); setAfC({}); setPageC(1); };
 
@@ -624,11 +624,11 @@ function RemarksNotesModal({ params, onClose }) {
                   </select>
                 </div>
                 <div>
-                  <label className={labelCls}>حالة الجلسة</label>
-                  <select value={fZ.has_session} onChange={e=>setFZ(f=>({...f,has_session:e.target.value}))} className={inputCls}>
+                  <label className={labelCls}>حالة الريمارك</label>
+                  <select value={fZ.has_remark} onChange={e=>setFZ(f=>({...f,has_remark:e.target.value}))} className={inputCls}>
                     <option value="">الكل</option>
-                    <option value="1">✅ موجودة</option>
-                    <option value="0">⚠️ غير موجودة</option>
+                    <option value="1">✅ موجود</option>
+                    <option value="0">⚠️ غير موجود</option>
                   </select>
                 </div>
                 <div className="col-span-2 md:col-span-5 flex gap-2 justify-end">
@@ -640,7 +640,7 @@ function RemarksNotesModal({ params, onClose }) {
                 <table className="w-full text-sm text-right" style={{minWidth:'1000px'}}>
                   <thead>
                     <tr className="bg-gray-50 border-b border-gray-100">
-                      {['اسم العميل','الموبايل','المجموعة','القسم','المنسق','تاريخ الريمارك','تاريخ الجلسة المتوقع','حالة الجلسة','تفاصيل الريمارك','المسؤول'].map(h=>(
+                      {['اسم العميل','الموبايل','المجموعة','القسم','المنسق','تاريخ الغياب','تاريخ الريمارك المتوقع','حالة الريمارك','تفاصيل الريمارك','المسؤول'].map(h=>(
                         <th key={h} className="px-4 py-3 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
@@ -649,18 +649,18 @@ function RemarksNotesModal({ params, onClose }) {
                     {zLoad ? <SkeletonRows cols={10}/> :
                      !zData?.rows?.length ? <EmptyRow cols={10}/> :
                      zData.rows.map((row,i)=>(
-                       <tr key={row.id??i} className={`hover:bg-gray-50/70 transition-colors ${!row.has_session ? 'bg-amber-50/40' : ''}`}>
+                       <tr key={row.remark_id??i} className={`hover:bg-gray-50/70 transition-colors ${!row.has_remark ? 'bg-amber-50/40' : ''}`}>
                          <td className="px-4 py-3 font-semibold text-gray-900 whitespace-nowrap">{row.client_name??'—'}</td>
                          <td className="px-4 py-3"><span className="font-mono text-xs text-blue-600">{row.client_phone??'—'}</span></td>
                          <td className="px-4 py-3 text-xs whitespace-nowrap text-gray-700">{row.group_name??'—'}</td>
                          <td className="px-4 py-3"><DeptBadge dept={row.dept_type}/></td>
                          <td className="px-4 py-3 text-xs whitespace-nowrap text-gray-600">{row.coordinators??'—'}</td>
-                         <td className="px-4 py-3 text-xs whitespace-nowrap font-medium text-gray-700">{fmtDate(row.remark_date)}</td>
-                         <td className="px-4 py-3 text-xs whitespace-nowrap font-bold text-orange-600">{fmtDate(row.expected_session_date)}</td>
+                         <td className="px-4 py-3 text-xs whitespace-nowrap font-medium text-gray-700">{fmtDate(row.session_date)}</td>
+                         <td className="px-4 py-3 text-xs whitespace-nowrap font-bold text-orange-600">{fmtDate(row.expected_remark_date)}</td>
                          <td className="px-4 py-3">
-                           {row.has_session
-                             ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700"><CheckCircle size={11}/>موجودة</span>
-                             : <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-700"><AlertTriangle size={11}/>غير موجودة</span>}
+                           {row.has_remark
+                             ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700"><CheckCircle size={11}/>موجود</span>
+                             : <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-700"><AlertTriangle size={11}/>غير موجود</span>}
                          </td>
                          <td className="px-4 py-3 text-xs text-gray-500" style={{maxWidth:'200px',overflowWrap:'break-word'}}>{row.remark_details??'—'}</td>
                          <td className="px-4 py-3 text-xs whitespace-nowrap text-gray-600">{row.assigned_to??'—'}</td>
