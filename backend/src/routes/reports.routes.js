@@ -662,7 +662,7 @@ router.get('/remarks-notes-main', (req, res) => {
       CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END AS has_remark
     FROM absent_students a
     LEFT JOIN batches b ON a.group_name = b.group_name
-    LEFT JOIN clients c_lu ON a.phone IS NOT NULL AND TRIM(a.phone) != '' AND c_lu.phone = a.phone
+    LEFT JOIN (SELECT phone, MIN(name) AS name FROM clients GROUP BY phone) c_lu ON a.phone IS NOT NULL AND TRIM(a.phone) != '' AND c_lu.phone = a.phone
     LEFT JOIN (
       SELECT client_phone,
         date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2)) AS rdate,
