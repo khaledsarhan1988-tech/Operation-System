@@ -1291,7 +1291,7 @@ function CodeProblemsModal({ params, onClose }) {
   // ── open editor
   const openEditor = (p) => {
     const cur = p._status;
-    setEditKey({ group_name: p.group_name, problem_type: p.problem_type, session_type: p._session });
+    setEditKey({ group_name: p.group_name, problem_type: p.problem_type, session_type: p._session, actual: p.actual ?? null });
     setEditForm({ status: cur?.status ?? 'new', note: cur?.note ?? '' });
   };
 
@@ -1300,7 +1300,7 @@ function CodeProblemsModal({ params, onClose }) {
     if (!editKey || saving) return;
     setSaving(true);
     try {
-      await api.put('/reports/problem-status', { ...editKey, ...editForm });
+      await api.put('/reports/problem-status', { ...editKey, ...editForm, actual: editKey.actual });
       qc.invalidateQueries({ queryKey: ['problem-statuses'] });
       setEditKey(null);
     } catch(e) {
@@ -1368,7 +1368,17 @@ function CodeProblemsModal({ params, onClose }) {
                  <td className="px-4 py-3 font-semibold text-gray-900 text-xs" style={{ maxWidth: '240px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.group_name}</td>
                  <td className="px-4 py-3 whitespace-nowrap text-xs font-mono text-gray-500">{p.first_date ?? '—'}</td>
                  <td className="px-4 py-3 whitespace-nowrap">{problemBadge(p.problem_type)}</td>
-                 <td className="px-4 py-3 text-xs text-gray-600" style={{ maxWidth: '260px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.detail}</td>
+                 <td className="px-4 py-3 text-xs text-gray-600" style={{ maxWidth: '260px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
+                   {p.detail}
+                   {p.repeated_violation && (
+                     <div className="mt-1 flex items-start gap-1 text-[10px] font-bold text-orange-700 bg-orange-50 border border-orange-200 rounded px-1.5 py-1">
+                       <span>⚠</span>
+                       <span>
+                         سبق وضع حالة "{p.previous_status === 'wont_repeat' ? 'لن تتكرر' : 'استثناء'}" عند العدد {p.previous_actual} — الموظف كرر الخطأ وأصبح {p.actual}
+                       </span>
+                     </div>
+                   )}
+                 </td>
                  <td className="px-4 py-3 whitespace-nowrap"><DeptBadge dept={p.dept_type} /></td>
                  <td className="px-4 py-3 text-gray-700 whitespace-nowrap text-xs">{p.coordinators ?? '—'}</td>
                  <td className="px-4 py-3 whitespace-nowrap"><StatusBadge p={p} /></td>

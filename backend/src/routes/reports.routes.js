@@ -1064,6 +1064,32 @@ router.get('/code-problems', (req, res) => {
     // Expected last date for SIDE (7 slot-dates, 2/week) → always +21 days
     const expectedSideLast = firstDate => addDays(firstDate, 21);
 
+    // Load all stored statuses into a map for O(1) lookup
+    const storedStatuses = db.prepare(`SELECT * FROM code_problem_status`).all();
+    const statusMap = {};
+    storedStatuses.forEach(s => { statusMap[`${s.group_name}|${s.problem_type}|${s.session_type}`] = s; });
+
+    // Helper: add problem respecting wont_repeat/exception rules
+    // - If status is wont_repeat/exception AND actual <= actual_at_status → SKIP
+    // - If status is wont_repeat/exception AND actual > actual_at_status → show as new with repeated_violation flag
+    // - If status is wont_repeat/exception AND no actual (date-based) → SKIP
+    const addProblem = (arr, problem, sessionType) => {
+      const key = `${problem.group_name}|${problem.problem_type}|${sessionType}`;
+      const s = statusMap[key];
+      if (s && (s.status === 'wont_repeat' || s.status === 'exception')) {
+        if (problem.actual != null && s.actual_at_status != null) {
+          if (problem.actual <= s.actual_at_status) return; // still same or less → skip
+          // Count increased → employee repeated the mistake
+          problem.repeated_violation = true;
+          problem.previous_status    = s.status;
+          problem.previous_actual    = s.actual_at_status;
+        } else {
+          return; // date-based problem → skip
+        }
+      }
+      arr.push(problem);
+    };
+
     const mainProblems = [], zoomProblems = [];
 
     for (const batch of batches) {
@@ -1084,11 +1110,11 @@ router.get('/code-problems', (req, res) => {
       // ── MAIN CHECKS ──────────────────────────────────────────────
       // 1. Count > 8
       if (mainDates.length > 8) {
-        mainProblems.push({ ...meta, first_date: firstMainDate,
+        addProblem(mainProblems, { ...meta, first_date: firstMainDate,
           problem_type: 'عدد محاضرات زيادة',
           detail: `الموجود: ${mainDates.length} محاضرة — المفروض: 8`,
           actual: mainDates.length, expected: 8,
-        });
+        }, 'main');
       }
 
       if (parsed) {
@@ -1099,11 +1125,11 @@ router.get('/code-problems', (req, res) => {
           const expected = `${year}-${pad(parsed.monthNum)}-${pad(parsed.dayNum)}`;
           const firstDow = getDow(first);
           if (first !== expected) {
-            mainProblems.push({ ...meta, first_date: firstMainDate,
+            addProblem(mainProblems, { ...meta, first_date: firstMainDate,
               problem_type: 'تاريخ أول محاضرة غلط',
               detail: `الاسم: ${expected} (${DAY_EN[parsed.dow]}) | الفعلي: ${first} (${DAY_EN[firstDow]||'?'})`,
               expected_date: expected, actual_date: first,
-            });
+            }, 'main');
           }
         }
 
@@ -1112,11 +1138,11 @@ router.get('/code-problems', (req, res) => {
         if (mainPair && mainDates.length > 0) {
           const wrong = mainDates.filter(d => !mainPair.includes(getDow(d)));
           if (wrong.length > 0) {
-            mainProblems.push({ ...meta, first_date: firstMainDate,
+            addProblem(mainProblems, { ...meta, first_date: firstMainDate,
               problem_type: 'محاضرات على أيام غلط',
               detail: `${wrong.length} محاضرة خارج أيام (${mainPair.map(d=>DAY_AR[d]).join(' و')}) | أمثلة: ${wrong.slice(0,3).join(', ')}`,
               wrong_count: wrong.length,
-            });
+            }, 'main');
           }
         }
 
@@ -1126,11 +1152,11 @@ router.get('/code-problems', (req, res) => {
         if (sidePair && sideDates.length > 0) {
           const wrong = sideDates.filter(d => !sidePair.includes(getDow(d)));
           if (wrong.length > 0) {
-            zoomProblems.push({ ...meta, trainee_count: batch.trainee_count, first_date: firstSideDate,
+            addProblem(zoomProblems, { ...meta, trainee_count: batch.trainee_count, first_date: firstSideDate,
               problem_type: 'زووم كول على أيام غلط',
               detail: `${wrong.length} جلسة خارج أيام (${sidePair.map(d=>DAY_AR[d]).join(' و')}) | أمثلة: ${wrong.slice(0,3).join(', ')}`,
               wrong_count: wrong.length,
-            });
+            }, 'side');
           }
         }
       }
@@ -1138,11 +1164,11 @@ router.get('/code-problems', (req, res) => {
       // 2. Zoom call count ≠ trainee_count × 7
       const expectedSide = (batch.trainee_count || 0) * 7;
       if (expectedSide > 0 && sideDates.length !== expectedSide) {
-        zoomProblems.push({ ...meta, trainee_count: batch.trainee_count, first_date: firstSideDate,
+        addProblem(zoomProblems, { ...meta, trainee_count: batch.trainee_count, first_date: firstSideDate,
           problem_type: sideDates.length < expectedSide ? 'زووم كول ناقصة' : 'زووم كول زيادة',
           detail: `الموجود: ${sideDates.length} | المطلوب: ${expectedSide} (${batch.trainee_count}×7)`,
           actual: sideDates.length, expected: expectedSide,
-        });
+        }, 'side');
       }
 
       // 3. MAIN — last session date mismatch
@@ -1152,11 +1178,11 @@ router.get('/code-problems', (req, res) => {
         const calcLast      = expectedMainLast(firstMainDate);
         if (actualLast !== calcLast) {
           const midnight = effectiveDate(lastMainRow.date, lastMainRow.time, lastMainRow.duration) !== lastMainRow.date;
-          mainProblems.push({ ...meta, first_date: firstMainDate,
+          addProblem(mainProblems, { ...meta, first_date: firstMainDate,
             problem_type: 'تاريخ آخر محاضرة غلط',
             detail: `المحسوب: ${calcLast} | الفعلي: ${actualLast}${midnight ? ' (تعدى منتصف الليل)' : ''}`,
             expected_date: calcLast, actual_date: actualLast,
-          });
+          }, 'main');
         }
       }
 
@@ -1167,11 +1193,11 @@ router.get('/code-problems', (req, res) => {
         const calcSideLast   = expectedSideLast(firstSideDate);
         if (actualSideLast !== calcSideLast) {
           const midnight = effectiveDate(lastSideRow.date, lastSideRow.time, lastSideRow.duration) !== lastSideRow.date;
-          zoomProblems.push({ ...meta, trainee_count: batch.trainee_count, first_date: firstSideDate,
+          addProblem(zoomProblems, { ...meta, trainee_count: batch.trainee_count, first_date: firstSideDate,
             problem_type: 'تاريخ آخر زووم كول غلط',
             detail: `المحسوب: ${calcSideLast} | الفعلي: ${actualSideLast}${midnight ? ' (تعدى منتصف الليل)' : ''}`,
             expected_date: calcSideLast, actual_date: actualSideLast,
-          });
+          }, 'side');
         }
       }
     }
@@ -1468,22 +1494,26 @@ router.get('/problem-statuses', (req, res) => {
 
 // ─── PUT /api/reports/problem-status (upsert) ────────────────────────────────
 router.put('/problem-status', (req, res) => {
-  const { group_name, problem_type, session_type = 'main', status, note } = req.body;
+  const { group_name, problem_type, session_type = 'main', status, note, actual } = req.body;
   if (!group_name || !problem_type || !status)
     return res.status(400).json({ error: 'group_name, problem_type, status required' });
   const validStatuses = ['new', 'reported', 'in_progress', 'exception', 'wont_repeat'];
   if (!validStatuses.includes(status))
     return res.status(400).json({ error: 'Invalid status' });
+  // Store actual count only when marking as wont_repeat or exception
+  const actualAtStatus = (status === 'wont_repeat' || status === 'exception') && actual != null
+    ? actual : null;
   try {
     db.prepare(`
-      INSERT INTO code_problem_status (group_name, problem_type, session_type, status, note, updated_by, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, datetime('now', '+2 hours'))
+      INSERT INTO code_problem_status (group_name, problem_type, session_type, status, note, actual_at_status, updated_by, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', '+2 hours'))
       ON CONFLICT(group_name, problem_type, session_type) DO UPDATE SET
-        status     = excluded.status,
-        note       = excluded.note,
-        updated_by = excluded.updated_by,
-        updated_at = excluded.updated_at
-    `).run(group_name, problem_type, session_type, status, note ?? null, req.user?.id ?? null);
+        status           = excluded.status,
+        note             = excluded.note,
+        actual_at_status = excluded.actual_at_status,
+        updated_by       = excluded.updated_by,
+        updated_at       = excluded.updated_at
+    `).run(group_name, problem_type, session_type, status, note ?? null, actualAtStatus, req.user?.id ?? null);
 
     const row = db.prepare(
       `SELECT ps.*, u.full_name as updated_by_name
