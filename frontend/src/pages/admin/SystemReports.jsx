@@ -194,10 +194,16 @@ function EmptyRow({ cols, msg = 'لا توجد بيانات' }) {
 }
 
 // ─── GROUPS MODAL ─────────────────────────────────────────────────────────────
-function GroupsModal({ title, groups, allUsers = [], onClose }) {
+function GroupsModal({ title, groups, allUsers = [], onClose, filterType = 'active' }) {
   const [expandedGroup, setExpandedGroup] = useState(null);
   const [traineesGroup, setTraineesGroup] = useState(null);
-  const [search, setSearch] = useState('');
+  const [search,      setSearch]      = useState('');
+  const [fromDate,    setFromDate]    = useState('');
+  const [toDate,      setToDate]      = useState('');
+  const [deptF,       setDeptF]       = useState('');
+  const [minTrainees, setMinTrainees] = useState('');
+  const [maxTrainees, setMaxTrainees] = useState('');
+  const [coordF,      setCoordF]      = useState('');
 
   const userDeptMap = {};
   allUsers.forEach(u => {
@@ -205,9 +211,24 @@ function GroupsModal({ title, groups, allUsers = [], onClose }) {
   });
   const getCoordDept = (g) => userDeptMap[(g.coordinators ?? '').toLowerCase().trim()] ?? g.dept_type ?? '—';
 
-  const filtered = search.trim()
-    ? groups.filter(g => g.group_name?.toLowerCase().includes(search.trim().toLowerCase()))
-    : groups;
+  // unique coordinator values for dropdown
+  const coordOptions = [...new Set(groups.map(g => g.coordinators).filter(Boolean))].sort();
+  const deptOptions  = [...new Set(groups.map(g => getCoordDept(g)).filter(d => d && d !== '—'))].sort();
+
+  const dateField = filterType === 'expired' ? 'end_date' : 'start_date';
+
+  const filtered = groups.filter(g => {
+    if (search.trim() && !g.group_name?.toLowerCase().includes(search.trim().toLowerCase())) return false;
+    if (fromDate && g[dateField] && g[dateField] < fromDate) return false;
+    if (toDate   && g[dateField] && g[dateField] > toDate)   return false;
+    if (deptF    && getCoordDept(g) !== deptF) return false;
+    if (minTrainees && (g.trainee_count ?? 0) < Number(minTrainees)) return false;
+    if (maxTrainees && (g.trainee_count ?? 0) > Number(maxTrainees)) return false;
+    if (coordF   && !(g.coordinators ?? '').toLowerCase().includes(coordF.toLowerCase())) return false;
+    return true;
+  });
+
+  const clearFilters = () => { setFromDate(''); setToDate(''); setDeptF(''); setMinTrainees(''); setMaxTrainees(''); setCoordF(''); setSearch(''); };
 
   const { data: lecturesData, isLoading: lecturesLoading } = useQuery({
     queryKey: ['group-lectures', expandedGroup],
@@ -244,7 +265,8 @@ function GroupsModal({ title, groups, allUsers = [], onClose }) {
               <X size={18} className="text-gray-600" />
             </button>
           </div>
-          <div className="relative">
+          {/* Search */}
+          <div className="relative mb-3">
             <Search className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input
               type="text" value={search}
@@ -252,6 +274,59 @@ function GroupsModal({ title, groups, allUsers = [], onClose }) {
               placeholder="بحث باسم المجموعة..."
               className="w-full bg-gray-50 border border-gray-200 rounded-xl pr-10 pl-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
             />
+          </div>
+
+          {/* Filters */}
+          <div className="flex flex-wrap gap-2 items-end">
+            {/* Date from */}
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-gray-500">من تاريخ {filterType === 'expired' ? '(النهاية)' : '(البداية)'}</label>
+              <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
+                className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs bg-gray-50 focus:outline-none focus:ring-1 focus:ring-[#1e3a5f]/30" />
+            </div>
+            {/* Date to */}
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-gray-500">إلى تاريخ</label>
+              <input type="date" value={toDate} onChange={e => setToDate(e.target.value)}
+                className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs bg-gray-50 focus:outline-none focus:ring-1 focus:ring-[#1e3a5f]/30" />
+            </div>
+            {/* Dept */}
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-gray-500">القسم</label>
+              <select value={deptF} onChange={e => setDeptF(e.target.value)}
+                className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs bg-gray-50 focus:outline-none focus:ring-1 focus:ring-[#1e3a5f]/30 min-w-[90px]">
+                <option value="">الكل</option>
+                {deptOptions.map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+            {/* Trainee count range */}
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-gray-500">المتدربين (من - إلى)</label>
+              <div className="flex gap-1">
+                <input type="number" min="0" value={minTrainees} onChange={e => setMinTrainees(e.target.value)}
+                  placeholder="من" className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs bg-gray-50 w-16 focus:outline-none focus:ring-1 focus:ring-[#1e3a5f]/30" />
+                <input type="number" min="0" value={maxTrainees} onChange={e => setMaxTrainees(e.target.value)}
+                  placeholder="إلى" className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs bg-gray-50 w-16 focus:outline-none focus:ring-1 focus:ring-[#1e3a5f]/30" />
+              </div>
+            </div>
+            {/* Coordinator — only for expired */}
+            {filterType === 'expired' && (
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold text-gray-500">المنسق</label>
+                <select value={coordF} onChange={e => setCoordF(e.target.value)}
+                  className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs bg-gray-50 focus:outline-none focus:ring-1 focus:ring-[#1e3a5f]/30 min-w-[120px]">
+                  <option value="">الكل</option>
+                  {coordOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+            )}
+            {/* Clear */}
+            {(fromDate||toDate||deptF||minTrainees||maxTrainees||coordF||search) && (
+              <button onClick={clearFilters}
+                className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-all mt-4">
+                <X size={11}/> مسح
+              </button>
+            )}
           </div>
         </div>
 
@@ -2142,7 +2217,7 @@ export default function SystemReports() {
           <KpiCard label="مجموعات نشطة" value={kpis.active_groups} icon={Users}
             gradient="linear-gradient(135deg, #1e3a5f 0%, #2d5a9e 100%)"
             loading={isLoading}
-            onClick={() => setGroupsModal({ title: 'مجموعات نشطة', groups: data?.active_groups_list ?? [] })} />
+            onClick={() => setGroupsModal({ title: 'مجموعات نشطة', groups: data?.active_groups_list ?? [], filterType: 'active' })} />
           <KpiCard label="بانتظار تسجيل المتدربين" value={kpis.waiting_trainees} icon={UserCheck}
             gradient="linear-gradient(135deg, #d97706 0%, #f59e0b 100%)"
             loading={isLoading}
@@ -2163,7 +2238,7 @@ export default function SystemReports() {
           <KpiCard label="مجموعات منتهية ونشطة" value={kpis.expired_active_groups} icon={AlertTriangle}
             gradient="linear-gradient(135deg, #dc2626 0%, #ef4444 100%)"
             loading={isLoading} pulse={(kpis.expired_active_groups ?? 0) > 0}
-            onClick={() => setGroupsModal({ title: 'مجموعات منتهية ولا تزال نشطة', groups: data?.expired_groups_list ?? [] })} />
+            onClick={() => setGroupsModal({ title: 'مجموعات منتهية ولا تزال نشطة', groups: data?.expired_groups_list ?? [], filterType: 'expired' })} />
           <KpiCard label="المحاضرات الأساسية" value={kpis.main_lectures} icon={BookOpen}
             gradient="linear-gradient(135deg, #0369a1 0%, #0ea5e9 100%)"
             loading={isLoading}
@@ -2315,6 +2390,7 @@ export default function SystemReports() {
           title={groupsModal.title}
           groups={groupsModal.groups}
           allUsers={usersData ?? []}
+          filterType={groupsModal.filterType ?? 'active'}
           onClose={() => setGroupsModal(null)}
         />
       )}
