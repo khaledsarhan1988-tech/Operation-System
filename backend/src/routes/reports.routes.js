@@ -382,7 +382,7 @@ router.get('/absent-list', (req, res) => {
   const activeFrom  = modal_from  || from_date;
   const activeTo    = modal_to    || to_date;
 
-  const deptFilter   = activeDept ? ` AND b.dept_type = '${activeDept}'` : '';
+  const deptFilter   = buildDeptFilter('b', activeDept);
   const empFilter    = buildCoordFilter('b', employee);
   const coordFilter  = buildCoordFilter('b', coordinator);
   const searchFilter = search     ? ` AND a.group_name LIKE '%${search}%'` : '';
@@ -395,7 +395,7 @@ router.get('/absent-list', (req, res) => {
   const dateFilter2  = activeFrom && activeTo ? ` AND l.date BETWEEN '${activeFrom}' AND '${activeTo}'`
                      : activeFrom ? ` AND l.date >= '${activeFrom}'`
                      : activeTo   ? ` AND l.date <= '${activeTo}'` : '';
-  const deptFilter2  = activeDept  ? ` AND b2.dept_type = '${activeDept}'` : '';
+  const deptFilter2  = buildDeptFilter('b2', activeDept);
   const empFilter2   = buildCoordFilter('b2', employee);
   const coordFilter2 = buildCoordFilter('b2', coordinator);
   const searchFilter2= search      ? ` AND l.group_name LIKE '%${search}%'` : '';
