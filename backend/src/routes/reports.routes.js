@@ -72,7 +72,7 @@ router.get('/dashboard', (req, res) => {
        WHERE status='نشطة'
          AND end_date IS NOT NULL
          AND end_date != ''
-         AND end_date < date('now')
+         AND end_date <= date('now')
        ${deptBatches}${empFilter}
        ORDER BY end_date DESC`
     ).all();
@@ -1270,7 +1270,7 @@ router.get('/team-summary-detail', (req, res) => {
          FROM batches
          WHERE status='نشطة'
            AND end_date IS NOT NULL AND end_date != ''
-           AND end_date < date('now')
+           AND end_date <= date('now')
            ${empFBatches}
            ${deptF.replace('b.','').replace('AND b.','AND ')}
          ORDER BY end_date ASC`
@@ -1386,7 +1386,7 @@ router.get('/team-summary', (req, res) => {
       `SELECT COUNT(*) as cnt FROM batches
        WHERE status='نشطة'
          AND end_date IS NOT NULL AND end_date != ''
-         AND end_date < date('now')
+         AND end_date <= date('now')
          AND coordinators LIKE ?
          ${deptFNoB}`
     );
