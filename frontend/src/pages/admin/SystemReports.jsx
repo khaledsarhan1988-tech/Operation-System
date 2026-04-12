@@ -2348,7 +2348,7 @@ export default function SystemReports() {
           <Zap size={11} /> التنبيهات
         </p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <KpiCard label="ملاحظات مفتوحة" value={kpis.open_remarks} icon={MessageSquare}
+          <KpiCard label="ملاحظات" value={kpis.open_remarks} icon={MessageSquare}
             gradient="linear-gradient(135deg, #b91c1c 0%, #f87171 100%)"
             loading={isLoading} pulse={(kpis.open_remarks ?? 0) > 0}
             onClick={() => setListModal({

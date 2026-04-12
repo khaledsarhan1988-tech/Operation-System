@@ -72,7 +72,7 @@ router.get('/dashboard', (req, res) => {
        WHERE status='نشطة'
          AND end_date IS NOT NULL
          AND end_date != ''
-         AND end_date <= date('now')
+         AND end_date <= date('now', '+2 hours')
        ${deptBatches}${empFilter}
        ORDER BY end_date DESC`
     ).all();
@@ -309,7 +309,7 @@ router.get('/lectures-list', (req, res) => {
     group_name = '', category = '',        // for ob_count popup: exact group + category
   } = req.query;
   const offset = (Number(page) - 1) * Number(limit);
-  const deptFilter        = department && department !== 'All' ? ` AND b.dept_type = '${department}'` : '';
+  const deptFilter        = buildDeptFilter('b', department);
   const empFilter         = buildCoordFilter('b', employee);
   const searchFilter      = search      ? ` AND l.group_name LIKE '%${search}%'` : '';
   const trainerFilter     = trainer     ? ` AND l.trainer LIKE '%${trainer}%'` : '';

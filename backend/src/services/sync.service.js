@@ -133,6 +133,21 @@ function syncLectures(buffer) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'main', NULL, datetime('now', '+2 hours'))
     `);
     rows.forEach(r => insert.run(r.group_name, r.date, r.time, r.duration, r.trainer, r.status, r.location, r.attendance));
+
+    // Update batches.completed_lectures to reflect actual count from lectures table
+    db.prepare(`
+      UPDATE batches
+      SET completed_lectures = (
+        SELECT COUNT(*) FROM lectures l
+        WHERE l.group_name = batches.group_name
+          AND l.session_type = 'main'
+      )
+      WHERE EXISTS (
+        SELECT 1 FROM lectures l
+        WHERE l.group_name = batches.group_name
+          AND l.session_type = 'main'
+      )
+    `).run();
   });
   run();
   return rows.length;
