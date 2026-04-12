@@ -405,14 +405,18 @@ router.get('/absent-list', (req, res) => {
     SELECT student_name, phone, group_name, date, time, lecture_no, dept_type, coordinators
     FROM (
       SELECT
-        COALESCE(c_lu.name, NULLIF(TRIM(a.student_name),'')) AS student_name,
+        COALESCE(
+          CASE WHEN a.phone IS NOT NULL AND TRIM(a.phone)!='' THEN
+            (SELECT c.name FROM clients c WHERE c.phone = a.phone LIMIT 1)
+          END,
+          NULLIF(TRIM(a.student_name),'')
+        ) AS student_name,
         a.phone, a.group_name,
         COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS date,
         a.time, a.lecture_no,
         b.dept_type, b.coordinators
       FROM absent_students a
       LEFT JOIN batches b ON a.group_name = b.group_name
-      LEFT JOIN clients c_lu ON a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone
       LEFT JOIN (
         SELECT group_name, date,
           ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
@@ -423,7 +427,7 @@ router.get('/absent-list', (req, res) => {
         AND lec_inf.lec_num = a.lecture_no
       WHERE (
         (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
-        OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+        OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND EXISTS (SELECT 1 FROM clients c WHERE c.phone = a.phone))
       )
       ${deptFilter}${empFilter}${coordFilter}${searchFilter}
     ) p1_inner
