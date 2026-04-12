@@ -412,8 +412,7 @@ router.get('/absent-list', (req, res) => {
         b.dept_type, b.coordinators
       FROM absent_students a
       LEFT JOIN batches b ON a.group_name = b.group_name
-      LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
-        AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone
+      LEFT JOIN clients c_lu ON a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone
       LEFT JOIN (
         SELECT group_name, date,
           ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
