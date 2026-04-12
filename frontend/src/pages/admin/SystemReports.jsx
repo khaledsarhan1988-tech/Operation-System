@@ -1129,11 +1129,13 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
                 {show.includes('coordinator') && (
                   <div>
                     <label className="block text-xs text-gray-400 mb-1 font-semibold">المنسق</label>
-                    <input type="text" value={modalF.coordinator}
+                    <select value={modalF.coordinator}
                       onChange={e => setModalF(f => ({ ...f, coordinator: e.target.value }))}
-                      placeholder="اسم المنسق..."
                       className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
-                    />
+                    >
+                      <option value="">الكل</option>
+                      {(filterOpts?.coordinators ?? []).map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
                   </div>
                 )}
                 {show.includes('date') && (<>
