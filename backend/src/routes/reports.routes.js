@@ -414,7 +414,11 @@ router.get('/absent-list', (req, res) => {
         a.phone, a.group_name,
         COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS date,
         a.time, a.lecture_no,
-        b.dept_type, b.coordinators
+        COALESCE(
+          (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) LIMIT 1),
+          b.dept_type
+        ) AS dept_type,
+        b.coordinators
       FROM absent_students a
       LEFT JOIN batches b ON a.group_name = b.group_name
       LEFT JOIN (
@@ -438,7 +442,11 @@ router.get('/absent-list', (req, res) => {
     SELECT
       c.name AS student_name,
       c.phone, l.group_name, l.date, l.time, NULL AS lecture_no,
-      b2.dept_type, b2.coordinators
+      COALESCE(
+        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b2.coordinators)) LIMIT 1),
+        b2.dept_type
+      ) AS dept_type,
+      b2.coordinators
     FROM lectures l
     INNER JOIN batches b2 ON l.group_name = b2.group_name
     INNER JOIN clients c ON c.group_name = l.group_name
