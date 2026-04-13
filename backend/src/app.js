@@ -7,7 +7,7 @@ const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
 const path = require('path');
 const fs = require('fs');
-const { initDb } = require('./config/database');
+const { initDb, saveNow } = require('./config/database');
 
 const PORT = process.env.PORT || 3001;
 
@@ -54,6 +54,7 @@ initDb().then(db => {
       db._raw.run(`ALTER TABLE code_problem_status_new RENAME TO code_problem_status`);
       db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cps_group  ON code_problem_status(group_name)`);
       db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cps_status ON code_problem_status(status)`);
+      saveNow(); // force write to disk immediately after DDL migration
       console.log('✅ Migration: code_problem_status rebuilt with wont_repeat + actual_at_status');
     }
   } catch (e) {

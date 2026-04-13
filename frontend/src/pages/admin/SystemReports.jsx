@@ -1383,8 +1383,8 @@ function CodeProblemsModal({ params, onClose }) {
     setSaveError(null);
     try {
       await api.put('/reports/problem-status', { ...editKey, ...editForm, actual: editKey.actual });
-      qc.invalidateQueries({ queryKey: ['problem-statuses'] });
-      qc.invalidateQueries({ queryKey: ['code-problems-modal'] });
+      await qc.invalidateQueries({ queryKey: ['problem-statuses'] });
+      await qc.invalidateQueries({ queryKey: ['code-problems-modal'] });
       // Auto-filter to show the saved status so user sees the result
       if (['reported', 'wont_repeat', 'exception'].includes(editForm.status)) {
         setFStatus(editForm.status);
