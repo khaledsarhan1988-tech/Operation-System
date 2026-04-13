@@ -30,6 +30,14 @@ initDb().then(db => {
     });
   }
 
+  // Safe migrations: add columns that may be missing from older DBs
+  const safeMigrations = [
+    `ALTER TABLE code_problem_status ADD COLUMN actual_at_status INTEGER`,
+  ];
+  safeMigrations.forEach(sql => {
+    try { db._raw.run(sql); } catch (_) { /* column already exists */ }
+  });
+
   const app = express();
 
   app.use(cors({

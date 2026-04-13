@@ -1307,6 +1307,7 @@ function CodeProblemsModal({ params, onClose }) {
   const [editKey,  setEditKey]  = useState(null);   // { group_name, problem_type, session_type }
   const [editForm, setEditForm] = useState({ status: 'new', note: '' });
   const [saving,   setSaving]   = useState(false);
+  const [saveError, setSaveError] = useState(null);
 
   // ── data
   const { data, isLoading } = useQuery({
@@ -1344,19 +1345,22 @@ function CodeProblemsModal({ params, onClose }) {
   const coords    = [...new Set(allEnriched.map(p => p.coordinators).filter(Boolean))].sort();
 
   // ── status counts (before section / status filter)
-  const statusCounts = { new: 0, reported: 0, in_progress: 0, exception: 0 };
-  allEnriched.forEach(p => { statusCounts[getStatusKey(p)]++; });
+  const statusCounts = { new: 0, reported: 0, in_progress: 0, exception: 0, wont_repeat: 0 };
+  allEnriched.forEach(p => { if (statusCounts[getStatusKey(p)] !== undefined) statusCounts[getStatusKey(p)]++; });
   const totalAll = allEnriched.length;
 
   // ── filter logic
   const applyFilters = (rows) => rows.filter(p => {
+    const sk = getStatusKey(p);
+    // Hide resolved (wont_repeat / exception) by default unless explicitly selected or it's a repeated violation
+    if (!fStatus && !p.repeated_violation && (sk === 'wont_repeat' || sk === 'exception')) return false;
     if (search    && !p.group_name?.toLowerCase().includes(search.toLowerCase())) return false;
     if (fProbType && p.problem_type !== fProbType)  return false;
     if (fDept     && p.dept_type    !== fDept)       return false;
     if (fCoord    && p.coordinators !== fCoord)      return false;
     if (fStatus) {
-      if (fStatus === 'new' && getStatusKey(p) !== 'new')             return false;
-      if (fStatus !== 'new' && getStatusKey(p) !== fStatus)           return false;
+      if (fStatus === 'new' && sk !== 'new')      return false;
+      if (fStatus !== 'new' && sk !== fStatus)    return false;
     }
     return true;
   });
@@ -1376,6 +1380,7 @@ function CodeProblemsModal({ params, onClose }) {
   const handleSave = async () => {
     if (!editKey || saving) return;
     setSaving(true);
+    setSaveError(null);
     try {
       await api.put('/reports/problem-status', { ...editKey, ...editForm, actual: editKey.actual });
       qc.invalidateQueries({ queryKey: ['problem-statuses'] });
@@ -1383,6 +1388,7 @@ function CodeProblemsModal({ params, onClose }) {
       setEditKey(null);
     } catch(e) {
       console.error(e);
+      setSaveError(e?.response?.data?.error || 'حدث خطأ أثناء الحفظ، حاول مرة أخرى');
     } finally { setSaving(false); }
   };
 
@@ -1634,6 +1640,11 @@ function CodeProblemsModal({ params, onClose }) {
                   className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f] resize-none bg-gray-50"
                 />
               </div>
+
+              {/* Error */}
+              {saveError && (
+                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{saveError}</p>
+              )}
 
               {/* Actions */}
               <div className="flex gap-2 pt-1">
