@@ -2,27 +2,58 @@ import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { format } from 'date-fns';
-import { Download, CheckCircle, BookOpen, Monitor } from 'lucide-react';
+import { Download, CheckCircle, BookOpen, Monitor, Clock } from 'lucide-react';
 import api from '../../api/axios';
 import Badge from '../../components/ui/Badge';
+
+// Parse time string (HH:MM or H:MM AM/PM) → total minutes from midnight
+function parseTimeMins(t) {
+  if (!t) return null;
+  const m24 = t.match(/^(\d{1,2}):(\d{2})$/);
+  if (m24) return parseInt(m24[1]) * 60 + parseInt(m24[2]);
+  const m12 = t.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (m12) {
+    let h = parseInt(m12[1]);
+    const min = parseInt(m12[2]);
+    if (m12[3].toUpperCase() === 'PM' && h < 12) h += 12;
+    if (m12[3].toUpperCase() === 'AM' && h === 12) h = 0;
+    return h * 60 + min;
+  }
+  return null;
+}
+
+function calcDelay(scheduledTime, actualTime) {
+  const scheduled = parseTimeMins(scheduledTime);
+  const actual    = parseTimeMins(actualTime);
+  if (scheduled === null || actual === null) return null;
+  return actual - scheduled;
+}
+
+function DelayBadge({ delay }) {
+  if (delay === null) return <span className="text-text-secondary text-sm">—</span>;
+  if (delay === 0)    return <span className="text-success font-semibold text-sm">في الموعد ✓</span>;
+  if (delay > 0)      return <span className="text-danger font-bold text-sm">متأخر {delay} دقيقة</span>;
+  return <span className="text-blue-500 font-semibold text-sm">مبكر {Math.abs(delay)} دقيقة</span>;
+}
 
 function SessionCheckCard({ session, onSave }) {
   const { t } = useTranslation();
   const isChecked = !!session.check_id;
 
   const [form, setForm] = useState({
-    trainer_present: session.trainer_present,
-    student_present: session.student_present,
+    trainer_present:   session.trainer_present,
+    student_present:   session.student_present,
     lecture_start_time: session.lecture_start_time || '',
-    recording_start_time: session.recording_start_time || '',
     actual_duration_min: session.actual_duration_min || '',
     notes: session.check_notes || '',
   });
 
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(isChecked);
+  const [saved,  setSaved]  = useState(isChecked);
 
   const set = (k, v) => { setForm(f => ({ ...f, [k]: v })); setSaved(false); };
+
+  const delay = calcDelay(session.time, form.lecture_start_time);
 
   const handleSave = async () => {
     setSaving(true);
@@ -59,9 +90,10 @@ function SessionCheckCard({ session, onSave }) {
 
       {/* Header */}
       <div className="mb-4 pe-6">
-        <p className="text-sm font-semibold text-text-primary line-clamp-2">{session.group_name}</p>
-        <div className="flex items-center gap-2 mt-1">
-          <span className="text-xs text-text-secondary">{session.time}</span>
+        <p className="text-sm font-semibold text-text-primary break-all">{session.group_name}</p>
+        <div className="flex items-center gap-2 mt-1 flex-wrap">
+          <Clock size={13} className="text-text-secondary" />
+          <span className="text-xs font-mono text-text-secondary">{session.time}</span>
           {session.side_session_category && <Badge value={session.side_session_category} ns="schedule" />}
           {session.trainer && <span className="text-xs text-text-secondary">· {session.trainer}</span>}
         </div>
@@ -85,30 +117,46 @@ function SessionCheckCard({ session, onSave }) {
         </div>
       </div>
 
-      {/* Time inputs */}
-      <div className="grid grid-cols-3 gap-3 mb-4">
+      {/* Time row */}
+      <div className="grid grid-cols-2 gap-3 mb-4">
         <div>
-          <label className="label text-xs">{t('sideSession.lectureStart')}</label>
-          <input type="time" className="input text-sm" value={form.lecture_start_time}
-            onChange={e => set('lecture_start_time', e.target.value)} />
+          <label className="label text-xs">وقت بداية المحاضرة الفعلية</label>
+          <input
+            type="time"
+            className="input text-sm"
+            value={form.lecture_start_time}
+            onChange={e => set('lecture_start_time', e.target.value)}
+          />
         </div>
         <div>
-          <label className="label text-xs">{t('sideSession.recordingStart')}</label>
-          <input type="time" className="input text-sm" value={form.recording_start_time}
-            onChange={e => set('recording_start_time', e.target.value)} />
+          <label className="label text-xs">إجمالي مدة التأخير</label>
+          <div className="input text-sm flex items-center min-h-[38px] bg-gray-50">
+            <DelayBadge delay={delay} />
+          </div>
         </div>
-        <div>
-          <label className="label text-xs">{t('sideSession.actualDuration')}</label>
-          <input type="number" min="1" max="120" className="input text-sm" value={form.actual_duration_min}
-            onChange={e => set('actual_duration_min', e.target.value)} />
-        </div>
+      </div>
+
+      {/* Duration */}
+      <div className="mb-4">
+        <label className="label text-xs">{t('sideSession.actualDuration')}</label>
+        <input
+          type="number"
+          min="1"
+          max="120"
+          className="input text-sm"
+          value={form.actual_duration_min}
+          onChange={e => set('actual_duration_min', e.target.value)}
+        />
       </div>
 
       {/* Notes */}
       <div className="mb-4">
         <label className="label text-xs">{t('sideSession.notes')}</label>
-        <textarea className="input h-16 resize-none text-sm" value={form.notes}
-          onChange={e => set('notes', e.target.value)} />
+        <textarea
+          className="input h-16 resize-none text-sm"
+          value={form.notes}
+          onChange={e => set('notes', e.target.value)}
+        />
       </div>
 
       <button onClick={handleSave} disabled={saving} className="btn-primary w-full text-sm">
@@ -130,14 +178,22 @@ export default function SideSessionCheck() {
   });
 
   const handleSave = async (session, form) => {
+    const payload = {
+      lecture_start_time:  form.lecture_start_time  || null,
+      recording_start_time: null,
+      actual_duration_min: form.actual_duration_min || null,
+      notes:               form.notes               || null,
+      trainer_present:     form.trainer_present,
+      student_present:     form.student_present,
+    };
     if (session.check_id) {
-      await api.put(`/agent/side-session-check/${session.check_id}`, form);
+      await api.put(`/agent/side-session-check/${session.check_id}`, payload);
     } else {
       await api.post('/agent/side-session-check', {
         lecture_id: session.id,
         group_name: session.group_name,
         session_date: date,
-        ...form,
+        ...payload,
       });
     }
     qc.invalidateQueries(['side-session-check', date, sessionType]);
