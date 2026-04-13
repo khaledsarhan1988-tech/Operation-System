@@ -121,9 +121,12 @@ export default function AbsentFollowUp() {
     applied.to_date || applied.department || applied.coordinator;
 
   const columns = [
-    { key: 'student_name',      label: t('absent.student'),        render: v => v || '—' },
-    { key: 'phone',             label: t('clients.phone'),         render: v => v || '—' },
-    { key: 'group_name',        label: t('absent.group'),          render: v => <span className="text-xs truncate max-w-[200px] block">{v}</span> },
+    { key: 'student_name',      label: t('absent.student'),        render: v => <span className="font-medium">{v || '—'}</span> },
+    { key: 'phone',             label: t('clients.phone'),         render: v => <span className="font-mono text-sm">{v || '—'}</span> },
+    { key: 'group_name',        label: t('absent.group'),          render: v => (
+        <span className="text-xs font-mono break-all leading-relaxed text-gray-700">{v}</span>
+      )
+    },
     { key: 'date',              label: t('absent.date'),           render: v => v?.slice(0, 10) },
     { key: 'lecture_no',        label: t('absent.lectureNo') },
     { key: 'follow_up_status',  label: t('absent.followUpStatus'), render: v => <Badge value={v} ns="absent" /> },
