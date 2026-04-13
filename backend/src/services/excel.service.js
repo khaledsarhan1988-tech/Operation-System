@@ -125,8 +125,15 @@ function normalizeDuration(val) {
   // Returns minutes as integer
   if (!val) return null;
   const s = String(val).trim();
-  const hm = s.match(/^(\d{1,2}):(\d{2})$/);
-  if (hm) return parseInt(hm[1]) * 60 + parseInt(hm[2]);
+  // Match HH:MM or MM:SS — disambiguate by first segment value
+  // No session runs ≥5 hours, so first >= 5 means MM:SS format (e.g. "15:00" = 15 min)
+  const hm = s.match(/^(\d{1,3}):(\d{2})$/);
+  if (hm) {
+    const first = parseInt(hm[1]);
+    const second = parseInt(hm[2]);
+    if (first >= 5) return first;           // "15:00" → 15 min, "20:00" → 20 min
+    return first * 60 + second;             // "1:30" → 90 min, "0:15" → 15 min
+  }
   const mins = s.match(/^(\d+)\s*min/i);
   if (mins) return parseInt(mins[1]);
   return null;
