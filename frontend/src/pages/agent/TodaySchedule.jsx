@@ -12,8 +12,9 @@ function SessionCard({ session: s }) {
       <div className="flex items-start justify-between mb-2">
         <p className="text-sm font-medium text-gray-800 line-clamp-2 flex-1 me-2">{s.group_name}</p>
         <div className="flex gap-1 flex-shrink-0">
-          <Badge value={s.session_type} ns="schedule" />
-          {s.side_session_category && <Badge value={s.side_session_category} ns="schedule" />}
+          {s.side_session_category
+            ? <Badge value={s.side_session_category} ns="schedule" />
+            : <Badge value={s.session_type} ns="schedule" />}
         </div>
       </div>
       <div className="space-y-1 text-xs text-gray-500">
