@@ -167,7 +167,14 @@ router.get('/absent', (req, res) => {
 
   const total = db.prepare(`SELECT COUNT(DISTINCT a.id) AS cnt ${baseFrom}`).get(...params).cnt;
   const data  = db.prepare(`
-    SELECT a.*,
+    SELECT a.id, a.group_name, a.phone, a.date, a.time, a.lecture_no,
+      a.follow_up_status, a.follow_up_note, a.follow_up_by, a.follow_up_at, a.synced_at,
+      COALESCE(
+        CASE WHEN a.phone IS NOT NULL AND TRIM(a.phone) != '' THEN
+          (SELECT c.name FROM clients c WHERE c.phone = a.phone LIMIT 1)
+        END,
+        NULLIF(TRIM(a.student_name), '')
+      ) AS student_name,
       b.dept_type,
       b.coordinators AS batch_coordinators,
       COALESCE(l.session_type, 'main') AS session_type
