@@ -24,10 +24,10 @@ const STATUS_MAP = {
   // Session type
   main:          { label: 'main',      cls: 'bg-blue-100 text-blue-600' },
   side:          { label: 'side',      cls: 'bg-purple-100 text-purple-600' },
-  onboarding:    { label: 'onboarding',cls: 'bg-teal-100 text-teal-600' },
-  offboarding:   { label: 'offboarding',cls:'bg-orange-100 text-orange-600' },
-  regular:       { label: 'regular',   cls: 'bg-purple-100 text-purple-600' },
-  compensatory:  { label: 'compensatory',cls:'bg-gray-100 text-gray-600' },
+  onboarding:    { label: 'onboarding',  cls: 'bg-teal-100 text-teal-700 font-semibold' },
+  offboarding:   { label: 'offboarding', cls: 'bg-orange-100 text-orange-700 font-semibold' },
+  regular:       { label: 'regular',     cls: 'bg-blue-100 text-blue-700 font-semibold' },
+  compensatory:  { label: 'compensatory',cls: 'bg-amber-100 text-amber-700 font-semibold' },
 };
 
 export default function Badge({ value, ns, className = '' }) {
