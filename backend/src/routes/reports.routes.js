@@ -311,7 +311,8 @@ router.get('/lectures-list', (req, res) => {
   const offset = (Number(page) - 1) * Number(limit);
   const deptFilter        = buildDeptFilter('b', department);
   const empFilter         = buildCoordFilter('b', employee);
-  const searchFilter      = search      ? ` AND l.group_name LIKE '%${search}%'` : '';
+  const searchEsc         = search.replace(/%/g, '\\%').replace(/_/g, '\\_');
+  const searchFilter      = search      ? ` AND l.group_name LIKE '%${searchEsc}%' ESCAPE '\\'` : '';
   const trainerFilter     = trainer     ? ` AND l.trainer LIKE '%${trainer}%'` : '';
   const coordFilter       = buildCoordFilter('b', coordinator);
   const groupFilter       = group_name  ? ` AND l.group_name = '${group_name.replace(/'/g, "''")}'` : '';
