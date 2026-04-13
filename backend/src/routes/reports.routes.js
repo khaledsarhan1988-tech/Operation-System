@@ -32,6 +32,11 @@ function buildCoordFilter(table, value) {
   return ` AND ${table}.coordinators LIKE '%${safe}%'`;
 }
 
+function escapeLike(s) {
+  if (!s) return '';
+  return s.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
 // ─── GET /api/reports/dashboard ───────────────────────────────────────────────
 router.get('/dashboard', (req, res) => {
   const { from_date, to_date, department, employee } = req.query;
@@ -355,7 +360,9 @@ router.get('/lectures-list', (req, res) => {
     ).get();
 
     const rows = db.prepare(
-      `SELECT l.*, b.dept_type, b.coordinators, b.lecture_duration_min${sideExtraFields}
+      `SELECT l.*,
+         COALESCE((SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) LIMIT 1), b.dept_type) AS dept_type,
+         b.coordinators, b.lecture_duration_min${sideExtraFields}
        FROM lectures l
        LEFT JOIN batches b ON l.group_name = b.group_name
        ${sideJoin}
@@ -386,7 +393,7 @@ router.get('/absent-list', (req, res) => {
   const deptFilter   = buildDeptFilter('b', activeDept);
   const empFilter    = buildCoordFilter('b', employee);
   const coordFilter  = buildCoordFilter('b', coordinator);
-  const searchFilter = search     ? ` AND a.group_name LIKE '%${search}%'` : '';
+  const searchFilter = search     ? ` AND a.group_name LIKE '%${escapeLike(search)}%' ESCAPE '\\'` : '';
   // Part1 date filter uses computed 'date' column (after inference), not raw a.date
   const dateFilterP1 = activeFrom && activeTo ? ` AND date BETWEEN '${activeFrom}' AND '${activeTo}'`
                      : activeFrom ? ` AND date >= '${activeFrom}'`
@@ -399,7 +406,7 @@ router.get('/absent-list', (req, res) => {
   const deptFilter2  = buildDeptFilter('b2', activeDept);
   const empFilter2   = buildCoordFilter('b2', employee);
   const coordFilter2 = buildCoordFilter('b2', coordinator);
-  const searchFilter2= search      ? ` AND l.group_name LIKE '%${search}%'` : '';
+  const searchFilter2= search      ? ` AND l.group_name LIKE '%${escapeLike(search)}%' ESCAPE '\\'` : '';
 
   // Part1: absent_students — with name lookup + date inference from lecture_no when date is missing
   const part1 = `
@@ -490,11 +497,11 @@ router.get('/absent-side-list', (req, res) => {
   const activeFrom = modal_from || from_date;
   const activeTo   = modal_to   || to_date;
 
-  const deptFilter    = activeDept  ? ` AND b.dept_type = '${activeDept}'` : '';
+  const deptFilter    = buildDeptFilter('b', activeDept);
   const empFilter     = buildCoordFilter('b', employee);
-  const trainerFilter = trainer     ? ` AND l.trainer LIKE '%${trainer}%'` : '';
+  const trainerFilter = trainer     ? ` AND l.trainer LIKE '%${escapeLike(trainer)}%' ESCAPE '\\'` : '';
   const coordFilter   = buildCoordFilter('b', coordinator);
-  const searchFilter  = search      ? ` AND l.group_name LIKE '%${search}%'` : '';
+  const searchFilter  = search      ? ` AND l.group_name LIKE '%${escapeLike(search)}%' ESCAPE '\\'` : '';
   const dateFilter    = activeFrom && activeTo
     ? ` AND l.date BETWEEN '${activeFrom}' AND '${activeTo}'`
     : activeFrom ? ` AND l.date >= '${activeFrom}'`
@@ -512,7 +519,7 @@ router.get('/absent-side-list', (req, res) => {
       l.date                                                                    AS session_date,
       MAX(l.trainer)                                                            AS trainer,
       MAX(b.coordinators)                                                       AS coordinators,
-      MAX(b.dept_type)                                                          AS dept_type,
+      COALESCE(MAX((SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) LIMIT 1)), MAX(b.dept_type)) AS dept_type,
       MAX(b.trainee_count)                                                      AS trainee_count,
       SUM(CASE WHEN l.attendance IS NOT NULL
                AND l.attendance != ''
@@ -567,12 +574,12 @@ router.get('/remarks-list', (req, res) => {
   const dateFilter     = activeFrom && activeTo ? ` AND ${remarkDate} BETWEEN '${activeFrom}' AND '${activeTo}'`
                        : activeFrom ? ` AND ${remarkDate} >= '${activeFrom}'`
                        : activeTo   ? ` AND ${remarkDate} <= '${activeTo}'` : '';
-  const empFilter      = employee        ? ` AND assigned_to LIKE '%${employee}%'` : '';
-  const assignFilter   = assigned_to     ? ` AND assigned_to LIKE '%${assigned_to}%'` : '';
+  const empFilter      = employee        ? ` AND assigned_to LIKE '%${escapeLike(employee)}%' ESCAPE '\\'` : '';
+  const assignFilter   = assigned_to     ? ` AND assigned_to LIKE '%${escapeLike(assigned_to)}%' ESCAPE '\\'` : '';
   const priorityFilter = priority        ? ` AND priority = '${priority}'` : '';
-  const categoryFilter = category_search ? ` AND category LIKE '%${category_search}%'` : '';
+  const categoryFilter = category_search ? ` AND category LIKE '%${escapeLike(category_search)}%' ESCAPE '\\'` : '';
   const statusFilter   = status_filter   ? ` AND status = '${status_filter}'` : '';
-  const searchFilter   = search          ? ` AND (client_name LIKE '%${search}%' OR details LIKE '%${search}%')` : '';
+  const searchFilter   = search          ? ` AND (client_name LIKE '%${escapeLike(search)}%' OR details LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
   const deptFilter     = activeDept
     ? ` AND EXISTS (
           SELECT 1 FROM clients c
@@ -654,13 +661,13 @@ router.get('/remarks-notes-main', (req, res) => {
   const deptFilter1  = buildDeptFilter('b', activeDept);
   const empFilter1   = buildCoordFilter('b', employee);
   const coord1       = buildCoordFilter('b', coordinator);
-  const search1      = search ? ` AND (a.student_name LIKE '%${search}%' OR a.group_name LIKE '%${search}%' OR a.phone LIKE '%${search}%')` : '';
+  const search1      = search ? ` AND (a.student_name LIKE '%${escapeLike(search)}%' OR a.group_name LIKE '%${escapeLike(search)}%' OR a.phone LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
 
   // Part2 filters (alias b2)
   const deptFilter2  = buildDeptFilter('b2', activeDept);
   const empFilter2   = buildCoordFilter('b2', employee);
   const coord2       = buildCoordFilter('b2', coordinator);
-  const search2      = search ? ` AND (c.name LIKE '%${search}%' OR l.group_name LIKE '%${search}%' OR c.phone LIKE '%${search}%')` : '';
+  const search2      = search ? ` AND (c.name LIKE '%${escapeLike(search)}%' OR l.group_name LIKE '%${escapeLike(search)}%' OR c.phone LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
 
   // Date filter applied on the UNION result
   const dateFilter = activeFrom && activeTo
@@ -796,7 +803,7 @@ router.get('/remarks-notes-zoom', (req, res) => {
   const dept1  = buildDeptFilter('b', activeDept);
   const emp1   = buildCoordFilter('b', employee);
   const coord1 = buildCoordFilter('b', coordinator);
-  const srch1  = search ? ` AND (c.name LIKE '%${search}%' OR c.phone LIKE '%${search}%' OR c.group_name LIKE '%${search}%')` : '';
+  const srch1  = search ? ` AND (c.name LIKE '%${escapeLike(search)}%' OR c.phone LIKE '%${escapeLike(search)}%' OR c.group_name LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
 
   // Part 2 filters — b2 = batches via LEFT JOIN (may be NULL when client not in clients table)
   // If b2 is NULL (client not in clients table), include the record regardless of who made the remark.
@@ -804,7 +811,7 @@ router.get('/remarks-notes-zoom', (req, res) => {
   const dept2  = safeDept  ? ` AND (b2.dept_type = '${safeDept}' OR EXISTS (SELECT 1 FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b2.coordinators)) AND u.department='${safeDept}') OR b2.coordinators IS NULL)` : '';
   const emp2   = safeEmp   ? ` AND (b2.coordinators LIKE '%${safeEmp}%'   OR b2.coordinators IS NULL)` : '';
   const coord2 = safeCoord ? ` AND (b2.coordinators LIKE '%${safeCoord}%' OR b2.coordinators IS NULL)` : '';
-  const srch2  = search ? ` AND (r2.client_name LIKE '%${search}%' OR r2.client_phone LIKE '%${search}%')` : '';
+  const srch2  = search ? ` AND (r2.client_name LIKE '%${escapeLike(search)}%' OR r2.client_phone LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
 
   // Date filter applied on the UNION result
   const dateFilter = activeFrom && activeTo
@@ -923,13 +930,14 @@ router.get('/remarks-categories', (req, res) => {
   const activeDept = modal_dept && modal_dept !== 'All' ? modal_dept : (department && department !== 'All' ? department : '');
 
   const remarkDateSQL  = `date(substr(r.added_at,7,4)||'-'||substr(r.added_at,4,2)||'-'||substr(r.added_at,1,2))`;
+  const safeDeptCat    = activeDept ? activeDept.replace(/'/g, "''") : '';
   const deptFilter     = activeDept
-    ? ` AND EXISTS (SELECT 1 FROM clients cx INNER JOIN batches bx ON cx.group_name=bx.group_name WHERE cx.phone=r.client_phone AND bx.dept_type='${activeDept}')`
+    ? ` AND EXISTS (SELECT 1 FROM clients cx INNER JOIN batches bx ON cx.group_name=bx.group_name WHERE cx.phone=r.client_phone AND (bx.dept_type='${safeDeptCat}' OR EXISTS (SELECT 1 FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(bx.coordinators)) AND u.department='${safeDeptCat}')))`
     : '';
-  const empFilter      = employee       ? ` AND r.assigned_to LIKE '%${employee}%'` : '';
-  const assignFilter   = assigned_to    ? ` AND r.assigned_to LIKE '%${assigned_to}%'` : '';
-  const catFilter      = category_filter ? ` AND r.category LIKE '%${category_filter}%'` : '';
-  const searchFilter   = search         ? ` AND (r.client_name LIKE '%${search}%' OR r.category LIKE '%${search}%' OR r.client_phone LIKE '%${search}%')` : '';
+  const empFilter      = employee       ? ` AND r.assigned_to LIKE '%${escapeLike(employee)}%' ESCAPE '\\'` : '';
+  const assignFilter   = assigned_to    ? ` AND r.assigned_to LIKE '%${escapeLike(assigned_to)}%' ESCAPE '\\'` : '';
+  const catFilter      = category_filter ? ` AND r.category LIKE '%${escapeLike(category_filter)}%' ESCAPE '\\'` : '';
+  const searchFilter   = search         ? ` AND (r.client_name LIKE '%${escapeLike(search)}%' OR r.category LIKE '%${escapeLike(search)}%' OR r.client_phone LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
   const dateFilter     = buildDateFilter(remarkDateSQL, activeFrom, activeTo);
 
   const baseWhere = `WHERE r.category IS NOT NULL AND TRIM(r.category) != ''
@@ -976,7 +984,7 @@ router.get('/remarks-categories', (req, res) => {
 // Validates groups against business rules for main & side sessions
 router.get('/code-problems', (req, res) => {
   const { department, employee } = req.query;
-  const deptFilter = department && department !== 'All' ? ` AND b.dept_type = '${department}'` : '';
+  const deptFilter = buildDeptFilter('b', department);
   const empFilter  = buildCoordFilter('b', employee);
 
   // ── helpers ──
@@ -1254,7 +1262,7 @@ router.get('/remarks-notes-options', (req, res) => {
 // ─── TEAM SUMMARY FILTER HELPERS ─────────────────────────────────────────────
 function tsFilters(q) {
   const { from_date, to_date, department } = q;
-  const deptF  = department && department !== 'All' ? ` AND b.dept_type = '${department}'`   : '';
+  const deptF  = buildDeptFilter('b', department);
   const dateA  = from_date ? ` AND a.date >= '${from_date}'` : '';
   const dateAe = to_date   ? ` AND a.date <= '${to_date}'`   : '';
   const dateL  = from_date ? ` AND l.date >= '${from_date}'` : '';
@@ -1271,7 +1279,7 @@ router.get('/team-summary-detail', (req, res) => {
   const { deptF, dateA, dateL, dateR } = tsFilters(req.query);
   const empFBatches = buildCoordFilter('batches', employee);
   const empFB       = buildCoordFilter('b', employee);
-  const empFRemarks = employee ? ` AND assigned_to LIKE '%${employee.replace(/'/g,"''")}%'` : '';
+  const empFRemarks = employee ? ` AND assigned_to LIKE '%${escapeLike(employee.replace(/'/g,"''"))}%' ESCAPE '\\'` : '';
 
   try {
     let rows = [];
