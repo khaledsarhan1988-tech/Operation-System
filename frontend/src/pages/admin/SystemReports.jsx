@@ -1310,9 +1310,10 @@ function CodeProblemsModal({ params, onClose }) {
   const [saveError, setSaveError] = useState(null);
 
   // ── data
+  const showResolved = fStatus === 'wont_repeat' || fStatus === 'exception';
   const { data, isLoading } = useQuery({
-    queryKey: ['code-problems-modal', params],
-    queryFn:  () => api.get('/reports/code-problems', { params }).then(r => r.data),
+    queryKey: ['code-problems-modal', params, showResolved],
+    queryFn:  () => api.get('/reports/code-problems', { params: { ...params, show_resolved: showResolved || undefined } }).then(r => r.data),
     staleTime: 5 * 60 * 1000, gcTime: 15 * 60 * 1000,
   });
   const { data: statusData, isLoading: statusLoading } = useQuery({
@@ -1328,7 +1329,7 @@ function CodeProblemsModal({ params, onClose }) {
   });
   const getStatus = (p, sessionType) =>
     statusMap[`${p.group_name}|${p.problem_type}|${sessionType}`] ?? null;
-  const getStatusKey = (p) => p._status?.status ?? 'new';
+  const getStatusKey = (p) => p._resolved_status ?? p._status?.status ?? 'new';
 
   // ── enrich problems with status
   const mainProbs = (data?.main_problems ?? []).map(p => ({
@@ -1344,10 +1345,15 @@ function CodeProblemsModal({ params, onClose }) {
   const depts     = [...new Set(allEnriched.map(p => p.dept_type).filter(Boolean))].sort();
   const coords    = [...new Set(allEnriched.map(p => p.coordinators).filter(Boolean))].sort();
 
-  // ── status counts (before section / status filter)
+  // ── status counts: active from allEnriched + resolved from statusData
   const statusCounts = { new: 0, reported: 0, in_progress: 0, exception: 0, wont_repeat: 0 };
   allEnriched.forEach(p => { if (statusCounts[getStatusKey(p)] !== undefined) statusCounts[getStatusKey(p)]++; });
-  const totalAll = allEnriched.length;
+  // Count wont_repeat/exception from statusData (they're excluded from allEnriched by default)
+  if (!showResolved && statusData) {
+    statusCounts.wont_repeat = statusData.filter(s => s.status === 'wont_repeat').length;
+    statusCounts.exception   = statusData.filter(s => s.status === 'exception').length;
+  }
+  const totalAll = allEnriched.length + (showResolved ? 0 : statusCounts.wont_repeat + statusCounts.exception);
 
   // ── filter logic
   const applyFilters = (rows) => rows.filter(p => {

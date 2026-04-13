@@ -983,7 +983,8 @@ router.get('/remarks-categories', (req, res) => {
 // ─── GET /api/reports/code-problems ──────────────────────────────────────────
 // Validates groups against business rules for main & side sessions
 router.get('/code-problems', (req, res) => {
-  const { department, employee } = req.query;
+  const { department, employee, show_resolved } = req.query;
+  const showResolved = show_resolved === 'true';
   const deptFilter = buildDeptFilter('b', department);
   const empFilter  = buildCoordFilter('b', employee);
 
@@ -1097,6 +1098,15 @@ router.get('/code-problems', (req, res) => {
       const key = `${problem.group_name}|${problem.problem_type}|${sessionType}`;
       const s = statusMap[key];
       if (s && (s.status === 'wont_repeat' || s.status === 'exception')) {
+        if (showResolved) {
+          // Include resolved items when explicitly requested (for filter view)
+          problem._resolved_status = s.status;
+          problem._status_note     = s.note;
+          problem._status_by       = s.updated_by_name;
+          problem._status_at       = s.updated_at;
+          arr.push(problem);
+          return;
+        }
         if (problem.actual != null && s.actual_at_status != null) {
           if (problem.actual <= s.actual_at_status) return; // still same or less → skip
           // Count increased → employee repeated the mistake
