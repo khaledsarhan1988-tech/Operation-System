@@ -1379,6 +1379,7 @@ function CodeProblemsModal({ params, onClose }) {
     try {
       await api.put('/reports/problem-status', { ...editKey, ...editForm, actual: editKey.actual });
       qc.invalidateQueries({ queryKey: ['problem-statuses'] });
+      qc.invalidateQueries({ queryKey: ['code-problems-modal'] });
       setEditKey(null);
     } catch(e) {
       console.error(e);
