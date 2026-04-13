@@ -219,32 +219,6 @@ export default function AbsentFollowUp() {
           />
         </div>
 
-        {/* Department */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs text-gray-500">القسم</label>
-          <select
-            value={filters.department}
-            onChange={e => setFilters(f => ({ ...f, department: e.target.value }))}
-            className="input text-sm w-32"
-          >
-            <option value="">الكل</option>
-            {filterOpts.departments.map(d => <option key={d} value={d}>{d}</option>)}
-          </select>
-        </div>
-
-        {/* Coordinator */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs text-gray-500">المنسق</label>
-          <select
-            value={filters.coordinator}
-            onChange={e => setFilters(f => ({ ...f, coordinator: e.target.value }))}
-            className="input text-sm w-36"
-          >
-            <option value="">الكل</option>
-            {filterOpts.coordinators.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
-        </div>
-
         {/* Follow-up status */}
         <div className="flex flex-col gap-1">
           <label className="text-xs text-gray-500">حالة المتابعة</label>
