@@ -1505,6 +1505,40 @@ function CodeProblemsModal({ params, onClose }) {
             </button>
           </div>
 
+          {/* ── SUMMARY BOXES ── */}
+          {(() => {
+            const achieved = statusCounts.reported + statusCounts.in_progress + statusCounts.wont_repeat + statusCounts.exception;
+            const remaining = totalAll - achieved;
+            return (
+              <div className="flex gap-3 mb-3">
+                <div className="flex-1 flex items-center gap-3 bg-emerald-50 border border-emerald-200 rounded-2xl px-4 py-3">
+                  <div className="p-2 bg-emerald-100 rounded-xl">
+                    <CheckCircle size={18} className="text-emerald-600" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-emerald-600 font-semibold">ما تم إنجازه</p>
+                    <p className="text-xl font-black text-emerald-700">{achieved}</p>
+                  </div>
+                  <div className="mr-auto text-xs text-emerald-500 font-medium">
+                    {totalAll > 0 ? Math.round((achieved / totalAll) * 100) : 0}%
+                  </div>
+                </div>
+                <div className="flex-1 flex items-center gap-3 bg-red-50 border border-red-200 rounded-2xl px-4 py-3">
+                  <div className="p-2 bg-red-100 rounded-xl">
+                    <AlertCircle size={18} className="text-red-500" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-red-500 font-semibold">جديد المتبقي</p>
+                    <p className="text-xl font-black text-red-600">{remaining}</p>
+                  </div>
+                  <div className="mr-auto text-xs text-red-400 font-medium">
+                    {totalAll > 0 ? Math.round((remaining / totalAll) * 100) : 0}%
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* ── STATUS TABS ── */}
           <div className="flex flex-wrap gap-2 mb-4">
             {/* All */}
