@@ -2,11 +2,13 @@ import { useState, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { format } from 'date-fns';
-import { Download, CheckCircle, BookOpen, Monitor, Clock, Save } from 'lucide-react';
+import { Download, CheckCircle, BookOpen, Monitor, Clock, Save, SearchCheck } from 'lucide-react';
 import api from '../../api/axios';
 import Badge from '../../components/ui/Badge';
 
-// Parse time string (HH:MM or H:MM AM/PM) → total minutes from midnight
+// ─── Time helpers ──────────────────────────────────────────────────────────────
+
+// Parse "HH:MM AM/PM" or "HH:MM" → total minutes from midnight
 function parseTimeMins(t) {
   if (!t) return null;
   const m24 = t.match(/^(\d{1,2}):(\d{2})$/);
@@ -20,6 +22,28 @@ function parseTimeMins(t) {
     return h * 60 + min;
   }
   return null;
+}
+
+// Convert "HH:MM AM/PM" or "HH:MM" → "HH:MM" (24h, for <input type="time">)
+function toInput24(t) {
+  if (!t) return '';
+  const mins = parseTimeMins(t);
+  if (mins === null) return '';
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+// Parse "HH:MM" or "MM:SS" duration string → minutes
+function parseDurationMin(val) {
+  if (!val) return 15;
+  const s = String(val).trim();
+  const hm = s.match(/^(\d{1,3}):(\d{2})$/);
+  if (hm) {
+    const first = parseInt(hm[1]);
+    return first >= 5 ? first : first * 60 + parseInt(hm[2]);
+  }
+  return 15;
 }
 
 function calcDelay(scheduledTime, actualTime) {
@@ -36,27 +60,38 @@ function DelayBadge({ delay }) {
   return <span className="text-blue-500 font-semibold text-sm">مبكر {Math.abs(delay)} دقيقة</span>;
 }
 
-// Build default form values for a session
-function defaultForm(session) {
+// Build form values — from saved check OR from lecture schedule data
+function buildForm(session, fromSchedule = false) {
+  if (!fromSchedule && session.check_id) {
+    // Already saved — use stored data
+    return {
+      trainer_present:     session.trainer_present   ?? 1,
+      student_present:     session.student_present   ?? 1,
+      lecture_start_time:  session.lecture_start_time || '',
+      actual_duration_min: session.actual_duration_min ?? parseDurationMin(session.duration),
+      notes:               session.check_notes || '',
+    };
+  }
+  // Auto-fill from schedule: start time = scheduled time, duration from Excel
   return {
-    trainer_present:     session.trainer_present   ?? 1,
-    student_present:     session.student_present   ?? 1,
-    lecture_start_time:  session.lecture_start_time || '',
-    actual_duration_min: session.actual_duration_min ?? 15,
+    trainer_present:     1,
+    student_present:     1,
+    lecture_start_time:  toInput24(session.time),          // scheduled time → actual
+    actual_duration_min: parseDurationMin(session.duration), // from Excel duration
     notes:               session.check_notes || '',
   };
 }
 
+// ─── Session card ──────────────────────────────────────────────────────────────
+
 function SessionCheckCard({ session, onSave }) {
   const { t } = useTranslation();
   const isChecked = !!session.check_id;
-
-  const [form, setForm] = useState(() => defaultForm(session));
+  const [form, setForm]   = useState(() => buildForm(session));
   const [saving, setSaving] = useState(false);
   const [saved,  setSaved]  = useState(isChecked);
 
   const set = (k, v) => { setForm(f => ({ ...f, [k]: v })); setSaved(false); };
-
   const delay = calcDelay(session.time, form.lecture_start_time);
 
   const handleSave = async () => {
@@ -68,9 +103,6 @@ function SessionCheckCard({ session, onSave }) {
       setSaving(false);
     }
   };
-
-  // Expose save for bulk-save
-  SessionCheckCard._instances = SessionCheckCard._instances || {};
 
   const PresenceBtn = ({ label, value, selected, onClick }) => (
     <button
@@ -173,6 +205,8 @@ function SessionCheckCard({ session, onSave }) {
   );
 }
 
+// ─── Main page ─────────────────────────────────────────────────────────────────
+
 export default function SideSessionCheck() {
   const { t } = useTranslation();
   const qc = useQueryClient();
@@ -184,24 +218,24 @@ export default function SideSessionCheck() {
   const { data: sessions, isLoading } = useQuery({
     queryKey: ['side-session-check', date, sessionType],
     queryFn: () => api.get(`/agent/side-session-check?date=${date}&session_type=${sessionType}`).then(r => r.data),
-    onSuccess: () => { setBulkDone(false); },
+    onSuccess: () => setBulkDone(false),
   });
 
   const handleSave = useCallback(async (session, form) => {
     const payload = {
-      lecture_start_time:  form.lecture_start_time  || null,
+      lecture_start_time:   form.lecture_start_time  || null,
       recording_start_time: null,
-      actual_duration_min: form.actual_duration_min || null,
-      notes:               form.notes               || null,
-      trainer_present:     form.trainer_present,
-      student_present:     form.student_present,
+      actual_duration_min:  form.actual_duration_min || null,
+      notes:                form.notes               || null,
+      trainer_present:      form.trainer_present,
+      student_present:      form.student_present,
     };
     if (session.check_id) {
       await api.put(`/agent/side-session-check/${session.check_id}`, payload);
     } else {
       await api.post('/agent/side-session-check', {
-        lecture_id: session.id,
-        group_name: session.group_name,
+        lecture_id:   session.id,
+        group_name:   session.group_name,
         session_date: date,
         ...payload,
       });
@@ -209,14 +243,13 @@ export default function SideSessionCheck() {
     qc.invalidateQueries(['side-session-check', date, sessionType]);
   }, [date, sessionType, qc]);
 
-  // Bulk save: save ALL sessions at once with their current (default) values
-  const handleBulkSave = async () => {
+  // "تحقق" — auto-fill from schedule then save all at once
+  const handleVerifyAndSave = async () => {
     if (!sessions?.length) return;
     setBulkSaving(true);
     try {
-      // Save all sessions concurrently using default form values
       await Promise.all(
-        sessions.map(session => handleSave(session, defaultForm(session)))
+        sessions.map(session => handleSave(session, buildForm(session, true)))
       );
       setBulkDone(true);
       await qc.invalidateQueries(['side-session-check', date, sessionType]);
@@ -240,7 +273,12 @@ export default function SideSessionCheck() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="text-xl font-bold text-text-primary">{t('nav.sideSessionCheck')}</h1>
         <div className="flex gap-2">
-          <input type="date" value={date} onChange={e => { setDate(e.target.value); setBulkDone(false); }} className="input w-44" />
+          <input
+            type="date"
+            value={date}
+            onChange={e => { setDate(e.target.value); setBulkDone(false); }}
+            className="input w-44"
+          />
           <button onClick={handleExport} className="btn-outline flex items-center gap-2 text-sm">
             <Download size={15} /> {t('common.export')}
           </button>
@@ -257,8 +295,7 @@ export default function SideSessionCheck() {
               : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
           }`}
         >
-          <BookOpen size={15} />
-          المحاضرات الأساسية
+          <BookOpen size={15} /> المحاضرات الأساسية
         </button>
         <button
           onClick={() => { setSessionType('side'); setBulkDone(false); }}
@@ -268,15 +305,14 @@ export default function SideSessionCheck() {
               : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
           }`}
         >
-          <Monitor size={15} />
-          الجلسات الجانبية (Zoom)
+          <Monitor size={15} /> الجلسات الجانبية (Zoom)
         </button>
       </div>
 
-      {/* Progress bar + bulk save */}
+      {/* Progress + verify button */}
       {total > 0 && (
-        <div className="card p-3 space-y-2">
-          <div className="flex justify-between text-xs text-text-secondary mb-1">
+        <div className="card p-4 space-y-3">
+          <div className="flex justify-between text-xs text-text-secondary">
             <span>{t('sideSession.todaySessions')}: {total}</span>
             <span>{checkedCount}/{total} — {Math.round((checkedCount / total) * 100)}%</span>
           </div>
@@ -287,25 +323,34 @@ export default function SideSessionCheck() {
             />
           </div>
 
-          {/* Bulk save button */}
-          {!allChecked && (
+          {!allChecked && !bulkDone && (
             <button
-              onClick={handleBulkSave}
+              onClick={handleVerifyAndSave}
               disabled={bulkSaving}
-              className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold transition-all
+              className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold transition-all
                 ${bulkSaving
                   ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                  : 'bg-success text-white hover:bg-success/90 shadow-sm'
+                  : 'bg-primary text-white hover:bg-primary/90 shadow-md'
                 }`}
             >
-              <Save size={15} />
-              {bulkSaving ? 'جاري الحفظ...' : `حفظ جميع الجلسات (${total - checkedCount} متبقية)`}
+              <SearchCheck size={16} />
+              {bulkSaving
+                ? 'جاري التحقق والحفظ...'
+                : `تحقق وحفظ الكل (${total - checkedCount} جلسة)`}
             </button>
           )}
+
           {(allChecked || bulkDone) && (
             <div className="flex items-center justify-center gap-2 py-2 text-success text-sm font-semibold">
-              <CheckCircle size={16} /> تم حفظ جميع الجلسات ✓
+              <CheckCircle size={16} /> تم التحقق وحفظ جميع الجلسات ✓
             </div>
+          )}
+
+          {/* Helper note */}
+          {!allChecked && !bulkDone && (
+            <p className="text-xs text-text-secondary text-center">
+              سيتم ملء الحضور تلقائياً بـ (نعم) ووقت البداية من الجدول المحدد
+            </p>
           )}
         </div>
       )}
