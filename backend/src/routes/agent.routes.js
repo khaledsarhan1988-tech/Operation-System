@@ -224,10 +224,11 @@ router.put('/absent/:id', (req, res) => {
   return res.json(db.prepare('SELECT * FROM absent_students WHERE id = ?').get(id));
 });
 
-// GET /api/agent/side-session-check?date=YYYY-MM-DD
+// GET /api/agent/side-session-check?date=YYYY-MM-DD&session_type=side|main
 router.get('/side-session-check', (req, res) => {
   const name = req.user.full_name;
-  const date = req.query.date || new Date().toISOString().slice(0, 10);
+  const date         = req.query.date         || new Date().toISOString().slice(0, 10);
+  const session_type = req.query.session_type || 'side';
 
   const batches = db.prepare(
     "SELECT group_name FROM batches WHERE coordinators LIKE ? AND status = 'نشطة'"
@@ -244,9 +245,9 @@ router.get('/side-session-check', (req, res) => {
     LEFT JOIN side_session_checks ssc ON ssc.lecture_id = l.id AND ssc.session_date = ?
     WHERE l.group_name IN (${placeholders})
       AND l.date = ?
-      AND l.session_type = 'side'
+      AND l.session_type = ?
     ORDER BY l.time ASC
-  `).all(date, ...batches, date);
+  `).all(date, ...batches, date, session_type);
 
   return res.json(sessions);
 });

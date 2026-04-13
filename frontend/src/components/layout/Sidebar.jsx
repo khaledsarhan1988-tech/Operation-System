@@ -13,7 +13,7 @@ const AGENT_LINKS = [
   { to: '/agent/clients',       label: 'nav.clientSearch',    icon: Search },
   { to: '/agent/absent',        label: 'nav.absentFollowUp',  icon: UserX },
   { to: '/agent/schedule',      label: 'nav.todaySchedule',   icon: Calendar },
-  { to: '/agent/side-sessions', label: 'nav.sideSessionCheck',icon: Video },
+  { to: '/agent/side-session-check', label: 'nav.sideSessionCheck', icon: Video },
 ];
 
 const LEADER_LINKS = [

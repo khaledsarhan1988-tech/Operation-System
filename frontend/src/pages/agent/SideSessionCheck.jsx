@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { format } from 'date-fns';
-import { Download, CheckCircle, Circle } from 'lucide-react';
+import { Download, CheckCircle, BookOpen, Monitor } from 'lucide-react';
 import api from '../../api/axios';
 import Badge from '../../components/ui/Badge';
 
@@ -121,11 +121,12 @@ function SessionCheckCard({ session, onSave }) {
 export default function SideSessionCheck() {
   const { t } = useTranslation();
   const qc = useQueryClient();
-  const [date, setDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [date, setDate]               = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [sessionType, setSessionType] = useState('side');
 
   const { data: sessions, isLoading } = useQuery({
-    queryKey: ['side-session-check', date],
-    queryFn: () => api.get(`/agent/side-session-check?date=${date}`).then(r => r.data),
+    queryKey: ['side-session-check', date, sessionType],
+    queryFn: () => api.get(`/agent/side-session-check?date=${date}&session_type=${sessionType}`).then(r => r.data),
   });
 
   const handleSave = async (session, form) => {
@@ -139,7 +140,7 @@ export default function SideSessionCheck() {
         ...form,
       });
     }
-    qc.invalidateQueries(['side-session-check', date]);
+    qc.invalidateQueries(['side-session-check', date, sessionType]);
   };
 
   const handleExport = () => {
@@ -147,19 +148,14 @@ export default function SideSessionCheck() {
   };
 
   const checkedCount = sessions?.filter(s => s.check_id)?.length || 0;
-  const total = sessions?.length || 0;
+  const total        = sessions?.length || 0;
 
   return (
-    <div className="space-y-5 animate-fadeIn">
+    <div className="space-y-4 animate-fadeIn">
+
+      {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-text-primary">{t('nav.sideSessionCheck')}</h1>
-          {total > 0 && (
-            <p className="text-sm text-text-secondary mt-0.5">
-              {checkedCount}/{total} {t('sideSession.saved')}
-            </p>
-          )}
-        </div>
+        <h1 className="text-xl font-bold text-text-primary">{t('nav.sideSessionCheck')}</h1>
         <div className="flex gap-2">
           <input type="date" value={date} onChange={e => setDate(e.target.value)} className="input w-44" />
           <button onClick={handleExport} className="btn-outline flex items-center gap-2 text-sm">
@@ -168,16 +164,42 @@ export default function SideSessionCheck() {
         </div>
       </div>
 
+      {/* Session type tabs */}
+      <div className="flex gap-2">
+        <button
+          onClick={() => setSessionType('main')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+            sessionType === 'main'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+          }`}
+        >
+          <BookOpen size={15} />
+          المحاضرات الأساسية
+        </button>
+        <button
+          onClick={() => setSessionType('side')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+            sessionType === 'side'
+              ? 'bg-purple-600 text-white shadow-sm'
+              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+          }`}
+        >
+          <Monitor size={15} />
+          الجلسات الجانبية (Zoom)
+        </button>
+      </div>
+
       {/* Progress bar */}
       {total > 0 && (
         <div className="card p-3">
           <div className="flex justify-between text-xs text-text-secondary mb-1">
             <span>{t('sideSession.todaySessions')}: {total}</span>
-            <span>{Math.round((checkedCount / total) * 100)}%</span>
+            <span>{checkedCount}/{total} — {Math.round((checkedCount / total) * 100)}%</span>
           </div>
           <div className="h-2 bg-surface rounded-full overflow-hidden">
             <div
-              className="h-full bg-success transition-all duration-500 rounded-full"
+              className={`h-full transition-all duration-500 rounded-full ${sessionType === 'main' ? 'bg-blue-500' : 'bg-purple-500'}`}
               style={{ width: `${(checkedCount / total) * 100}%` }}
             />
           </div>
