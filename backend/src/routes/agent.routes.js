@@ -122,27 +122,68 @@ router.get('/schedule', (req, res) => {
 // GET /api/agent/absent
 router.get('/absent', (req, res) => {
   const name = req.user.full_name;
-  const { follow_up_status, page = 1, limit = 25 } = req.query;
+  const {
+    follow_up_status, page = 1, limit = 25,
+    q, session_type, from_date, to_date, department, coordinator,
+  } = req.query;
 
-  const batches = db.prepare(
-    "SELECT group_name FROM batches WHERE coordinators LIKE ? AND status = 'نشطة'"
-  ).all(`%${name}%`).map(b => b.group_name);
+  const batchRows = db.prepare(
+    "SELECT group_name, dept_type, coordinators FROM batches WHERE coordinators LIKE ? AND status = 'نشطة'"
+  ).all(`%${name}%`);
 
-  if (!batches.length) return res.json({ total: 0, data: [] });
+  if (!batchRows.length) return res.json({ total: 0, page: parseInt(page), data: [], filter_opts: { departments: [], coordinators: [] } });
 
-  const placeholders = batches.map(() => '?').join(',');
-  const conditions = [`group_name IN (${placeholders})`];
-  const params = [...batches];
+  const groupNames = batchRows.map(b => b.group_name);
+  const placeholders = groupNames.map(() => '?').join(',');
 
-  if (follow_up_status) { conditions.push('follow_up_status = ?'); params.push(follow_up_status); }
+  const conditions = [`a.group_name IN (${placeholders})`];
+  const params = [...groupNames];
+
+  if (follow_up_status) { conditions.push('a.follow_up_status = ?'); params.push(follow_up_status); }
+  if (from_date)        { conditions.push('a.date >= ?'); params.push(from_date); }
+  if (to_date)          { conditions.push('a.date <= ?'); params.push(to_date); }
+  if (q) {
+    conditions.push('(a.student_name LIKE ? OR a.phone LIKE ? OR a.group_name LIKE ?)');
+    const esc = q.replace(/%/g, '\\%').replace(/_/g, '\\_');
+    params.push(`%${esc}%`, `%${esc}%`, `%${esc}%`);
+  }
+  if (department && department !== 'All') { conditions.push('b.dept_type = ?'); params.push(department); }
+  if (coordinator) { conditions.push('b.coordinators LIKE ?'); params.push(`%${coordinator}%`); }
+  if (session_type) {
+    if (session_type === 'side') {
+      conditions.push("l.session_type = 'side'");
+    } else {
+      conditions.push("COALESCE(l.session_type, 'main') = 'main'");
+    }
+  }
 
   const where = conditions.join(' AND ');
-  const total = db.prepare(`SELECT COUNT(*) AS cnt FROM absent_students WHERE ${where}`).get(...params).cnt;
-  const data = db.prepare(
-    `SELECT * FROM absent_students WHERE ${where} ORDER BY date DESC LIMIT ? OFFSET ?`
-  ).all(...params, parseInt(limit), (parseInt(page) - 1) * parseInt(limit));
+  const baseFrom = `
+    FROM absent_students a
+    LEFT JOIN batches b ON a.group_name = b.group_name
+    LEFT JOIN lectures l ON a.group_name = l.group_name AND a.date = l.date
+    WHERE ${where}
+  `;
 
-  return res.json({ total, page: parseInt(page), data });
+  const total = db.prepare(`SELECT COUNT(DISTINCT a.id) AS cnt ${baseFrom}`).get(...params).cnt;
+  const data  = db.prepare(`
+    SELECT a.*,
+      b.dept_type,
+      b.coordinators AS batch_coordinators,
+      COALESCE(l.session_type, 'main') AS session_type
+    ${baseFrom}
+    GROUP BY a.id
+    ORDER BY a.date DESC
+    LIMIT ? OFFSET ?
+  `).all(...params, parseInt(limit), (parseInt(page) - 1) * parseInt(limit));
+
+  // Build filter option lists from the agent's own batches
+  const depts  = [...new Set(batchRows.map(b => b.dept_type).filter(Boolean))];
+  const coords = [...new Set(
+    batchRows.flatMap(b => (b.coordinators || '').split(/[,،]/).map(c => c.trim())).filter(Boolean)
+  )];
+
+  return res.json({ total, page: parseInt(page), data, filter_opts: { departments: depts, coordinators: coords } });
 });
 
 // PUT /api/agent/absent/:id
