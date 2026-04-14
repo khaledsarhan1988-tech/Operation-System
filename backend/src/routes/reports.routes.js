@@ -1001,14 +1001,16 @@ router.get('/code-problems', (req, res) => {
   const showResolved = show_resolved === 'true';
   const deptFilter = buildDeptFilter('b', department);
 
-  // Smart coordinator filter: if coordinator_user_id provided, match by name parts
+  // Smart coordinator filter: if coordinator_user_id provided, match by full_name parts + username
   let empFilter = buildCoordFilter('b', employee);
   if (coordinator_user_id && !employee) {
-    const userRow = db.prepare('SELECT full_name FROM users WHERE id = ?').get(Number(coordinator_user_id));
-    if (userRow?.full_name) {
-      const parts = userRow.full_name.trim().split(/\s+/).filter(w => w.length > 2);
-      if (parts.length > 0) {
-        const conditions = parts.map(p => `b.coordinators LIKE '%${p.replace(/'/g, "''")}%'`).join(' OR ');
+    const userRow = db.prepare('SELECT full_name, username FROM users WHERE id = ?').get(Number(coordinator_user_id));
+    if (userRow) {
+      const nameWords = (userRow.full_name || '').trim().split(/\s+/).filter(w => w.length > 1);
+      const uname     = (userRow.username || '').trim();
+      const allTerms  = [...new Set([...nameWords, uname].filter(w => w.length > 1))];
+      if (allTerms.length > 0) {
+        const conditions = allTerms.map(p => `b.coordinators LIKE '%${p.replace(/'/g, "''")}%'`).join(' OR ');
         empFilter = ` AND (${conditions})`;
       }
     }
