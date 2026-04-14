@@ -27,19 +27,12 @@ const LEADER_LINKS = [
   { to: '/leader/performance',   label: 'nav.performance',     icon: BarChart2 },
 ];
 
-const ADMIN_LINKS = [
-  { to: '/admin',               label: 'nav.dashboard',    icon: LayoutDashboard, end: true },
-  { to: '/admin/users',         label: 'nav.users',        icon: UserCog },
-  { to: '/admin/upload',        label: 'nav.excelUpload',  icon: Upload },
-  { to: '/admin/team',          label: 'nav.team',         icon: Users },
-  { to: '/admin/control',       label: 'لوحة التحكم',      icon: LayoutDashboard },
-  { type: 'section', label: 'التقارير' },
-  { to: '/admin/reports/customer-services', label: 'تقارير خدمة العملاء',     icon: Headphones,    exact: true },
-  { to: '/admin/reports/education',         label: 'تقارير الإدارة التعليمية', icon: GraduationCap, exact: true },
-  { to: '/admin/reports/quality',           label: 'تقارير الجودة',            icon: ShieldCheck,   exact: true },
-];
 
-const ROLE_LINKS = { agent: AGENT_LINKS, leader: LEADER_LINKS, admin: ADMIN_LINKS };
+const REPORT_LINKS = [
+  { to: '/admin/reports/customer-services', label: 'تقارير خدمة العملاء',     icon: Headphones,    management: 'Customer Services' },
+  { to: '/admin/reports/education',         label: 'تقارير الإدارة التعليمية', icon: GraduationCap, management: 'Education' },
+  { to: '/admin/reports/quality',           label: 'تقارير الجودة',            icon: ShieldCheck,   management: 'Quality' },
+];
 
 const managementMap = {
   'Customer Services': 'خدمة العملاء',
@@ -48,11 +41,30 @@ const managementMap = {
   'All': 'جميع الإدارات',
 };
 
+function getAdminLinks(user) {
+  const base = [
+    { to: '/admin',         label: 'nav.dashboard', icon: LayoutDashboard, end: true },
+    { to: '/admin/users',   label: 'nav.users',     icon: UserCog },
+    { to: '/admin/upload',  label: 'nav.excelUpload', icon: Upload },
+    { to: '/admin/team',    label: 'nav.team',      icon: Users },
+    { to: '/admin/control', label: 'لوحة التحكم',   icon: LayoutDashboard },
+    { type: 'section', label: 'التقارير' },
+  ];
+  const mgmt = user?.management;
+  const reports = mgmt === 'All'
+    ? REPORT_LINKS
+    : REPORT_LINKS.filter(r => r.management === mgmt);
+  return [...base, ...reports];
+}
+
 export default function Sidebar({ mobile, onClose }) {
   const { t } = useTranslation();
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const links = ROLE_LINKS[user?.role] || AGENT_LINKS;
+  const links = user?.role === 'admin'
+    ? getAdminLinks(user)
+    : user?.role === 'leader' ? LEADER_LINKS
+    : AGENT_LINKS;
 
   const handleLogout = async () => {
     await logout();
