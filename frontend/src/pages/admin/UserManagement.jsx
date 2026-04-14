@@ -76,8 +76,7 @@ function UserModal({ open, onClose, user, onSaved }) {
             <select className="input" value={form.role} onChange={e => {
               const r = e.target.value;
               set('role', r);
-              if (r === 'admin' || r === 'leader') set('department', 'All');
-              if (r === 'admin') set('management', 'All');
+              if (r === 'admin') { set('department', 'All'); set('management', 'All'); }
             }}>
               <option value="agent">{t('admin.agent')}</option>
               <option value="leader">{t('admin.leader')}</option>
@@ -92,6 +91,9 @@ function UserModal({ open, onClose, user, onSaved }) {
               <option value="Private">{t('common.private')}</option>
               <option value="Semi">{t('common.semi')}</option>
             </select>
+            {form.role === 'leader' && form.department === 'All' && (
+              <p className="text-xs text-amber-600 mt-1 font-medium">⚠ قائد الفريق يحتاج قسم محدد (General / Private / Semi)</p>
+            )}
           </div>
           <div>
             <label className="label">الإدارة</label>
