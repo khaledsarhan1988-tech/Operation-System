@@ -1641,10 +1641,15 @@ router.get('/group-lectures', (req, res) => {
 // ─── GET /api/reports/fix-report ─────────────────────────────────────────────
 router.get('/fix-report', (req, res) => {
   const { period, date_from, date_to } = req.query;
+  // For leader: filter by coordinator's registered department (not batch dept_type)
+  // This prevents cross-dept leakage when a coordinator has groups in multiple depts
   let deptClause = '';
   if (req.user.role === 'leader') {
     const dept = req.user.department;
-    if (dept && dept !== 'All') { const s = dept.replace(/'/g,"''"); deptClause = ` AND b.dept_type='${s}'`; }
+    if (dept && dept !== 'All') {
+      const s = dept.replace(/'/g,"''");
+      deptClause = ` AND b.coordinators IN (SELECT full_name FROM users WHERE department='${s}')`;
+    }
   }
   // Build date condition embedded in CASE WHEN (date_from/date_to override period)
   let fixedDateCond = '';
@@ -1689,10 +1694,14 @@ router.get('/fix-report', (req, res) => {
 router.get('/fix-report/detail', (req, res) => {
   const { coordinator, period, date_from, date_to } = req.query;
   if (!coordinator) return res.status(400).json({ error: 'coordinator required' });
+  // Same dept filter approach: by coordinator's registered department
   let deptClause = '';
   if (req.user.role === 'leader') {
     const dept = req.user.department;
-    if (dept && dept !== 'All') { const s = dept.replace(/'/g,"''"); deptClause = ` AND b.dept_type='${s}'`; }
+    if (dept && dept !== 'All') {
+      const s = dept.replace(/'/g,"''");
+      deptClause = ` AND b.coordinators IN (SELECT full_name FROM users WHERE department='${s}')`;
+    }
   }
   let periodClause = '';
   if (date_from && date_to) {
