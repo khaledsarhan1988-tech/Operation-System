@@ -1111,7 +1111,7 @@ router.get('/code-problems', (req, res) => {
     const addProblem = (arr, problem, sessionType) => {
       const key = `${problem.group_name}|${problem.problem_type}|${sessionType}`;
       const s = statusMap[key];
-      if (s && (s.status === 'wont_repeat' || s.status === 'exception')) {
+      if (s && (s.status === 'wont_repeat' || s.status === 'exception' || s.status === 'resolved')) {
         if (showResolved) {
           // Include resolved items when explicitly requested (for filter view)
           problem._resolved_status = s.status;
@@ -1541,11 +1541,11 @@ router.put('/problem-status', (req, res) => {
   const { group_name, problem_type, session_type = 'main', status, note, actual } = req.body;
   if (!group_name || !problem_type || !status)
     return res.status(400).json({ error: 'group_name, problem_type, status required' });
-  const validStatuses = ['new', 'reported', 'in_progress', 'exception', 'wont_repeat'];
+  const validStatuses = ['new', 'reported', 'in_progress', 'exception', 'wont_repeat', 'resolved'];
   if (!validStatuses.includes(status))
     return res.status(400).json({ error: 'Invalid status' });
   // Store actual count only when marking as wont_repeat or exception
-  const actualAtStatus = (status === 'wont_repeat' || status === 'exception') && actual != null
+  const actualAtStatus = (status === 'wont_repeat' || status === 'exception' || status === 'resolved') && actual != null
     ? actual : null;
   try {
     db.prepare(`

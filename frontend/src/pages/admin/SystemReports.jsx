@@ -1290,6 +1290,7 @@ const STATUS_CFG = {
   in_progress: { label: 'قيد الحل',    emoji: '⏳', dot: 'bg-amber-500',   badge: 'bg-amber-100 text-amber-700 border-amber-200',   btn: 'hover:bg-amber-50 hover:border-amber-300'  },
   wont_repeat: { label: 'لن تتكرر',    emoji: '✋', dot: 'bg-emerald-500', badge: 'bg-emerald-100 text-emerald-700 border-emerald-200', btn: 'hover:bg-emerald-50 hover:border-emerald-300' },
   exception:   { label: 'استثناء',     emoji: '🔕', dot: 'bg-slate-400',   badge: 'bg-slate-100 text-slate-600 border-slate-200',   btn: 'hover:bg-slate-50 hover:border-slate-300'  },
+  resolved:    { label: 'تم حلها',     emoji: '✅', dot: 'bg-green-600',   badge: 'bg-green-100 text-green-700 border-green-200',   btn: 'hover:bg-green-50 hover:border-green-300'  },
 };
 
 function CodeProblemsModal({ params, onClose }) {
