@@ -12,7 +12,7 @@ function AssignModal({ open, onClose, onAssign }) {
   const [agentName, setAgentName] = useState('');
 
   const { data: agents } = useQuery({
-    queryKey: ['leader-team'],
+    queryKey: ['leader-team-all'],
     queryFn: () => api.get('/leader/team').then(r => r.data),
   });
 
@@ -50,30 +50,48 @@ export default function TeamOverview() {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const [showAssign, setShowAssign] = useState(false);
+  const [coordinator, setCoordinator] = useState('');
+
+  const { data: allTeam } = useQuery({
+    queryKey: ['leader-team-all'],
+    queryFn: () => api.get('/leader/team').then(r => r.data),
+  });
 
   const { data: team, isLoading, refetch } = useQuery({
-    queryKey: ['leader-team'],
-    queryFn: () => api.get('/leader/team').then(r => r.data),
+    queryKey: ['leader-team', coordinator],
+    queryFn: () => api.get('/leader/team', { params: coordinator ? { coordinator } : {} }).then(r => r.data),
   });
 
   const handleExport = () => {
     window.open(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/export/team-performance`, '_blank');
   };
 
+  const selectCls = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f] min-w-[180px]';
+
   const columns = [
     { key: 'name',            label: t('leader.agent') },
     { key: 'total',           label: t('leader.totalTasks') },
     { key: 'pending',         label: t('leader.pending'),   render: v => <span className="font-semibold text-warning">{v}</span> },
     { key: 'done',            label: t('leader.completed'), render: v => <span className="text-success font-semibold">{v}</span> },
-    { key: 'completed_today', label: 'Today',              render: v => <span className="text-primary font-semibold">{v}</span> },
+    { key: 'completed_today', label: 'Today',               render: v => <span className="text-primary font-semibold">{v}</span> },
     { key: 'overdue',         label: t('leader.overdue'),   render: v => v > 0 ? <span className="font-semibold text-danger">{v}</span> : '—' },
   ];
 
   return (
-    <div className="space-y-5 animate-fadeIn">
+    <div className="space-y-5 animate-fadeIn" dir="rtl">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="text-xl font-bold text-text-primary">{t('leader.teamOverview')}</h1>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap items-center">
+          <select
+            value={coordinator}
+            onChange={e => setCoordinator(e.target.value)}
+            className={`${selectCls} ${coordinator ? 'ring-2 ring-[#1e3a5f]/30 border-[#1e3a5f] font-bold' : ''}`}
+          >
+            <option value="">كل المنسقين</option>
+            {(allTeam ?? []).map((a, i) => (
+              <option key={i} value={a.name}>{a.name}</option>
+            ))}
+          </select>
           <button onClick={() => refetch()} className="btn-outline flex items-center gap-2 text-sm">
             <RefreshCw size={14} />
           </button>

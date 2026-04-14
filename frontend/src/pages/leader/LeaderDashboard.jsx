@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Users, ClipboardList, UserX, Globe, AlertTriangle } from 'lucide-react';
@@ -7,24 +8,33 @@ import StatCard from '../../components/ui/StatCard';
 
 export default function LeaderDashboard() {
   const { t } = useTranslation();
+  const [coordinator, setCoordinator] = useState('');
+
+  // list for dropdown (always unfiltered)
+  const { data: allTeam } = useQuery({
+    queryKey: ['leader-team-all'],
+    queryFn: () => api.get('/leader/team').then(r => r.data),
+  });
 
   const { data: team } = useQuery({
-    queryKey: ['leader-team'],
-    queryFn: () => api.get('/leader/team').then(r => r.data),
+    queryKey: ['leader-team', coordinator],
+    queryFn: () => api.get('/leader/team', { params: coordinator ? { coordinator } : {} }).then(r => r.data),
     refetchInterval: 30000,
   });
 
   const { data: groups } = useQuery({
-    queryKey: ['leader-groups'],
-    queryFn: () => api.get('/leader/groups').then(r => r.data),
+    queryKey: ['leader-groups', coordinator],
+    queryFn: () => api.get('/leader/groups', { params: coordinator ? { coordinator } : {} }).then(r => r.data),
   });
 
   const { data: absentReport } = useQuery({
-    queryKey: ['leader-absent', { status: 'pending', page: 1 }],
-    queryFn: () => api.get('/leader/absent-report?status=pending&limit=1').then(r => r.data),
+    queryKey: ['leader-absent-dash', coordinator],
+    queryFn: () => api.get('/leader/absent-report', {
+      params: { status: 'pending', limit: 1, ...(coordinator ? { coordinator } : {}) }
+    }).then(r => r.data),
   });
 
-  const totalTasks  = team?.reduce((a, b) => a + (b.total || 0), 0) || 0;
+  const totalTasks   = team?.reduce((a, b) => a + (b.total || 0), 0) || 0;
   const totalPending = team?.reduce((a, b) => a + (b.pending || 0), 0) || 0;
 
   const barData = team?.slice(0, 8).map(a => ({
@@ -35,9 +45,24 @@ export default function LeaderDashboard() {
 
   const COLORS = ['#E67E22', '#27AE60'];
 
+  const selectCls = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f] min-w-[180px]';
+
   return (
-    <div className="space-y-6 animate-fadeIn">
-      <h1 className="text-xl font-bold text-text-primary">{t('nav.dashboard')}</h1>
+    <div className="space-y-6 animate-fadeIn" dir="rtl">
+      {/* Header + filter */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <h1 className="text-xl font-bold text-text-primary">{t('nav.dashboard')}</h1>
+        <select
+          value={coordinator}
+          onChange={e => setCoordinator(e.target.value)}
+          className={`${selectCls} ${coordinator ? 'ring-2 ring-[#1e3a5f]/30 border-[#1e3a5f] font-bold' : ''}`}
+        >
+          <option value="">كل المنسقين</option>
+          {(allTeam ?? []).map((a, i) => (
+            <option key={i} value={a.name}>{a.name}</option>
+          ))}
+        </select>
+      </div>
 
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -64,7 +89,7 @@ export default function LeaderDashboard() {
         </div>
 
         <div className="card">
-          <h2 className="font-semibold text-text-primary mb-4">Tasks Distribution</h2>
+          <h2 className="font-semibold text-text-primary mb-4">توزيع المهام</h2>
           <ResponsiveContainer width="100%" height={220}>
             <PieChart>
               <Pie
