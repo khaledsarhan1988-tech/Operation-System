@@ -1461,7 +1461,9 @@ function CodeProblemsModal({ params, onClose }) {
                            getStatusKey(p) === 'reported'     ? 'bg-blue-50/20'    : '';
              return (
                <tr key={i} className={`border-b border-gray-50 hover:bg-gray-50/60 transition-colors ${rowBg}`}>
-                 <td className="px-4 py-3 font-semibold text-gray-900 text-xs" style={{ maxWidth: '240px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{p.group_name}</td>
+                 <td className="px-4 py-3 font-semibold text-gray-900 text-xs" style={{ maxWidth: '240px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
+                   <button onClick={() => navigator.clipboard.writeText(p.group_name)} title="انقر للنسخ" className="text-right hover:text-blue-600 transition-colors cursor-copy">{p.group_name}</button>
+                 </td>
                  <td className="px-4 py-3 whitespace-nowrap text-xs font-mono text-gray-500">{p.first_date ?? '—'}</td>
                  <td className="px-4 py-3 whitespace-nowrap">{problemBadge(p.problem_type)}</td>
                  <td className="px-4 py-3 text-xs text-gray-600" style={{ maxWidth: '260px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
