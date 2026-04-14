@@ -32,9 +32,9 @@ const LEADER_LINKS = [
 
 const REPORT_LINKS = [
   { to: '/admin/reports/customer-services', label: 'تقارير خدمة العملاء',     icon: Headphones,    management: 'Customer Services' },
+  { to: '/admin/reports/fix-report',        label: 'تقارير الإصلاح',           icon: FileText,      management: 'Customer Services', sub: true },
   { to: '/admin/reports/education',         label: 'تقارير الإدارة التعليمية', icon: GraduationCap, management: 'Education' },
   { to: '/admin/reports/quality',           label: 'تقارير الجودة',            icon: ShieldCheck,   management: 'Quality' },
-  { to: '/admin/reports/fix-report',        label: 'تقارير الإصلاح',           icon: FileText,      management: 'All' },
 ];
 
 const managementMap = {
@@ -105,17 +105,21 @@ export default function Sidebar({ mobile, onClose }) {
               </div>
             );
           }
-          const { to, label, icon: Icon, end } = item;
+          const { to, label, icon: Icon, end, sub } = item;
           return (
             <NavLink
               key={to}
               to={to}
               end={end}
               onClick={mobile ? onClose : undefined}
-              className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}
+              className={({ isActive }) =>
+                sub
+                  ? `sidebar-link mr-4 border-r-2 border-white/10 pr-2 opacity-80 ${isActive ? 'active' : ''}`
+                  : `sidebar-link ${isActive ? 'active' : ''}`
+              }
             >
-              <Icon size={18} />
-              <span className="flex-1 text-sm">{t(label, label)}</span>
+              <Icon size={sub ? 15 : 18} />
+              <span className={`flex-1 ${sub ? 'text-xs' : 'text-sm'}`}>{t(label, label)}</span>
             </NavLink>
           );
         })}

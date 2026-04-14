@@ -100,7 +100,7 @@ function DetailModal({ coordinator, period, onClose }) {
 
 export default function FixReport() {
   const [period, setPeriod] = useState('today');
-  const [detail, setDetail] = useState(null); // coordinator name
+  const [detail, setDetail] = useState(null); // { coordinator, period }
 
   const { data, isLoading } = useQuery({
     queryKey: ['fix-report', period],
@@ -187,13 +187,19 @@ export default function FixReport() {
                   <td className="px-5 py-4 font-bold text-gray-900 text-sm">{r.coordinator || '—'}</td>
                   <td className="px-5 py-4 text-gray-600 font-semibold">{r.total}</td>
                   <td className="px-5 py-4">
-                    <span className={`inline-flex items-center px-2.5 py-1 rounded-xl text-xs font-black border ${
-                      r.fixed_today > 0 ? 'bg-blue-100 text-blue-700 border-blue-200' : 'text-gray-400 border-gray-200 bg-gray-50'
-                    }`}>{r.fixed_today}</span>
+                    <button
+                      onClick={() => r.fixed_today > 0 && setDetail({ coordinator: r.coordinator, period: 'today' })}
+                      disabled={r.fixed_today === 0}
+                      className={`inline-flex items-center px-2.5 py-1 rounded-xl text-xs font-black border transition-all ${
+                        r.fixed_today > 0
+                          ? 'bg-blue-100 text-blue-700 border-blue-200 hover:bg-blue-200 cursor-pointer'
+                          : 'bg-gray-50 text-gray-400 border-gray-200 cursor-default'
+                      }`}
+                    >{r.fixed_today}</button>
                   </td>
                   <td className="px-5 py-4">
                     <button
-                      onClick={() => r.fixed > 0 && setDetail(r.coordinator)}
+                      onClick={() => r.fixed > 0 && setDetail({ coordinator: r.coordinator, period })}
                       disabled={r.fixed === 0}
                       className={`inline-flex items-center px-3 py-1 rounded-xl text-xs font-black border transition-all ${
                         r.fixed > 0
@@ -219,7 +225,7 @@ export default function FixReport() {
         </table>
       </div>
 
-      {detail && <DetailModal coordinator={detail} period={period} onClose={() => setDetail(null)} />}
+      {detail && <DetailModal coordinator={detail.coordinator} period={detail.period} onClose={() => setDetail(null)} />}
     </div>
   );
 }
