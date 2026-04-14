@@ -997,10 +997,22 @@ router.get('/remarks-categories', (req, res) => {
 // ─── GET /api/reports/code-problems ──────────────────────────────────────────
 // Validates groups against business rules for main & side sessions
 router.get('/code-problems', (req, res) => {
-  const { department, employee, show_resolved } = req.query;
+  const { department, employee, show_resolved, coordinator_user_id } = req.query;
   const showResolved = show_resolved === 'true';
   const deptFilter = buildDeptFilter('b', department);
-  const empFilter  = buildCoordFilter('b', employee);
+
+  // Smart coordinator filter: if coordinator_user_id provided, match by name parts
+  let empFilter = buildCoordFilter('b', employee);
+  if (coordinator_user_id && !employee) {
+    const userRow = db.prepare('SELECT full_name FROM users WHERE id = ?').get(Number(coordinator_user_id));
+    if (userRow?.full_name) {
+      const parts = userRow.full_name.trim().split(/\s+/).filter(w => w.length > 2);
+      if (parts.length > 0) {
+        const conditions = parts.map(p => `b.coordinators LIKE '%${p.replace(/'/g, "''")}%'`).join(' OR ');
+        empFilter = ` AND (${conditions})`;
+      }
+    }
+  }
 
   // ── helpers ──
   const MONTHS  = { Jan:1,Feb:2,Mar:3,Apr:4,May:5,Jun:6,Jul:7,Aug:8,Sep:9,Oct:10,Nov:11,Dec:12 };

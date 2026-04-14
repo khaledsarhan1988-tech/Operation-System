@@ -39,9 +39,9 @@ export default function AgentDashboard() {
   });
 
   const { data: codeProblems } = useQuery({
-    queryKey: ['agent-code-problems', user?.full_name],
-    queryFn: () => api.get('/reports/code-problems', { params: { employee: user?.full_name } }).then(r => r.data),
-    enabled: !!user?.full_name,
+    queryKey: ['agent-code-problems', user?.id],
+    queryFn: () => api.get('/reports/code-problems', { params: { coordinator_user_id: user?.id } }).then(r => r.data),
+    enabled: !!user?.id,
     staleTime: 5 * 60 * 1000,
   });
 
