@@ -26,6 +26,14 @@ function buildDeptFilter(table, department) {
   ))`;
 }
 
+// Strict dept filter — checks ONLY dept_type, no coordinator fallback
+// Used for leader role auto-filtering to prevent cross-department leakage
+function buildStrictDeptFilter(table, department) {
+  if (!department || department === 'All') return '';
+  const safe = department.replace(/'/g, "''");
+  return ` AND ${table}.dept_type = '${safe}'`;
+}
+
 function buildCoordFilter(table, value) {
   if (!value) return '';
   const safe = value.replace(/'/g, "''");
@@ -1000,11 +1008,16 @@ router.get('/code-problems', (req, res) => {
   const { department, employee, show_resolved } = req.query;
   const showResolved = show_resolved === 'true';
 
-  // Dept filter: for leader auto-apply their own department; for admin use query param
-  const effectiveDept = (req.user.role === 'leader' && (!department || department === 'All'))
-    ? req.user.department
-    : department;
-  const deptFilter = buildDeptFilter('b', effectiveDept);
+  // Dept filter:
+  // - leader: strict dept_type-only filter (no OR EXISTS) to prevent cross-dept leakage
+  // - admin:  full buildDeptFilter (includes coordinator-based fallback)
+  let deptFilter;
+  if (req.user.role === 'leader') {
+    const dept = (!department || department === 'All') ? req.user.department : department;
+    deptFilter = buildStrictDeptFilter('b', dept);
+  } else {
+    deptFilter = buildDeptFilter('b', department);
+  }
 
   // If agent: force filter to their own groups using their name from DB
   let empFilter;

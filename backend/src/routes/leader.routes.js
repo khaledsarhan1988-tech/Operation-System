@@ -8,14 +8,6 @@ const router = express.Router();
 router.use(authenticate, requireRole('leader'));
 
 // ─── HELPER ───────────────────────────────────────────────────────────────────
-// Returns the leader's department filter clause for batches (alias = 'b')
-function leaderDeptClause(user) {
-  const dept = user?.department;
-  if (!dept || dept === 'All') return { clause: '', param: null };
-  const safe = dept.replace(/'/g, "''");
-  return { clause: ` AND b.dept_type = '${safe}'`, param: dept };
-}
-
 // Returns a subquery filter to restrict remarks to agents in the leader's department
 function leaderDeptRemarksClause(user) {
   const dept = user?.department;
@@ -61,7 +53,6 @@ router.get('/team', (req, res) => {
 // GET /api/leader/absent-report?group=&status=&from=&to=&coordinator=&page=&limit=
 router.get('/absent-report', (req, res) => {
   const { group, status, from, to, coordinator, page = 1, limit = 50 } = req.query;
-  const { clause: deptClause } = leaderDeptClause(req.user);
   const conditions = [];
   const params = [];
 
@@ -93,7 +84,6 @@ router.get('/absent-report', (req, res) => {
 // GET /api/leader/groups?coordinator=
 router.get('/groups', (req, res) => {
   const { coordinator } = req.query;
-  const { clause: deptClause } = leaderDeptClause(req.user);
   const conditions = ["b.status = 'نشطة'"];
   const params = [];
   if (coordinator) { conditions.push('b.coordinators LIKE ?'); params.push(`%${coordinator}%`); }
