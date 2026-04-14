@@ -191,14 +191,14 @@ export default function LeaderCodeProblems() {
       <table className="w-full text-sm text-right" style={{ minWidth: '1000px' }}>
         <thead>
           <tr className="bg-gray-50 border-b border-gray-100">
-            {['اسم المجموعة', labelFirst, 'نوع المشكلة', 'التفاصيل', 'القسم', 'المنسق', 'الحالة'].map(h => (
+            {['اسم المجموعة', labelFirst, 'نوع المشكلة', 'التفاصيل', 'القسم', 'المنسق', 'الحالة', 'ملحوظات'].map(h => (
               <th key={h} className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
             ))}
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-50">
-          {isLoading || statusLoading ? <SkeletonRows cols={7} rows={5} /> :
-           !rows.length ? <EmptyRow cols={7} msg="✓ لا توجد مشاكل" /> :
+          {isLoading || statusLoading ? <SkeletonRows cols={8} rows={5} /> :
+           !rows.length ? <EmptyRow cols={8} msg="✓ لا توجد مشاكل" /> :
            rows.map((p, i) => {
              const rowBg =
                getStatusKey(p) === 'exception'   ? 'bg-slate-50/50'   :
@@ -223,6 +223,7 @@ export default function LeaderCodeProblems() {
                  <td className="px-4 py-3 whitespace-nowrap"><DeptBadge dept={p.dept_type} /></td>
                  <td className="px-4 py-3 text-gray-700 whitespace-nowrap text-xs">{p.coordinators ?? '—'}</td>
                  <td className="px-4 py-3 whitespace-nowrap"><StatusBadge p={p} /></td>
+                 <td className="px-4 py-3 text-xs text-gray-600" style={{ maxWidth: '220px', wordBreak: 'break-word' }}>{p._status?.note || '—'}</td>
                </tr>
              );
            })}

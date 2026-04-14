@@ -186,14 +186,14 @@ export default function AgentCodeProblems() {
       <table className="w-full text-sm text-right" style={{ minWidth: '900px' }}>
         <thead>
           <tr className="bg-gray-50 border-b border-gray-100">
-            {['اسم المجموعة', labelFirst, 'نوع المشكلة', 'التفاصيل', 'القسم', 'الحالة'].map(h => (
+            {['اسم المجموعة', labelFirst, 'نوع المشكلة', 'التفاصيل', 'القسم', 'الحالة', 'ملحوظات'].map(h => (
               <th key={h} className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
             ))}
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-50">
-          {isLoading || statusLoading ? <SkeletonRows cols={6} rows={5} /> :
-           !rows.length ? <EmptyRow cols={6} msg="✓ لا توجد مشاكل" /> :
+          {isLoading || statusLoading ? <SkeletonRows cols={7} rows={5} /> :
+           !rows.length ? <EmptyRow cols={7} msg="✓ لا توجد مشاكل" /> :
            rows.map((p, i) => {
              const rowBg =
                getStatusKey(p) === 'exception'   ? 'bg-slate-50/50'   :
@@ -217,6 +217,7 @@ export default function AgentCodeProblems() {
                  </td>
                  <td className="px-4 py-3 whitespace-nowrap"><DeptBadge dept={p.dept_type} /></td>
                  <td className="px-4 py-3 whitespace-nowrap"><StatusBadge p={p} /></td>
+                 <td className="px-4 py-3 text-xs text-gray-600" style={{ maxWidth: '220px', wordBreak: 'break-word' }}>{p._status?.note || '—'}</td>
                </tr>
              );
            })}
