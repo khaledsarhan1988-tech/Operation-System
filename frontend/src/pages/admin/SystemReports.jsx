@@ -1361,7 +1361,7 @@ function CodeProblemsModal({ params, onClose }) {
   const applyFilters = (rows) => rows.filter(p => {
     const sk = getStatusKey(p);
     // Hide resolved (wont_repeat / exception) by default unless explicitly selected or it's a repeated violation
-    if (!fStatus && !p.repeated_violation && (sk === 'wont_repeat' || sk === 'exception' || sk === 'resolved')) return false;
+    if (!fStatus && !search && !p.repeated_violation && (sk === 'wont_repeat' || sk === 'exception' || sk === 'resolved')) return false;
     if (search    && !p.group_name?.toLowerCase().includes(search.toLowerCase())) return false;
     if (fProbType && p.problem_type !== fProbType)  return false;
     if (fDept     && p.dept_type    !== fDept)       return false;
