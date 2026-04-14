@@ -7,13 +7,41 @@ const { requireRole } = require('../middleware/roles');
 const router = express.Router();
 router.use(authenticate, requireRole('leader'));
 
+// ─── HELPER ───────────────────────────────────────────────────────────────────
+// Returns the leader's department filter clause for batches (alias = 'b')
+function leaderDeptClause(user) {
+  const dept = user?.department;
+  if (!dept || dept === 'All') return { clause: '', param: null };
+  const safe = dept.replace(/'/g, "''");
+  return { clause: ` AND b.dept_type = '${safe}'`, param: dept };
+}
+
+// Returns a subquery filter to restrict remarks to agents in the leader's department
+function leaderDeptRemarksClause(user) {
+  const dept = user?.department;
+  if (!dept || dept === 'All') return '';
+  const safe = dept.replace(/'/g, "''");
+  return ` AND r.assigned_to IN (SELECT full_name FROM users WHERE role='agent' AND department='${safe}')`;
+}
+
+function leaderDeptRemarksClauseFlat(user) {
+  const dept = user?.department;
+  if (!dept || dept === 'All') return '';
+  const safe = dept.replace(/'/g, "''");
+  return ` AND assigned_to IN (SELECT full_name FROM users WHERE role='agent' AND department='${safe}')`;
+}
+
+// ─── ROUTES ───────────────────────────────────────────────────────────────────
+
 // GET /api/leader/team?coordinator=
 router.get('/team', (req, res) => {
   const { coordinator } = req.query;
+  const deptClause = leaderDeptRemarksClause(req.user);
   const conditions = [];
   const params = [];
   if (coordinator) { conditions.push('r.assigned_to LIKE ?'); params.push(`%${coordinator}%`); }
-  const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+  const extraWhere = conditions.length ? ' AND ' + conditions.join(' AND ') : '';
+  const where = `WHERE 1=1${deptClause}${extraWhere}`;
   const agents = db.prepare(`
     SELECT
       r.assigned_to AS name,
@@ -33,6 +61,7 @@ router.get('/team', (req, res) => {
 // GET /api/leader/absent-report?group=&status=&from=&to=&coordinator=&page=&limit=
 router.get('/absent-report', (req, res) => {
   const { group, status, from, to, coordinator, page = 1, limit = 50 } = req.query;
+  const { clause: deptClause } = leaderDeptClause(req.user);
   const conditions = [];
   const params = [];
 
@@ -43,6 +72,12 @@ router.get('/absent-report', (req, res) => {
   if (coordinator) {
     conditions.push(`EXISTS (SELECT 1 FROM batches b WHERE b.group_name = absent_students.group_name AND b.coordinators LIKE ?)`);
     params.push(`%${coordinator}%`);
+  }
+  // Dept filter via subquery
+  const dept = req.user?.department;
+  if (dept && dept !== 'All') {
+    conditions.push(`EXISTS (SELECT 1 FROM batches b WHERE b.group_name = absent_students.group_name AND b.dept_type = ?)`);
+    params.push(dept);
   }
 
   const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
@@ -58,9 +93,12 @@ router.get('/absent-report', (req, res) => {
 // GET /api/leader/groups?coordinator=
 router.get('/groups', (req, res) => {
   const { coordinator } = req.query;
+  const { clause: deptClause } = leaderDeptClause(req.user);
   const conditions = ["b.status = 'نشطة'"];
   const params = [];
   if (coordinator) { conditions.push('b.coordinators LIKE ?'); params.push(`%${coordinator}%`); }
+  const dept = req.user?.department;
+  if (dept && dept !== 'All') { conditions.push('b.dept_type = ?'); params.push(dept); }
   const where = 'WHERE ' + conditions.join(' AND ');
   const groups = db.prepare(`
     SELECT b.*,
@@ -75,12 +113,14 @@ router.get('/groups', (req, res) => {
 // GET /api/leader/performance?from=&to=&coordinator=
 router.get('/performance', (req, res) => {
   const { from, to, coordinator } = req.query;
+  const deptClause = leaderDeptRemarksClauseFlat(req.user);
   const conditions = [];
   const params = [];
   if (from)        { conditions.push('added_at >= ?'); params.push(from); }
   if (to)          { conditions.push('added_at <= ?'); params.push(to); }
   if (coordinator) { conditions.push('assigned_to LIKE ?'); params.push(`%${coordinator}%`); }
-  const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+  const extraWhere = conditions.length ? ' AND ' + conditions.join(' AND ') : '';
+  const where = `WHERE 1=1${deptClause}${extraWhere}`;
 
   const data = db.prepare(`
     SELECT
@@ -115,6 +155,7 @@ router.post('/assign', (req, res) => {
 // GET /api/leader/side-sessions-summary?date=
 router.get('/side-sessions-summary', (req, res) => {
   const date = req.query.date || new Date().toISOString().slice(0, 10);
+  const { clause: deptClause } = leaderDeptClause(req.user);
   const data = db.prepare(`
     SELECT
       l.group_name,
@@ -128,9 +169,10 @@ router.get('/side-sessions-summary', (req, res) => {
       ssc.checked_at,
       u.full_name AS checked_by_name
     FROM lectures l
+    LEFT JOIN batches b ON b.group_name = l.group_name
     LEFT JOIN side_session_checks ssc ON ssc.lecture_id = l.id AND ssc.session_date = ?
     LEFT JOIN users u ON u.id = ssc.checked_by
-    WHERE l.date = ? AND l.session_type = 'side'
+    WHERE l.date = ? AND l.session_type = 'side'${deptClause}
     ORDER BY l.group_name, l.time
   `).all(date, date);
   return res.json(data);

@@ -999,7 +999,12 @@ router.get('/remarks-categories', (req, res) => {
 router.get('/code-problems', (req, res) => {
   const { department, employee, show_resolved } = req.query;
   const showResolved = show_resolved === 'true';
-  const deptFilter = buildDeptFilter('b', department);
+
+  // Dept filter: for leader auto-apply their own department; for admin use query param
+  const effectiveDept = (req.user.role === 'leader' && (!department || department === 'All'))
+    ? req.user.department
+    : department;
+  const deptFilter = buildDeptFilter('b', effectiveDept);
 
   // If agent: force filter to their own groups using their name from DB
   let empFilter;
