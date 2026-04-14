@@ -61,6 +61,37 @@ initDb().then(db => {
     console.error('code_problem_status migration error:', e.message);
   }
 
+  // 2. Add 'resolved' to code_problem_status CHECK constraint
+  try {
+    const res2 = db._raw.exec(`SELECT sql FROM sqlite_master WHERE type='table' AND name='code_problem_status'`);
+    const tableSql2 = res2[0]?.values[0][0] || '';
+    if (!tableSql2.includes("'resolved'")) {
+      db._raw.run(`CREATE TABLE code_problem_status_new2 (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_name       TEXT NOT NULL,
+        problem_type     TEXT NOT NULL,
+        session_type     TEXT NOT NULL DEFAULT 'main',
+        status           TEXT NOT NULL DEFAULT 'new' CHECK(status IN ('new','reported','in_progress','exception','wont_repeat','resolved')),
+        note             TEXT,
+        actual_at_status INTEGER,
+        updated_by       INTEGER,
+        updated_at       TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        UNIQUE(group_name, problem_type, session_type)
+      )`);
+      db._raw.run(`INSERT OR IGNORE INTO code_problem_status_new2
+        SELECT id, group_name, problem_type, session_type, status, note, actual_at_status, updated_by, updated_at
+        FROM code_problem_status`);
+      db._raw.run(`DROP TABLE code_problem_status`);
+      db._raw.run(`ALTER TABLE code_problem_status_new2 RENAME TO code_problem_status`);
+      db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cps_group  ON code_problem_status(group_name)`);
+      db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cps_status ON code_problem_status(status)`);
+      saveNow();
+      console.log("✅ Migration: code_problem_status added 'resolved' status");
+    }
+  } catch (e) {
+    console.error('code_problem_status resolved migration error:', e.message);
+  }
+
   const app = express();
 
   app.use(cors({
