@@ -1311,7 +1311,7 @@ function CodeProblemsModal({ params, onClose }) {
   const [saveError, setSaveError] = useState(null);
 
   // ── data
-  const showResolved = fStatus === 'wont_repeat' || fStatus === 'exception';
+  const showResolved = fStatus === 'wont_repeat' || fStatus === 'exception' || fStatus === 'resolved';
   const { data, isLoading } = useQuery({
     queryKey: ['code-problems-modal', params, showResolved],
     queryFn:  () => api.get('/reports/code-problems', { params: { ...params, show_resolved: showResolved || undefined } }).then(r => r.data),
@@ -1347,20 +1347,21 @@ function CodeProblemsModal({ params, onClose }) {
   const coords    = [...new Set(allEnriched.map(p => p.coordinators).filter(Boolean))].sort();
 
   // ── status counts: active from allEnriched + resolved from statusData
-  const statusCounts = { new: 0, reported: 0, in_progress: 0, exception: 0, wont_repeat: 0 };
+  const statusCounts = { new: 0, reported: 0, in_progress: 0, exception: 0, wont_repeat: 0, resolved: 0 };
   allEnriched.forEach(p => { if (statusCounts[getStatusKey(p)] !== undefined) statusCounts[getStatusKey(p)]++; });
-  // Count wont_repeat/exception from statusData (they're excluded from allEnriched by default)
+  // Count wont_repeat/exception/resolved from statusData (they're excluded from allEnriched by default)
   if (!showResolved && statusData) {
     statusCounts.wont_repeat = statusData.filter(s => s.status === 'wont_repeat').length;
     statusCounts.exception   = statusData.filter(s => s.status === 'exception').length;
+    statusCounts.resolved    = statusData.filter(s => s.status === 'resolved').length;
   }
-  const totalAll = allEnriched.length + (showResolved ? 0 : statusCounts.wont_repeat + statusCounts.exception);
+  const totalAll = allEnriched.length + (showResolved ? 0 : statusCounts.wont_repeat + statusCounts.exception + statusCounts.resolved);
 
   // ── filter logic
   const applyFilters = (rows) => rows.filter(p => {
     const sk = getStatusKey(p);
     // Hide resolved (wont_repeat / exception) by default unless explicitly selected or it's a repeated violation
-    if (!fStatus && !p.repeated_violation && (sk === 'wont_repeat' || sk === 'exception')) return false;
+    if (!fStatus && !p.repeated_violation && (sk === 'wont_repeat' || sk === 'exception' || sk === 'resolved')) return false;
     if (search    && !p.group_name?.toLowerCase().includes(search.toLowerCase())) return false;
     if (fProbType && p.problem_type !== fProbType)  return false;
     if (fDept     && p.dept_type    !== fDept)       return false;
