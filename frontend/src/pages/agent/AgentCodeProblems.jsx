@@ -79,13 +79,10 @@ export default function AgentCodeProblems() {
   const [saving,    setSaving]    = useState(false);
   const [saveError, setSaveError] = useState(null);
 
-  // ── data
-  const showResolved = fStatus === 'wont_repeat' || fStatus === 'exception' || fStatus === 'resolved';
+  // ── data — always fetch show_resolved:true so counts are accurate for this agent's groups
   const { data, isLoading } = useQuery({
-    queryKey: ['agent-code-problems', user?.id, showResolved],
-    queryFn: () => api.get('/reports/code-problems', {
-      params: showResolved ? { show_resolved: true } : {},
-    }).then(r => r.data),
+    queryKey: ['agent-code-problems', user?.id],
+    queryFn: () => api.get('/reports/code-problems', { params: { show_resolved: true } }).then(r => r.data),
     enabled: !!user?.id,
     staleTime: 5 * 60 * 1000,
   });
@@ -112,15 +109,10 @@ export default function AgentCodeProblems() {
   // ── prob types for filter dropdown
   const probTypes = [...new Set(allEnriched.map(p => p.problem_type).filter(Boolean))].sort();
 
-  // ── status counts
+  // ── status counts — counted from allEnriched (already filtered to this agent's groups)
   const statusCounts = { new: 0, reported: 0, in_progress: 0, exception: 0, wont_repeat: 0, resolved: 0 };
   allEnriched.forEach(p => { const k = getStatusKey(p); if (k in statusCounts) statusCounts[k]++; });
-  if (!showResolved && statusData) {
-    statusCounts.wont_repeat = statusData.filter(s => s.status === 'wont_repeat').length;
-    statusCounts.exception   = statusData.filter(s => s.status === 'exception').length;
-    statusCounts.resolved    = statusData.filter(s => s.status === 'resolved').length;
-  }
-  const totalAll = allEnriched.length + (showResolved ? 0 : statusCounts.wont_repeat + statusCounts.exception + statusCounts.resolved);
+  const totalAll = allEnriched.length;
 
   // ── filter logic
   const applyFilters = (rows) => rows.filter(p => {
