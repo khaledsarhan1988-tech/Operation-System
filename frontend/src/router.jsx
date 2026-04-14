@@ -30,6 +30,9 @@ import EducationReports from './pages/admin/EducationReports';
 import QualityReports from './pages/admin/QualityReports';
 import TeamPage from './pages/admin/TeamPage';
 
+// Shared pages
+import FixReport from './pages/shared/FixReport';
+
 const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
   { path: '/', element: <Navigate to="/login" replace /> },
@@ -67,6 +70,7 @@ const router = createBrowserRouter([
       { path: 'reports/customer-services',    element: <SystemReports /> },
       { path: 'reports/education',            element: <EducationReports /> },
       { path: 'reports/quality',              element: <QualityReports /> },
+      { path: 'reports/fix-report',           element: <FixReport /> },
     ],
   },
 
@@ -84,6 +88,7 @@ const router = createBrowserRouter([
       { path: 'reports/customer-services',    element: <SystemReports /> },
       { path: 'reports/education',            element: <EducationReports /> },
       { path: 'reports/quality',              element: <QualityReports /> },
+      { path: 'reports/fix-report',           element: <FixReport /> },
     ],
   },
 

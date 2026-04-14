@@ -1638,4 +1638,69 @@ router.get('/group-lectures', (req, res) => {
   }
 });
 
+// ─── GET /api/reports/fix-report ─────────────────────────────────────────────
+router.get('/fix-report', (req, res) => {
+  const { period } = req.query;
+  let deptClause = '';
+  if (req.user.role === 'leader') {
+    const dept = req.user.department;
+    if (dept && dept !== 'All') { const s = dept.replace(/'/g,"''"); deptClause = ` AND b.dept_type='${s}'`; }
+  }
+  let periodFixed = '';
+  if (period === 'today') periodFixed = ` AND date(cps.updated_at)=date('now','+2 hours')`;
+  else if (period === 'week')  periodFixed = ` AND cps.updated_at>=datetime('now','-6 days','+2 hours')`;
+  else if (period === 'month') periodFixed = ` AND cps.updated_at>=datetime('now','-29 days','+2 hours')`;
+  try {
+    const rows = db.prepare(`
+      SELECT
+        b.coordinators AS coordinator,
+        COUNT(*) AS total,
+        SUM(CASE WHEN cps.status IN ('wont_repeat','exception','resolved') THEN 1 ELSE 0 END) AS fixed,
+        SUM(CASE WHEN cps.status IN ('wont_repeat','exception','resolved')
+              AND date(cps.updated_at)=date('now','+2 hours') THEN 1 ELSE 0 END) AS fixed_today
+      FROM code_problem_status cps
+      JOIN batches b ON b.group_name=cps.group_name
+      WHERE 1=1${deptClause}
+      GROUP BY b.coordinators
+      ORDER BY fixed DESC, total DESC
+    `).all();
+    return res.json(rows);
+  } catch (err) {
+    console.error('[reports] fix-report:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GET /api/reports/fix-report/detail ──────────────────────────────────────
+router.get('/fix-report/detail', (req, res) => {
+  const { coordinator, period } = req.query;
+  if (!coordinator) return res.status(400).json({ error: 'coordinator required' });
+  let deptClause = '';
+  if (req.user.role === 'leader') {
+    const dept = req.user.department;
+    if (dept && dept !== 'All') { const s = dept.replace(/'/g,"''"); deptClause = ` AND b.dept_type='${s}'`; }
+  }
+  let periodClause = '';
+  if (period === 'today') periodClause = ` AND date(cps.updated_at)=date('now','+2 hours')`;
+  else if (period === 'week')  periodClause = ` AND cps.updated_at>=datetime('now','-6 days','+2 hours')`;
+  else if (period === 'month') periodClause = ` AND cps.updated_at>=datetime('now','-29 days','+2 hours')`;
+  const safe = coordinator.replace(/'/g,"''");
+  try {
+    const rows = db.prepare(`
+      SELECT cps.group_name, cps.problem_type, cps.session_type, cps.status, cps.note,
+             cps.updated_at, b.dept_type, b.coordinators, u.full_name AS updated_by_name
+      FROM code_problem_status cps
+      JOIN batches b ON b.group_name=cps.group_name
+      LEFT JOIN users u ON u.id=cps.updated_by
+      WHERE cps.status IN ('wont_repeat','exception','resolved')
+        AND b.coordinators LIKE '%${safe}%'${deptClause}${periodClause}
+      ORDER BY cps.updated_at DESC
+    `).all();
+    return res.json(rows);
+  } catch (err) {
+    console.error('[reports] fix-report/detail:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

@@ -23,8 +23,10 @@ const LEADER_LINKS = [
   { to: '/leader/absent',       label: 'nav.absentReport',     icon: UserX },
   { to: '/leader/groups',       label: 'nav.groupCoverage',    icon: Globe },
   { to: '/leader/tasks',         label: 'nav.taskDistribution', icon: ClipboardList },
-  { to: '/leader/code-problems', label: 'أكواد بها مشكلة',     icon: AlertTriangle },
-  { to: '/leader/performance',   label: 'nav.performance',     icon: BarChart2 },
+  { to: '/leader/code-problems',        label: 'أكواد بها مشكلة', icon: AlertTriangle },
+  { to: '/leader/performance',          label: 'nav.performance',  icon: BarChart2 },
+  { type: 'section', label: 'التقارير' },
+  { to: '/leader/reports/fix-report',   label: 'تقارير الإصلاح',  icon: FileText },
 ];
 
 
@@ -32,6 +34,7 @@ const REPORT_LINKS = [
   { to: '/admin/reports/customer-services', label: 'تقارير خدمة العملاء',     icon: Headphones,    management: 'Customer Services' },
   { to: '/admin/reports/education',         label: 'تقارير الإدارة التعليمية', icon: GraduationCap, management: 'Education' },
   { to: '/admin/reports/quality',           label: 'تقارير الجودة',            icon: ShieldCheck,   management: 'Quality' },
+  { to: '/admin/reports/fix-report',        label: 'تقارير الإصلاح',           icon: FileText,      management: 'All' },
 ];
 
 const managementMap = {
@@ -53,7 +56,7 @@ function getAdminLinks(user) {
   const mgmt = user?.management;
   const reports = mgmt === 'All'
     ? REPORT_LINKS
-    : REPORT_LINKS.filter(r => r.management === mgmt);
+    : REPORT_LINKS.filter(r => r.management === mgmt || r.management === 'All');
   return [...base, ...reports];
 }
 
