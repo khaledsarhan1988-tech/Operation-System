@@ -25,12 +25,6 @@ const LEADER_LINKS = [
   { to: '/leader/tasks',         label: 'nav.taskDistribution', icon: ClipboardList },
   { to: '/leader/code-problems', label: 'أكواد بها مشكلة',     icon: AlertTriangle },
   { to: '/leader/performance',   label: 'nav.performance',     icon: BarChart2 },
-  { to: '/leader/users',        label: 'nav.users',            icon: UserCog },
-  { to: '/leader/upload',       label: 'nav.excelUpload',      icon: Upload },
-  { type: 'section', label: 'التقارير' },
-  { to: '/leader/reports/customer-services', label: 'تقارير خدمة العملاء',    icon: Headphones,     exact: true },
-  { to: '/leader/reports/education',         label: 'تقارير الإدارة التعليمية', icon: GraduationCap,  exact: true },
-  { to: '/leader/reports/quality',           label: 'تقارير الجودة',           icon: ShieldCheck,    exact: true },
 ];
 
 const ADMIN_LINKS = [
