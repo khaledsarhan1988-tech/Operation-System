@@ -11,9 +11,11 @@ import ClientSearch from './pages/agent/ClientSearch';
 import AbsentFollowUp from './pages/agent/AbsentFollowUp';
 import TodaySchedule from './pages/agent/TodaySchedule';
 import SideSessionCheck from './pages/agent/SideSessionCheck';
+import AgentCodeProblems from './pages/agent/AgentCodeProblems';
 
 // Leader pages
 import LeaderDashboard from './pages/leader/LeaderDashboard';
+import LeaderCodeProblems from './pages/leader/LeaderCodeProblems';
 import TeamOverview from './pages/leader/TeamOverview';
 import AbsentReport from './pages/leader/AbsentReport';
 import GroupCoverage from './pages/leader/GroupCoverage';
@@ -44,6 +46,7 @@ const router = createBrowserRouter([
       { path: 'absent',             element: <AbsentFollowUp /> },
       { path: 'schedule',           element: <TodaySchedule /> },
       { path: 'side-session-check', element: <SideSessionCheck /> },
+      { path: 'code-problems',      element: <AgentCodeProblems /> },
     ],
   },
 
@@ -60,6 +63,7 @@ const router = createBrowserRouter([
       { path: 'tasks',                        element: <TaskDistribution /> },
       { path: 'users',                        element: <UserManagement /> },
       { path: 'upload',                       element: <ExcelUpload /> },
+      { path: 'code-problems',                element: <LeaderCodeProblems /> },
       { path: 'reports/customer-services',    element: <SystemReports /> },
       { path: 'reports/education',            element: <EducationReports /> },
       { path: 'reports/quality',              element: <QualityReports /> },
