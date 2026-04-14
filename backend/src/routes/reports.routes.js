@@ -581,11 +581,25 @@ router.get('/remarks-list', (req, res) => {
   const statusFilter   = status_filter   ? ` AND status = '${status_filter}'` : '';
   const searchFilter   = search          ? ` AND (client_name LIKE '%${escapeLike(search)}%' OR details LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
   const deptFilter     = activeDept
-    ? ` AND EXISTS (
-          SELECT 1 FROM clients c
-          INNER JOIN batches b ON c.group_name = b.group_name
-          WHERE c.phone = remarks.client_phone
-            AND b.dept_type = '${activeDept}'
+    ? ` AND (
+          EXISTS (
+            SELECT 1 FROM clients c
+            INNER JOIN batches b ON c.group_name = b.group_name
+            WHERE c.phone = remarks.client_phone
+              AND b.dept_type = '${activeDept}'
+          )
+          OR (
+            NOT EXISTS (
+              SELECT 1 FROM clients c
+              INNER JOIN batches b ON c.group_name = b.group_name
+              WHERE c.phone = remarks.client_phone
+            )
+            AND EXISTS (
+              SELECT 1 FROM team_members tm
+              WHERE LOWER(TRIM(tm.name)) LIKE LOWER('%' || TRIM(remarks.assigned_to) || '%')
+                AND LOWER(tm.section) = LOWER('${activeDept}')
+            )
+          )
         )`
     : '';
 

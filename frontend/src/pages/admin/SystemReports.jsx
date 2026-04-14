@@ -1579,6 +1579,18 @@ function CodeProblemsModal({ params, onClose }) {
               <option value="main">أساسية فقط</option>
               <option value="side">جانبية فقط</option>
             </select>
+            <select
+              value={fStatus}
+              onChange={e => setFStatus(e.target.value)}
+              className={`${selectCls} ${fStatus ? 'ring-2 ring-[#1e3a5f]/30 border-[#1e3a5f] font-bold' : ''}`}
+            >
+              <option value="">كل الحالات</option>
+              {Object.entries(STATUS_CFG).map(([key, cfg]) => (
+                <option key={key} value={key}>
+                  {cfg.emoji} {cfg.label} ({statusCounts[key]})
+                </option>
+              ))}
+            </select>
             <select value={fProbType} onChange={e => setFProbType(e.target.value)} className={selectCls}>
               <option value="">كل أنواع المشاكل</option>
               {probTypes.map(t => <option key={t} value={t}>{t}</option>)}
