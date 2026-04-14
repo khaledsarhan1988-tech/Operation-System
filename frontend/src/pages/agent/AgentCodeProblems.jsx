@@ -34,9 +34,7 @@ export default function AgentCodeProblems() {
 
   const { data: codeProblems, isLoading } = useQuery({
     queryKey: ['agent-code-problems', user?.id],
-    queryFn: () => api.get('/reports/code-problems', {
-      params: { coordinator_user_id: user?.id },
-    }).then(r => r.data),
+    queryFn: () => api.get('/reports/code-problems').then(r => r.data),
     enabled: !!user?.id,
     staleTime: 5 * 60 * 1000,
   });

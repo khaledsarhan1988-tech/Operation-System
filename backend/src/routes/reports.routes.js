@@ -5,7 +5,7 @@ const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 
 const router = express.Router();
-router.use(authenticate, requireRole('leader'));
+router.use(authenticate, requireRole('agent'));
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 
@@ -997,14 +997,14 @@ router.get('/remarks-categories', (req, res) => {
 // ─── GET /api/reports/code-problems ──────────────────────────────────────────
 // Validates groups against business rules for main & side sessions
 router.get('/code-problems', (req, res) => {
-  const { department, employee, show_resolved, coordinator_user_id } = req.query;
+  const { department, employee, show_resolved } = req.query;
   const showResolved = show_resolved === 'true';
   const deptFilter = buildDeptFilter('b', department);
 
-  // Smart coordinator filter: if coordinator_user_id provided, match by full_name parts + username
-  let empFilter = buildCoordFilter('b', employee);
-  if (coordinator_user_id && !employee) {
-    const userRow = db.prepare('SELECT full_name, username FROM users WHERE id = ?').get(Number(coordinator_user_id));
+  // If agent: force filter to their own groups using their name from DB
+  let empFilter;
+  if (req.user.role === 'agent') {
+    const userRow = db.prepare('SELECT full_name, username FROM users WHERE id = ?').get(req.user.id);
     if (userRow) {
       const nameWords = (userRow.full_name || '').trim().split(/\s+/).filter(w => w.length > 1);
       const uname     = (userRow.username || '').trim();
@@ -1012,8 +1012,14 @@ router.get('/code-problems', (req, res) => {
       if (allTerms.length > 0) {
         const conditions = allTerms.map(p => `b.coordinators LIKE '%${p.replace(/'/g, "''")}%'`).join(' OR ');
         empFilter = ` AND (${conditions})`;
+      } else {
+        empFilter = ' AND 1=0'; // no match terms → show nothing
       }
+    } else {
+      empFilter = ' AND 1=0';
     }
+  } else {
+    empFilter = buildCoordFilter('b', employee);
   }
 
   // ── helpers ──
