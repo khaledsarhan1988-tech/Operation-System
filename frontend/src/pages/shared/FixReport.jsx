@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { CheckCircle, AlertCircle, X, FileText } from 'lucide-react';
+import { CheckCircle, AlertCircle, X, FileText, XCircle } from 'lucide-react';
 import api from '../../api/axios';
 
 const STATUS_CFG = {
@@ -16,10 +16,12 @@ const PERIODS = [
   { value: 'all',   label: 'كل الوقت' },
 ];
 
-function DetailModal({ coordinator, period, onClose }) {
+function DetailModal({ coordinator, period, dateFrom, dateTo, onClose }) {
   const { data, isLoading } = useQuery({
-    queryKey: ['fix-detail', coordinator, period],
-    queryFn: () => api.get('/reports/fix-report/detail', { params: { coordinator, period } }).then(r => r.data),
+    queryKey: ['fix-detail', coordinator, period, dateFrom, dateTo],
+    queryFn: () => api.get('/reports/fix-report/detail', {
+      params: { coordinator, period, date_from: dateFrom || undefined, date_to: dateTo || undefined },
+    }).then(r => r.data),
   });
 
   return (
@@ -100,11 +102,21 @@ function DetailModal({ coordinator, period, onClose }) {
 
 export default function FixReport() {
   const [period, setPeriod] = useState('today');
-  const [detail, setDetail] = useState(null); // { coordinator, period }
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [detail, setDetail] = useState(null); // { coordinator, period, dateFrom, dateTo }
+
+  const hasDateRange = dateFrom || dateTo;
 
   const { data, isLoading } = useQuery({
-    queryKey: ['fix-report', period],
-    queryFn: () => api.get('/reports/fix-report', { params: { period } }).then(r => r.data),
+    queryKey: ['fix-report', period, dateFrom, dateTo],
+    queryFn: () => api.get('/reports/fix-report', {
+      params: {
+        period: hasDateRange ? undefined : period,
+        date_from: dateFrom || undefined,
+        date_to: dateTo || undefined,
+      },
+    }).then(r => r.data),
     staleTime: 60 * 1000,
   });
 
@@ -114,6 +126,7 @@ export default function FixReport() {
   const pct = totalAll > 0 ? Math.round((totalFixed / totalAll) * 100) : 0;
 
   const selectCls = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]';
+  const dateCls  = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]';
 
   return (
     <div className="space-y-5 animate-fadeIn" dir="rtl">
@@ -128,9 +141,46 @@ export default function FixReport() {
             <p className="text-xs text-gray-400 mt-0.5">إجمالي ما تم إصلاحه لكل منسق</p>
           </div>
         </div>
-        <select value={period} onChange={e => setPeriod(e.target.value)} className={selectCls}>
-          {PERIODS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-        </select>
+
+        {/* Filters */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Period — disabled when date range is active */}
+          <select
+            value={period}
+            onChange={e => setPeriod(e.target.value)}
+            disabled={!!hasDateRange}
+            className={`${selectCls} ${hasDateRange ? 'opacity-40 cursor-not-allowed' : ''}`}
+          >
+            {PERIODS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+          </select>
+
+          {/* Date range */}
+          <div className="flex items-center gap-1.5 bg-white border border-gray-200 rounded-xl px-3 py-1.5">
+            <span className="text-xs text-gray-400 whitespace-nowrap">من</span>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={e => setDateFrom(e.target.value)}
+              className={`${dateCls} border-0 p-0 text-xs focus:ring-0`}
+            />
+            <span className="text-xs text-gray-400 whitespace-nowrap">إلى</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={e => setDateTo(e.target.value)}
+              className={`${dateCls} border-0 p-0 text-xs focus:ring-0`}
+            />
+            {hasDateRange && (
+              <button
+                onClick={() => { setDateFrom(''); setDateTo(''); }}
+                className="text-gray-400 hover:text-red-500 transition-colors mr-1"
+                title="مسح التاريخ"
+              >
+                <XCircle size={15} />
+              </button>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Summary boxes */}
@@ -188,7 +238,7 @@ export default function FixReport() {
                   <td className="px-5 py-4 text-gray-600 font-semibold">{r.total}</td>
                   <td className="px-5 py-4">
                     <button
-                      onClick={() => r.fixed_today > 0 && setDetail({ coordinator: r.coordinator, period: 'today' })}
+                      onClick={() => r.fixed_today > 0 && setDetail({ coordinator: r.coordinator, period: 'today', dateFrom: '', dateTo: '' })}
                       disabled={r.fixed_today === 0}
                       className={`inline-flex items-center px-2.5 py-1 rounded-xl text-xs font-black border transition-all ${
                         r.fixed_today > 0
@@ -199,7 +249,7 @@ export default function FixReport() {
                   </td>
                   <td className="px-5 py-4">
                     <button
-                      onClick={() => r.fixed > 0 && setDetail({ coordinator: r.coordinator, period })}
+                      onClick={() => r.fixed > 0 && setDetail({ coordinator: r.coordinator, period, dateFrom, dateTo })}
                       disabled={r.fixed === 0}
                       className={`inline-flex items-center px-3 py-1 rounded-xl text-xs font-black border transition-all ${
                         r.fixed > 0
@@ -225,7 +275,15 @@ export default function FixReport() {
         </table>
       </div>
 
-      {detail && <DetailModal coordinator={detail.coordinator} period={detail.period} onClose={() => setDetail(null)} />}
+      {detail && (
+        <DetailModal
+          coordinator={detail.coordinator}
+          period={detail.period}
+          dateFrom={detail.dateFrom}
+          dateTo={detail.dateTo}
+          onClose={() => setDetail(null)}
+        />
+      )}
     </div>
   );
 }

@@ -1640,22 +1640,36 @@ router.get('/group-lectures', (req, res) => {
 
 // ─── GET /api/reports/fix-report ─────────────────────────────────────────────
 router.get('/fix-report', (req, res) => {
-  const { period } = req.query;
+  const { period, date_from, date_to } = req.query;
   let deptClause = '';
   if (req.user.role === 'leader') {
     const dept = req.user.department;
     if (dept && dept !== 'All') { const s = dept.replace(/'/g,"''"); deptClause = ` AND b.dept_type='${s}'`; }
   }
-  let periodFixed = '';
-  if (period === 'today') periodFixed = ` AND date(cps.updated_at)=date('now','+2 hours')`;
-  else if (period === 'week')  periodFixed = ` AND cps.updated_at>=datetime('now','-6 days','+2 hours')`;
-  else if (period === 'month') periodFixed = ` AND cps.updated_at>=datetime('now','-29 days','+2 hours')`;
+  // Build date condition embedded in CASE WHEN (date_from/date_to override period)
+  let fixedDateCond = '';
+  if (date_from && date_to) {
+    const f = date_from.replace(/'/g,"''"); const t = date_to.replace(/'/g,"''");
+    fixedDateCond = ` AND date(cps.updated_at) BETWEEN '${f}' AND '${t}'`;
+  } else if (date_from) {
+    const f = date_from.replace(/'/g,"''");
+    fixedDateCond = ` AND date(cps.updated_at) >= '${f}'`;
+  } else if (date_to) {
+    const t = date_to.replace(/'/g,"''");
+    fixedDateCond = ` AND date(cps.updated_at) <= '${t}'`;
+  } else if (period === 'today') {
+    fixedDateCond = ` AND date(cps.updated_at)=date('now','+2 hours')`;
+  } else if (period === 'week') {
+    fixedDateCond = ` AND cps.updated_at>=datetime('now','-6 days','+2 hours')`;
+  } else if (period === 'month') {
+    fixedDateCond = ` AND cps.updated_at>=datetime('now','-29 days','+2 hours')`;
+  }
   try {
     const rows = db.prepare(`
       SELECT
         b.coordinators AS coordinator,
         COUNT(*) AS total,
-        SUM(CASE WHEN cps.status IN ('wont_repeat','exception','resolved') THEN 1 ELSE 0 END) AS fixed,
+        SUM(CASE WHEN cps.status IN ('wont_repeat','exception','resolved')${fixedDateCond} THEN 1 ELSE 0 END) AS fixed,
         SUM(CASE WHEN cps.status IN ('wont_repeat','exception','resolved')
               AND date(cps.updated_at)=date('now','+2 hours') THEN 1 ELSE 0 END) AS fixed_today
       FROM code_problem_status cps
@@ -1673,7 +1687,7 @@ router.get('/fix-report', (req, res) => {
 
 // ─── GET /api/reports/fix-report/detail ──────────────────────────────────────
 router.get('/fix-report/detail', (req, res) => {
-  const { coordinator, period } = req.query;
+  const { coordinator, period, date_from, date_to } = req.query;
   if (!coordinator) return res.status(400).json({ error: 'coordinator required' });
   let deptClause = '';
   if (req.user.role === 'leader') {
@@ -1681,9 +1695,22 @@ router.get('/fix-report/detail', (req, res) => {
     if (dept && dept !== 'All') { const s = dept.replace(/'/g,"''"); deptClause = ` AND b.dept_type='${s}'`; }
   }
   let periodClause = '';
-  if (period === 'today') periodClause = ` AND date(cps.updated_at)=date('now','+2 hours')`;
-  else if (period === 'week')  periodClause = ` AND cps.updated_at>=datetime('now','-6 days','+2 hours')`;
-  else if (period === 'month') periodClause = ` AND cps.updated_at>=datetime('now','-29 days','+2 hours')`;
+  if (date_from && date_to) {
+    const f = date_from.replace(/'/g,"''"); const t = date_to.replace(/'/g,"''");
+    periodClause = ` AND date(cps.updated_at) BETWEEN '${f}' AND '${t}'`;
+  } else if (date_from) {
+    const f = date_from.replace(/'/g,"''");
+    periodClause = ` AND date(cps.updated_at) >= '${f}'`;
+  } else if (date_to) {
+    const t = date_to.replace(/'/g,"''");
+    periodClause = ` AND date(cps.updated_at) <= '${t}'`;
+  } else if (period === 'today') {
+    periodClause = ` AND date(cps.updated_at)=date('now','+2 hours')`;
+  } else if (period === 'week') {
+    periodClause = ` AND cps.updated_at>=datetime('now','-6 days','+2 hours')`;
+  } else if (period === 'month') {
+    periodClause = ` AND cps.updated_at>=datetime('now','-29 days','+2 hours')`;
+  }
   const safe = coordinator.replace(/'/g,"''");
   try {
     const rows = db.prepare(`
