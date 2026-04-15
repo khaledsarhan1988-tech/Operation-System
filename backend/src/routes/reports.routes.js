@@ -908,11 +908,14 @@ router.get('/remarks-notes-zoom', (req, res) => {
   const srch1  = search ? ` AND (c.name LIKE '%${escapeLike(search)}%' OR c.phone LIKE '%${escapeLike(search)}%' OR c.group_name LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
 
   // Part 2 filters — b2 = batches via LEFT JOIN (may be NULL when client not in clients table)
-  // If b2 is NULL (client not in clients table), include the record regardless of dept.
-  // Strict: no OR EXISTS — only direct dept_type check (NULL b2 rows always allowed through)
-  const dept2  = safeDept  ? ` AND (b2.dept_type = '${safeDept}' OR b2.coordinators IS NULL)` : '';
-  const emp2   = safeEmp   ? ` AND (b2.coordinators LIKE '%${safeEmp}%'   OR b2.coordinators IS NULL)` : '';
-  const coord2 = safeCoord ? ` AND (b2.coordinators LIKE '%${safeCoord}%' OR b2.coordinators IS NULL)` : '';
+  // IMPORTANT: r2.assigned_to is the primary coordinator for Part 2 (remark-based).
+  // When a student is in multiple groups, the correlated subquery may pick a different group than
+  // where the absence occurred. We therefore filter by the REMARK's assigned_to first, then fall
+  // back to the resolved batch coordinator. This prevents incorrect exclusion due to the wrong group
+  // being selected by the correlated subquery.
+  const dept2  = safeDept  ? ` AND (b2.dept_type = '${safeDept}' OR b2.coordinators IS NULL OR EXISTS (SELECT 1 FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(r2.assigned_to)) AND u.department='${safeDept}'))` : '';
+  const emp2   = safeEmp   ? ` AND (b2.coordinators LIKE '%${safeEmp}%'   OR b2.coordinators IS NULL OR r2.assigned_to LIKE '%${safeEmp}%')` : '';
+  const coord2 = safeCoord ? ` AND (b2.coordinators LIKE '%${safeCoord}%' OR b2.coordinators IS NULL OR r2.assigned_to LIKE '%${safeCoord}%')` : '';
   const srch2  = search ? ` AND (r2.client_name LIKE '%${escapeLike(search)}%' OR r2.client_phone LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
 
   // Date filter applied on the UNION result
@@ -959,9 +962,10 @@ router.get('/remarks-notes-zoom', (req, res) => {
       r2.client_phone,
       c2.group_name,
       date(${rdSQL}, '-1 day')                AS session_date,
-      COALESCE(b2.coordinators, r2.assigned_to) AS coordinators,
+      COALESCE(r2.assigned_to, b2.coordinators) AS coordinators,
       COALESCE(
-        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(COALESCE(b2.coordinators, r2.assigned_to))) LIMIT 1),
+        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(r2.assigned_to)) AND u.department != 'All' LIMIT 1),
+        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b2.coordinators)) AND u.department != 'All' LIMIT 1),
         b2.dept_type
       ) AS dept_type
     FROM remarks r2
