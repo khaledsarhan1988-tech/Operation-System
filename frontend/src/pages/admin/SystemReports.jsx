@@ -1,5 +1,5 @@
 'use client';
-import { useState, useRef } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Users, AlertTriangle, BookOpen, Layers, UserX, AlertCircle,
@@ -10,6 +10,29 @@ import {
 } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
+
+// ─── COPY BUTTON ──────────────────────────────────────────────────────────────
+function CopyButton({ text }) {
+  const [copied, setCopied] = useState(false);
+  const handle = useCallback(() => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }, [text]);
+  return (
+    <button
+      onClick={handle}
+      title="انقر للنسخ"
+      className={`inline-flex items-center gap-1.5 group text-right transition-colors ${copied ? 'text-emerald-600' : 'text-gray-900 hover:text-blue-600'}`}
+    >
+      <span className="font-semibold text-xs">{text}</span>
+      {copied
+        ? <Check size={12} className="text-emerald-500 flex-shrink-0" />
+        : <Copy size={12} className="opacity-0 group-hover:opacity-60 flex-shrink-0 transition-opacity" />
+      }
+    </button>
+  );
+}
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 const fmtDate = (d) => {
@@ -1461,8 +1484,8 @@ function CodeProblemsModal({ params, onClose }) {
                            getStatusKey(p) === 'reported'     ? 'bg-blue-50/20'    : '';
              return (
                <tr key={i} className={`border-b border-gray-50 hover:bg-gray-50/60 transition-colors ${rowBg}`}>
-                 <td className="px-4 py-3 font-semibold text-gray-900 text-xs" style={{ maxWidth: '240px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
-                   <button onClick={() => navigator.clipboard.writeText(p.group_name)} title="انقر للنسخ" className="text-right hover:text-blue-600 transition-colors cursor-copy">{p.group_name}</button>
+                 <td className="px-4 py-3 text-xs" style={{ maxWidth: '240px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
+                   <CopyButton text={p.group_name} />
                  </td>
                  <td className="px-4 py-3 whitespace-nowrap text-xs font-mono text-gray-500">{p.first_date ?? '—'}</td>
                  <td className="px-4 py-3 whitespace-nowrap">{problemBadge(p.problem_type)}</td>
