@@ -1,7 +1,29 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { CheckCircle, AlertCircle, X, FileText, XCircle } from 'lucide-react';
+import { CheckCircle, AlertCircle, X, FileText, XCircle, Copy, Check } from 'lucide-react';
 import api from '../../api/axios';
+
+function CopyButton({ text }) {
+  const [copied, setCopied] = useState(false);
+  const handle = useCallback(() => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }, [text]);
+  return (
+    <button
+      onClick={handle}
+      title="انقر للنسخ"
+      className={`inline-flex items-center gap-1.5 group text-right transition-colors ${copied ? 'text-emerald-600' : 'text-gray-900 hover:text-blue-600'}`}
+    >
+      <span className="font-semibold text-xs">{text}</span>
+      {copied
+        ? <Check size={12} className="text-emerald-500 flex-shrink-0" />
+        : <Copy size={12} className="opacity-0 group-hover:opacity-60 flex-shrink-0 transition-opacity" />
+      }
+    </button>
+  );
+}
 
 const STATUS_CFG = {
   wont_repeat: { label: 'لن تتكرر', emoji: '✋', badge: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
@@ -62,8 +84,8 @@ function DetailModal({ coordinator, period, dateFrom, dateTo, onClose }) {
                   const cfg = STATUS_CFG[r.status];
                   return (
                     <tr key={i} className="hover:bg-gray-50/60 transition-colors">
-                      <td className="px-4 py-3 text-xs font-semibold text-gray-900" style={{ maxWidth: '220px', wordBreak: 'break-word' }}>
-                        <button onClick={() => navigator.clipboard.writeText(r.group_name)} title="انقر للنسخ" className="text-right hover:text-blue-600 transition-colors cursor-copy">{r.group_name}</button>
+                      <td className="px-4 py-3" style={{ maxWidth: '220px', wordBreak: 'break-word' }}>
+                        <CopyButton text={r.group_name} />
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap">
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border bg-yellow-100 text-yellow-800 border-yellow-200">{r.problem_type}</span>
