@@ -818,9 +818,9 @@ router.get('/remarks-notes-main', (req, res) => {
         WHERE TRIM(a3.phone) = TRIM(r3.client_phone)
           AND a3.date = date(${rdSQLMain}, '-1 day')
       )
-      AND EXISTS (
-        SELECT 1 FROM lectures lx
-        WHERE lx.group_name = c3.group_name AND lx.session_type = 'main'
+      AND NOT (
+        EXISTS (SELECT 1 FROM lectures lx  WHERE lx.group_name = c3.group_name AND lx.session_type = 'side')
+        AND NOT EXISTS (SELECT 1 FROM lectures lx2 WHERE lx2.group_name = c3.group_name AND lx2.session_type = 'main')
       )
     ${deptFilter3}${empFilter3}${coord3}${search3}`;
 
