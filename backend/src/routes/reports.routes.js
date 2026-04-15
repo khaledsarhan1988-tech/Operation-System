@@ -1672,15 +1672,15 @@ router.get('/fix-report', (req, res) => {
   try {
     const rows = db.prepare(`
       SELECT
-        b.coordinators AS coordinator,
+        COALESCE(b.coordinators, '--') AS coordinator,
         COUNT(*) AS total,
         SUM(CASE WHEN cps.status IN ('wont_repeat','exception','resolved')${fixedDateCond} THEN 1 ELSE 0 END) AS fixed,
         SUM(CASE WHEN cps.status IN ('wont_repeat','exception','resolved')
               AND date(cps.updated_at)=date('now','+2 hours') THEN 1 ELSE 0 END) AS fixed_today
       FROM code_problem_status cps
-      JOIN batches b ON b.group_name=cps.group_name
+      LEFT JOIN batches b ON TRIM(LOWER(b.group_name))=TRIM(LOWER(cps.group_name))
       WHERE 1=1${deptClause}
-      GROUP BY b.coordinators
+      GROUP BY COALESCE(b.coordinators, '--')
       ORDER BY fixed DESC, total DESC
     `).all();
     return res.json(rows);
@@ -1724,12 +1724,13 @@ router.get('/fix-report/detail', (req, res) => {
   try {
     const rows = db.prepare(`
       SELECT cps.group_name, cps.problem_type, cps.session_type, cps.status, cps.note,
-             cps.updated_at, b.dept_type, b.coordinators, u.full_name AS updated_by_name
+             cps.updated_at, b.dept_type, COALESCE(b.coordinators,'--') AS coordinators,
+             u.full_name AS updated_by_name
       FROM code_problem_status cps
-      JOIN batches b ON b.group_name=cps.group_name
+      LEFT JOIN batches b ON TRIM(LOWER(b.group_name))=TRIM(LOWER(cps.group_name))
       LEFT JOIN users u ON u.id=cps.updated_by
       WHERE cps.status IN ('wont_repeat','exception','resolved')
-        AND b.coordinators LIKE '%${safe}%'${deptClause}${periodClause}
+        AND COALESCE(b.coordinators,'--') LIKE '%${safe}%'${deptClause}${periodClause}
       ORDER BY cps.updated_at DESC
     `).all();
     return res.json(rows);
