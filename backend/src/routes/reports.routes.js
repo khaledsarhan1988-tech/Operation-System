@@ -762,7 +762,12 @@ router.get('/remarks-notes-main', (req, res) => {
     FROM remarks WHERE category = 'Attendance Main Session'
     GROUP BY client_phone, date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2))`;
 
-  // Combine both parts, join with remarks, apply date filter
+  // Outer coordinator filter (second gate — guarantees correct filtering even if inner join produces duplicates)
+  const outerCoordFilter = coordinator
+    ? ` AND TRIM(LOWER(abs_base.coordinators)) LIKE LOWER('%${coordinator.replace(/'/g,"''")}%')`
+    : '';
+
+  // Combine both parts, join with remarks, apply date + outer coord filter
   const innerQ = `
     SELECT
       abs_base.student_name, abs_base.student_phone, abs_base.group_name,
@@ -779,7 +784,7 @@ router.get('/remarks-notes-main', (req, res) => {
     LEFT JOIN (${remarksSubQ}) r
       ON r.client_phone = abs_base.student_phone
       AND r.rdate = date(abs_base.absence_date, '+1 day')
-    WHERE abs_base.absence_date IS NOT NULL ${dateFilter}`;
+    WHERE abs_base.absence_date IS NOT NULL ${dateFilter}${outerCoordFilter}`;
 
   try {
     const totalRow = db.prepare(
@@ -900,6 +905,11 @@ router.get('/remarks-notes-zoom', (req, res) => {
     FROM remarks WHERE category = 'Attendance Zoom Call'
     GROUP BY client_phone, date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2))`;
 
+  // Outer coordinator filter (second gate — guarantees correct filtering even if inner join produces duplicates)
+  const outerCoordFilter = safeCoord
+    ? ` AND TRIM(LOWER(abs_union.coordinators)) LIKE LOWER('%${safeCoord}%')`
+    : '';
+
   // Combine sources → LEFT JOIN remarks → apply date & having filters
   const innerQ = `
     SELECT
@@ -917,7 +927,7 @@ router.get('/remarks-notes-zoom', (req, res) => {
     LEFT JOIN (${remarksSubQ}) r
       ON r.client_phone = abs_union.client_phone
       AND r.rdate = date(abs_union.session_date, '+1 day')
-    WHERE abs_union.session_date IS NOT NULL ${dateFilter}`;
+    WHERE abs_union.session_date IS NOT NULL ${dateFilter}${outerCoordFilter}`;
 
   try {
     const totalRow = db.prepare(
