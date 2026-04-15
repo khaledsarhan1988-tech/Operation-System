@@ -818,6 +818,10 @@ router.get('/remarks-notes-main', (req, res) => {
         WHERE TRIM(a3.phone) = TRIM(r3.client_phone)
           AND a3.date = date(${rdSQLMain}, '-1 day')
       )
+      AND EXISTS (
+        SELECT 1 FROM lectures lx
+        WHERE lx.group_name = c3.group_name AND lx.session_type = 'main'
+      )
     ${deptFilter3}${empFilter3}${coord3}${search3}`;
 
   // Outer coordinator filter (second gate — guarantees correct filtering even if inner join produces duplicates)
