@@ -915,9 +915,9 @@ router.get('/remarks-notes-zoom', (req, res) => {
   // where the absence occurred. We therefore filter by the REMARK's assigned_to first, then fall
   // back to the resolved batch coordinator. This prevents incorrect exclusion due to the wrong group
   // being selected by the correlated subquery.
-  const dept2  = safeDept  ? ` AND (b2.dept_type = '${safeDept}' OR b2.coordinators IS NULL OR EXISTS (SELECT 1 FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(r2.assigned_to)) AND u.department='${safeDept}'))` : '';
-  const emp2   = safeEmp   ? ` AND (b2.coordinators LIKE '%${safeEmp}%'   OR b2.coordinators IS NULL OR r2.assigned_to LIKE '%${safeEmp}%')` : '';
-  const coord2 = safeCoord ? ` AND (b2.coordinators LIKE '%${safeCoord}%' OR b2.coordinators IS NULL OR r2.assigned_to LIKE '%${safeCoord}%')` : '';
+  const dept2  = safeDept  ? ` AND (b2.dept_type = '${safeDept}' OR EXISTS (SELECT 1 FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(r2.assigned_to)) AND u.department='${safeDept}'))` : '';
+  const emp2   = safeEmp   ? ` AND (b2.coordinators LIKE '%${safeEmp}%' OR r2.assigned_to LIKE '%${safeEmp}%')` : '';
+  const coord2 = safeCoord ? ` AND (b2.coordinators LIKE '%${safeCoord}%' OR r2.assigned_to LIKE '%${safeCoord}%')` : '';
   const srch2  = search ? ` AND (r2.client_name LIKE '%${escapeLike(search)}%' OR r2.client_phone LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
 
   // Date filter applied on the UNION result
