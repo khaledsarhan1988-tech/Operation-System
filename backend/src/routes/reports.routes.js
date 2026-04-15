@@ -1019,30 +1019,31 @@ router.get('/code-problems', (req, res) => {
   const showResolved = show_resolved === 'true';
 
   // Dept filter:
+  // - agent:  strict dept_type filter by their OWN department (from DB, not query param)
   // - leader: strict dept_type-only filter (no OR EXISTS) to prevent cross-dept leakage
   // - admin:  full buildDeptFilter (includes coordinator-based fallback)
   let deptFilter;
-  if (req.user.role === 'leader') {
+  if (req.user.role === 'agent') {
+    const agentRow = db.prepare('SELECT full_name, department FROM users WHERE id = ?').get(req.user.id);
+    const agentDept = agentRow?.department;
+    deptFilter = buildStrictDeptFilter('b', agentDept && agentDept !== 'All' ? agentDept : '');
+  } else if (req.user.role === 'leader') {
     const dept = (!department || department === 'All') ? req.user.department : department;
     deptFilter = buildStrictDeptFilter('b', dept);
   } else {
     deptFilter = buildDeptFilter('b', department);
   }
 
-  // If agent: force filter to their own groups using their name from DB
+  // If agent: force filter to their own groups using FULL name as one unit (not split by word)
+  // Splitting by word causes cross-agent leakage: "Shrouk Ali" → LIKE '%Ali%' also matches "Ali Moaatz"
   let empFilter;
   if (req.user.role === 'agent') {
-    const userRow = db.prepare('SELECT full_name, username FROM users WHERE id = ?').get(req.user.id);
-    if (userRow) {
-      const nameWords = (userRow.full_name || '').trim().split(/\s+/).filter(w => w.length > 1);
-      const uname     = (userRow.username || '').trim();
-      const allTerms  = [...new Set([...nameWords, uname].filter(w => w.length > 1))];
-      if (allTerms.length > 0) {
-        const conditions = allTerms.map(p => `b.coordinators LIKE '%${p.replace(/'/g, "''")}%'`).join(' OR ');
-        empFilter = ` AND (${conditions})`;
-      } else {
-        empFilter = ' AND 1=0'; // no match terms → show nothing
-      }
+    const userRow = db.prepare('SELECT full_name FROM users WHERE id = ?').get(req.user.id);
+    const fullName = (userRow?.full_name || '').trim();
+    if (fullName) {
+      const safe = fullName.replace(/'/g, "''");
+      // Match full name as a complete unit (handles single and multi-coordinator fields)
+      empFilter = ` AND TRIM(LOWER(b.coordinators)) LIKE LOWER('%${safe}%')`;
     } else {
       empFilter = ' AND 1=0';
     }
