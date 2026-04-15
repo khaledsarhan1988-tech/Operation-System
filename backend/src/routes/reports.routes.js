@@ -679,17 +679,35 @@ router.get('/remarks-notes-main', (req, res) => {
   const activeTo   = modal_to   || to_date;
   const activeDept = modal_dept && modal_dept !== 'All' ? modal_dept : (department && department !== 'All' ? department : '');
 
-  // Part1 filters (alias b)
-  const deptFilter1  = buildDeptFilter('b', activeDept);
+  // When coordinator is selected with no explicit dept, auto-apply their registered department (strict)
+  // Prevents cross-dept leakage: Shrouk Ali (General) should not show Semi groups she coordinates
+  let resolvedDept = activeDept;
+  if (coordinator && !activeDept) {
+    const coordUser = db.prepare(
+      `SELECT department FROM users WHERE LOWER(TRIM(full_name))=LOWER(TRIM(?)) AND department != 'All' LIMIT 1`
+    ).get(coordinator.trim());
+    if (coordUser?.department) resolvedDept = coordUser.department;
+  }
+
+  // Part1 filters (alias b) — use strict dept filter to prevent OR EXISTS cross-dept leakage
+  const deptFilter1  = buildStrictDeptFilter('b', resolvedDept);
   const empFilter1   = buildCoordFilter('b', employee);
   const coord1       = buildCoordFilter('b', coordinator);
   const search1      = search ? ` AND (a.student_name LIKE '%${escapeLike(search)}%' OR a.group_name LIKE '%${escapeLike(search)}%' OR a.phone LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
 
-  // Part2 filters (alias b2)
-  const deptFilter2  = buildDeptFilter('b2', activeDept);
+  // Part2 filters (alias b2) — same strict dept filter
+  const deptFilter2  = buildStrictDeptFilter('b2', resolvedDept);
   const empFilter2   = buildCoordFilter('b2', employee);
   const coord2       = buildCoordFilter('b2', coordinator);
   const search2      = search ? ` AND (c.name LIKE '%${escapeLike(search)}%' OR l.group_name LIKE '%${escapeLike(search)}%' OR c.phone LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
+
+  // Part3 filters (alias b3) — same strict dept filter, NULL b3 allowed through (same as zoom Part2)
+  const safeCoord3   = coordinator ? coordinator.replace(/'/g, "''") : '';
+  const safeDept3    = resolvedDept ? resolvedDept.replace(/'/g, "''") : '';
+  const deptFilter3  = safeDept3  ? ` AND (b3.dept_type = '${safeDept3}' OR b3.coordinators IS NULL)` : '';
+  const empFilter3   = employee   ? ` AND (b3.coordinators LIKE '%${employee.replace(/'/g,"''")}%' OR b3.coordinators IS NULL)` : '';
+  const coord3       = safeCoord3 ? ` AND (b3.coordinators LIKE '%${safeCoord3}%' OR b3.coordinators IS NULL)` : '';
+  const search3      = search ? ` AND (COALESCE(c3.name, r3.client_name) LIKE '%${escapeLike(search)}%' OR c3.group_name LIKE '%${escapeLike(search)}%' OR r3.client_phone LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
 
   // Date filter applied on the UNION result
   const dateFilter = activeFrom && activeTo
@@ -762,12 +780,52 @@ router.get('/remarks-notes-main', (req, res) => {
     FROM remarks WHERE category = 'Attendance Main Session'
     GROUP BY client_phone, date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2))`;
 
+  // Part3: clients with 'Attendance Main Session' remarks who are NOT already captured by Part1
+  // (handles absent_students rows where date=NULL and lecture_no=NULL — no date can be inferred)
+  // Uses remark_date − 1 day as the absence_date, mirroring the zoom endpoint's Part2 approach.
+  const rdSQLMain = `date(substr(r3.added_at,7,4)||'-'||substr(r3.added_at,4,2)||'-'||substr(r3.added_at,1,2))`;
+  const part3 = `
+    SELECT DISTINCT
+      COALESCE(c3.name, r3.client_name) AS student_name,
+      r3.client_phone                   AS student_phone,
+      COALESCE(c3.group_name, '--')     AS group_name,
+      date(${rdSQLMain}, '-1 day')      AS absence_date,
+      COALESCE(b3.coordinators, r3.assigned_to) AS coordinators,
+      COALESCE(
+        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(COALESCE(b3.coordinators, r3.assigned_to))) LIMIT 1),
+        b3.dept_type
+      ) AS dept_type
+    FROM remarks r3
+    -- Pick the group that was ACTIVE when the remark was made:
+    -- prefer the most recently started group whose start_date <= remark_date.
+    -- Fall back to alphabetically-first group if no group has started yet.
+    LEFT JOIN clients c3 ON c3.phone = r3.client_phone
+      AND c3.group_name = COALESCE(
+        (SELECT cl.group_name FROM clients cl
+         INNER JOIN batches bl ON bl.group_name = cl.group_name
+         WHERE cl.phone = r3.client_phone
+           AND bl.start_date IS NOT NULL
+           AND bl.start_date <= ${rdSQLMain}
+         ORDER BY bl.start_date DESC LIMIT 1),
+        (SELECT cl2.group_name FROM clients cl2
+         WHERE cl2.phone = r3.client_phone ORDER BY cl2.group_name ASC LIMIT 1)
+      )
+    LEFT JOIN batches b3 ON b3.group_name = c3.group_name
+    WHERE r3.category = 'Attendance Main Session'
+      AND r3.client_phone IS NOT NULL AND TRIM(r3.client_phone) != ''
+      AND NOT EXISTS (
+        SELECT 1 FROM absent_students a3
+        WHERE TRIM(a3.phone) = TRIM(r3.client_phone)
+          AND a3.date = date(${rdSQLMain}, '-1 day')
+      )
+    ${deptFilter3}${empFilter3}${coord3}${search3}`;
+
   // Outer coordinator filter (second gate — guarantees correct filtering even if inner join produces duplicates)
   const outerCoordFilter = coordinator
     ? ` AND TRIM(LOWER(abs_base.coordinators)) LIKE LOWER('%${coordinator.replace(/'/g,"''")}%')`
     : '';
 
-  // Combine both parts, join with remarks, apply date + outer coord filter
+  // Combine all three parts, join with remarks, apply date + outer coord filter
   const innerQ = `
     SELECT
       abs_base.student_name, abs_base.student_phone, abs_base.group_name,
@@ -780,6 +838,8 @@ router.get('/remarks-notes-main', (req, res) => {
       SELECT * FROM (${part1}) p1 WHERE absence_date IS NOT NULL
       UNION ALL
       SELECT * FROM (${part2}) p2
+      UNION ALL
+      SELECT * FROM (${part3}) p3
     ) abs_base
     LEFT JOIN (${remarksSubQ}) r
       ON r.client_phone = abs_base.student_phone
@@ -824,18 +884,29 @@ router.get('/remarks-notes-zoom', (req, res) => {
 
   const safeEmp   = employee    ? employee.replace(/'/g, "''")    : '';
   const safeCoord = coordinator ? coordinator.replace(/'/g, "''") : '';
-  const safeDept  = activeDept  ? activeDept.replace(/'/g, "''")  : '';
+
+  // When coordinator is selected with no explicit dept, auto-apply their registered department (strict)
+  // Prevents cross-dept leakage: coordinator from General should not show Semi groups
+  let resolvedDept = activeDept;
+  if (coordinator && !activeDept) {
+    const coordUser = db.prepare(
+      `SELECT department FROM users WHERE LOWER(TRIM(full_name))=LOWER(TRIM(?)) AND department != 'All' LIMIT 1`
+    ).get(coordinator.trim());
+    if (coordUser?.department) resolvedDept = coordUser.department;
+  }
+  const safeDept = resolvedDept ? resolvedDept.replace(/'/g, "''") : '';
 
   // Part 1 filters — b = batches via INNER JOIN
-  const dept1  = buildDeptFilter('b', activeDept);
+  // Use strict dept filter to prevent OR EXISTS cross-dept leakage
+  const dept1  = buildStrictDeptFilter('b', resolvedDept);
   const emp1   = buildCoordFilter('b', employee);
   const coord1 = buildCoordFilter('b', coordinator);
   const srch1  = search ? ` AND (c.name LIKE '%${escapeLike(search)}%' OR c.phone LIKE '%${escapeLike(search)}%' OR c.group_name LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
 
   // Part 2 filters — b2 = batches via LEFT JOIN (may be NULL when client not in clients table)
-  // If b2 is NULL (client not in clients table), include the record regardless of who made the remark.
-  // This handles group transfers: remark may be by old employee but group now belongs to new employee.
-  const dept2  = safeDept  ? ` AND (b2.dept_type = '${safeDept}' OR EXISTS (SELECT 1 FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b2.coordinators)) AND u.department='${safeDept}') OR b2.coordinators IS NULL)` : '';
+  // If b2 is NULL (client not in clients table), include the record regardless of dept.
+  // Strict: no OR EXISTS — only direct dept_type check (NULL b2 rows always allowed through)
+  const dept2  = safeDept  ? ` AND (b2.dept_type = '${safeDept}' OR b2.coordinators IS NULL)` : '';
   const emp2   = safeEmp   ? ` AND (b2.coordinators LIKE '%${safeEmp}%'   OR b2.coordinators IS NULL)` : '';
   const coord2 = safeCoord ? ` AND (b2.coordinators LIKE '%${safeCoord}%' OR b2.coordinators IS NULL)` : '';
   const srch2  = search ? ` AND (r2.client_name LIKE '%${escapeLike(search)}%' OR r2.client_phone LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
@@ -890,8 +961,20 @@ router.get('/remarks-notes-zoom', (req, res) => {
         b2.dept_type
       ) AS dept_type
     FROM remarks r2
-    LEFT JOIN (SELECT phone, MIN(group_name) AS group_name, MIN(name) AS name
-               FROM clients GROUP BY phone) c2 ON c2.phone = r2.client_phone
+    -- Pick the group that was ACTIVE when the remark was made:
+    -- prefer the most recently started group whose start_date <= remark_date.
+    -- Fall back to alphabetically-first group if no group has started yet.
+    LEFT JOIN clients c2 ON c2.phone = r2.client_phone
+      AND c2.group_name = COALESCE(
+        (SELECT cl.group_name FROM clients cl
+         INNER JOIN batches bl ON bl.group_name = cl.group_name
+         WHERE cl.phone = r2.client_phone
+           AND bl.start_date IS NOT NULL
+           AND bl.start_date <= ${rdSQL}
+         ORDER BY bl.start_date DESC LIMIT 1),
+        (SELECT cl2.group_name FROM clients cl2
+         WHERE cl2.phone = r2.client_phone ORDER BY cl2.group_name ASC LIMIT 1)
+      )
     LEFT JOIN batches b2 ON b2.group_name = c2.group_name
     WHERE r2.category = 'Attendance Zoom Call'
     ${dept2}${emp2}${coord2}${srch2}`;
