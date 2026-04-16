@@ -1777,7 +1777,8 @@ router.get('/fix-report', (req, res) => {
     const rows = db.prepare(`
       SELECT
         COALESCE(b.coordinators, '--') AS coordinator,
-        COUNT(*) AS total,
+        COUNT(*) AS all_count,
+        SUM(CASE WHEN cps.status NOT IN ('wont_repeat','exception','resolved') THEN 1 ELSE 0 END) AS total,
         SUM(CASE WHEN cps.status IN ('wont_repeat','exception','resolved')${fixedDateCond} THEN 1 ELSE 0 END) AS fixed,
         SUM(CASE WHEN cps.status IN ('wont_repeat','exception','resolved')
               AND date(cps.updated_at)=date('now','+2 hours') THEN 1 ELSE 0 END) AS fixed_today
@@ -1785,7 +1786,7 @@ router.get('/fix-report', (req, res) => {
       LEFT JOIN batches b ON TRIM(LOWER(b.group_name))=TRIM(LOWER(cps.group_name))
       WHERE 1=1${deptClause}
       GROUP BY COALESCE(b.coordinators, '--')
-      ORDER BY fixed DESC, total DESC
+      ORDER BY total DESC, fixed DESC
     `).all();
     return res.json(rows);
   } catch (err) {
@@ -1798,13 +1799,13 @@ router.get('/fix-report', (req, res) => {
 router.get('/fix-report/detail', (req, res) => {
   const { coordinator, period, date_from, date_to } = req.query;
   if (!coordinator) return res.status(400).json({ error: 'coordinator required' });
-  // Same dept filter approach: by coordinator's registered department
+  // Use dept_type filter (same as fix-report main endpoint)
   let deptClause = '';
   if (req.user.role === 'leader') {
     const dept = req.user.department;
     if (dept && dept !== 'All') {
       const s = dept.replace(/'/g,"''");
-      deptClause = ` AND b.coordinators IN (SELECT full_name FROM users WHERE department='${s}')`;
+      deptClause = ` AND b.dept_type = '${s}'`;
     }
   }
   let periodClause = '';

@@ -142,10 +142,11 @@ export default function FixReport() {
     staleTime: 60 * 1000,
   });
 
-  const totalFixed   = data?.reduce((a, r) => a + (r.fixed   || 0), 0) ?? 0;
-  const totalToday   = data?.reduce((a, r) => a + (r.fixed_today || 0), 0) ?? 0;
-  const totalAll     = data?.reduce((a, r) => a + (r.total   || 0), 0) ?? 0;
-  const pct = totalAll > 0 ? Math.round((totalFixed / totalAll) * 100) : 0;
+  const totalFixed    = data?.reduce((a, r) => a + (r.fixed     || 0), 0) ?? 0;
+  const totalToday    = data?.reduce((a, r) => a + (r.fixed_today || 0), 0) ?? 0;
+  const totalAll      = data?.reduce((a, r) => a + (r.total     || 0), 0) ?? 0;  // pending only
+  const totalAllCount = data?.reduce((a, r) => a + (r.all_count || 0), 0) ?? 0;  // for pct
+  const pct = totalAllCount > 0 ? Math.round((totalFixed / totalAllCount) * 100) : 0;
 
   const selectCls = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]';
   const dateCls  = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]';
@@ -253,7 +254,7 @@ export default function FixReport() {
             ) : !data?.length ? (
               <tr><td colSpan={5} className="text-center py-12 text-gray-400 text-sm">لا توجد بيانات</td></tr>
             ) : data.map((r, i) => {
-              const rowPct = r.total > 0 ? Math.round((r.fixed / r.total) * 100) : 0;
+              const rowPct = r.all_count > 0 ? Math.round((r.fixed / r.all_count) * 100) : 0;
               return (
                 <tr key={i} className="hover:bg-gray-50/60 transition-colors">
                   <td className="px-5 py-4 font-bold text-gray-900 text-sm">{r.coordinator || '—'}</td>
