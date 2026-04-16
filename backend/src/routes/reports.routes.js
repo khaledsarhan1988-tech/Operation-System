@@ -1122,7 +1122,18 @@ router.get('/code-problems', (req, res) => {
     deptFilter = buildStrictDeptFilter('b', agentDept && agentDept !== 'All' ? agentDept : '');
   } else if (req.user.role === 'leader') {
     const dept = (!department || department === 'All') ? req.user.department : department;
-    deptFilter = buildStrictDeptFilter('b', dept);
+    if (dept && dept !== 'All') {
+      const s = dept.replace(/'/g, "''");
+      deptFilter = ` AND b.dept_type = '${s}'
+        AND b.coordinators IS NOT NULL AND TRIM(b.coordinators) NOT IN ('', '--')
+        AND NOT EXISTS (
+          SELECT 1 FROM batches b2
+          WHERE TRIM(LOWER(b2.coordinators)) = TRIM(LOWER(b.coordinators))
+            AND b2.dept_type != '${s}'
+        )`;
+    } else {
+      deptFilter = '';
+    }
   } else {
     deptFilter = buildDeptFilter('b', department);
   }
