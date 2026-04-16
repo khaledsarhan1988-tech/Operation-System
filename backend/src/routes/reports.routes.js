@@ -1803,18 +1803,13 @@ router.get('/fix-report', (req, res) => {
 router.get('/fix-report/detail', (req, res) => {
   const { coordinator, period, date_from, date_to } = req.query;
   if (!coordinator) return res.status(400).json({ error: 'coordinator required' });
-  // For leader: same exclusive-dept filter as fix-report main
+  // For leader: filter detail rows by the leader's dept_type only (no NOT EXISTS — that was blocking mixed-dept coordinators)
   let deptClause = '';
   if (req.user.role === 'leader') {
     const dept = req.user.department;
     if (dept && dept !== 'All') {
       const s = dept.replace(/'/g,"''");
-      deptClause = ` AND b.dept_type = '${s}'
-        AND NOT EXISTS (
-          SELECT 1 FROM batches b2
-          WHERE TRIM(LOWER(b2.coordinators)) = TRIM(LOWER(b.coordinators))
-            AND b2.dept_type != '${s}'
-        )`;
+      deptClause = ` AND b.dept_type = '${s}'`;
     }
   }
   let periodClause = '';
