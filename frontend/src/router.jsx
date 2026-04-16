@@ -16,6 +16,7 @@ import AgentCodeProblems from './pages/agent/AgentCodeProblems';
 // Leader pages
 import LeaderDashboard from './pages/leader/LeaderDashboard';
 import LeaderCodeProblems from './pages/leader/LeaderCodeProblems';
+import LeaderPerformance from './pages/leader/LeaderPerformance';
 import TeamOverview from './pages/leader/TeamOverview';
 import AbsentReport from './pages/leader/AbsentReport';
 import GroupCoverage from './pages/leader/GroupCoverage';
@@ -67,6 +68,7 @@ const router = createBrowserRouter([
       { path: 'users',                        element: <UserManagement /> },
       { path: 'upload',                       element: <ExcelUpload /> },
       { path: 'code-problems',                element: <LeaderCodeProblems /> },
+      { path: 'performance',                  element: <LeaderPerformance /> },
       { path: 'reports/customer-services',    element: <SystemReports /> },
       { path: 'reports/education',            element: <EducationReports /> },
       { path: 'reports/quality',              element: <QualityReports /> },
