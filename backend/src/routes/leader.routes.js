@@ -14,20 +14,14 @@ function leaderDeptRemarksClause(user) {
   const dept = user?.department;
   if (!dept || dept === 'All') return '';
   const safe = dept.replace(/'/g, "''");
-  return ` AND (
-    r.assigned_to IN (SELECT full_name FROM users WHERE role='agent' AND department='${safe}')
-    OR EXISTS (SELECT 1 FROM batches b INNER JOIN remarks r2 ON r2.id=r.id WHERE b.coordinators LIKE '%'||r.assigned_to||'%' AND b.dept_type='${safe}')
-  )`;
+  return ` AND r.assigned_to IN (SELECT full_name FROM users WHERE role='agent' AND department='${safe}')`;
 }
 
 function leaderDeptRemarksClauseFlat(user) {
   const dept = user?.department;
   if (!dept || dept === 'All') return '';
   const safe = dept.replace(/'/g, "''");
-  return ` AND (
-    assigned_to IN (SELECT full_name FROM users WHERE role='agent' AND department='${safe}')
-    OR EXISTS (SELECT 1 FROM batches b WHERE b.coordinators LIKE '%'||assigned_to||'%' AND b.dept_type='${safe}')
-  )`;
+  return ` AND assigned_to IN (SELECT full_name FROM users WHERE role='agent' AND department='${safe}')`;
 }
 
 // ─── ROUTES ───────────────────────────────────────────────────────────────────
