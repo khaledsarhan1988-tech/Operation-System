@@ -142,10 +142,10 @@ export default function FixReport() {
     staleTime: 60 * 1000,
   });
 
-  const totalFixed    = data?.reduce((a, r) => a + (r.fixed     || 0), 0) ?? 0;
-  const totalToday    = data?.reduce((a, r) => a + (r.fixed_today || 0), 0) ?? 0;
-  const totalAll      = data?.reduce((a, r) => a + (r.total     || 0), 0) ?? 0;  // pending only
-  const totalAllCount = data?.reduce((a, r) => a + (r.all_count || 0), 0) ?? 0;  // for pct
+  const totalAllCount = data?.reduce((a, r) => a + (r.all_count  || 0), 0) ?? 0;
+  const totalFixed    = data?.reduce((a, r) => a + (r.fixed      || 0), 0) ?? 0;
+  const totalRemain   = data?.reduce((a, r) => a + (r.remaining  || 0), 0) ?? 0;
+  const totalToday    = data?.reduce((a, r) => a + (r.fixed_today|| 0), 0) ?? 0;
   const pct = totalAllCount > 0 ? Math.round((totalFixed / totalAllCount) * 100) : 0;
 
   const selectCls = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]';
@@ -207,7 +207,21 @@ export default function FixReport() {
       </div>
 
       {/* Summary boxes */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-4 gap-4">
+        <div className="bg-gray-50 border border-gray-200 rounded-2xl px-5 py-4 flex items-center gap-4">
+          <div className="p-2 bg-gray-100 rounded-xl"><AlertCircle size={20} className="text-gray-500" /></div>
+          <div>
+            <p className="text-xs text-gray-500 font-semibold">إجمالي المشاكل</p>
+            <p className="text-2xl font-black text-gray-700">{totalAllCount}</p>
+          </div>
+        </div>
+        <div className="bg-red-50 border border-red-200 rounded-2xl px-5 py-4 flex items-center gap-4">
+          <div className="p-2 bg-red-100 rounded-xl"><AlertCircle size={20} className="text-red-500" /></div>
+          <div>
+            <p className="text-xs text-red-500 font-semibold">المتبقية</p>
+            <p className="text-2xl font-black text-red-600">{totalRemain}</p>
+          </div>
+        </div>
         <div className="bg-emerald-50 border border-emerald-200 rounded-2xl px-5 py-4 flex items-center gap-4">
           <div className="p-2 bg-emerald-100 rounded-xl"><CheckCircle size={20} className="text-emerald-600" /></div>
           <div>
@@ -223,13 +237,6 @@ export default function FixReport() {
             <p className="text-2xl font-black text-blue-600">{totalToday}</p>
           </div>
         </div>
-        <div className="bg-gray-50 border border-gray-200 rounded-2xl px-5 py-4 flex items-center gap-4">
-          <div className="p-2 bg-gray-100 rounded-xl"><AlertCircle size={20} className="text-gray-500" /></div>
-          <div>
-            <p className="text-xs text-gray-500 font-semibold">إجمالي المشاكل المتابعة</p>
-            <p className="text-2xl font-black text-gray-700">{totalAll}</p>
-          </div>
-        </div>
       </div>
 
       {/* Table */}
@@ -237,7 +244,7 @@ export default function FixReport() {
         <table className="w-full text-sm text-right">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-100">
-              {['المنسق', 'إجمالي المشاكل', 'تم إصلاحه اليوم', 'إجمالي تم إصلاحه', 'النسبة'].map(h => (
+              {['المنسق', 'إجمالي المشاكل', 'المتبقية', 'إجمالي تم إصلاحه', 'تم إصلاحه اليوم', 'النسبة'].map(h => (
                 <th key={h} className="px-5 py-3 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
               ))}
             </tr>
@@ -246,19 +253,35 @@ export default function FixReport() {
             {isLoading ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <tr key={i} className="animate-pulse">
-                  {Array.from({ length: 5 }).map((__, j) => (
+                  {Array.from({ length: 6 }).map((__, j) => (
                     <td key={j} className="px-5 py-4"><div className="h-3 bg-gray-100 rounded-full w-3/4" /></td>
                   ))}
                 </tr>
               ))
             ) : !data?.length ? (
-              <tr><td colSpan={5} className="text-center py-12 text-gray-400 text-sm">لا توجد بيانات</td></tr>
+              <tr><td colSpan={6} className="text-center py-12 text-gray-400 text-sm">لا توجد بيانات</td></tr>
             ) : data.map((r, i) => {
               const rowPct = r.all_count > 0 ? Math.round((r.fixed / r.all_count) * 100) : 0;
               return (
                 <tr key={i} className="hover:bg-gray-50/60 transition-colors">
                   <td className="px-5 py-4 font-bold text-gray-900 text-sm">{r.coordinator || '—'}</td>
-                  <td className="px-5 py-4 text-gray-600 font-semibold">{r.total}</td>
+                  <td className="px-5 py-4 text-gray-700 font-semibold">{r.all_count}</td>
+                  <td className="px-5 py-4">
+                    <span className={`inline-flex items-center px-2.5 py-1 rounded-xl text-xs font-black border ${
+                      r.remaining > 0 ? 'bg-red-100 text-red-700 border-red-200' : 'bg-gray-50 text-gray-400 border-gray-200'
+                    }`}>{r.remaining}</span>
+                  </td>
+                  <td className="px-5 py-4">
+                    <button
+                      onClick={() => r.fixed > 0 && setDetail({ coordinator: r.coordinator, period: 'all', dateFrom: '', dateTo: '' })}
+                      disabled={r.fixed === 0}
+                      className={`inline-flex items-center px-3 py-1 rounded-xl text-xs font-black border transition-all ${
+                        r.fixed > 0
+                          ? 'bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-200 cursor-pointer'
+                          : 'bg-gray-50 text-gray-400 border-gray-200 cursor-default'
+                      }`}
+                    >{r.fixed}</button>
+                  </td>
                   <td className="px-5 py-4">
                     <button
                       onClick={() => r.fixed_today > 0 && setDetail({ coordinator: r.coordinator, period: 'today', dateFrom: '', dateTo: '' })}
@@ -269,19 +292,6 @@ export default function FixReport() {
                           : 'bg-gray-50 text-gray-400 border-gray-200 cursor-default'
                       }`}
                     >{r.fixed_today}</button>
-                  </td>
-                  <td className="px-5 py-4">
-                    <button
-                      onClick={() => r.fixed > 0 && setDetail({ coordinator: r.coordinator, period, dateFrom, dateTo })}
-                      disabled={r.fixed === 0}
-                      className={`inline-flex items-center px-3 py-1 rounded-xl text-xs font-black border transition-all ${
-                        r.fixed > 0
-                          ? 'bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-200 cursor-pointer'
-                          : 'bg-gray-50 text-gray-400 border-gray-200 cursor-default'
-                      }`}
-                    >
-                      {r.fixed}
-                    </button>
                   </td>
                   <td className="px-5 py-4">
                     <div className="flex items-center gap-2">

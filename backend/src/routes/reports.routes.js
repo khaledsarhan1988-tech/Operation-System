@@ -1785,15 +1785,16 @@ router.get('/fix-report', (req, res) => {
       SELECT
         COALESCE(b.coordinators, '--') AS coordinator,
         COUNT(*) AS all_count,
-        SUM(CASE WHEN cps.status NOT IN ('wont_repeat','exception','resolved') THEN 1 ELSE 0 END) AS total,
-        SUM(CASE WHEN cps.status IN ('wont_repeat','exception','resolved')${fixedDateCond} THEN 1 ELSE 0 END) AS fixed,
+        SUM(CASE WHEN cps.status NOT IN ('wont_repeat','exception','resolved') THEN 1 ELSE 0 END) AS remaining,
+        SUM(CASE WHEN cps.status IN ('wont_repeat','exception','resolved') THEN 1 ELSE 0 END) AS fixed,
+        SUM(CASE WHEN cps.status IN ('wont_repeat','exception','resolved')${fixedDateCond} THEN 1 ELSE 0 END) AS fixed_period,
         SUM(CASE WHEN cps.status IN ('wont_repeat','exception','resolved')
               AND date(cps.updated_at)=date('now','+2 hours') THEN 1 ELSE 0 END) AS fixed_today
       FROM code_problem_status cps
       LEFT JOIN batches b ON TRIM(LOWER(b.group_name))=TRIM(LOWER(cps.group_name))
       WHERE 1=1${deptClause}
       GROUP BY COALESCE(b.coordinators, '--')
-      ORDER BY total DESC, fixed DESC
+      ORDER BY remaining DESC, fixed DESC
     `).all();
     return res.json(rows);
   } catch (err) {
