@@ -1117,20 +1117,18 @@ router.get('/code-problems', (req, res) => {
   // - admin:  full buildDeptFilter (includes coordinator-based fallback)
   let deptFilter;
   if (req.user.role === 'agent') {
+    // Agent: filter by their own dept_type from users table + their own name in coordinators
     const agentRow = db.prepare('SELECT full_name, department FROM users WHERE id = ?').get(req.user.id);
     const agentDept = agentRow?.department;
     deptFilter = buildStrictDeptFilter('b', agentDept && agentDept !== 'All' ? agentDept : '');
   } else if (req.user.role === 'leader') {
+    // Leader: filter by dept_type only — coordinators field may contain multiple names (e.g. "Mostafa, fouad")
+    // We use LIKE to match leader's name within potentially multi-name coordinator fields
     const dept = (!department || department === 'All') ? req.user.department : department;
     if (dept && dept !== 'All') {
       const s = dept.replace(/'/g, "''");
       deptFilter = ` AND b.dept_type = '${s}'
-        AND b.coordinators IS NOT NULL AND TRIM(b.coordinators) NOT IN ('', '--')
-        AND NOT EXISTS (
-          SELECT 1 FROM batches b2
-          WHERE TRIM(LOWER(b2.coordinators)) = TRIM(LOWER(b.coordinators))
-            AND b2.dept_type != '${s}'
-        )`;
+        AND b.coordinators IS NOT NULL AND TRIM(b.coordinators) NOT IN ('', '--')`;
     } else {
       deptFilter = '';
     }

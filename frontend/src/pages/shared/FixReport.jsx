@@ -153,18 +153,34 @@ export default function FixReport() {
   const isLoading = codeLoad || fixLoad;
 
   // Build coordinator → total count from code-problems
+  // Split multi-name coordinator fields (e.g. "Mostafa, fouad" → ["Mostafa", "fouad"])
   const coordTotals = {};
   [...(codeProbs?.main_problems ?? []), ...(codeProbs?.zoom_problems ?? [])].forEach(p => {
-    const coord = p.coordinators || '--';
-    coordTotals[coord] = (coordTotals[coord] || 0) + 1;
+    const raw = p.coordinators || '--';
+    const coords = raw.includes(',') ? raw.split(',').map(c => c.trim()).filter(Boolean) : [raw.trim()];
+    coords.forEach(coord => {
+      coordTotals[coord] = (coordTotals[coord] || 0) + 1;
+    });
   });
 
-  // Merge: use fixData as base (has fixed/today info), override all_count from coordTotals
+  // Build fix lookup — also split multi-name coordinators in fixData
+  const fixLookup = {};
+  (fixData ?? []).forEach(r => {
+    const raw = r.coordinator || '--';
+    const coords = raw.includes(',') ? raw.split(',').map(c => c.trim()).filter(Boolean) : [raw.trim()];
+    coords.forEach(coord => {
+      if (!fixLookup[coord]) fixLookup[coord] = { fixed: 0, fixed_today: 0 };
+      fixLookup[coord].fixed       += r.fixed       || 0;
+      fixLookup[coord].fixed_today += r.fixed_today || 0;
+    });
+  });
+
+  // Merge: coordTotals (real total) + fixLookup (fixed counts)
   const data = Object.entries(coordTotals).map(([coord, total]) => {
-    const fix = (fixData ?? []).find(r => (r.coordinator || '--') === coord) || {};
-    const fixed     = fix.fixed      || 0;
-    const fixedToday= fix.fixed_today|| 0;
-    const remaining = total - fixed;
+    const fix       = fixLookup[coord] || {};
+    const fixed     = fix.fixed       || 0;
+    const fixedToday= fix.fixed_today || 0;
+    const remaining = Math.max(0, total - fixed);
     return { coordinator: coord, all_count: total, fixed, fixed_today: fixedToday, remaining };
   }).sort((a, b) => b.remaining - a.remaining || b.fixed - a.fixed);
 
