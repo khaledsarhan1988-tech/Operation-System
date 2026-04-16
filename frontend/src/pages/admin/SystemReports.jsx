@@ -1333,11 +1333,10 @@ function CodeProblemsModal({ params, onClose }) {
   const [saving,   setSaving]   = useState(false);
   const [saveError, setSaveError] = useState(null);
 
-  // ── data
-  const showResolved = fStatus === 'wont_repeat' || fStatus === 'exception' || fStatus === 'resolved';
+  // ── data — always show_resolved:true so tab counts match table rows for any active filter
   const { data, isLoading } = useQuery({
-    queryKey: ['code-problems-modal', params, showResolved],
-    queryFn:  () => api.get('/reports/code-problems', { params: { ...params, show_resolved: showResolved || undefined } }).then(r => r.data),
+    queryKey: ['code-problems-modal', params],
+    queryFn:  () => api.get('/reports/code-problems', { params: { ...params, show_resolved: true } }).then(r => r.data),
     staleTime: 5 * 60 * 1000, gcTime: 15 * 60 * 1000,
   });
   const { data: statusData, isLoading: statusLoading } = useQuery({
@@ -1369,16 +1368,20 @@ function CodeProblemsModal({ params, onClose }) {
   const depts     = [...new Set(allEnriched.map(p => p.dept_type).filter(Boolean))].sort();
   const coords    = [...new Set(allEnriched.map(p => p.coordinators).filter(Boolean))].sort();
 
-  // ── status counts: active from allEnriched + resolved from statusData
+  // ── status counts: calculated from pre-status-filtered data so tab counts respect
+  // the active coordinator / dept / search filters (fixes tab 92 → table 3 mismatch)
+  const preFiltered = allEnriched.filter(p => {
+    if (fSection === 'main' && p._session !== 'main') return false;
+    if (fSection === 'side' && p._session !== 'side') return false;
+    if (search    && !p.group_name?.toLowerCase().includes(search.toLowerCase())) return false;
+    if (fProbType && p.problem_type !== fProbType)  return false;
+    if (fDept     && p.dept_type    !== fDept)       return false;
+    if (fCoord    && p.coordinators !== fCoord)      return false;
+    return true;
+  });
   const statusCounts = { new: 0, reported: 0, in_progress: 0, exception: 0, wont_repeat: 0, resolved: 0 };
-  allEnriched.forEach(p => { if (statusCounts[getStatusKey(p)] !== undefined) statusCounts[getStatusKey(p)]++; });
-  // Count wont_repeat/exception/resolved from statusData (they're excluded from allEnriched by default)
-  if (!showResolved && statusData) {
-    statusCounts.wont_repeat = statusData.filter(s => s.status === 'wont_repeat').length;
-    statusCounts.exception   = statusData.filter(s => s.status === 'exception').length;
-    statusCounts.resolved    = statusData.filter(s => s.status === 'resolved').length;
-  }
-  const totalAll = allEnriched.length + (showResolved ? 0 : statusCounts.wont_repeat + statusCounts.exception + statusCounts.resolved);
+  preFiltered.forEach(p => { const k = getStatusKey(p); if (k in statusCounts) statusCounts[k]++; });
+  const totalAll = preFiltered.length;
 
   // ── filter logic
   const applyFilters = (rows) => rows.filter(p => {
@@ -1535,7 +1538,7 @@ function CodeProblemsModal({ params, onClose }) {
 
           {/* ── SUMMARY BOXES ── */}
           {(() => {
-            const achieved = statusCounts.reported + statusCounts.in_progress + statusCounts.wont_repeat + statusCounts.exception;
+            const achieved = statusCounts.wont_repeat + statusCounts.exception + statusCounts.resolved;
             const remaining = totalAll - achieved;
             return (
               <div className="flex gap-3 mb-3">

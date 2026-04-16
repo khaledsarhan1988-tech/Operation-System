@@ -154,7 +154,7 @@ export default function AgentCodeProblems() {
   const hasFilters = search || fSection !== 'all' || fProbType || fStatus;
 
   // ── summary
-  const achieved  = statusCounts.reported + statusCounts.in_progress + statusCounts.wont_repeat + statusCounts.exception + statusCounts.resolved;
+  const achieved  = statusCounts.wont_repeat + statusCounts.exception + statusCounts.resolved;
   const remaining = totalAll - achieved;
 
   // ─── TABLE COMPONENT ───────────────────────────────────────────────────────

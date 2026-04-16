@@ -161,7 +161,7 @@ export default function LeaderCodeProblems() {
   const selectCls  = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f] min-w-[140px]';
   const hasFilters = search || fSection !== 'all' || fProbType || fStatus || fEmployee;
 
-  const achieved  = statusCounts.reported + statusCounts.in_progress + statusCounts.wont_repeat + statusCounts.exception + statusCounts.resolved;
+  const achieved  = statusCounts.wont_repeat + statusCounts.exception + statusCounts.resolved;
   const remaining = totalAll - achieved;
 
   // ─── TABLE ────────────────────────────────────────────────────────────────
