@@ -1754,23 +1754,10 @@ router.get('/group-lectures', (req, res) => {
 // ─── GET /api/reports/fix-report ─────────────────────────────────────────────
 router.get('/fix-report', (req, res) => {
   const { period, date_from, date_to } = req.query;
-  // For leader: show only coordinators whose batches are EXCLUSIVELY in the leader's dept_type
-  // This prevents coordinators with mixed-dept groups (e.g. fouad: General+Private) from appearing
-  // under both leaders. Also excludes '--' (no coordinator assigned).
-  let deptClause = '';
-  if (req.user.role === 'leader') {
-    const dept = req.user.department;
-    if (dept && dept !== 'All') {
-      const s = dept.replace(/'/g,"''");
-      deptClause = ` AND b.coordinators IS NOT NULL AND TRIM(b.coordinators) != '--'
-        AND b.dept_type = '${s}'
-        AND NOT EXISTS (
-          SELECT 1 FROM batches b2
-          WHERE TRIM(LOWER(b2.coordinators)) = TRIM(LOWER(b.coordinators))
-            AND b2.dept_type != '${s}'
-        )`;
-    }
-  }
+  // fix-report returns ALL coordinators with no dept filter.
+  // Filtering by dept is done on the frontend by merging with code-problems (which applies dept filter).
+  // This ensures fixed counts are always available for all coordinators regardless of dept.
+  const deptClause = '';
   // Build date condition embedded in CASE WHEN (date_from/date_to override period)
   let fixedDateCond = '';
   if (date_from && date_to) {
