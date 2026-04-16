@@ -78,11 +78,13 @@ export default function LeaderCodeProblems() {
   const [saving,    setSaving]    = useState(false);
   const [saveError, setSaveError] = useState(null);
 
-  // ── team list for employee dropdown
-  const { data: team } = useQuery({
-    queryKey: ['leader-team'],
-    queryFn: () => api.get('/leader/team').then(r => r.data),
+  // ── users list for employee dropdown (all agents from users table)
+  const { data: usersData } = useQuery({
+    queryKey: ['users-agents'],
+    queryFn: () => api.get('/admin/users').then(r => r.data),
+    staleTime: 10 * 60 * 1000,
   });
+  const team = (usersData ?? []).filter(u => u.role === 'agent' && u.is_active);
 
   // ── data — always show_resolved:true so counts match inside/outside
   const { data, isLoading } = useQuery({
@@ -258,7 +260,7 @@ export default function LeaderCodeProblems() {
           >
             <option value="">كل الموظفين</option>
             {(team ?? []).map((a, i) => (
-              <option key={i} value={a.name}>{a.name}</option>
+              <option key={i} value={a.full_name}>{a.full_name}</option>
             ))}
           </select>
         </div>
