@@ -1745,14 +1745,21 @@ router.get('/group-lectures', (req, res) => {
 // ─── GET /api/reports/fix-report ─────────────────────────────────────────────
 router.get('/fix-report', (req, res) => {
   const { period, date_from, date_to } = req.query;
-  // For leader: filter by b.dept_type (same as code-problems endpoint)
-  // Using coordinators IN (users) caused coordinators not in users table (e.g. "fouad") to be excluded
+  // For leader: show only coordinators whose batches are EXCLUSIVELY in the leader's dept_type
+  // This prevents coordinators with mixed-dept groups (e.g. fouad: General+Private) from appearing
+  // under both leaders. Also excludes '--' (no coordinator assigned).
   let deptClause = '';
   if (req.user.role === 'leader') {
     const dept = req.user.department;
     if (dept && dept !== 'All') {
       const s = dept.replace(/'/g,"''");
-      deptClause = ` AND b.dept_type = '${s}'`;
+      deptClause = ` AND b.coordinators IS NOT NULL AND TRIM(b.coordinators) != '--'
+        AND b.dept_type = '${s}'
+        AND NOT EXISTS (
+          SELECT 1 FROM batches b2
+          WHERE TRIM(LOWER(b2.coordinators)) = TRIM(LOWER(b.coordinators))
+            AND b2.dept_type != '${s}'
+        )`;
     }
   }
   // Build date condition embedded in CASE WHEN (date_from/date_to override period)
@@ -1799,13 +1806,18 @@ router.get('/fix-report', (req, res) => {
 router.get('/fix-report/detail', (req, res) => {
   const { coordinator, period, date_from, date_to } = req.query;
   if (!coordinator) return res.status(400).json({ error: 'coordinator required' });
-  // Use dept_type filter (same as fix-report main endpoint)
+  // For leader: same exclusive-dept filter as fix-report main
   let deptClause = '';
   if (req.user.role === 'leader') {
     const dept = req.user.department;
     if (dept && dept !== 'All') {
       const s = dept.replace(/'/g,"''");
-      deptClause = ` AND b.dept_type = '${s}'`;
+      deptClause = ` AND b.dept_type = '${s}'
+        AND NOT EXISTS (
+          SELECT 1 FROM batches b2
+          WHERE TRIM(LOWER(b2.coordinators)) = TRIM(LOWER(b.coordinators))
+            AND b2.dept_type != '${s}'
+        )`;
     }
   }
   let periodClause = '';
