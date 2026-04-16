@@ -1745,14 +1745,14 @@ router.get('/group-lectures', (req, res) => {
 // ─── GET /api/reports/fix-report ─────────────────────────────────────────────
 router.get('/fix-report', (req, res) => {
   const { period, date_from, date_to } = req.query;
-  // For leader: filter by coordinator's registered department (not batch dept_type)
-  // This prevents cross-dept leakage when a coordinator has groups in multiple depts
+  // For leader: filter by b.dept_type (same as code-problems endpoint)
+  // Using coordinators IN (users) caused coordinators not in users table (e.g. "fouad") to be excluded
   let deptClause = '';
   if (req.user.role === 'leader') {
     const dept = req.user.department;
     if (dept && dept !== 'All') {
       const s = dept.replace(/'/g,"''");
-      deptClause = ` AND b.coordinators IN (SELECT full_name FROM users WHERE department='${s}')`;
+      deptClause = ` AND b.dept_type = '${s}'`;
     }
   }
   // Build date condition embedded in CASE WHEN (date_from/date_to override period)
