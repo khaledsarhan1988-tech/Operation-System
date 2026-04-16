@@ -908,6 +908,8 @@ router.get('/remarks-notes-zoom', (req, res) => {
   const emp1   = buildCoordFilter('b', employee);
   const coord1 = buildCoordFilter('b', coordinator);
   const srch1  = search ? ` AND (c.name LIKE '%${escapeLike(search)}%' OR c.phone LIKE '%${escapeLike(search)}%' OR c.group_name LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
+  // Part A search filter — uses absent_students column aliases
+  const srchA  = search ? ` AND (a.student_name LIKE '%${escapeLike(search)}%' OR a.phone LIKE '%${escapeLike(search)}%' OR a.group_name LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
 
   // Part 2 filters — b2 = batches via LEFT JOIN (may be NULL when client not in clients table)
   // IMPORTANT: r2.assigned_to is the primary coordinator for Part 2 (remark-based).
@@ -928,6 +930,38 @@ router.get('/remarks-notes-zoom', (req, res) => {
 
   const havingFilter = has_remark === '1' ? ` AND has_remark = 1`
                      : has_remark === '0' ? ` AND has_remark = 0` : '';
+
+  // Part A: students from absent_students table whose absence date matches a SIDE session
+  // Mirrors Part 1 of remarks-notes-main but filtered to session_type='side' lectures
+  const partA = `
+    SELECT DISTINCT
+      COALESCE(c_lu.name, NULLIF(TRIM(a.student_name),'')) AS client_name,
+      a.phone AS client_phone,
+      a.group_name,
+      a.date AS session_date,
+      b.coordinators,
+      COALESCE(
+        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) LIMIT 1),
+        b.dept_type
+      ) AS dept_type
+    FROM absent_students a
+    INNER JOIN batches b ON a.group_name = b.group_name
+    LEFT JOIN (SELECT phone, MIN(name) AS name FROM clients GROUP BY phone) c_lu
+      ON (a.student_name IS NULL OR TRIM(a.student_name) = '')
+      AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
+      AND c_lu.phone = a.phone
+    WHERE (
+      (a.student_name IS NOT NULL AND TRIM(a.student_name) != '')
+      OR (a.phone IS NOT NULL AND TRIM(a.phone) != '' AND c_lu.name IS NOT NULL)
+    )
+    AND a.date IS NOT NULL AND TRIM(a.date) != ''
+    AND EXISTS (
+      SELECT 1 FROM lectures l
+      WHERE l.group_name = a.group_name
+        AND l.session_type = 'side'
+        AND l.date = a.date
+    )
+    ${dept1}${emp1}${coord1}${srchA}`;
 
   // Part 1: clients in groups where ALL side sessions were absent (no one attended)
   // Safe to expand all group clients because everyone is confirmed absent
@@ -1013,6 +1047,8 @@ router.get('/remarks-notes-zoom', (req, res) => {
       r.assigned_to, r.status AS remark_status,
       CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END AS has_remark
     FROM (
+      SELECT * FROM (${partA}) pA
+      UNION
       SELECT * FROM (${part1}) p1
       UNION
       SELECT * FROM (${part2}) p2
