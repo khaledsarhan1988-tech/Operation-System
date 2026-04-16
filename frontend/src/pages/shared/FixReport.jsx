@@ -130,7 +130,15 @@ export default function FixReport() {
 
   const hasDateRange = dateFrom || dateTo;
 
-  const { data, isLoading } = useQuery({
+  // Source 1: all problems (real total) from code-problems with show_resolved=true
+  const { data: codeProbs, isLoading: codeLoad } = useQuery({
+    queryKey: ['fix-report-code-probs'],
+    queryFn: () => api.get('/reports/code-problems', { params: { show_resolved: true } }).then(r => r.data),
+    staleTime: 60 * 1000,
+  });
+
+  // Source 2: fix counts per coordinator from fix-report
+  const { data: fixData, isLoading: fixLoad } = useQuery({
     queryKey: ['fix-report', period, dateFrom, dateTo],
     queryFn: () => api.get('/reports/fix-report', {
       params: {
@@ -142,10 +150,28 @@ export default function FixReport() {
     staleTime: 60 * 1000,
   });
 
-  const totalAllCount = data?.reduce((a, r) => a + (r.all_count  || 0), 0) ?? 0;
-  const totalFixed    = data?.reduce((a, r) => a + (r.fixed      || 0), 0) ?? 0;
-  const totalRemain   = data?.reduce((a, r) => a + (r.remaining  || 0), 0) ?? 0;
-  const totalToday    = data?.reduce((a, r) => a + (r.fixed_today|| 0), 0) ?? 0;
+  const isLoading = codeLoad || fixLoad;
+
+  // Build coordinator → total count from code-problems
+  const coordTotals = {};
+  [...(codeProbs?.main_problems ?? []), ...(codeProbs?.zoom_problems ?? [])].forEach(p => {
+    const coord = p.coordinators || '--';
+    coordTotals[coord] = (coordTotals[coord] || 0) + 1;
+  });
+
+  // Merge: use fixData as base (has fixed/today info), override all_count from coordTotals
+  const data = Object.entries(coordTotals).map(([coord, total]) => {
+    const fix = (fixData ?? []).find(r => (r.coordinator || '--') === coord) || {};
+    const fixed     = fix.fixed      || 0;
+    const fixedToday= fix.fixed_today|| 0;
+    const remaining = total - fixed;
+    return { coordinator: coord, all_count: total, fixed, fixed_today: fixedToday, remaining };
+  }).sort((a, b) => b.remaining - a.remaining || b.fixed - a.fixed);
+
+  const totalAllCount = data.reduce((a, r) => a + r.all_count,   0);
+  const totalFixed    = data.reduce((a, r) => a + r.fixed,        0);
+  const totalRemain   = data.reduce((a, r) => a + r.remaining,    0);
+  const totalToday    = data.reduce((a, r) => a + r.fixed_today,  0);
   const pct = totalAllCount > 0 ? Math.round((totalFixed / totalAllCount) * 100) : 0;
 
   const selectCls = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]';
