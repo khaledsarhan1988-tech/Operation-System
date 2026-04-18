@@ -1980,9 +1980,21 @@ router.get('/fix-report/detail', (req, res) => {
 
 // ─── GET /api/reports/attendance-absence ─────────────────────────────────────
 // Per-coordinator attendance & absence stats for Main sessions + Zoom/Side sessions.
-// Counts ONLY sessions with recorded attendance data (ignores unrecorded lectures
-// to avoid inflating absence rates). Lectures where attendance column is empty
-// are treated as "not yet tracked" — excluded from both numerator and denominator.
+//
+// Main sessions:
+//   - Expected = SUM(trainee_count) for main lectures that have recorded attendance
+//     (attendance column filled). Lectures with empty attendance are "not yet
+//     tracked" and excluded from both numerator and denominator.
+//   - Absent  = COUNT of absent_students records matching those lectures by
+//     (group_name, date). This is the source of truth for student-level
+//     absences (the `attendance` column in lectures is unreliable in some
+//     departments — it sometimes equals trainee_count even when students are
+//     absent, while absent_students always records the individual absences).
+//
+// Zoom / side sessions:
+//   - Each 15-min confirmed side session = one student slot.
+//   - Expected = count of such sessions in tracked group+date groups.
+//   - Absent   = count where l.attendance is 0/empty.
 //
 // Role-based:
 //   - admin  → sees all, honors ?department= filter (OR EXISTS)
@@ -2008,18 +2020,16 @@ router.get('/attendance-absence', (req, res) => {
     // ─── MAIN SESSIONS ─────────────────────────────────────────────────────
     // For each main lecture WITH recorded attendance:
     //   expected_for_this_lecture = b.trainee_count
-    //   present_for_this_lecture  = CAST(l.attendance AS INTEGER)
-    //   absent_for_this_lecture   = MAX(0, trainee_count - attendance)
-    // Lectures with empty attendance are skipped entirely.
+    //   absent_for_this_lecture   = COUNT(absent_students) on (group, date)
+    // Lectures with empty attendance are skipped entirely (not yet tracked).
     const mainStats = db.prepare(`
       SELECT
         COALESCE(b.coordinators, '--') AS coordinator,
         SUM(b.trainee_count) AS expected,
-        SUM(CASE
-          WHEN CAST(l.attendance AS INTEGER) > b.trainee_count THEN 0
-          WHEN CAST(l.attendance AS INTEGER) < 0 THEN b.trainee_count
-          ELSE b.trainee_count - CAST(l.attendance AS INTEGER)
-        END) AS absent
+        SUM(
+          (SELECT COUNT(*) FROM absent_students a
+           WHERE a.group_name = l.group_name AND a.date = l.date)
+        ) AS absent
       FROM lectures l
       INNER JOIN batches b ON l.group_name = b.group_name
       WHERE l.session_type = 'main'
