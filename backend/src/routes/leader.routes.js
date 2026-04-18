@@ -65,11 +65,23 @@ router.get('/absent-report', (req, res) => {
     conditions.push(`EXISTS (SELECT 1 FROM batches b WHERE b.group_name = absent_students.group_name AND b.coordinators LIKE ?)`);
     params.push(`%${coordinator}%`);
   }
-  // Dept filter via subquery
+  // Dept filter: include groups where batch dept matches OR coordinator is registered in this dept.
+  // Prevents exclusion of groups with mismatched stored dept_type (e.g., coordinator is General but batch stored Semi).
   const dept = req.user?.department;
   if (dept && dept !== 'All') {
-    conditions.push(`EXISTS (SELECT 1 FROM batches b WHERE b.group_name = absent_students.group_name AND b.dept_type = ?)`);
-    params.push(dept);
+    conditions.push(`EXISTS (
+      SELECT 1 FROM batches b
+      WHERE b.group_name = absent_students.group_name
+        AND (
+          b.dept_type = ?
+          OR EXISTS (
+            SELECT 1 FROM users u
+            WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
+              AND u.department = ?
+          )
+        )
+    )`);
+    params.push(dept, dept);
   }
 
   const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
@@ -89,7 +101,18 @@ router.get('/groups', (req, res) => {
   const params = [];
   if (coordinator) { conditions.push('b.coordinators LIKE ?'); params.push(`%${coordinator}%`); }
   const dept = req.user?.department;
-  if (dept && dept !== 'All') { conditions.push('b.dept_type = ?'); params.push(dept); }
+  if (dept && dept !== 'All') {
+    // Match batch dept OR coordinator's registered dept — prevents exclusion of mismatched groups
+    conditions.push(`(
+      b.dept_type = ?
+      OR EXISTS (
+        SELECT 1 FROM users u
+        WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
+          AND u.department = ?
+      )
+    )`);
+    params.push(dept, dept);
+  }
   const where = 'WHERE ' + conditions.join(' AND ');
   const groups = db.prepare(`
     SELECT b.*,

@@ -26,12 +26,19 @@ function buildDeptFilter(table, department) {
   ))`;
 }
 
-// Strict dept filter — checks ONLY dept_type, no coordinator fallback
-// Used for leader role auto-filtering to prevent cross-department leakage
+// Dept filter — matches batch's dept_type OR coordinator's registered department.
+// A coordinator's registered department (in users table) is the source of truth:
+// if Ali Moaatz is registered General but his group is stored Semi, the group
+// should still appear for General department queries.
+// Kept name "Strict" for backwards-compatibility but the behavior is now inclusive.
 function buildStrictDeptFilter(table, department) {
   if (!department || department === 'All') return '';
   const safe = department.replace(/'/g, "''");
-  return ` AND ${table}.dept_type = '${safe}'`;
+  return ` AND (${table}.dept_type = '${safe}' OR EXISTS (
+    SELECT 1 FROM users u
+    WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(${table}.coordinators))
+      AND u.department = '${safe}'
+  ))`;
 }
 
 function buildCoordFilter(table, value) {
@@ -56,12 +63,20 @@ router.get('/dashboard', (req, res) => {
   const empRemark   = employee ? ` AND remarks.assigned_to LIKE '%${employee.replace(/'/g,"''")}%'` : '';
 
   // للملاحظات: ربط العميل بالمجموعة للفلترة بالقسم
+  // Match batch dept OR coordinator's registered dept to handle mismatched stored dept_type
   const deptRemark  = department && department !== 'All'
     ? ` AND EXISTS (
           SELECT 1 FROM clients c
           INNER JOIN batches b ON c.group_name = b.group_name
           WHERE c.phone = remarks.client_phone
-            AND b.dept_type = '${department}'
+            AND (
+              b.dept_type = '${department.replace(/'/g,"''")}'
+              OR EXISTS (
+                SELECT 1 FROM users u
+                WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
+                  AND u.department = '${department.replace(/'/g,"''")}'
+              )
+            )
         )`
     : '';
 
@@ -275,7 +290,7 @@ router.get('/dashboard', (req, res) => {
                WHERE a.student_name IS NOT NULL AND TRIM(a.student_name) != ''
                AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
                ${buildDateFilter('a.date', from_date, to_date)}
-               ${department && department !== 'All' ? ` AND b.dept_type = '${department}'` : ''}
+               ${department && department !== 'All' ? ` AND (b.dept_type = '${department.replace(/'/g,"''")}' OR EXISTS (SELECT 1 FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) AND u.department='${department.replace(/'/g,"''")}'))` : ''}
                ${buildCoordFilter('b', employee)}`
             ).get()?.cnt ?? 0;
             const zoomCnt = db.prepare(
@@ -594,7 +609,14 @@ router.get('/remarks-list', (req, res) => {
             SELECT 1 FROM clients c
             INNER JOIN batches b ON c.group_name = b.group_name
             WHERE c.phone = remarks.client_phone
-              AND b.dept_type = '${activeDept}'
+              AND (
+                b.dept_type = '${activeDept.replace(/'/g,"''")}'
+                OR EXISTS (
+                  SELECT 1 FROM users u
+                  WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
+                    AND u.department = '${activeDept.replace(/'/g,"''")}'
+                )
+              )
           )
           OR (
             NOT EXISTS (
@@ -605,7 +627,7 @@ router.get('/remarks-list', (req, res) => {
             AND EXISTS (
               SELECT 1 FROM team_members tm
               WHERE LOWER(TRIM(tm.name)) LIKE LOWER('%' || TRIM(remarks.assigned_to) || '%')
-                AND LOWER(tm.section) = LOWER('${activeDept}')
+                AND LOWER(tm.section) = LOWER('${activeDept.replace(/'/g,"''")}')
             )
           )
         )`

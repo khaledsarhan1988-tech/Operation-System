@@ -147,7 +147,18 @@ router.get('/absent', (req, res) => {
     const esc = q.replace(/%/g, '\\%').replace(/_/g, '\\_');
     params.push(`%${esc}%`, `%${esc}%`, `%${esc}%`);
   }
-  if (department && department !== 'All') { conditions.push('b.dept_type = ?'); params.push(department); }
+  if (department && department !== 'All') {
+    // Match batch dept OR coordinator's registered dept — avoids excluding groups with mismatched stored dept_type
+    conditions.push(`(
+      b.dept_type = ?
+      OR EXISTS (
+        SELECT 1 FROM users u
+        WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
+          AND u.department = ?
+      )
+    )`);
+    params.push(department, department);
+  }
   if (coordinator) { conditions.push('b.coordinators LIKE ?'); params.push(`%${coordinator}%`); }
   if (session_type) {
     if (session_type === 'side') {
