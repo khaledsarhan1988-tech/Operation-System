@@ -1978,4 +1978,174 @@ router.get('/fix-report/detail', (req, res) => {
   }
 });
 
+// ─── GET /api/reports/attendance-absence ─────────────────────────────────────
+// Per-coordinator attendance & absence stats for Main sessions + Zoom/Side sessions.
+// Role-based:
+//   - admin  → sees all, honors ?department= filter (OR EXISTS)
+//   - leader → scoped to req.user.department (coordinator-first)
+//   - agent  → scoped to their own groups (coordinator = their name)
+router.get('/attendance-absence', (req, res) => {
+  const { from_date, to_date, coordinator } = req.query;
+
+  // Role-based dept filter
+  let deptFilterB = '';
+  let coordFilterB = buildCoordFilter('b', coordinator);
+  if (req.user?.role === 'leader') {
+    deptFilterB = buildStrictDeptFilter('b', req.user.department);
+  } else if (req.user?.role === 'admin') {
+    deptFilterB = buildDeptFilter('b', req.query.department);
+  } else if (req.user?.role === 'agent') {
+    // Agent sees only their own — override coordinator filter with their full_name
+    coordFilterB = buildCoordFilter('b', req.user.full_name);
+  }
+
+  const dateFilterL = buildDateFilter('l.date', from_date, to_date);
+
+  try {
+    // 1) MAIN expected: count of (lecture × student) for main sessions
+    const mainExpected = db.prepare(`
+      SELECT
+        COALESCE(b.coordinators, '--') AS coordinator,
+        COUNT(*) AS cnt
+      FROM lectures l
+      INNER JOIN batches b ON l.group_name = b.group_name
+      INNER JOIN clients c ON c.group_name = l.group_name
+      WHERE l.session_type = 'main'
+        AND c.name IS NOT NULL AND TRIM(c.name) != ''
+        AND c.phone IS NOT NULL AND TRIM(c.phone) != ''
+      ${dateFilterL}${deptFilterB}${coordFilterB}
+      GROUP BY b.coordinators
+    `).all();
+
+    // 2) MAIN absent Part1: explicit absent_students records (name resolved or phone lookup)
+    const part1DateFilter = buildDateFilter(
+      `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`,
+      from_date,
+      to_date
+    );
+    const mainAbsentPart1 = db.prepare(`
+      SELECT coordinator, COUNT(*) AS cnt FROM (
+        SELECT
+          COALESCE(b.coordinators, '--') AS coordinator,
+          COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS resolved_date
+        FROM absent_students a
+        INNER JOIN batches b ON a.group_name = b.group_name
+        LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
+          AND a.phone IS NOT NULL AND TRIM(a.phone) != '' AND c_lu.phone = a.phone
+        LEFT JOIN (
+          SELECT group_name, date,
+            ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
+          FROM lectures WHERE session_type = 'main'
+        ) lec_inf ON (a.date IS NULL OR TRIM(a.date)='')
+          AND lec_inf.group_name = a.group_name
+          AND a.lecture_no IS NOT NULL
+          AND lec_inf.lec_num = a.lecture_no
+        WHERE (
+          (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
+          OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+        )
+        ${deptFilterB}${coordFilterB}
+      ) p1
+      WHERE 1=1 ${part1DateFilter}
+      GROUP BY coordinator
+    `).all();
+
+    // 3) MAIN absent Part2: main lectures with NO attendance AND NO absent records → all students absent
+    const mainAbsentPart2 = db.prepare(`
+      SELECT
+        COALESCE(b.coordinators, '--') AS coordinator,
+        COUNT(*) AS cnt
+      FROM lectures l
+      INNER JOIN batches b ON l.group_name = b.group_name
+      INNER JOIN clients c ON c.group_name = l.group_name
+      WHERE l.session_type = 'main'
+        AND (l.attendance IS NULL OR TRIM(l.attendance) = '')
+        AND c.name IS NOT NULL AND TRIM(c.name) != ''
+        AND c.phone IS NOT NULL AND TRIM(c.phone) != ''
+        AND NOT EXISTS (
+          SELECT 1 FROM absent_students a2
+          WHERE a2.group_name = l.group_name AND a2.date = l.date
+        )
+      ${dateFilterL}${deptFilterB}${coordFilterB}
+      GROUP BY b.coordinators
+    `).all();
+
+    // 4) ZOOM (side) stats: per group+date, each student = one 15-min session
+    //    expected = trainee_count, absent = trainee_count - present_count
+    const zoomStats = db.prepare(`
+      SELECT
+        coordinator,
+        SUM(trainee_count) AS zoom_expected,
+        SUM(CASE WHEN trainee_count - present_count > 0
+                 THEN trainee_count - present_count ELSE 0 END) AS zoom_absent
+      FROM (
+        SELECT
+          COALESCE(b.coordinators, '--') AS coordinator,
+          l.group_name,
+          l.date,
+          MAX(b.trainee_count) AS trainee_count,
+          SUM(CASE
+            WHEN l.attendance IS NOT NULL AND l.attendance != ''
+                 AND CAST(l.attendance AS INTEGER) > 0
+            THEN 1 ELSE 0
+          END) AS present_count
+        FROM lectures l
+        INNER JOIN batches b ON l.group_name = b.group_name
+        WHERE l.session_type = 'side'
+          AND l.status = 'مؤكدة'
+          AND (l.duration IS NULL OR l.duration <= '00:15')
+          ${dateFilterL}${deptFilterB}${coordFilterB}
+        GROUP BY b.coordinators, l.group_name, l.date
+      ) sub
+      GROUP BY coordinator
+    `).all();
+
+    // Merge all sources per coordinator
+    const map = new Map();
+    const ensure = (raw) => {
+      const key = raw || '--';
+      if (!map.has(key)) {
+        map.set(key, {
+          coordinator: key,
+          main_expected: 0,
+          main_absent: 0,
+          zoom_expected: 0,
+          zoom_absent: 0,
+        });
+      }
+      return map.get(key);
+    };
+
+    mainExpected.forEach(r => { ensure(r.coordinator).main_expected += r.cnt || 0; });
+    mainAbsentPart1.forEach(r => { ensure(r.coordinator).main_absent += r.cnt || 0; });
+    mainAbsentPart2.forEach(r => { ensure(r.coordinator).main_absent += r.cnt || 0; });
+    zoomStats.forEach(r => {
+      const row = ensure(r.coordinator);
+      row.zoom_expected += r.zoom_expected || 0;
+      row.zoom_absent   += r.zoom_absent   || 0;
+    });
+
+    // Compute rates + sort by total absent desc
+    const result = Array.from(map.values())
+      .filter(r => r.main_expected + r.zoom_expected > 0)
+      .map(r => ({
+        ...r,
+        main_absence_rate: r.main_expected > 0
+          ? Math.round((r.main_absent / r.main_expected) * 100)
+          : 0,
+        zoom_absence_rate: r.zoom_expected > 0
+          ? Math.round((r.zoom_absent / r.zoom_expected) * 100)
+          : 0,
+      }))
+      .sort((a, b) =>
+        (b.main_absent + b.zoom_absent) - (a.main_absent + a.zoom_absent)
+      );
+
+    return res.json(result);
+  } catch (err) {
+    console.error('[reports] attendance-absence error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

@@ -33,6 +33,7 @@ import TeamPage from './pages/admin/TeamPage';
 
 // Shared pages
 import FixReport from './pages/shared/FixReport';
+import AttendanceAbsenceReport from './pages/shared/AttendanceAbsenceReport';
 
 const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
@@ -73,6 +74,7 @@ const router = createBrowserRouter([
       { path: 'reports/education',            element: <EducationReports /> },
       { path: 'reports/quality',              element: <QualityReports /> },
       { path: 'reports/fix-report',           element: <FixReport /> },
+      { path: 'reports/attendance-absence',   element: <AttendanceAbsenceReport /> },
     ],
   },
 
@@ -91,6 +93,7 @@ const router = createBrowserRouter([
       { path: 'reports/education',            element: <EducationReports /> },
       { path: 'reports/quality',              element: <QualityReports /> },
       { path: 'reports/fix-report',           element: <FixReport /> },
+      { path: 'reports/attendance-absence',   element: <AttendanceAbsenceReport /> },
     ],
   },
 

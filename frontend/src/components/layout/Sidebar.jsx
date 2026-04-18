@@ -4,7 +4,7 @@ import { useAuth } from '../../auth/AuthContext';
 import {
   LayoutDashboard, ClipboardList, Search, UserX, Calendar,
   Video, Users, BarChart2, Globe, UserCog, Upload, FileText,
-  LogOut, Headphones, GraduationCap, ShieldCheck, AlertTriangle
+  LogOut, Headphones, GraduationCap, ShieldCheck, AlertTriangle, Activity
 } from 'lucide-react';
 
 const AGENT_LINKS = [
@@ -26,15 +26,17 @@ const LEADER_LINKS = [
   { to: '/leader/code-problems',        label: 'أكواد بها مشكلة', icon: AlertTriangle },
   { to: '/leader/performance',          label: 'nav.performance',  icon: BarChart2 },
   { type: 'section', label: 'التقارير' },
-  { to: '/leader/reports/fix-report',   label: 'تقارير الإصلاح',  icon: FileText },
+  { to: '/leader/reports/fix-report',           label: 'تقارير الإصلاح',          icon: FileText },
+  { to: '/leader/reports/attendance-absence',   label: 'تقارير الحضور والغياب',  icon: Activity },
 ];
 
 
 const REPORT_LINKS = [
-  { to: '/admin/reports/customer-services', label: 'تقارير خدمة العملاء',     icon: Headphones,    management: 'Customer Services' },
-  { to: '/admin/reports/fix-report',        label: 'تقارير الإصلاح',           icon: FileText,      management: 'Customer Services', sub: true },
-  { to: '/admin/reports/education',         label: 'تقارير الإدارة التعليمية', icon: GraduationCap, management: 'Education' },
-  { to: '/admin/reports/quality',           label: 'تقارير الجودة',            icon: ShieldCheck,   management: 'Quality' },
+  { to: '/admin/reports/customer-services',     label: 'تقارير خدمة العملاء',     icon: Headphones,    management: 'Customer Services' },
+  { to: '/admin/reports/fix-report',            label: 'تقارير الإصلاح',           icon: FileText,      management: 'Customer Services', sub: true },
+  { to: '/admin/reports/attendance-absence',    label: 'تقارير الحضور والغياب',   icon: Activity,      management: 'Customer Services', sub: true },
+  { to: '/admin/reports/education',             label: 'تقارير الإدارة التعليمية', icon: GraduationCap, management: 'Education' },
+  { to: '/admin/reports/quality',               label: 'تقارير الجودة',            icon: ShieldCheck,   management: 'Quality' },
 ];
 
 const managementMap = {
