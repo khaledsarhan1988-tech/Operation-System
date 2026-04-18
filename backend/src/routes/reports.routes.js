@@ -1223,7 +1223,16 @@ router.get('/code-problems', (req, res) => {
 
   try {
     const batches = db.prepare(
-      `SELECT group_name, trainee_count, dept_type, coordinators, start_date
+      `SELECT b.group_name, b.trainee_count,
+              COALESCE(
+                (SELECT u.department FROM users u
+                 WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
+                   AND u.department IS NOT NULL
+                   AND u.department != 'All'
+                 LIMIT 1),
+                b.dept_type
+              ) AS dept_type,
+              b.coordinators, b.start_date
        FROM batches b WHERE status='نشطة'${deptFilter}${empFilter}`
     ).all();
 
