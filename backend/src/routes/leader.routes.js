@@ -65,19 +65,26 @@ router.get('/absent-report', (req, res) => {
     conditions.push(`EXISTS (SELECT 1 FROM batches b WHERE b.group_name = absent_students.group_name AND b.coordinators LIKE ?)`);
     params.push(`%${coordinator}%`);
   }
-  // Dept filter: include groups where batch dept matches OR coordinator is registered in this dept.
-  // Prevents exclusion of groups with mismatched stored dept_type (e.g., coordinator is General but batch stored Semi).
+  // Dept filter: coordinator's registered dept is source of truth.
+  // Include if coordinator registered in leader's dept, OR (coordinator NOT registered AND batch dept matches).
   const dept = req.user?.department;
   if (dept && dept !== 'All') {
     conditions.push(`EXISTS (
       SELECT 1 FROM batches b
       WHERE b.group_name = absent_students.group_name
         AND (
-          b.dept_type = ?
-          OR EXISTS (
+          EXISTS (
             SELECT 1 FROM users u
             WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
               AND u.department = ?
+          )
+          OR (
+            b.dept_type = ?
+            AND NOT EXISTS (
+              SELECT 1 FROM users u2
+              WHERE LOWER(TRIM(u2.full_name)) = LOWER(TRIM(b.coordinators))
+                AND u2.department IS NOT NULL AND u2.department != 'All'
+            )
           )
         )
     )`);
@@ -102,13 +109,20 @@ router.get('/groups', (req, res) => {
   if (coordinator) { conditions.push('b.coordinators LIKE ?'); params.push(`%${coordinator}%`); }
   const dept = req.user?.department;
   if (dept && dept !== 'All') {
-    // Match batch dept OR coordinator's registered dept — prevents exclusion of mismatched groups
+    // Coordinator's registered dept is source of truth; fallback to batch.dept_type only if coordinator unregistered.
     conditions.push(`(
-      b.dept_type = ?
-      OR EXISTS (
+      EXISTS (
         SELECT 1 FROM users u
         WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
           AND u.department = ?
+      )
+      OR (
+        b.dept_type = ?
+        AND NOT EXISTS (
+          SELECT 1 FROM users u2
+          WHERE LOWER(TRIM(u2.full_name)) = LOWER(TRIM(b.coordinators))
+            AND u2.department IS NOT NULL AND u2.department != 'All'
+        )
       )
     )`);
     params.push(dept, dept);

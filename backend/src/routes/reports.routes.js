@@ -26,19 +26,32 @@ function buildDeptFilter(table, department) {
   ))`;
 }
 
-// Dept filter — matches batch's dept_type OR coordinator's registered department.
-// A coordinator's registered department (in users table) is the source of truth:
-// if Ali Moaatz is registered General but his group is stored Semi, the group
-// should still appear for General department queries.
-// Kept name "Strict" for backwards-compatibility but the behavior is now inclusive.
+// Dept filter — coordinator's registered department is SOURCE OF TRUTH.
+// Rules:
+//   1. If coordinator IS registered in users table → use their registered department
+//      (Ali Moaatz registered General → his groups count as General even if batch stored Semi)
+//   2. If coordinator is NOT registered (or multi-name field doesn't exact-match) →
+//      fall back to batch.dept_type
+// This prevents cross-dept leakage: groups where batch stored General but coordinator
+// is registered Semi will NOT appear for General leader (they belong to coordinator's dept).
 function buildStrictDeptFilter(table, department) {
   if (!department || department === 'All') return '';
   const safe = department.replace(/'/g, "''");
-  return ` AND (${table}.dept_type = '${safe}' OR EXISTS (
-    SELECT 1 FROM users u
-    WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(${table}.coordinators))
-      AND u.department = '${safe}'
-  ))`;
+  return ` AND (
+    EXISTS (
+      SELECT 1 FROM users u
+      WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(${table}.coordinators))
+        AND u.department = '${safe}'
+    )
+    OR (
+      ${table}.dept_type = '${safe}'
+      AND NOT EXISTS (
+        SELECT 1 FROM users u
+        WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(${table}.coordinators))
+          AND u.department IS NOT NULL AND u.department != 'All'
+      )
+    )
+  )`;
 }
 
 function buildCoordFilter(table, value) {
@@ -1180,17 +1193,26 @@ router.get('/code-problems', (req, res) => {
   if (req.user.role === 'agent') {
     deptFilter = '';
   } else if (req.user.role === 'leader') {
-    // Leader: match on dept_type OR coordinator's registered department.
-    // Pure strict filter (b.dept_type only) excludes groups where batch.dept_type is stored
-    // inconsistently (e.g., Ali Moaatz registered General but group stored Semi).
+    // Leader: coordinator's registered dept is source of truth.
+    // Include group if: coordinator registered in leader's dept, OR (coordinator NOT registered AND batch.dept_type matches).
     const dept = (!department || department === 'All') ? req.user.department : department;
     if (dept && dept !== 'All') {
       const s = dept.replace(/'/g, "''");
-      deptFilter = ` AND (b.dept_type = '${s}' OR EXISTS (
-          SELECT 1 FROM users u
-          WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
-            AND u.department = '${s}'
-        ))
+      deptFilter = ` AND (
+          EXISTS (
+            SELECT 1 FROM users u
+            WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
+              AND u.department = '${s}'
+          )
+          OR (
+            b.dept_type = '${s}'
+            AND NOT EXISTS (
+              SELECT 1 FROM users u
+              WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
+                AND u.department IS NOT NULL AND u.department != 'All'
+            )
+          )
+        )
         AND b.coordinators IS NOT NULL AND TRIM(b.coordinators) NOT IN ('', '--')`;
     } else {
       deptFilter = '';
@@ -1834,12 +1856,22 @@ router.get('/fix-report', (req, res) => {
     const dept = req.user.department;
     if (dept && dept !== 'All') {
       const s = dept.replace(/'/g,"''");
-      // Match batch dept OR coordinator's registered dept — consistent with code-problems leader filter
-      deptCond = ` AND (b.dept_type = '${s}' OR EXISTS (
-        SELECT 1 FROM users u
-        WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
-          AND u.department = '${s}'
-      ))`;
+      // Coordinator's registered dept is source of truth; fallback to batch.dept_type only if coordinator unregistered.
+      deptCond = ` AND (
+        EXISTS (
+          SELECT 1 FROM users u
+          WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
+            AND u.department = '${s}'
+        )
+        OR (
+          b.dept_type = '${s}'
+          AND NOT EXISTS (
+            SELECT 1 FROM users u
+            WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
+              AND u.department IS NOT NULL AND u.department != 'All'
+          )
+        )
+      )`;
     }
   }
   // Build date condition embedded in CASE WHEN (date_from/date_to override period)
@@ -1886,17 +1918,27 @@ router.get('/fix-report', (req, res) => {
 router.get('/fix-report/detail', (req, res) => {
   const { coordinator, period, date_from, date_to } = req.query;
   if (!coordinator) return res.status(400).json({ error: 'coordinator required' });
-  // For leader: match batch dept OR coordinator's registered dept (consistent with code-problems)
+  // For leader: coordinator's registered dept is source of truth (consistent with code-problems)
   let deptClause = '';
   if (req.user.role === 'leader') {
     const dept = req.user.department;
     if (dept && dept !== 'All') {
       const s = dept.replace(/'/g,"''");
-      deptClause = ` AND (b.dept_type = '${s}' OR EXISTS (
-        SELECT 1 FROM users u
-        WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
-          AND u.department = '${s}'
-      ))`;
+      deptClause = ` AND (
+        EXISTS (
+          SELECT 1 FROM users u
+          WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
+            AND u.department = '${s}'
+        )
+        OR (
+          b.dept_type = '${s}'
+          AND NOT EXISTS (
+            SELECT 1 FROM users u
+            WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
+              AND u.department IS NOT NULL AND u.department != 'All'
+          )
+        )
+      )`;
     }
   }
   let periodClause = '';
