@@ -1158,12 +1158,17 @@ router.get('/code-problems', (req, res) => {
   if (req.user.role === 'agent') {
     deptFilter = '';
   } else if (req.user.role === 'leader') {
-    // Leader: filter by dept_type only — coordinators field may contain multiple names (e.g. "Mostafa, fouad")
-    // We use LIKE to match leader's name within potentially multi-name coordinator fields
+    // Leader: match on dept_type OR coordinator's registered department.
+    // Pure strict filter (b.dept_type only) excludes groups where batch.dept_type is stored
+    // inconsistently (e.g., Ali Moaatz registered General but group stored Semi).
     const dept = (!department || department === 'All') ? req.user.department : department;
     if (dept && dept !== 'All') {
       const s = dept.replace(/'/g, "''");
-      deptFilter = ` AND b.dept_type = '${s}'
+      deptFilter = ` AND (b.dept_type = '${s}' OR EXISTS (
+          SELECT 1 FROM users u
+          WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
+            AND u.department = '${s}'
+        ))
         AND b.coordinators IS NOT NULL AND TRIM(b.coordinators) NOT IN ('', '--')`;
     } else {
       deptFilter = '';
@@ -1807,7 +1812,12 @@ router.get('/fix-report', (req, res) => {
     const dept = req.user.department;
     if (dept && dept !== 'All') {
       const s = dept.replace(/'/g,"''");
-      deptCond = ` AND b.dept_type = '${s}'`;
+      // Match batch dept OR coordinator's registered dept — consistent with code-problems leader filter
+      deptCond = ` AND (b.dept_type = '${s}' OR EXISTS (
+        SELECT 1 FROM users u
+        WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
+          AND u.department = '${s}'
+      ))`;
     }
   }
   // Build date condition embedded in CASE WHEN (date_from/date_to override period)
@@ -1854,13 +1864,17 @@ router.get('/fix-report', (req, res) => {
 router.get('/fix-report/detail', (req, res) => {
   const { coordinator, period, date_from, date_to } = req.query;
   if (!coordinator) return res.status(400).json({ error: 'coordinator required' });
-  // For leader: filter detail rows by the leader's dept_type only (no NOT EXISTS — that was blocking mixed-dept coordinators)
+  // For leader: match batch dept OR coordinator's registered dept (consistent with code-problems)
   let deptClause = '';
   if (req.user.role === 'leader') {
     const dept = req.user.department;
     if (dept && dept !== 'All') {
       const s = dept.replace(/'/g,"''");
-      deptClause = ` AND b.dept_type = '${s}'`;
+      deptClause = ` AND (b.dept_type = '${s}' OR EXISTS (
+        SELECT 1 FROM users u
+        WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
+          AND u.department = '${s}'
+      ))`;
     }
   }
   let periodClause = '';
