@@ -1148,15 +1148,15 @@ router.get('/code-problems', (req, res) => {
   const showResolved = show_resolved === 'true';
 
   // Dept filter:
-  // - agent:  strict dept_type filter by their OWN department (from DB, not query param)
+  // - agent:  NO dept filter — coordinator name LIKE filter already restricts to their own groups.
+  //           Applying dept_type filter causes false negatives when a group's stored dept_type
+  //           doesn't match the coordinator's registered department (e.g., Ali Moaatz is General
+  //           but his group is stored as Semi → group gets incorrectly excluded).
   // - leader: strict dept_type-only filter (no OR EXISTS) to prevent cross-dept leakage
   // - admin:  full buildDeptFilter (includes coordinator-based fallback)
   let deptFilter;
   if (req.user.role === 'agent') {
-    // Agent: filter by their own dept_type from users table + their own name in coordinators
-    const agentRow = db.prepare('SELECT full_name, department FROM users WHERE id = ?').get(req.user.id);
-    const agentDept = agentRow?.department;
-    deptFilter = buildStrictDeptFilter('b', agentDept && agentDept !== 'All' ? agentDept : '');
+    deptFilter = '';
   } else if (req.user.role === 'leader') {
     // Leader: filter by dept_type only — coordinators field may contain multiple names (e.g. "Mostafa, fouad")
     // We use LIKE to match leader's name within potentially multi-name coordinator fields
