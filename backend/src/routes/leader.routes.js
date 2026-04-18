@@ -183,7 +183,28 @@ router.post('/assign', (req, res) => {
 // GET /api/leader/side-sessions-summary?date=
 router.get('/side-sessions-summary', (req, res) => {
   const date = req.query.date || new Date().toISOString().slice(0, 10);
-  const { clause: deptClause } = leaderDeptClause(req.user);
+  // Coordinator-first dept filter: coordinator's registered department is source of truth;
+  // fall back to batch.dept_type only if coordinator not registered in users table.
+  const dept = req.user?.department;
+  let deptClause = '';
+  if (dept && dept !== 'All') {
+    const safe = dept.replace(/'/g, "''");
+    deptClause = ` AND (
+      EXISTS (
+        SELECT 1 FROM users u2
+        WHERE LOWER(TRIM(u2.full_name)) = LOWER(TRIM(b.coordinators))
+          AND u2.department = '${safe}'
+      )
+      OR (
+        b.dept_type = '${safe}'
+        AND NOT EXISTS (
+          SELECT 1 FROM users u3
+          WHERE LOWER(TRIM(u3.full_name)) = LOWER(TRIM(b.coordinators))
+            AND u3.department IS NOT NULL AND u3.department != 'All'
+        )
+      )
+    )`;
+  }
   const data = db.prepare(`
     SELECT
       l.group_name,
