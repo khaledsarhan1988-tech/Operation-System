@@ -16,14 +16,25 @@ const PERIODS = [
 
 function periodToRange(period) {
   const today = new Date();
-  const iso = d => d.toISOString().slice(0, 10);
+  // Local-date ISO (avoid UTC offset bug)
+  const iso = d => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
   if (period === 'today') return { from: iso(today), to: iso(today) };
   if (period === 'week') {
-    const start = new Date(today); start.setDate(today.getDate() - 6);
+    // Start of current week (Saturday — common Arab week start)
+    const start = new Date(today);
+    const dayOfWeek = start.getDay(); // 0=Sun..6=Sat
+    const diff = (dayOfWeek + 1) % 7;  // distance back to Saturday
+    start.setDate(start.getDate() - diff);
     return { from: iso(start), to: iso(today) };
   }
   if (period === 'month') {
-    const start = new Date(today); start.setDate(today.getDate() - 29);
+    // First day of current calendar month
+    const start = new Date(today.getFullYear(), today.getMonth(), 1);
     return { from: iso(start), to: iso(today) };
   }
   return { from: '', to: '' };
