@@ -2025,9 +2025,11 @@ router.get('/attendance-absence', (req, res) => {
 
   try {
     // ─── MAIN EXPECTED per coordinator ─────────────────────────────────────
-    // Matches dashboard `main_lectures` KPI (COUNT of main lectures).
+    // Student-slot count: SUM(trainee_count) across main lectures in window.
+    // This is the correct denominator for student-level absences (Part1+Part2).
     const mainExpectedRows = db.prepare(`
-      SELECT COALESCE(b.coordinators, '--') AS coordinator, COUNT(*) AS cnt
+      SELECT COALESCE(b.coordinators, '--') AS coordinator,
+        COALESCE(SUM(b.trainee_count), 0) AS cnt
       FROM lectures l
       INNER JOIN batches b ON l.group_name = b.group_name
       WHERE l.session_type = 'main'
@@ -2082,15 +2084,22 @@ router.get('/attendance-absence', (req, res) => {
     `).all();
 
     // ─── ZOOM EXPECTED per coordinator ─────────────────────────────────────
-    // Matches dashboard `zoom_calls` KPI (COUNT of regular 15-min side sessions).
+    // Student-slot count matching zoom_absent formula's unit:
+    // For each (group, date) with at least one 15-min confirmed zoom session,
+    // expected slots = MAX(trainee_count). Sum across (group,date) pairs.
     const zoomExpectedRows = db.prepare(`
-      SELECT COALESCE(b.coordinators, '--') AS coordinator, COUNT(*) AS cnt
-      FROM lectures l
-      INNER JOIN batches b ON l.group_name = b.group_name
-      WHERE l.session_type = 'side'
-        AND l.side_session_category = 'regular'
-      ${dateFilterL}${deptFilterB}${coordFilterB}
-      GROUP BY b.coordinators
+      SELECT coordinator, COALESCE(SUM(expected_slots), 0) AS cnt FROM (
+        SELECT COALESCE(b.coordinators, '--') AS coordinator,
+          MAX(b.trainee_count) AS expected_slots
+        FROM lectures l
+        INNER JOIN batches b ON l.group_name = b.group_name
+        WHERE l.session_type = 'side'
+          AND l.status = 'مؤكدة'
+          AND (l.duration IS NULL OR l.duration <= '00:15')
+        ${dateFilterL}${deptFilterB}${coordFilterB}
+        GROUP BY b.coordinators, l.group_name, l.date
+      ) sub
+      GROUP BY coordinator
     `).all();
 
     // ─── ZOOM ABSENT per coordinator (dashboard formula) ───────────────────
