@@ -1406,6 +1406,15 @@ router.get('/code-problems', (req, res) => {
         }, 'main');
       }
 
+      // 1b. Count < 8 (missing main lectures)
+      if (mainDates.length > 0 && mainDates.length < 8) {
+        addProblem(mainProblems, { ...meta, first_date: firstMainDate,
+          problem_type: 'عدد المحاضرات ناقصة',
+          detail: `الموجود: ${mainDates.length} محاضرة — المفروض: 8`,
+          actual: mainDates.length, expected: 8,
+        }, 'main');
+      }
+
       if (parsed) {
         // 2. First session date ≠ name date
         if (mainDates.length > 0) {
