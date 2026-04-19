@@ -1528,6 +1528,62 @@ router.get('/code-problems', (req, res) => {
     mainProblems.forEach(attachRename);
     zoomProblems.forEach(attachRename);
 
+    // ── GHOST entries ────────────────────────────────────────────────────────
+    // For each resolved problem that points to a new_group_code which exists as
+    // a current batch, surface a read-only "historical" problem under the new
+    // code so users searching by the new code can see what was resolved
+    // previously. Without this, searching by the new code hides the resolved
+    // record (because the resolved record is keyed to the old group_name).
+    const batchMap = {};
+    batches.forEach(b => { batchMap[b.group_name] = b; });
+    const existingKey = new Set();
+    mainProblems.forEach(p => existingKey.add(`${p.group_name}|${p.problem_type}|main`));
+    zoomProblems.forEach(p => existingKey.add(`${p.group_name}|${p.problem_type}|side`));
+
+    storedStatuses.forEach(s => {
+      if (!s.new_group_code) return;
+      const newCode = s.new_group_code.trim();
+      if (!newCode) return;
+      // Only surface closed statuses (resolved / wont_repeat / exception)
+      if (!['resolved', 'wont_repeat', 'exception'].includes(s.status)) return;
+      const batch = batchMap[newCode];
+      if (!batch) return; // new code must exist in the filtered batches
+      const sessionType = s.session_type || 'main';
+      const key = `${newCode}|${s.problem_type}|${sessionType}`;
+      if (existingKey.has(key)) return; // a live problem already exists — skip
+      // When showResolved=false (default), skip — ghost entries are inherently "closed"
+      if (!showResolved) return;
+      // Look up the "updated_by_name" (join users) — cheap, done once per ghost
+      let updatedByName = null;
+      if (s.updated_by) {
+        const u = db.prepare('SELECT full_name FROM users WHERE id = ?').get(s.updated_by);
+        updatedByName = u?.full_name ?? null;
+      }
+      const ghost = {
+        group_name:          newCode,
+        problem_type:        s.problem_type,
+        dept_type:           batch.dept_type,
+        coordinators:        batch.coordinators,
+        trainee_count:       batch.trainee_count,
+        first_date:          null,
+        detail:              `تم حل هذه المشكلة تحت الاسم السابق: ${s.group_name}`,
+        // flags that mark this as a ghost/historical entry
+        _ghost:              true,
+        _ghost_source_group: s.group_name,
+        // already-closed status fields (mirrors addProblem's showResolved branch)
+        _resolved_status:    s.status,
+        _status_note:        s.note,
+        _status_by:          updatedByName,
+        _status_at:          s.updated_at,
+        // rename badge
+        previous_group_name: s.group_name,
+        rename_recorded_at:  s.updated_at,
+      };
+      if (sessionType === 'side') zoomProblems.push(ghost);
+      else                        mainProblems.push(ghost);
+      existingKey.add(key);
+    });
+
     return res.json({ main_problems: mainProblems, zoom_problems: zoomProblems,
       total: mainProblems.length + zoomProblems.length });
   } catch (err) {

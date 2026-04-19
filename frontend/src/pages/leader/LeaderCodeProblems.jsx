@@ -113,7 +113,14 @@ export default function LeaderCodeProblems() {
   (statusData ?? []).forEach(s => {
     statusMap[`${s.group_name}|${s.problem_type}|${s.session_type}`] = s;
   });
-  const getStatus    = (p, session) => statusMap[`${p.group_name}|${p.problem_type}|${session}`] ?? null;
+  const getStatus = (p, session) => {
+    const primary = statusMap[`${p.group_name}|${p.problem_type}|${session}`];
+    if (primary) return primary;
+    if (p._ghost_source_group) {
+      return statusMap[`${p._ghost_source_group}|${p.problem_type}|${session}`] ?? null;
+    }
+    return null;
+  };
   const getStatusKey = (p) => p._resolved_status ?? p._status?.status ?? 'new';
 
   // ── enrich problems
@@ -146,7 +153,8 @@ export default function LeaderCodeProblems() {
   // ── open editor
   const openEditor = (p) => {
     const cur = p._status;
-    setEditKey({ group_name: p.group_name, problem_type: p.problem_type, session_type: p._session, actual: p.actual ?? null });
+    const targetGroup = p._ghost_source_group ?? p.group_name;
+    setEditKey({ group_name: targetGroup, problem_type: p.problem_type, session_type: p._session, actual: p.actual ?? null });
     setEditForm({
       status:         cur?.status ?? 'new',
       note:           cur?.note   ?? '',
@@ -239,7 +247,7 @@ export default function LeaderCodeProblems() {
                <tr key={i} className={`border-b border-gray-50 hover:bg-gray-50/60 transition-colors ${rowBg}`}>
                  <td className="px-4 py-3 font-semibold text-gray-900 text-xs" style={{ maxWidth: '240px', wordBreak: 'break-word' }}>
                    <button onClick={() => navigator.clipboard.writeText(p.group_name)} title="انقر للنسخ" className="text-right hover:text-blue-600 transition-colors cursor-copy">{p.group_name}</button>
-                   {p._status?.new_group_code && (
+                   {!p._ghost && p._status?.new_group_code && (
                      <button
                        type="button"
                        onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(p._status.new_group_code); }}

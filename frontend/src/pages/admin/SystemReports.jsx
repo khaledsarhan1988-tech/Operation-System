@@ -1357,8 +1357,15 @@ function CodeProblemsModal({ params, onClose }) {
   (statusData ?? []).forEach(s => {
     statusMap[`${s.group_name}|${s.problem_type}|${s.session_type}`] = s;
   });
-  const getStatus = (p, sessionType) =>
-    statusMap[`${p.group_name}|${p.problem_type}|${sessionType}`] ?? null;
+  const getStatus = (p, sessionType) => {
+    // Ghost entries live under new_group_code but the DB record is keyed to the old group_name
+    const primary = statusMap[`${p.group_name}|${p.problem_type}|${sessionType}`];
+    if (primary) return primary;
+    if (p._ghost_source_group) {
+      return statusMap[`${p._ghost_source_group}|${p.problem_type}|${sessionType}`] ?? null;
+    }
+    return null;
+  };
   const getStatusKey = (p) => p._resolved_status ?? p._status?.status ?? 'new';
 
   // ── enrich problems with status
@@ -1413,7 +1420,9 @@ function CodeProblemsModal({ params, onClose }) {
   // ── open editor
   const openEditor = (p) => {
     const cur = p._status;
-    setEditKey({ group_name: p.group_name, problem_type: p.problem_type, session_type: p._session, actual: p.actual ?? null });
+    // For ghost (historical) entries, edit the ORIGINAL record (old group_name)
+    const targetGroup = p._ghost_source_group ?? p.group_name;
+    setEditKey({ group_name: targetGroup, problem_type: p.problem_type, session_type: p._session, actual: p.actual ?? null });
     setEditForm({
       status:         cur?.status ?? 'new',
       note:           cur?.note   ?? '',
@@ -1517,7 +1526,7 @@ function CodeProblemsModal({ params, onClose }) {
                <tr key={i} className={`border-b border-gray-50 hover:bg-gray-50/60 transition-colors ${rowBg}`}>
                  <td className="px-4 py-3 text-xs" style={{ maxWidth: '240px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
                    <CopyButton text={p.group_name} />
-                   {p._status?.new_group_code && (
+                   {!p._ghost && p._status?.new_group_code && (
                      <button
                        type="button"
                        onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(p._status.new_group_code); }}
