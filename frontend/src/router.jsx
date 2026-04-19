@@ -30,6 +30,7 @@ import SystemReports from './pages/admin/SystemReports';
 import EducationReports from './pages/admin/EducationReports';
 import QualityReports from './pages/admin/QualityReports';
 import TeamPage from './pages/admin/TeamPage';
+import DashboardDetail from './pages/admin/DashboardDetail';
 
 // Shared pages
 import FixReport from './pages/shared/FixReport';
@@ -85,6 +86,7 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate to="dashboard" replace /> },
       { path: 'dashboard',                    element: <AdminDashboard /> },
+      { path: 'dashboard/details/:metric',    element: <DashboardDetail /> },
       { path: 'users',                        element: <UserManagement /> },
       { path: 'upload',                       element: <ExcelUpload /> },
       { path: 'team',                         element: <TeamPage /> },

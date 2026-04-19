@@ -13,6 +13,8 @@ export default function AdminDashboard() {
     refetchInterval: 60000,
   });
 
+  const base = '/admin/dashboard/details';
+
   return (
     <div className="space-y-6 animate-fadeIn">
       <div className="flex items-center justify-between">
@@ -23,14 +25,14 @@ export default function AdminDashboard() {
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label={t('stats.totalClients')}      value={kpis?.total_clients}         icon={Users}        color="primary" />
-        <StatCard label={t('stats.activeGroups')}      value={kpis?.total_batches}         icon={Globe}        color="success" />
-        <StatCard label={t('stats.totalTasks')}        value={kpis?.total_remarks}         icon={ClipboardList}color="primary" />
-        <StatCard label={t('stats.pending')}           value={kpis?.pending_remarks}       icon={Clock}        color="warning" />
-        <StatCard label={t('stats.overdue')}           value={kpis?.overdue_remarks}       icon={AlertTriangle}color="danger" />
-        <StatCard label={t('stats.totalAgents')}       value={kpis?.total_agents}          icon={Users}        color="primary" />
-        <StatCard label={t('stats.absentPending')}     value={kpis?.absent_pending}        icon={AlertTriangle}color="danger" />
-        <StatCard label={t('stats.sessionChecksToday')}value={kpis?.session_checks_today}  icon={Video}        color="success" />
+        <StatCard label={t('stats.totalClients')}       value={kpis?.total_clients}         icon={Users}         color="primary" to={`${base}/clients`} />
+        <StatCard label={t('stats.activeGroups')}       value={kpis?.total_batches}         icon={Globe}         color="success" to={`${base}/batches`} />
+        <StatCard label={t('stats.totalTasks')}         value={kpis?.total_remarks}         icon={ClipboardList} color="primary" to={`${base}/remarks`} />
+        <StatCard label={t('stats.pending')}            value={kpis?.pending_remarks}       icon={Clock}         color="warning" to={`${base}/pending-remarks`} />
+        <StatCard label={t('stats.overdue')}            value={kpis?.overdue_remarks}       icon={AlertTriangle} color="danger"  to={`${base}/overdue-remarks`} />
+        <StatCard label={t('stats.totalAgents')}        value={kpis?.total_agents}          icon={Users}         color="primary" to={`${base}/agents`} />
+        <StatCard label={t('stats.absentPending')}      value={kpis?.absent_pending}        icon={AlertTriangle} color="danger"  to={`${base}/absent-pending`} />
+        <StatCard label={t('stats.sessionChecksToday')} value={kpis?.session_checks_today}  icon={Video}         color="success" to={`${base}/session-checks-today`} />
       </div>
 
       <div className="card">

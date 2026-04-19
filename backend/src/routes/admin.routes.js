@@ -216,4 +216,104 @@ router.get('/kpis', (req, res) => {
   return res.json(kpis);
 });
 
+// ─── KPI DRILL-DOWN DETAILS ──────────────────────────────────────────────────
+// Returns the full data behind each KPI card on the admin dashboard.
+router.get('/kpis/details/:metric', (req, res) => {
+  const { metric } = req.params;
+  try {
+    let rows = [];
+    switch (metric) {
+      case 'clients':
+        rows = db.prepare(`
+          SELECT id, name, phone, email, group_name, via_company, registration_time
+          FROM clients
+          ORDER BY name COLLATE NOCASE
+        `).all();
+        break;
+
+      case 'batches':
+        rows = db.prepare(`
+          SELECT id, group_name, course, status, trainers, coordinators,
+                 trainee_count, max_trainees, scheduled_lectures, completed_lectures,
+                 start_date, end_date, dept_type
+          FROM batches
+          WHERE status = 'نشطة'
+          ORDER BY group_name
+        `).all();
+        break;
+
+      case 'remarks':
+        rows = db.prepare(`
+          SELECT id, client_name, client_phone, task_type, category, priority, status,
+                 assigned_to, assigned_by, added_at, sla_deadline, last_updated
+          FROM remarks
+          ORDER BY added_at DESC
+        `).all();
+        break;
+
+      case 'pending-remarks':
+        rows = db.prepare(`
+          SELECT id, client_name, client_phone, task_type, category, priority, status,
+                 assigned_to, assigned_by, added_at, sla_deadline
+          FROM remarks
+          WHERE status != 'إنتهت'
+          ORDER BY sla_deadline ASC
+        `).all();
+        break;
+
+      case 'overdue-remarks':
+        rows = db.prepare(`
+          SELECT id, client_name, client_phone, task_type, category, priority, status,
+                 assigned_to, assigned_by, added_at, sla_deadline
+          FROM remarks
+          WHERE status != 'إنتهت'
+            AND sla_deadline < datetime('now', '+2 hours')
+          ORDER BY sla_deadline ASC
+        `).all();
+        break;
+
+      case 'agents':
+        rows = db.prepare(`
+          SELECT id, username, full_name, role, department, management, language, is_active, created_at
+          FROM users
+          WHERE role = 'agent' AND is_active = 1
+          ORDER BY full_name COLLATE NOCASE
+        `).all();
+        break;
+
+      case 'absent-pending':
+        rows = db.prepare(`
+          SELECT id, group_name, student_name, phone, date, time, lecture_no,
+                 follow_up_status, follow_up_note, follow_up_by, follow_up_at
+          FROM absent_students
+          WHERE follow_up_status = 'pending'
+          ORDER BY date DESC, group_name
+        `).all();
+        break;
+
+      case 'session-checks-today':
+        rows = db.prepare(`
+          SELECT s.id, s.group_name, s.session_date,
+                 s.trainer_present, s.student_present,
+                 s.lecture_start_time, s.recording_start_time,
+                 s.actual_duration_min, s.notes,
+                 s.checked_at, u.full_name AS checked_by_name
+          FROM side_session_checks s
+          LEFT JOIN users u ON u.id = s.checked_by
+          WHERE date(s.checked_at) = date('now')
+          ORDER BY s.checked_at DESC
+        `).all();
+        break;
+
+      default:
+        return res.status(404).json({ error: 'Unknown metric' });
+    }
+
+    return res.json({ metric, count: rows.length, rows });
+  } catch (err) {
+    console.error('[admin] kpi details error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
