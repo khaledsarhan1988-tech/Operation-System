@@ -2175,6 +2175,14 @@ export default function SystemReports() {
     staleTime: 10 * 60 * 1000,  // 10 min — users list rarely changes
     gcTime:    30 * 60 * 1000,
   });
+  // Unique coordinator names from batches.coordinators — used to surface
+  // Leaders who also work as coordinators in the employee filter dropdown.
+  const { data: coordOpts } = useQuery({
+    queryKey: ['coordinator-names'],
+    queryFn: () => api.get('/reports/remarks-notes-options').then(r => r.data),
+    staleTime: 10 * 60 * 1000,
+    gcTime:    30 * 60 * 1000,
+  });
 
   // Code problems — always fetch so KPI shows correct count immediately
   const { data: codeProbs, isLoading: codeLoading } = useQuery({
@@ -2192,7 +2200,19 @@ export default function SystemReports() {
     gcTime:    15 * 60 * 1000,
   });
 
-  const agents = (usersData ?? []).filter(u => u.role === 'agent');
+  // Set of coordinator names (lowercase, handles multi-name fields like "A, B").
+  const coordNameSet = new Set(
+    (coordOpts?.coordinators ?? [])
+      .flatMap(c => String(c).split(','))
+      .map(s => s.trim().toLowerCase())
+      .filter(Boolean)
+  );
+  // Dropdown shows Agents + Leaders who are also coordinators in batches.
+  const agents = (usersData ?? []).filter(u =>
+    u.role === 'agent' ||
+    (u.role === 'leader' && u.full_name &&
+     coordNameSet.has(u.full_name.trim().toLowerCase()))
+  );
   const kpis = data?.kpis ?? {};
 
   const handleApply = () => {
