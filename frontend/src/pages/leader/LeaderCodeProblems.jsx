@@ -240,15 +240,17 @@ export default function LeaderCodeProblems() {
                  <td className="px-4 py-3 font-semibold text-gray-900 text-xs" style={{ maxWidth: '240px', wordBreak: 'break-word' }}>
                    <button onClick={() => navigator.clipboard.writeText(p.group_name)} title="انقر للنسخ" className="text-right hover:text-blue-600 transition-colors cursor-copy">{p.group_name}</button>
                    {p._status?.new_group_code && (
-                     <div
-                       className="mt-1 inline-flex items-start gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-1 font-mono"
-                       title={`تم تعديل اسم الكود إلى: ${p._status.new_group_code}${p._status.updated_at ? ` في ${p._status.updated_at}` : ''}`}
+                     <button
+                       type="button"
+                       onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(p._status.new_group_code); }}
+                       className="mt-1 inline-flex items-start gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded px-1.5 py-1 font-mono cursor-copy transition-colors"
+                       title="انقر للنسخ"
                        dir="ltr"
                      >
                        <span className="text-emerald-600">↪</span>
                        <span className="text-emerald-600 font-sans">الكود الجديد:</span>
                        <span className="break-all">{p._status.new_group_code}</span>
-                     </div>
+                     </button>
                    )}
                    {p.previous_group_name && (
                      <div
