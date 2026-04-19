@@ -1349,6 +1349,22 @@ router.get('/code-problems', (req, res) => {
     const statusMap = {};
     storedStatuses.forEach(s => { statusMap[`${s.group_name}|${s.problem_type}|${s.session_type}`] = s; });
 
+    // Build rename map: new_group_code → { previous_group_name, updated_at }
+    // Used to display "Previous code" badge when user searches by the new code name
+    const renameMap = {};
+    storedStatuses.forEach(s => {
+      if (s.new_group_code && s.new_group_code.trim()) {
+        const key = s.new_group_code.trim();
+        // Keep the most recent rename entry per new code
+        if (!renameMap[key] || s.updated_at > renameMap[key].updated_at) {
+          renameMap[key] = {
+            previous_group_name: s.group_name,
+            updated_at: s.updated_at,
+          };
+        }
+      }
+    });
+
     // Helper: add problem respecting wont_repeat/exception rules
     // - If status is wont_repeat/exception AND actual <= actual_at_status → SKIP
     // - If status is wont_repeat/exception AND actual > actual_at_status → show as new with repeated_violation flag
@@ -1499,6 +1515,18 @@ router.get('/code-problems', (req, res) => {
         }
       }
     }
+
+    // Attach previous_group_name to problems whose group_name matches a recorded new_group_code
+    const attachRename = p => {
+      const r = renameMap[p.group_name];
+      if (r) {
+        p.previous_group_name = r.previous_group_name;
+        p.rename_recorded_at  = r.updated_at;
+      }
+      return p;
+    };
+    mainProblems.forEach(attachRename);
+    zoomProblems.forEach(attachRename);
 
     return res.json({ main_problems: mainProblems, zoom_problems: zoomProblems,
       total: mainProblems.length + zoomProblems.length });
@@ -1791,27 +1819,61 @@ router.get('/problem-statuses', (req, res) => {
 });
 
 // ─── PUT /api/reports/problem-status (upsert) ────────────────────────────────
+// Problem types that REQUIRE new_group_code when status is resolved/wont_repeat/exception
+const RENAME_REQUIRED_TYPES = new Set([
+  'تاريخ أول محاضرة غلط',
+  'محاضرات على أيام غلط',
+]);
+// Statuses that allow (and sometimes require) entering new_group_code
+const RENAME_ALLOWED_STATUSES = new Set(['resolved', 'wont_repeat', 'exception']);
+// Valid group code regex: Month(3 letters)_Day_Weekday_...(Trainer)Coordinator
+const GROUP_CODE_REGEX = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)_\d{1,2}_(Sat|Sun|Mon|Tue|Wed|Thu|Fri)_.+\(.+\).+$/;
+
 router.put('/problem-status', (req, res) => {
-  const { group_name, problem_type, session_type = 'main', status, note, actual } = req.body;
+  const { group_name, problem_type, session_type = 'main', status, note, actual, new_group_code } = req.body;
   if (!group_name || !problem_type || !status)
     return res.status(400).json({ error: 'group_name, problem_type, status required' });
   const validStatuses = ['new', 'reported', 'in_progress', 'exception', 'wont_repeat', 'resolved'];
   if (!validStatuses.includes(status))
     return res.status(400).json({ error: 'Invalid status' });
+
+  // new_group_code handling
+  let newCodeValue = null;
+  if (RENAME_ALLOWED_STATUSES.has(status)) {
+    const trimmed = (new_group_code || '').trim();
+    // Required for certain problem types
+    if (RENAME_REQUIRED_TYPES.has(problem_type) && !trimmed) {
+      return res.status(400).json({
+        error: 'يجب إدخال الكود الجديد لأن نوع المشكلة من النوع الذي يتطلب تعديل الاسم'
+      });
+    }
+    // Validate format if provided
+    if (trimmed) {
+      if (!GROUP_CODE_REGEX.test(trimmed)) {
+        return res.status(400).json({
+          error: 'صيغة الكود الجديد غير صحيحة. مثال: May_23_Sat_6PM_General2_P(nada)mostafa'
+        });
+      }
+      newCodeValue = trimmed;
+    }
+  }
+  // For non-resolution statuses, new_group_code is always null (doesn't apply)
+
   // Store actual count only when marking as wont_repeat or exception
   const actualAtStatus = (status === 'wont_repeat' || status === 'exception' || status === 'resolved') && actual != null
     ? actual : null;
   try {
     db.prepare(`
-      INSERT INTO code_problem_status (group_name, problem_type, session_type, status, note, actual_at_status, updated_by, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', '+2 hours'))
+      INSERT INTO code_problem_status (group_name, problem_type, session_type, status, note, actual_at_status, new_group_code, updated_by, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+2 hours'))
       ON CONFLICT(group_name, problem_type, session_type) DO UPDATE SET
         status           = excluded.status,
         note             = excluded.note,
         actual_at_status = excluded.actual_at_status,
+        new_group_code   = excluded.new_group_code,
         updated_by       = excluded.updated_by,
         updated_at       = excluded.updated_at
-    `).run(group_name, problem_type, session_type, status, note ?? null, actualAtStatus, req.user?.id ?? null);
+    `).run(group_name, problem_type, session_type, status, note ?? null, actualAtStatus, newCodeValue, req.user?.id ?? null);
 
     const row = db.prepare(
       `SELECT ps.*, u.full_name as updated_by_name

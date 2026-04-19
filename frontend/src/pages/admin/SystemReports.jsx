@@ -1316,6 +1316,13 @@ const STATUS_CFG = {
   resolved:    { label: 'تم حلها',     emoji: '✅', dot: 'bg-green-600',   badge: 'bg-green-100 text-green-700 border-green-200',   btn: 'hover:bg-green-50 hover:border-green-300'  },
 };
 
+// Statuses that treat the problem as "closed" and allow entering a new group code
+const RENAME_ALLOWED_STATUSES = new Set(['resolved', 'wont_repeat', 'exception']);
+// Problem types where the new group code is REQUIRED (mandatory field)
+const RENAME_REQUIRED_TYPES   = new Set(['تاريخ أول محاضرة غلط', 'محاضرات على أيام غلط']);
+// Group-code format validation (client-side mirror of backend regex)
+const GROUP_CODE_REGEX = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)_\d{1,2}_(Sat|Sun|Mon|Tue|Wed|Thu|Fri)_.+\(.+\).+$/;
+
 function CodeProblemsModal({ params, onClose }) {
   const qc = useQueryClient();
 
@@ -1329,7 +1336,7 @@ function CodeProblemsModal({ params, onClose }) {
 
   // ── status editor
   const [editKey,  setEditKey]  = useState(null);   // { group_name, problem_type, session_type }
-  const [editForm, setEditForm] = useState({ status: 'new', note: '' });
+  const [editForm, setEditForm] = useState({ status: 'new', note: '', new_group_code: '' });
   const [saving,   setSaving]   = useState(false);
   const [saveError, setSaveError] = useState(null);
 
@@ -1407,16 +1414,37 @@ function CodeProblemsModal({ params, onClose }) {
   const openEditor = (p) => {
     const cur = p._status;
     setEditKey({ group_name: p.group_name, problem_type: p.problem_type, session_type: p._session, actual: p.actual ?? null });
-    setEditForm({ status: cur?.status ?? 'new', note: cur?.note ?? '' });
+    setEditForm({
+      status:         cur?.status ?? 'new',
+      note:           cur?.note   ?? '',
+      new_group_code: cur?.new_group_code ?? '',
+    });
   };
+
+  // ── validation helpers
+  const isRenameField = editKey && RENAME_ALLOWED_STATUSES.has(editForm.status);
+  const isRenameRequired = isRenameField && editKey && RENAME_REQUIRED_TYPES.has(editKey.problem_type);
+  const trimmedNewCode = (editForm.new_group_code || '').trim();
+  const newCodeFormatValid = !trimmedNewCode || GROUP_CODE_REGEX.test(trimmedNewCode);
+  const canSave = !saving
+    && !(isRenameRequired && !trimmedNewCode)
+    && newCodeFormatValid;
 
   // ── save status
   const handleSave = async () => {
-    if (!editKey || saving) return;
+    if (!editKey || saving || !canSave) return;
     setSaving(true);
     setSaveError(null);
     try {
-      await api.put('/reports/problem-status', { ...editKey, ...editForm, actual: editKey.actual });
+      const payload = {
+        ...editKey,
+        status: editForm.status,
+        note:   editForm.note,
+        actual: editKey.actual,
+        // Only send new_group_code for statuses that allow it
+        new_group_code: isRenameField ? (trimmedNewCode || null) : null,
+      };
+      await api.put('/reports/problem-status', payload);
       await qc.invalidateQueries({ queryKey: ['problem-statuses'] });
       await qc.invalidateQueries({ queryKey: ['code-problems-modal'] });
       // Auto-filter to show the saved status so user sees the result
@@ -1489,6 +1517,17 @@ function CodeProblemsModal({ params, onClose }) {
                <tr key={i} className={`border-b border-gray-50 hover:bg-gray-50/60 transition-colors ${rowBg}`}>
                  <td className="px-4 py-3 text-xs" style={{ maxWidth: '240px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
                    <CopyButton text={p.group_name} />
+                   {p.previous_group_name && (
+                     <div
+                       className="mt-1 inline-flex items-start gap-1 text-[10px] font-semibold text-gray-600 bg-gray-100 border border-gray-200 rounded px-1.5 py-1 font-mono"
+                       title={`تم تعديل الاسم من هذا الكود في ${p.rename_recorded_at ?? ''}`}
+                       dir="ltr"
+                     >
+                       <span className="text-indigo-600">↩</span>
+                       <span className="text-gray-500 font-sans">الكود السابق:</span>
+                       <span className="break-all">{p.previous_group_name}</span>
+                     </div>
+                   )}
                  </td>
                  <td className="px-4 py-3 whitespace-nowrap text-xs font-mono text-gray-500">{p.first_date ?? '—'}</td>
                  <td className="px-4 py-3 whitespace-nowrap">{problemBadge(p.problem_type)}</td>
@@ -1714,6 +1753,44 @@ function CodeProblemsModal({ params, onClose }) {
                 </div>
               </div>
 
+              {/* New Group Code — shown only for closed statuses (resolved/wont_repeat/exception) */}
+              {isRenameField && (
+                <div className={isRenameRequired
+                  ? 'p-3 rounded-xl border-2 border-amber-400 bg-amber-50/60'
+                  : 'p-3 rounded-xl border border-gray-200 bg-gray-50'}>
+                  <label className={`text-xs font-bold mb-1.5 flex items-center gap-1.5 uppercase tracking-wide ${
+                    isRenameRequired ? 'text-amber-700' : 'text-gray-500'
+                  }`}>
+                    <span>اسم الكود الجديد {isRenameRequired ? '*' : '(اختياري)'}</span>
+                    {isRenameRequired && <span className="text-[10px] font-normal text-amber-700">— إلزامي</span>}
+                  </label>
+                  <input
+                    type="text"
+                    value={editForm.new_group_code}
+                    onChange={e => setEditForm(f => ({ ...f, new_group_code: e.target.value }))}
+                    placeholder="مثال: May_23_Sat_6PM_General2_P(nada)mostafa"
+                    className={`w-full border-2 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 bg-white font-mono ${
+                      trimmedNewCode && !newCodeFormatValid
+                        ? 'border-red-400 focus:ring-red-200 focus:border-red-500'
+                        : isRenameRequired
+                          ? 'border-amber-300 focus:ring-amber-200 focus:border-amber-500'
+                          : 'border-gray-200 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]'
+                    }`}
+                    dir="ltr"
+                  />
+                  {isRenameRequired && !trimmedNewCode && (
+                    <p className="text-[11px] text-amber-700 mt-1.5 flex items-center gap-1">
+                      ⚠️ يجب إدخال الكود الجديد لأن المشكلة من نوع &quot;{editKey.problem_type}&quot;
+                    </p>
+                  )}
+                  {trimmedNewCode && !newCodeFormatValid && (
+                    <p className="text-[11px] text-red-600 mt-1.5">
+                      ❌ صيغة الكود غير صحيحة — يجب أن يبدأ بالشهر_اليوم_اسم اليوم مثل: May_23_Sat_…
+                    </p>
+                  )}
+                </div>
+              )}
+
               {/* Note */}
               <div>
                 <label className="text-xs font-bold text-gray-500 mb-1.5 block uppercase tracking-wide">
@@ -1737,8 +1814,8 @@ function CodeProblemsModal({ params, onClose }) {
               <div className="flex gap-2 pt-1">
                 <button
                   onClick={handleSave}
-                  disabled={saving}
-                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-[#1e3a5f] hover:bg-[#15294a] text-white rounded-xl text-sm font-bold transition-all disabled:opacity-60 shadow-sm"
+                  disabled={!canSave}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-[#1e3a5f] hover:bg-[#15294a] text-white rounded-xl text-sm font-bold transition-all disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
                 >
                   {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                   {saving ? 'جاري الحفظ...' : 'حفظ'}

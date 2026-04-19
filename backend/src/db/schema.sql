@@ -234,6 +234,7 @@ CREATE TABLE IF NOT EXISTS code_problem_status (
   status            TEXT NOT NULL DEFAULT 'new' CHECK(status IN ('new','reported','in_progress','exception','wont_repeat','resolved')),
   note              TEXT,
   actual_at_status  INTEGER,
+  new_group_code    TEXT,
   updated_by        INTEGER REFERENCES users(id) ON DELETE SET NULL,
   updated_at        TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
   UNIQUE(group_name, problem_type, session_type)

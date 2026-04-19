@@ -117,6 +117,8 @@ initDb().then(db => {
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cps_status ON code_problem_status(status)`);
     // Add actual_at_status column if not exists (safe migration)
     try { db._raw.run(`ALTER TABLE code_problem_status ADD COLUMN actual_at_status INTEGER`); } catch(_) {}
+    // Add new_group_code column if not exists (tracks renamed codes)
+    try { db._raw.run(`ALTER TABLE code_problem_status ADD COLUMN new_group_code TEXT`); } catch(_) {}
     console.log('✅ Migration: code_problem_status table ready');
   } catch(e) {
     console.log('code_problem_status migration:', e.message);
