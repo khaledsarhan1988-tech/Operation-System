@@ -1980,21 +1980,20 @@ router.get('/fix-report/detail', (req, res) => {
 
 // ─── GET /api/reports/attendance-absence ─────────────────────────────────────
 // Per-coordinator attendance & absence stats for Main sessions + Zoom/Side sessions.
+// Uses the SAME formulas as the Customer Services Reports dashboard so numbers
+// line up perfectly (e.g. dashboard `absent_main=45` → this page `main_absent=45`).
 //
 // Main sessions:
-//   - Expected = SUM(trainee_count) for main lectures that have recorded attendance
-//     (attendance column filled). Lectures with empty attendance are "not yet
-//     tracked" and excluded from both numerator and denominator.
-//   - Absent  = COUNT of absent_students records matching those lectures by
-//     (group_name, date). This is the source of truth for student-level
-//     absences (the `attendance` column in lectures is unreliable in some
-//     departments — it sometimes equals trainee_count even when students are
-//     absent, while absent_students always records the individual absences).
+//   - Expected = COUNT of main lectures for the coordinator in the filter window.
+//   - Absent   = Part1 (absent_students with resolved name + resolved date via
+//                lecture_no when date is missing)
+//              + Part2 (main lectures with empty attendance where a client
+//                exists in the group AND no matching absent_students record).
 //
 // Zoom / side sessions:
-//   - Each 15-min confirmed side session = one student slot.
-//   - Expected = count of such sessions in tracked group+date groups.
-//   - Absent   = count where l.attendance is 0/empty.
+//   - Expected = COUNT of regular 15-min confirmed side sessions for coord.
+//   - Absent   = per (group,date), MAX(trainee_count) - COUNT(sessions with
+//                attendance>0). Only groups with absent_count>0 are counted.
 //
 // Role-based:
 //   - admin  → sees all, honors ?department= filter (OR EXISTS)
@@ -2003,76 +2002,113 @@ router.get('/fix-report/detail', (req, res) => {
 router.get('/attendance-absence', (req, res) => {
   const { from_date, to_date, coordinator } = req.query;
 
-  // Role-based dept filter
-  let deptFilterB = '';
+  // Role-based dept filter (applied to both 'b' and 'b2' batches aliases)
+  let deptFilterB = '', deptFilterB2 = '';
   let coordFilterB = buildCoordFilter('b', coordinator);
+  let coordFilterB2 = buildCoordFilter('b2', coordinator);
   if (req.user?.role === 'leader') {
-    deptFilterB = buildStrictDeptFilter('b', req.user.department);
+    deptFilterB  = buildStrictDeptFilter('b',  req.user.department);
+    deptFilterB2 = buildStrictDeptFilter('b2', req.user.department);
   } else if (req.user?.role === 'admin') {
-    deptFilterB = buildDeptFilter('b', req.query.department);
+    deptFilterB  = buildDeptFilter('b',  req.query.department);
+    deptFilterB2 = buildDeptFilter('b2', req.query.department);
   } else if (req.user?.role === 'agent') {
-    coordFilterB = buildCoordFilter('b', req.user.full_name);
+    coordFilterB  = buildCoordFilter('b',  req.user.full_name);
+    coordFilterB2 = buildCoordFilter('b2', req.user.full_name);
   }
 
   const dateFilterL = buildDateFilter('l.date', from_date, to_date);
+  const dateFilterResolved = from_date && to_date
+    ? ` AND resolved_date BETWEEN '${from_date}' AND '${to_date}'`
+    : from_date ? ` AND resolved_date >= '${from_date}'`
+    : to_date   ? ` AND resolved_date <= '${to_date}'` : '';
 
   try {
-    // ─── MAIN SESSIONS ─────────────────────────────────────────────────────
-    // For each main lecture WITH recorded attendance:
-    //   expected_for_this_lecture = b.trainee_count
-    //   absent_for_this_lecture   = COUNT(absent_students) on (group, date)
-    // Lectures with empty attendance are skipped entirely (not yet tracked).
-    const mainStats = db.prepare(`
-      SELECT
-        COALESCE(b.coordinators, '--') AS coordinator,
-        SUM(b.trainee_count) AS expected,
-        SUM(
-          (SELECT COUNT(*) FROM absent_students a
-           WHERE a.group_name = l.group_name AND a.date = l.date)
-        ) AS absent
+    // ─── MAIN EXPECTED per coordinator ─────────────────────────────────────
+    // Matches dashboard `main_lectures` KPI (COUNT of main lectures).
+    const mainExpectedRows = db.prepare(`
+      SELECT COALESCE(b.coordinators, '--') AS coordinator, COUNT(*) AS cnt
       FROM lectures l
       INNER JOIN batches b ON l.group_name = b.group_name
       WHERE l.session_type = 'main'
-        AND l.attendance IS NOT NULL
-        AND TRIM(l.attendance) != ''
-        AND b.trainee_count > 0
       ${dateFilterL}${deptFilterB}${coordFilterB}
       GROUP BY b.coordinators
     `).all();
 
-    // ─── ZOOM / SIDE SESSIONS ──────────────────────────────────────────────
-    // Each 15-min side session = one student's zoom slot.
-    // Only count sessions that are confirmed (status='مؤكدة'), ≤15min duration,
-    // AND belong to a group+date where attendance has been tracked for at
-    // least one session (to avoid "all zero" dates inflating absence rate).
-    const zoomStats = db.prepare(`
-      SELECT
-        coordinator,
-        SUM(session_count) AS expected,
-        SUM(absent_count)  AS absent
-      FROM (
-        SELECT
-          COALESCE(b.coordinators, '--') AS coordinator,
-          l.group_name,
-          l.date,
-          COUNT(*) AS session_count,
-          SUM(CASE
-            WHEN l.attendance IS NOT NULL AND TRIM(l.attendance) != ''
-                 AND CAST(l.attendance AS INTEGER) > 0
-            THEN 0 ELSE 1
-          END) AS absent_count,
-          SUM(CASE
-            WHEN l.attendance IS NOT NULL AND TRIM(l.attendance) != ''
-            THEN 1 ELSE 0
-          END) AS tracked_count
+    // ─── MAIN ABSENT per coordinator (dashboard Part1 + Part2) ─────────────
+    // Part1: absent_students records with resolved name & date.
+    const mainAbsentPart1 = db.prepare(`
+      SELECT coordinator, COUNT(*) AS cnt FROM (
+        SELECT COALESCE(b.coordinators, '--') AS coordinator,
+          COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS resolved_date
+        FROM absent_students a
+        LEFT JOIN batches b ON a.group_name = b.group_name
+        LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
+          AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone
+        LEFT JOIN (
+          SELECT group_name, date,
+            ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
+          FROM lectures WHERE session_type='main'
+        ) lec_inf ON (a.date IS NULL OR TRIM(a.date)='')
+          AND lec_inf.group_name = a.group_name
+          AND a.lecture_no IS NOT NULL
+          AND lec_inf.lec_num = a.lecture_no
+        WHERE (
+          (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
+          OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+        )
+        ${deptFilterB}${coordFilterB}
+      ) p1
+      WHERE 1=1${dateFilterResolved}
+      GROUP BY coordinator
+    `).all();
+
+    // Part2: main lectures with empty attendance + client exists + no absent record.
+    const mainAbsentPart2 = db.prepare(`
+      SELECT COALESCE(b2.coordinators, '--') AS coordinator, COUNT(*) AS cnt
+      FROM lectures l
+      INNER JOIN batches b2 ON l.group_name = b2.group_name
+      INNER JOIN clients c ON c.group_name = l.group_name
+      WHERE l.session_type = 'main'
+        AND (l.attendance IS NULL OR TRIM(l.attendance) = '')
+        AND c.name IS NOT NULL AND TRIM(c.name)!=''
+        AND c.phone IS NOT NULL AND TRIM(c.phone)!=''
+        AND NOT EXISTS (
+          SELECT 1 FROM absent_students a2
+          WHERE a2.group_name = l.group_name AND a2.date = l.date
+        )
+      ${dateFilterL}${deptFilterB2}${coordFilterB2}
+      GROUP BY b2.coordinators
+    `).all();
+
+    // ─── ZOOM EXPECTED per coordinator ─────────────────────────────────────
+    // Matches dashboard `zoom_calls` KPI (COUNT of regular 15-min side sessions).
+    const zoomExpectedRows = db.prepare(`
+      SELECT COALESCE(b.coordinators, '--') AS coordinator, COUNT(*) AS cnt
+      FROM lectures l
+      INNER JOIN batches b ON l.group_name = b.group_name
+      WHERE l.session_type = 'side'
+        AND l.side_session_category = 'regular'
+      ${dateFilterL}${deptFilterB}${coordFilterB}
+      GROUP BY b.coordinators
+    `).all();
+
+    // ─── ZOOM ABSENT per coordinator (dashboard formula) ───────────────────
+    const zoomAbsentRows = db.prepare(`
+      SELECT coordinator, COALESCE(SUM(absent_count), 0) AS cnt FROM (
+        SELECT COALESCE(b.coordinators, '--') AS coordinator,
+          MAX(b.trainee_count) -
+            SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != ''
+                     AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END)
+            AS absent_count
         FROM lectures l
         INNER JOIN batches b ON l.group_name = b.group_name
         WHERE l.session_type = 'side'
           AND l.status = 'مؤكدة'
           AND (l.duration IS NULL OR l.duration <= '00:15')
-          ${dateFilterL}${deptFilterB}${coordFilterB}
+        ${dateFilterL}${deptFilterB}${coordFilterB}
         GROUP BY b.coordinators, l.group_name, l.date
-        HAVING tracked_count > 0
+        HAVING absent_count > 0
       ) sub
       GROUP BY coordinator
     `).all();
@@ -2091,15 +2127,20 @@ router.get('/attendance-absence', (req, res) => {
       return map.get(key);
     };
 
-    mainStats.forEach(r => {
-      const row = ensure(r.coordinator);
-      row.main_expected += r.expected || 0;
-      row.main_absent   += r.absent   || 0;
+    mainExpectedRows.forEach(r => {
+      ensure(r.coordinator).main_expected += r.cnt || 0;
     });
-    zoomStats.forEach(r => {
-      const row = ensure(r.coordinator);
-      row.zoom_expected += r.expected || 0;
-      row.zoom_absent   += r.absent   || 0;
+    mainAbsentPart1.forEach(r => {
+      ensure(r.coordinator).main_absent += r.cnt || 0;
+    });
+    mainAbsentPart2.forEach(r => {
+      ensure(r.coordinator).main_absent += r.cnt || 0;
+    });
+    zoomExpectedRows.forEach(r => {
+      ensure(r.coordinator).zoom_expected += r.cnt || 0;
+    });
+    zoomAbsentRows.forEach(r => {
+      ensure(r.coordinator).zoom_absent += r.cnt || 0;
     });
 
     const result = Array.from(map.values())
