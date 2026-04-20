@@ -574,19 +574,25 @@ router.get('/absent-side-list', (req, res) => {
       AND (l.duration IS NULL OR l.duration <= '00:15')
     ${dateFilter}${deptFilter}${empFilter}${trainerFilter}${coordFilter}${searchFilter}${lineL}`;
 
+  // NOTE: Side sessions are per-student 15-min slots — each row in `lectures`
+  // represents one student's scheduled session on that date, NOT the whole group.
+  // So the "expected" count for a specific date is COUNT(*) of side rows on that
+  // date, NOT batch.trainee_count (which covers the entire group).
+  // Example: group with 2 trainees → one slot on Apr 19, another on Apr 20 →
+  //   COUNT(*) per date = 1, not 2.
   const groupedQuery = `
     SELECT
       l.group_name,
       l.date                                                                    AS session_date,
       MAX(l.trainer)                                                            AS trainer,
       MAX(b.coordinators)                                                       AS coordinators,
-      COALESCE(MAX((SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) LIMIT 1)), MAX(b.dept_type)) AS dept_type,
-      MAX(b.trainee_count)                                                      AS trainee_count,
+      COALESCE(MAX((SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) AND u.department != 'All' LIMIT 1)), MAX(b.dept_type)) AS dept_type,
+      COUNT(*)                                                                  AS trainee_count,
       SUM(CASE WHEN l.attendance IS NOT NULL
                AND l.attendance != ''
                AND CAST(l.attendance AS INTEGER) > 0
                THEN 1 ELSE 0 END)                                               AS present_count,
-      MAX(b.trainee_count) -
+      COUNT(*) -
       SUM(CASE WHEN l.attendance IS NOT NULL
                AND l.attendance != ''
                AND CAST(l.attendance AS INTEGER) > 0
@@ -786,6 +792,7 @@ router.get('/remarks-notes-main', (req, res) => {
                      : has_remark === '0' ? ` AND has_remark = 0` : '';
 
   // Part1: students in absent_students table (with date inference from lecture_no)
+  // dept_type uses u.department != 'All' so UNION dedup is consistent across parts
   const part1 = `
     SELECT
       COALESCE(c_lu.name, NULLIF(TRIM(a.student_name),'')) AS student_name,
@@ -793,7 +800,7 @@ router.get('/remarks-notes-main', (req, res) => {
       COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS absence_date,
       b.coordinators,
       COALESCE(
-        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) LIMIT 1),
+        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) AND u.department != 'All' LIMIT 1),
         b.dept_type
       ) AS dept_type
     FROM absent_students a
@@ -822,7 +829,7 @@ router.get('/remarks-notes-main', (req, res) => {
       l.group_name, l.date AS absence_date,
       b2.coordinators,
       COALESCE(
-        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b2.coordinators)) LIMIT 1),
+        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b2.coordinators)) AND u.department != 'All' LIMIT 1),
         b2.dept_type
       ) AS dept_type
     FROM lectures l
@@ -859,7 +866,7 @@ router.get('/remarks-notes-main', (req, res) => {
       date(${rdSQLMain}, '-1 day')      AS absence_date,
       COALESCE(b3.coordinators, r3.assigned_to) AS coordinators,
       COALESCE(
-        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(COALESCE(b3.coordinators, r3.assigned_to))) LIMIT 1),
+        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(COALESCE(b3.coordinators, r3.assigned_to))) AND u.department != 'All' LIMIT 1),
         b3.dept_type
       ) AS dept_type
     FROM remarks r3
@@ -1003,6 +1010,8 @@ router.get('/remarks-notes-zoom', (req, res) => {
 
   // Part A: students from absent_students table whose absence date matches a SIDE session
   // Mirrors Part 1 of remarks-notes-main but filtered to session_type='side' lectures
+  // dept_type resolution mirrors part2 (u.department != 'All') to prevent UNION
+  // keeping two copies of the same row with dept_type = 'All' vs Semi/Private/General
   const partA = `
     SELECT DISTINCT
       COALESCE(c_lu.name, NULLIF(TRIM(a.student_name),'')) AS client_name,
@@ -1011,7 +1020,7 @@ router.get('/remarks-notes-zoom', (req, res) => {
       a.date AS session_date,
       b.coordinators,
       COALESCE(
-        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) LIMIT 1),
+        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) AND u.department != 'All' LIMIT 1),
         b.dept_type
       ) AS dept_type
     FROM absent_students a
@@ -1033,13 +1042,24 @@ router.get('/remarks-notes-zoom', (req, res) => {
     )
     ${dept1}${emp1}${coord1}${srchA}${lineA}`;
 
-  // Part 1: clients in groups where ALL side sessions were absent (no one attended)
-  // Safe to expand all group clients because everyone is confirmed absent
+  // Part 1: clients in groups where ALL side sessions were absent on a date.
+  //
+  // IMPORTANT: Side sessions are per-student 15-min slots — each lecture row
+  // represents ONE student's scheduled session, NOT a group-wide session.
+  // So we CANNOT naively expand all group clients as absent — a group with 2
+  // trainees might only have 1 slot on a given date (the other trainee's slot
+  // is on a different date). Expanding would falsely mark the non-scheduled
+  // trainee as absent.
+  //
+  // Fix: only include clients whose absence on that specific date is also
+  // confirmed by an entry in absent_students (by phone OR name match).
+  // This keeps coverage for cases where the lecture row shows attendance=0
+  // AND absent_students was populated correctly by the Excel import.
   const part1 = `
     SELECT DISTINCT c.name AS client_name, c.phone AS client_phone,
       c.group_name, grp.session_date, b.coordinators,
       COALESCE(
-        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) LIMIT 1),
+        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) AND u.department != 'All' LIMIT 1),
         b.dept_type
       ) AS dept_type
     FROM (
@@ -1056,6 +1076,15 @@ router.get('/remarks-notes-zoom', (req, res) => {
     INNER JOIN batches b ON b.group_name = grp.group_name${line ? ' AND b.line = grp.line' : ''}
     WHERE c.name IS NOT NULL AND TRIM(c.name) != ''
       AND c.phone IS NOT NULL AND TRIM(c.phone) != ''
+      AND EXISTS (
+        SELECT 1 FROM absent_students a_p1
+        WHERE a_p1.group_name = grp.group_name
+          AND a_p1.date = grp.session_date${line ? ' AND a_p1.line = grp.line' : ''}
+          AND (
+            (a_p1.phone IS NOT NULL AND TRIM(a_p1.phone) = TRIM(c.phone))
+            OR (a_p1.student_name IS NOT NULL AND LOWER(TRIM(a_p1.student_name)) = LOWER(TRIM(c.name)))
+          )
+      )
     ${dept1}${emp1}${coord1}${srch1}`;
 
   // Part 2: clients confirmed absent via 'Attendance Zoom Call' remarks
