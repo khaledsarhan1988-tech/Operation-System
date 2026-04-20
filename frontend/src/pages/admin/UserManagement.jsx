@@ -9,7 +9,8 @@ import Badge from '../../components/ui/Badge';
 
 const EMPTY_FORM = {
   username: '', password: '', full_name: '',
-  role: 'agent', department: 'All', management: 'Customer Services', language: 'ar', is_active: 1,
+  role: 'agent', department: 'All', management: 'Customer Services',
+  line: 'Ahmed Hassan', language: 'ar', is_active: 1,
 };
 
 function UserModal({ open, onClose, user, onSaved }) {
@@ -17,7 +18,8 @@ function UserModal({ open, onClose, user, onSaved }) {
   const [form, setForm] = useState(user ? {
     username: user.username, password: '',
     full_name: user.full_name, role: user.role,
-    department: user.department, management: user.management || 'Customer Services', language: user.language,
+    department: user.department, management: user.management || 'Customer Services',
+    line: user.line || 'Ahmed Hassan', language: user.language,
     is_active: user.is_active,
   } : { ...EMPTY_FORM });
   const [showPw, setShowPw] = useState(false);
@@ -105,6 +107,13 @@ function UserModal({ open, onClose, user, onSaved }) {
             </select>
           </div>
           <div>
+            <label className="label">Line</label>
+            <select className="input" value={form.line} onChange={e => set('line', e.target.value)}>
+              <option value="Ahmed Hassan">Ahmed Hassan</option>
+              <option value="Dardasha">Dardasha</option>
+            </select>
+          </div>
+          <div>
             <label className="label">{t('admin.language')}</label>
             <select className="input" value={form.language} onChange={e => set('language', e.target.value)}>
               <option value="ar">العربية</option>
@@ -189,6 +198,7 @@ export default function UserManagement() {
       const map = { 'Customer Services': 'خدمة العملاء', 'Education': 'التعليم', 'Quality': 'الجودة' };
       return <span className="badge bg-accent/10 text-accent">{map[v] || v}</span>;
     }},
+    { key: 'line', label: 'Line', render: v => <span className="badge bg-primary/10 text-primary">{v || 'Ahmed Hassan'}</span> },
     { key: 'language', label: t('admin.language'), render: v => v === 'ar' ? 'العربية' : 'English' },
     {
       key: 'is_active', label: 'الحالة', render: (v, row) => (

@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
   role          TEXT NOT NULL CHECK(role IN ('agent','leader','admin')),
   department    TEXT NOT NULL DEFAULT 'General',
   management    TEXT NOT NULL DEFAULT 'Customer Services',
+  line          TEXT NOT NULL DEFAULT 'Ahmed Hassan',
   language      TEXT NOT NULL DEFAULT 'ar' CHECK(language IN ('ar','en')),
   is_active     INTEGER NOT NULL DEFAULT 1,
   created_at    TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),

@@ -13,14 +13,14 @@ router.use(authenticate, requireRole('leader'));
 // GET /api/admin/users
 router.get('/users', (req, res) => {
   const users = db.prepare(
-    'SELECT id, username, full_name, role, department, management, language, is_active, created_at FROM users ORDER BY role, full_name'
+    'SELECT id, username, full_name, role, department, management, line, language, is_active, created_at FROM users ORDER BY role, full_name'
   ).all();
   return res.json(users);
 });
 
 // POST /api/admin/users
 router.post('/users', (req, res) => {
-  const { username, password, full_name, role, department, language = 'ar', management = 'Customer Services' } = req.body;
+  const { username, password, full_name, role, department, language = 'ar', management = 'Customer Services', line = 'Ahmed Hassan' } = req.body;
   if (!username || !password || !full_name || !role) {
     return res.status(400).json({ error: 'username, password, full_name, role are required' });
   }
@@ -32,11 +32,11 @@ router.post('/users', (req, res) => {
 
   const hash = bcrypt.hashSync(password, 12);
   const result = db.prepare(`
-    INSERT INTO users (username, password_hash, full_name, role, department, language, management)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(username, hash, full_name, role, department || 'General', language, management);
+    INSERT INTO users (username, password_hash, full_name, role, department, language, management, line)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(username, hash, full_name, role, department || 'General', language, management, line);
 
-  const user = db.prepare('SELECT id, username, full_name, role, department, management, language, is_active FROM users WHERE id = ?')
+  const user = db.prepare('SELECT id, username, full_name, role, department, management, line, language, is_active FROM users WHERE id = ?')
     .get(result.lastInsertRowid);
   return res.status(201).json(user);
 });
@@ -44,7 +44,7 @@ router.post('/users', (req, res) => {
 // PUT /api/admin/users/:id
 router.put('/users/:id', (req, res) => {
   const { id } = req.params;
-  const { full_name, role, department, language, password, is_active, management } = req.body;
+  const { full_name, role, department, language, password, is_active, management, line } = req.body;
 
   const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
   if (!user) return res.status(404).json({ error: 'User not found' });
@@ -62,13 +62,14 @@ router.put('/users/:id', (req, res) => {
   if (language   !== undefined) { fields.push('language = ?');   params.push(language); }
   if (is_active  !== undefined) { fields.push('is_active = ?');  params.push(is_active ? 1 : 0); }
   if (management !== undefined) { fields.push('management = ?'); params.push(management); }
+  if (line       !== undefined) { fields.push('line = ?');       params.push(line); }
 
   if (fields.length) {
     fields.push("updated_at = datetime('now', '+2 hours')");
     db.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).run(...params, id);
   }
 
-  const updated = db.prepare('SELECT id, username, full_name, role, department, management, language, is_active FROM users WHERE id = ?').get(id);
+  const updated = db.prepare('SELECT id, username, full_name, role, department, management, line, language, is_active FROM users WHERE id = ?').get(id);
   return res.json(updated);
 });
 
@@ -274,7 +275,7 @@ router.get('/kpis/details/:metric', (req, res) => {
 
       case 'agents':
         rows = db.prepare(`
-          SELECT id, username, full_name, role, department, management, language, is_active, created_at
+          SELECT id, username, full_name, role, department, management, line, language, is_active, created_at
           FROM users
           WHERE role = 'agent' AND is_active = 1
           ORDER BY full_name COLLATE NOCASE

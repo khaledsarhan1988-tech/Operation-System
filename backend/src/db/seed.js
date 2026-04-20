@@ -36,6 +36,14 @@ initDb().then(db => {
     // Column already exists, ignore
   }
 
+  // Add line column if it doesn't exist (migration)
+  try {
+    db._raw.run(`ALTER TABLE users ADD COLUMN line TEXT NOT NULL DEFAULT 'Ahmed Hassan'`);
+    console.log('✅ Migration: added line column');
+  } catch(e) {
+    // Column already exists, ignore
+  }
+
   // Fix dept_type for existing batches where regex was wrong
   try {
     // Fix Semi: group names containing _SP( or _SP_ or _Sp etc.

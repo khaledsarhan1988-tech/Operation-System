@@ -92,6 +92,19 @@ initDb().then(db => {
     console.error('code_problem_status resolved migration error:', e.message);
   }
 
+  // 3. Add `line` column to users if missing
+  try {
+    const res3 = db._raw.exec(`PRAGMA table_info(users)`);
+    const cols = res3[0]?.values.map(r => r[1]) || [];
+    if (!cols.includes('line')) {
+      db._raw.run(`ALTER TABLE users ADD COLUMN line TEXT NOT NULL DEFAULT 'Ahmed Hassan'`);
+      saveNow();
+      console.log('✅ Migration: added `line` column to users');
+    }
+  } catch (e) {
+    console.error('users.line migration error:', e.message);
+  }
+
   const app = express();
 
   app.use(cors({
