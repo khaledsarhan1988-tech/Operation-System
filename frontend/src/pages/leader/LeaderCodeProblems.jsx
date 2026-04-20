@@ -5,6 +5,7 @@ import {
   Loader2, Save, X, Edit3
 } from 'lucide-react';
 import api from '../../api/axios';
+import CopyButton from '../../components/ui/CopyButton';
 
 // ─── STATUS CONFIG ─────────────────────────────────────────────────────────────
 const STATUS_CFG = {
@@ -246,19 +247,20 @@ export default function LeaderCodeProblems() {
              return (
                <tr key={i} className={`border-b border-gray-50 hover:bg-gray-50/60 transition-colors ${rowBg}`}>
                  <td className="px-4 py-3 font-semibold text-gray-900 text-xs" style={{ maxWidth: '240px', wordBreak: 'break-word' }}>
-                   <button onClick={() => navigator.clipboard.writeText(p.group_name)} title="انقر للنسخ" className="text-right hover:text-blue-600 transition-colors cursor-copy">{p.group_name}</button>
+                   <CopyButton text={p.group_name} className="text-right hover:text-blue-600 transition-colors" dir="ltr">
+                     <span className="break-all">{p.group_name}</span>
+                   </CopyButton>
                    {!p._ghost && p._status?.new_group_code && (
-                     <button
-                       type="button"
-                       onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(p._status.new_group_code); }}
-                       className="mt-1 inline-flex items-start gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded px-1.5 py-1 font-mono cursor-copy transition-colors"
-                       title="انقر للنسخ"
+                     <CopyButton
+                       text={p._status.new_group_code}
+                       className="mt-1 items-start gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded px-1.5 py-1 font-mono transition-colors"
                        dir="ltr"
+                       size={10}
                      >
                        <span className="text-emerald-600">↪</span>
                        <span className="text-emerald-600 font-sans">الكود الجديد:</span>
                        <span className="break-all">{p._status.new_group_code}</span>
-                     </button>
+                     </CopyButton>
                    )}
                    {p.previous_group_name && (
                      <div

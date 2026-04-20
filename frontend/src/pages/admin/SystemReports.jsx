@@ -10,14 +10,17 @@ import {
 } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
+import { copyText } from '../../utils/clipboard';
 
 // ─── COPY BUTTON ──────────────────────────────────────────────────────────────
 function CopyButton({ text }) {
   const [copied, setCopied] = useState(false);
-  const handle = useCallback(() => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+  const handle = useCallback(async () => {
+    const ok = await copyText(text);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
   }, [text]);
   return (
     <button
@@ -983,11 +986,12 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
 
   function CopyBadge({ val }) {
     const [copied, setCopied] = useState(false);
-    const handleCopy = () => {
-      navigator.clipboard.writeText(val).then(() => {
+    const handleCopy = async () => {
+      const ok = await copyText(val);
+      if (ok) {
         setCopied(true);
         setTimeout(() => setCopied(false), 1500);
-      });
+      }
     };
     return (
       <span
@@ -1529,7 +1533,7 @@ function CodeProblemsModal({ params, onClose }) {
                    {!p._ghost && p._status?.new_group_code && (
                      <button
                        type="button"
-                       onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(p._status.new_group_code); }}
+                       onClick={async (e) => { e.stopPropagation(); await copyText(p._status.new_group_code); }}
                        className="mt-1 inline-flex items-start gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded px-1.5 py-1 font-mono cursor-copy transition-colors"
                        title="انقر للنسخ"
                        dir="ltr"
@@ -1923,11 +1927,12 @@ function MetricDetailModal({ employee, metric, applied = {}, onClose }) {
     return rows.map(r => r.group_name).join('\n');
   };
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(getCodes()).then(() => {
+  const handleCopy = async () => {
+    const ok = await copyText(getCodes());
+    if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    });
+    }
   };
 
   const headerColors = {

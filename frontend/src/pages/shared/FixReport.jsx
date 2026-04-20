@@ -2,13 +2,16 @@ import { useState, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { CheckCircle, AlertCircle, X, FileText, XCircle, Copy, Check } from 'lucide-react';
 import api from '../../api/axios';
+import { copyText } from '../../utils/clipboard';
 
 function CopyButton({ text }) {
   const [copied, setCopied] = useState(false);
-  const handle = useCallback(() => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+  const handle = useCallback(async () => {
+    const ok = await copyText(text);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
   }, [text]);
   return (
     <button
