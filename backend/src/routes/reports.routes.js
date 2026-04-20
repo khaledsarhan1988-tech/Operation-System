@@ -1055,10 +1055,14 @@ router.get('/remarks-notes-zoom', (req, res) => {
   // is on a different date). Expanding would falsely mark the non-scheduled
   // trainee as absent.
   //
-  // Fix: only include clients whose absence on that specific date is also
-  // confirmed by an entry in absent_students (by phone OR name match).
-  // This keeps coverage for cases where the lecture row shows attendance=0
-  // AND absent_students was populated correctly by the Excel import.
+  // Fix: a client qualifies if EITHER
+  //   (a) the number of side slots that day >= number of group clients
+  //       (meaning every student in the group was scheduled that day — safe
+  //        to expand all), OR
+  //   (b) an absent_students record matches this client by phone or name
+  //       on that specific date (explicit confirmation).
+  // This covers the single-trainee group case (Apr_6_Mon_11AM_General_5_P)
+  // while excluding the wrong trainee in multi-trainee split-day groups.
   const part1 = `
     SELECT DISTINCT c.name AS client_name, c.phone AS client_phone,
       c.group_name, grp.session_date, b.coordinators,
@@ -1067,7 +1071,8 @@ router.get('/remarks-notes-zoom', (req, res) => {
         b.dept_type
       ) AS dept_type
     FROM (
-      SELECT l.group_name, l.date AS session_date, l.line
+      SELECT l.group_name, l.date AS session_date, l.line,
+        COUNT(*) AS slot_count_on_date
       FROM lectures l
       WHERE l.session_type = 'side' AND l.status = 'مؤكدة'
         AND (l.duration IS NULL OR l.duration <= '00:15')${line ? ` AND l.line = '${line.replace(/'/g, "''")}'` : ''}
@@ -1080,14 +1085,24 @@ router.get('/remarks-notes-zoom', (req, res) => {
     INNER JOIN batches b ON b.group_name = grp.group_name${line ? ' AND b.line = grp.line' : ''}
     WHERE c.name IS NOT NULL AND TRIM(c.name) != ''
       AND c.phone IS NOT NULL AND TRIM(c.phone) != ''
-      AND EXISTS (
-        SELECT 1 FROM absent_students a_p1
-        WHERE a_p1.group_name = grp.group_name
-          AND a_p1.date = grp.session_date${line ? ' AND a_p1.line = grp.line' : ''}
-          AND (
-            (a_p1.phone IS NOT NULL AND TRIM(a_p1.phone) = TRIM(c.phone))
-            OR (a_p1.student_name IS NOT NULL AND LOWER(TRIM(a_p1.student_name)) = LOWER(TRIM(c.name)))
-          )
+      AND (
+        -- Case (a): slots >= total group clients → everyone was scheduled, expand all
+        grp.slot_count_on_date >= (
+          SELECT COUNT(*) FROM clients c_cnt
+          WHERE c_cnt.group_name = grp.group_name${line ? ' AND c_cnt.line = grp.line' : ''}
+            AND c_cnt.name IS NOT NULL AND TRIM(c_cnt.name) != ''
+            AND c_cnt.phone IS NOT NULL AND TRIM(c_cnt.phone) != ''
+        )
+        -- Case (b): explicit absent_students match for this client on this date
+        OR EXISTS (
+          SELECT 1 FROM absent_students a_p1
+          WHERE a_p1.group_name = grp.group_name
+            AND a_p1.date = grp.session_date${line ? ' AND a_p1.line = grp.line' : ''}
+            AND (
+              (a_p1.phone IS NOT NULL AND TRIM(a_p1.phone) = TRIM(c.phone))
+              OR (a_p1.student_name IS NOT NULL AND LOWER(TRIM(a_p1.student_name)) = LOWER(TRIM(c.name)))
+            )
+        )
       )
     ${dept1}${emp1}${coord1}${srch1}`;
 
