@@ -11,10 +11,20 @@ router.use(authenticate, requireRole('leader'));
 // ─── USER MANAGEMENT ──────────────────────────────────────────────────────────
 
 // GET /api/admin/users
+// Line-based visibility:
+//   - requester.line === 'All'          → sees everyone
+//   - requester.line === 'Ahmed Hassan' → sees Ahmed Hassan users + All users
+//   - requester.line === 'Dardasha'     → sees Dardasha users + All users
 router.get('/users', (req, res) => {
-  const users = db.prepare(
-    'SELECT id, username, full_name, role, department, management, line, language, is_active, created_at FROM users ORDER BY role, full_name'
-  ).all();
+  const requesterLine = req.user.line || 'All';
+  let sql = 'SELECT id, username, full_name, role, department, management, line, language, is_active, created_at FROM users';
+  const params = [];
+  if (requesterLine !== 'All') {
+    sql += ' WHERE line = ? OR line = ?';
+    params.push(requesterLine, 'All');
+  }
+  sql += ' ORDER BY role, full_name';
+  const users = db.prepare(sql).all(...params);
   return res.json(users);
 });
 
