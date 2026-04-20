@@ -236,8 +236,10 @@ CREATE TABLE IF NOT EXISTS excel_syncs (
   status        TEXT NOT NULL CHECK(status IN ('success','error')),
   error_msg     TEXT,
   uploaded_by   INTEGER REFERENCES users(id),
-  created_at    TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+  created_at    TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+  line          TEXT NOT NULL DEFAULT 'Ahmed Hassan'
 );
+CREATE INDEX IF NOT EXISTS idx_excel_syncs_line ON excel_syncs(line);
 
 -- =============================================
 -- CODE PROBLEM STATUS (persistent tracking)

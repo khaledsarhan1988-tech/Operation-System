@@ -9,6 +9,18 @@ const { lineFilter } = require('../utils/lineFilter');
 const router = express.Router();
 router.use(authenticate, requireRole('leader'));
 
+// Effective line for endpoints where 'All' admins can choose via ?line= query:
+//   - non-'All' users → always their own line (override ignored)
+//   - 'All' users with ?line=X (valid) → X
+//   - 'All' users without ?line= → null (no filter = see all)
+const VALID_LINES = ['Ahmed Hassan', 'Dardasha'];
+function effectiveLine(req) {
+  const userLine = req.user?.line || 'Ahmed Hassan';
+  if (userLine !== 'All') return userLine;
+  const q = (req.query.line || '').trim();
+  return VALID_LINES.includes(q) ? q : null;
+}
+
 // ─── USER MANAGEMENT ──────────────────────────────────────────────────────────
 
 // GET /api/admin/users
@@ -112,16 +124,20 @@ router.delete('/side-session-checks/:id', (req, res) => {
   return res.json({ message: 'Deleted' });
 });
 
-// ─── SYNC HISTORY ────────────────────────────────────────────────────────────
+// ─── SYNC HISTORY (line-scoped) ──────────────────────────────────────────────
 router.get('/syncs', (req, res) => {
   try {
+    const line = effectiveLine(req);
+    const where = line ? 'WHERE es.line = ?' : '';
+    const params = line ? [line] : [];
     const syncs = db.prepare(`
       SELECT es.*, u.full_name AS uploaded_by_name
       FROM excel_syncs es
       LEFT JOIN users u ON u.id = es.uploaded_by
+      ${where}
       ORDER BY es.created_at DESC
       LIMIT 50
-    `).all();
+    `).all(...params);
     return res.json({ syncs });
   } catch (err) {
     return res.json({ syncs: [] });
@@ -139,20 +155,22 @@ function lineAnd(line) {
   return line ? ' AND line = ?' : '';
 }
 
-// ─── UPLOAD STATUS ───────────────────────────────────────────────────────────
+// ─── UPLOAD STATUS (line-scoped) ─────────────────────────────────────────────
 router.get('/upload-status', (req, res) => {
   try {
+    const line = effectiveLine(req);
+    const lp = line ? [line] : [];
+
     let uploadMap = {};
     try {
+      const syncWhere = line ? "WHERE status = 'success' AND line = ?" : "WHERE status = 'success'";
       db.prepare(`
         SELECT file_type, MAX(created_at) as last_upload, rows_imported
-        FROM excel_syncs WHERE status = 'success'
+        FROM excel_syncs ${syncWhere}
         GROUP BY file_type
-      `).all().forEach(r => { uploadMap[r.file_type] = r; });
+      `).all(...lp).forEach(r => { uploadMap[r.file_type] = r; });
     } catch {}
 
-    const line = lineFilter(req);
-    const lp = line ? [line] : [];
     // Line-scoped counts (NULL alias means 'no alias')
     const counts = {
       data:          safeCount(db, `SELECT COUNT(*) as c FROM employees${lineWhere(line)}`, lp),
@@ -177,10 +195,10 @@ router.get('/upload-status', (req, res) => {
   }
 });
 
-// ─── CLEAR SINGLE FILE TYPE DATA (line-scoped) ───────────────────────────────
+// ─── CLEAR SINGLE FILE TYPE DATA (line-scoped with ?line= override for 'All') ───
 router.delete('/clear-excel-data/:fileType', (req, res) => {
   const { fileType } = req.params;
-  const line = lineFilter(req);
+  const line = effectiveLine(req);
   const lineW  = lineWhere(line);
   const lineA  = lineAnd(line);
   const lp = line ? [line] : [];
@@ -198,8 +216,15 @@ router.delete('/clear-excel-data/:fileType', (req, res) => {
     return res.status(400).json({ error: `Unknown fileType: ${fileType}` });
   try {
     FILE_DELETE[fileType]();
-    try { db.prepare("DELETE FROM excel_syncs WHERE file_type = ?").run(fileType); } catch {}
-    return res.json({ message: `Cleared: ${fileType}` });
+    // Scope sync log deletion by line too (preserve other line's history)
+    try {
+      if (line) {
+        db.prepare("DELETE FROM excel_syncs WHERE file_type = ? AND line = ?").run(fileType, line);
+      } else {
+        db.prepare("DELETE FROM excel_syncs WHERE file_type = ?").run(fileType);
+      }
+    } catch {}
+    return res.json({ message: `Cleared: ${fileType}` + (line ? ` (${line})` : '') });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -209,17 +234,19 @@ function safeRun(db, sql, params = []) {
   try { db.prepare(sql).run(...params); } catch {}
 }
 
-// ─── CLEAR ALL EXCEL DATA (line-scoped) ───────────────────────────────────────
+// ─── CLEAR ALL EXCEL DATA (line-scoped with ?line= override for 'All') ──────
 router.delete('/clear-excel-data', (req, res) => {
   try {
-    const line = lineFilter(req);
+    const line = effectiveLine(req);
     const lineW = lineWhere(line);
     const lp = line ? [line] : [];
     ['lectures','absent_students','clients','batches','remarks','employees'].forEach(t =>
       safeRun(db, `DELETE FROM ${t}${lineW}`, lp)
     );
-    if (!line) {
-      // Only wipe sync audit log if admin is clearing everything
+    // Clear sync audit log: scoped if a line is active, full wipe otherwise
+    if (line) {
+      safeRun(db, 'DELETE FROM excel_syncs WHERE line = ?', lp);
+    } else {
       safeRun(db, 'DELETE FROM excel_syncs');
     }
     return res.json({ message: 'All Excel data cleared' + (line ? ` (${line})` : '') });

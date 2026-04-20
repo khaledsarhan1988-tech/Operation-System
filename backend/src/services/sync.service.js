@@ -22,7 +22,7 @@ function syncFile(fileType, buffer, userId, filename, line) {
   if (!line) throw new Error('Line is required for upload (Ahmed Hassan | Dardasha)');
   if (!VALID_LINES.includes(line)) throw new Error(`Invalid line: ${line}`);
 
-  const syncEntry = { file_type: fileType, filename, rows_imported: 0, status: 'success', error_msg: null, uploaded_by: userId };
+  const syncEntry = { file_type: fileType, filename, rows_imported: 0, status: 'success', error_msg: null, uploaded_by: userId, line };
   const warnings = [];
   try {
     let rows = 0;
@@ -43,9 +43,9 @@ function syncFile(fileType, buffer, userId, filename, line) {
     throw err;
   } finally {
     db.prepare(`
-      INSERT INTO excel_syncs (file_type, filename, rows_imported, status, error_msg, uploaded_by)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(syncEntry.file_type, syncEntry.filename, syncEntry.rows_imported, syncEntry.status, syncEntry.error_msg, syncEntry.uploaded_by);
+      INSERT INTO excel_syncs (file_type, filename, rows_imported, status, error_msg, uploaded_by, line)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(syncEntry.file_type, syncEntry.filename, syncEntry.rows_imported, syncEntry.status, syncEntry.error_msg, syncEntry.uploaded_by, syncEntry.line);
   }
   return { rows_imported: syncEntry.rows_imported, warnings };
 }

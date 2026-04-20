@@ -115,6 +115,7 @@ initDb().then(db => {
     'lectures',
     'absent_students',
     'side_session_checks',
+    'excel_syncs',
   ];
   multiLineTables.forEach(table => {
     try {

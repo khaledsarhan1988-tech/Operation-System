@@ -196,13 +196,13 @@ function UploadZone({ fileType, selectedLine, onSuccess, onWarnings }) {
   );
 }
 
-function SyncHistory() {
+function SyncHistory({ selectedLine }) {
   const { i18n } = useTranslation();
   const isAr = i18n.language === 'ar';
 
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ['syncs'],
-    queryFn: () => api.get('/admin/syncs').then(r => r.data),
+    queryKey: ['syncs', selectedLine],
+    queryFn: () => api.get('/admin/syncs', { params: selectedLine ? { line: selectedLine } : {} }).then(r => r.data),
   });
 
   const fileLabel = (key) => {
@@ -265,7 +265,7 @@ function SyncHistory() {
 }
 
 // ─── FILES STATUS PANEL ───────────────────────────────────────────────────────
-function FilesStatusPanel({ onClearSuccess }) {
+function FilesStatusPanel({ onClearSuccess, selectedLine }) {
   const { i18n } = useTranslation();
   const isAr = i18n.language === 'ar';
   const queryClient = useQueryClient();
@@ -275,9 +275,11 @@ function FilesStatusPanel({ onClearSuccess }) {
   const [fileAction, setFileAction] = useState({});
   const [clearMsg, setClearMsg] = useState(null);
 
+  const lineParams = selectedLine ? { line: selectedLine } : {};
+
   const { data: statusData, isLoading, refetch } = useQuery({
-    queryKey: ['upload-status'],
-    queryFn: () => api.get('/admin/upload-status').then(r => r.data),
+    queryKey: ['upload-status', selectedLine],
+    queryFn: () => api.get('/admin/upload-status', { params: lineParams }).then(r => r.data),
     staleTime: 30 * 1000,
   });
 
@@ -290,6 +292,7 @@ function FilesStatusPanel({ onClearSuccess }) {
   const refresh = () => {
     refetch();
     queryClient.invalidateQueries({ queryKey: ['syncs'] });
+    queryClient.invalidateQueries({ queryKey: ['upload-status'] });
     onClearSuccess?.();
   };
 
@@ -297,8 +300,8 @@ function FilesStatusPanel({ onClearSuccess }) {
     setClearingAll(true);
     setClearMsg(null);
     try {
-      await api.delete('/admin/clear-excel-data');
-      setClearMsg({ ok: true, text: 'تم مسح كل البيانات بنجاح ✅' });
+      await api.delete('/admin/clear-excel-data', { params: lineParams });
+      setClearMsg({ ok: true, text: `تم مسح بيانات ${selectedLine || 'الكل'} بنجاح ✅` });
       setConfirmClearAll(false);
       refresh();
     } catch (err) {
@@ -312,7 +315,7 @@ function FilesStatusPanel({ onClearSuccess }) {
     setFileAction(prev => ({ ...prev, [key]: 'clearing' }));
     setClearMsg(null);
     try {
-      await api.delete(`/admin/clear-excel-data/${key}`);
+      await api.delete(`/admin/clear-excel-data/${key}`, { params: lineParams });
       setClearMsg({ ok: true, text: `تم مسح البيانات بنجاح ✅` });
       setFileAction(prev => ({ ...prev, [key]: null }));
       refresh();
@@ -523,7 +526,7 @@ export default function ExcelUpload() {
       {/* Two-column layout */}
       <div className="flex gap-5 items-start">
         <div className="w-64 flex-shrink-0">
-          <FilesStatusPanel onClearSuccess={handleSuccess} />
+          <FilesStatusPanel onClearSuccess={handleSuccess} selectedLine={selectedLine} />
         </div>
 
         <div className="flex-1 space-y-5">
@@ -560,7 +563,7 @@ export default function ExcelUpload() {
             />
           </div>
 
-          <SyncHistory />
+          <SyncHistory selectedLine={selectedLine} />
         </div>
       </div>
 
