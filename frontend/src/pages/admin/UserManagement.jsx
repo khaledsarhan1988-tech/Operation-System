@@ -109,6 +109,7 @@ function UserModal({ open, onClose, user, onSaved }) {
           <div>
             <label className="label">Line</label>
             <select className="input" value={form.line} onChange={e => set('line', e.target.value)}>
+              <option value="All">All</option>
               <option value="Ahmed Hassan">Ahmed Hassan</option>
               <option value="Dardasha">Dardasha</option>
             </select>
