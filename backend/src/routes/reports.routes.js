@@ -216,13 +216,17 @@ router.get('/dashboard', (req, res) => {
        )`
     ).get();
 
-    // 6. Absent zoom call — grouped per group+date, absent = trainee_count - present sessions (15 min only)
+    // 6. Absent zoom call — grouped per group+date.
+    // Side sessions are per-student 15-min slots, so the expected count
+    // for a specific date is COUNT(*) of side rows on that date (NOT
+    // batch.trainee_count which covers the whole group across all dates).
+    // Must match the formula in /absent-side-list exactly to avoid
+    // KPI-vs-modal mismatches.
     const absentSideRow = db.prepare(
       `SELECT COALESCE(SUM(absent_count), 0) as cnt FROM (
          SELECT
-           b.trainee_count,
-           SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != '' AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END) AS present_count,
-           MAX(b.trainee_count) - SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != '' AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END) AS absent_count
+           COUNT(*) -
+           SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != '' AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END) AS absent_count
          FROM lectures l
          INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
          WHERE l.session_type = 'side'
@@ -2334,13 +2338,14 @@ router.get('/attendance-absence', (req, res) => {
     `).all();
 
     // ─── ZOOM EXPECTED per coordinator ─────────────────────────────────────
-    // Student-slot count matching zoom_absent formula's unit:
-    // For each (group, date) with at least one 15-min confirmed zoom session,
-    // expected slots = MAX(trainee_count). Sum across (group,date) pairs.
+    // Side sessions are per-student 15-min slots — each lecture row is ONE
+    // student's scheduled slot. So expected slots per (group,date) = COUNT(*)
+    // of lecture rows, NOT batch.trainee_count (which is the whole group size
+    // spanning many dates). Must match /absent-side-list and dashboard KPI.
     const zoomExpectedRows = db.prepare(`
       SELECT coordinator, COALESCE(SUM(expected_slots), 0) AS cnt FROM (
         SELECT COALESCE(b.coordinators, '--') AS coordinator,
-          MAX(b.trainee_count) AS expected_slots
+          COUNT(*) AS expected_slots
         FROM lectures l
         INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
         WHERE l.session_type = 'side'
@@ -2353,10 +2358,11 @@ router.get('/attendance-absence', (req, res) => {
     `).all();
 
     // ─── ZOOM ABSENT per coordinator (dashboard formula) ───────────────────
+    // absent = COUNT(*) - present(attendance>0). See comment above.
     const zoomAbsentRows = db.prepare(`
       SELECT coordinator, COALESCE(SUM(absent_count), 0) AS cnt FROM (
         SELECT COALESCE(b.coordinators, '--') AS coordinator,
-          MAX(b.trainee_count) -
+          COUNT(*) -
             SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != ''
                      AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END)
             AS absent_count
