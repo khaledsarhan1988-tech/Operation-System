@@ -41,13 +41,10 @@ const PERIODS = [
   { value: 'all',   label: 'كل الوقت' },
 ];
 
-function DetailModal({ coordinator, period, dateFrom, dateTo, onClose }) {
-  const { data, isLoading } = useQuery({
-    queryKey: ['fix-detail', coordinator, period, dateFrom, dateTo],
-    queryFn: () => api.get('/reports/fix-report/detail', {
-      params: { coordinator, period, date_from: dateFrom || undefined, date_to: dateTo || undefined },
-    }).then(r => r.data),
-  });
+function DetailModal({ coordinator, period, items, onClose }) {
+  // Items are already filtered by caller (same source as summary numbers).
+  const isLoading = false;
+  const data = items;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
@@ -84,7 +81,8 @@ function DetailModal({ coordinator, period, dateFrom, dateTo, onClose }) {
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {data.map((r, i) => {
-                  const cfg = STATUS_CFG[r.status];
+                  const status = r._resolved_status || r.status;
+                  const cfg    = STATUS_CFG[status];
                   return (
                     <tr key={i} className="hover:bg-gray-50/60 transition-colors">
                       <td className="px-4 py-3" style={{ maxWidth: '220px', wordBreak: 'break-word' }}>
@@ -93,7 +91,7 @@ function DetailModal({ coordinator, period, dateFrom, dateTo, onClose }) {
                       <td className="px-4 py-3 whitespace-nowrap">
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border bg-yellow-100 text-yellow-800 border-yellow-200">{r.problem_type}</span>
                       </td>
-                      <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{r.session_type === 'main' ? 'أساسي' : 'جانبي'}</td>
+                      <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{r._session_type === 'main' ? 'أساسي' : 'جانبي'}</td>
                       <td className="px-4 py-3 whitespace-nowrap">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold border ${
                           r.dept_type === 'Private' ? 'bg-violet-100 text-violet-800 border-violet-200' :
@@ -106,9 +104,9 @@ function DetailModal({ coordinator, period, dateFrom, dateTo, onClose }) {
                           {cfg?.emoji} {cfg?.label}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-xs text-gray-600" style={{ maxWidth: '180px', wordBreak: 'break-word' }}>{r.note || '—'}</td>
-                      <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{r.updated_at?.slice(0, 16) ?? '—'}</td>
-                      <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">{r.updated_by_name ?? '—'}</td>
+                      <td className="px-4 py-3 text-xs text-gray-600" style={{ maxWidth: '180px', wordBreak: 'break-word' }}>{r._status_note || r.note || '—'}</td>
+                      <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{(r._status_at || r.updated_at)?.slice(0, 16) ?? '—'}</td>
+                      <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">{r._status_by || r.updated_by_name || '—'}</td>
                     </tr>
                   );
                 })}
@@ -133,59 +131,62 @@ export default function FixReport() {
 
   const hasDateRange = dateFrom || dateTo;
 
-  // Source 1: all problems (real total) from code-problems with show_resolved=true
-  const { data: codeProbs, isLoading: codeLoad } = useQuery({
+  // Single source: all problems from code-problems with show_resolved=true.
+  // Both totals AND fixed counts are derived from the same dataset so numbers
+  // always match the "Code Problems" page exactly (no stale cps rows, no
+  // JOIN duplication, no double-count from ghost entries).
+  const { data: codeProbs, isLoading } = useQuery({
     queryKey: ['fix-report-code-probs'],
     queryFn: () => api.get('/reports/code-problems', { params: { show_resolved: true } }).then(r => r.data),
     staleTime: 60 * 1000,
   });
 
-  // Source 2: fix counts per coordinator from fix-report
-  const { data: fixData, isLoading: fixLoad } = useQuery({
-    queryKey: ['fix-report', period, dateFrom, dateTo],
-    queryFn: () => api.get('/reports/fix-report', {
-      params: {
-        period: hasDateRange ? undefined : period,
-        date_from: dateFrom || undefined,
-        date_to: dateTo || undefined,
-      },
-    }).then(r => r.data),
-    staleTime: 60 * 1000,
-  });
+  const todayStr = new Date().toISOString().slice(0, 10);
 
-  const isLoading = codeLoad || fixLoad;
+  // Flatten all problems, tag session_type, drop ghost duplicates
+  const allProblems = [
+    ...(codeProbs?.main_problems ?? []).map(p => ({ ...p, _session_type: 'main' })),
+    ...(codeProbs?.zoom_problems ?? []).map(p => ({ ...p, _session_type: 'side' })),
+  ].filter(p => !p._ghost);
 
-  // Build coordinator → total count from code-problems
-  // Split multi-name coordinator fields (e.g. "Mostafa, fouad" → ["Mostafa", "fouad"])
-  const coordTotals = {};
-  [...(codeProbs?.main_problems ?? []), ...(codeProbs?.zoom_problems ?? [])].forEach(p => {
-    const raw = p.coordinators || '--';
+  // Aggregate per coordinator. Split multi-name coordinator fields
+  // (e.g. "Mostafa, fouad" → ["Mostafa", "fouad"]) so each coordinator gets credit.
+  const agg = {};
+  allProblems.forEach(p => {
+    const raw    = p.coordinators || '--';
     const coords = raw.includes(',') ? raw.split(',').map(c => c.trim()).filter(Boolean) : [raw.trim()];
+    const isFixed      = ['resolved', 'wont_repeat', 'exception'].includes(p._resolved_status);
+    const statusDate   = p._status_at ? String(p._status_at).slice(0, 10) : null;
+    const isFixedToday = isFixed && statusDate === todayStr;
+
     coords.forEach(coord => {
-      coordTotals[coord] = (coordTotals[coord] || 0) + 1;
+      if (!agg[coord]) agg[coord] = { total: 0, fixed: 0, fixed_today: 0 };
+      agg[coord].total += 1;
+      if (isFixed)      agg[coord].fixed += 1;
+      if (isFixedToday) agg[coord].fixed_today += 1;
     });
   });
 
-  // Build fix lookup — also split multi-name coordinators in fixData
-  const fixLookup = {};
-  (fixData ?? []).forEach(r => {
-    const raw = r.coordinator || '--';
+  // Helper: pick fixed problems for a given coordinator + period (for detail modal)
+  const pickFixed = (coord, periodKey) => allProblems.filter(p => {
+    if (!['resolved', 'wont_repeat', 'exception'].includes(p._resolved_status)) return false;
+    const raw    = p.coordinators || '--';
     const coords = raw.includes(',') ? raw.split(',').map(c => c.trim()).filter(Boolean) : [raw.trim()];
-    coords.forEach(coord => {
-      if (!fixLookup[coord]) fixLookup[coord] = { fixed: 0, fixed_today: 0 };
-      fixLookup[coord].fixed       += r.fixed       || 0;
-      fixLookup[coord].fixed_today += r.fixed_today || 0;
-    });
+    if (!coords.includes(coord)) return false;
+    if (periodKey === 'today') {
+      const d = p._status_at ? String(p._status_at).slice(0, 10) : null;
+      if (d !== todayStr) return false;
+    }
+    return true;
   });
 
-  // Merge: coordTotals (real total) + fixLookup (fixed counts)
-  const data = Object.entries(coordTotals).map(([coord, total]) => {
-    const fix       = fixLookup[coord] || {};
-    const fixed     = fix.fixed       || 0;
-    const fixedToday= fix.fixed_today || 0;
-    const remaining = Math.max(0, total - fixed);
-    return { coordinator: coord, all_count: total, fixed, fixed_today: fixedToday, remaining };
-  }).sort((a, b) => b.remaining - a.remaining || b.fixed - a.fixed);
+  const data = Object.entries(agg).map(([coord, x]) => ({
+    coordinator: coord,
+    all_count:   x.total,
+    fixed:       x.fixed,
+    fixed_today: x.fixed_today,
+    remaining:   Math.max(0, x.total - x.fixed),
+  })).sort((a, b) => b.remaining - a.remaining || b.fixed - a.fixed);
 
   const totalAllCount = data.reduce((a, r) => a + r.all_count,   0);
   const totalFixed    = data.reduce((a, r) => a + r.fixed,        0);
@@ -318,7 +319,7 @@ export default function FixReport() {
                   </td>
                   <td className="px-5 py-4">
                     <button
-                      onClick={() => r.fixed > 0 && setDetail({ coordinator: r.coordinator, period: 'all', dateFrom: '', dateTo: '' })}
+                      onClick={() => r.fixed > 0 && setDetail({ coordinator: r.coordinator, period: 'all', items: pickFixed(r.coordinator, 'all') })}
                       disabled={r.fixed === 0}
                       className={`inline-flex items-center px-3 py-1 rounded-xl text-xs font-black border transition-all ${
                         r.fixed > 0
@@ -329,7 +330,7 @@ export default function FixReport() {
                   </td>
                   <td className="px-5 py-4">
                     <button
-                      onClick={() => r.fixed_today > 0 && setDetail({ coordinator: r.coordinator, period: 'today', dateFrom: '', dateTo: '' })}
+                      onClick={() => r.fixed_today > 0 && setDetail({ coordinator: r.coordinator, period: 'today', items: pickFixed(r.coordinator, 'today') })}
                       disabled={r.fixed_today === 0}
                       className={`inline-flex items-center px-2.5 py-1 rounded-xl text-xs font-black border transition-all ${
                         r.fixed_today > 0
@@ -357,8 +358,7 @@ export default function FixReport() {
         <DetailModal
           coordinator={detail.coordinator}
           period={detail.period}
-          dateFrom={detail.dateFrom}
-          dateTo={detail.dateTo}
+          items={detail.items}
           onClose={() => setDetail(null)}
         />
       )}
