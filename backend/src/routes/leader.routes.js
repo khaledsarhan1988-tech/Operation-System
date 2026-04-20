@@ -27,27 +27,37 @@ function leaderDeptRemarksClauseFlat(user) {
 // ─── ROUTES ───────────────────────────────────────────────────────────────────
 
 // GET /api/leader/team?coordinator=
+// Lists every active agent in the leader's department with task counts.
+// Starts from the users table so agents with zero remarks still appear.
 router.get('/team', (req, res) => {
   const { coordinator } = req.query;
-  const deptClause = leaderDeptRemarksClause(req.user);
-  const conditions = [];
-  const params = [];
-  if (coordinator) { conditions.push('r.assigned_to LIKE ?'); params.push(`%${coordinator}%`); }
-  const extraWhere = conditions.length ? ' AND ' + conditions.join(' AND ') : '';
-  const where = `WHERE 1=1${deptClause}${extraWhere}`;
+  const userConditions = ["u.role = 'agent'", 'u.is_active = 1'];
+  const userParams = [];
+  const dept = req.user?.department;
+  if (dept && dept !== 'All') {
+    userConditions.push('u.department = ?');
+    userParams.push(dept);
+  }
+  if (coordinator) {
+    userConditions.push('u.full_name LIKE ?');
+    userParams.push(`%${coordinator}%`);
+  }
+  const userWhere = 'WHERE ' + userConditions.join(' AND ');
+
   const agents = db.prepare(`
     SELECT
-      r.assigned_to AS name,
-      COUNT(*) AS total,
-      SUM(CASE WHEN r.status != 'إنتهت' THEN 1 ELSE 0 END) AS pending,
-      SUM(CASE WHEN r.status = 'إنتهت' THEN 1 ELSE 0 END) AS done,
-      SUM(CASE WHEN r.status = 'إنتهت' AND date(r.last_updated) = date('now') THEN 1 ELSE 0 END) AS completed_today,
-      SUM(CASE WHEN r.status != 'إنتهت' AND r.sla_deadline < datetime('now', '+2 hours') THEN 1 ELSE 0 END) AS overdue
-    FROM remarks r
-    ${where}
-    GROUP BY r.assigned_to
-    ORDER BY pending DESC
-  `).all(...params);
+      u.full_name AS name,
+      COUNT(r.id) AS total,
+      COALESCE(SUM(CASE WHEN r.status != 'إنتهت' THEN 1 ELSE 0 END), 0) AS pending,
+      COALESCE(SUM(CASE WHEN r.status = 'إنتهت' THEN 1 ELSE 0 END), 0) AS done,
+      COALESCE(SUM(CASE WHEN r.status = 'إنتهت' AND date(r.last_updated) = date('now') THEN 1 ELSE 0 END), 0) AS completed_today,
+      COALESCE(SUM(CASE WHEN r.status != 'إنتهت' AND r.sla_deadline < datetime('now', '+2 hours') THEN 1 ELSE 0 END), 0) AS overdue
+    FROM users u
+    LEFT JOIN remarks r ON r.assigned_to = u.full_name
+    ${userWhere}
+    GROUP BY u.full_name
+    ORDER BY pending DESC, u.full_name COLLATE NOCASE
+  `).all(...userParams);
   return res.json(agents);
 });
 
@@ -139,29 +149,48 @@ router.get('/groups', (req, res) => {
 });
 
 // GET /api/leader/performance?from=&to=&coordinator=
+// Per-agent performance stats. Starts from the users table so every active
+// agent in the leader's department is listed (even with zero tasks).
 router.get('/performance', (req, res) => {
   const { from, to, coordinator } = req.query;
-  const deptClause = leaderDeptRemarksClauseFlat(req.user);
-  const conditions = [];
-  const params = [];
-  if (from)        { conditions.push('added_at >= ?'); params.push(from); }
-  if (to)          { conditions.push('added_at <= ?'); params.push(to); }
-  if (coordinator) { conditions.push('assigned_to LIKE ?'); params.push(`%${coordinator}%`); }
-  const extraWhere = conditions.length ? ' AND ' + conditions.join(' AND ') : '';
-  const where = `WHERE 1=1${deptClause}${extraWhere}`;
+
+  // Build user-side filters (always applied)
+  const userConditions = ["u.role = 'agent'", 'u.is_active = 1'];
+  const userParams = [];
+  const dept = req.user?.department;
+  if (dept && dept !== 'All') {
+    userConditions.push('u.department = ?');
+    userParams.push(dept);
+  }
+  if (coordinator) {
+    userConditions.push('u.full_name LIKE ?');
+    userParams.push(`%${coordinator}%`);
+  }
+  const userWhere = 'WHERE ' + userConditions.join(' AND ');
+
+  // Build date filters for the LEFT JOIN (must live inside the ON clause
+  // so agents with no remarks still appear with zero counts).
+  const joinConditions = ['r.assigned_to = u.full_name'];
+  const joinParams = [];
+  if (from) { joinConditions.push('r.added_at >= ?'); joinParams.push(from); }
+  if (to)   { joinConditions.push('r.added_at <= ?'); joinParams.push(to); }
+  const joinClause = joinConditions.join(' AND ');
+
+  const params = [...joinParams, ...userParams];
 
   const data = db.prepare(`
     SELECT
-      assigned_to AS name,
-      COUNT(*) AS total,
-      SUM(CASE WHEN status = 'إنتهت' THEN 1 ELSE 0 END) AS done,
-      SUM(CASE WHEN status != 'إنتهت' THEN 1 ELSE 0 END) AS pending,
-      SUM(CASE WHEN status != 'إنتهت' AND sla_deadline < datetime('now', '+2 hours') THEN 1 ELSE 0 END) AS overdue,
-      SUM(CASE WHEN priority = 'عاجلة' THEN 1 ELSE 0 END) AS urgent
-    FROM remarks
-    ${where}
-    GROUP BY assigned_to
-    ORDER BY total DESC
+      u.full_name AS name,
+      COUNT(r.id) AS total,
+      COALESCE(SUM(CASE WHEN r.status = 'إنتهت' THEN 1 ELSE 0 END), 0) AS done,
+      COALESCE(SUM(CASE WHEN r.status != 'إنتهت' THEN 1 ELSE 0 END), 0) AS pending,
+      COALESCE(SUM(CASE WHEN r.status != 'إنتهت' AND r.sla_deadline < datetime('now', '+2 hours') THEN 1 ELSE 0 END), 0) AS overdue,
+      COALESCE(SUM(CASE WHEN r.priority = 'عاجلة' THEN 1 ELSE 0 END), 0) AS urgent
+    FROM users u
+    LEFT JOIN remarks r ON ${joinClause}
+    ${userWhere}
+    GROUP BY u.full_name
+    ORDER BY total DESC, u.full_name COLLATE NOCASE
   `).all(...params);
   return res.json(data);
 });
