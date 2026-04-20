@@ -3,6 +3,7 @@ const express = require('express');
 const db = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
+const { lineFilter } = require('../utils/lineFilter');
 
 const router = express.Router();
 router.use(authenticate, requireRole('agent'));
@@ -65,9 +66,26 @@ function escapeLike(s) {
   return s.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
 
+// Multi-line tenant filter — appends " AND <alias>.line = '<line>'" to a WHERE clause.
+// Pass alias for aliased tables (e.g. 'b', 'r', 'l'); pass '' for plain column reference.
+// When line is null (admin 'All'), returns '' so no filter is applied.
+function buildLineFilter(alias, line) {
+  if (!line) return '';
+  const col = alias ? `${alias}.line` : 'line';
+  const safe = line.replace(/'/g, "''");
+  return ` AND ${col} = '${safe}'`;
+}
+
 // ─── GET /api/reports/dashboard ───────────────────────────────────────────────
 router.get('/dashboard', (req, res) => {
   const { from_date, to_date, department, employee } = req.query;
+  const line = lineFilter(req);
+  const lineBatches = buildLineFilter('batches', line);
+  const lineB       = buildLineFilter('b', line);
+  const lineL       = buildLineFilter('lectures', line);
+  const lineLA      = buildLineFilter('l', line);
+  const lineA       = buildLineFilter('a', line);
+  const lineRemarks = buildLineFilter('remarks', line);
 
   const deptBatches = buildDeptFilter('batches', department);
   const deptB       = buildDeptFilter('b', department);
@@ -96,15 +114,15 @@ router.get('/dashboard', (req, res) => {
   try {
     // 1. Active groups (3 statuses)
     const activeGroupsList = db.prepare(
-      `SELECT * FROM batches WHERE status='نشطة'${deptBatches}${empFilter} ORDER BY start_date DESC`
+      `SELECT * FROM batches WHERE status='نشطة'${deptBatches}${empFilter}${lineBatches} ORDER BY start_date DESC`
     ).all();
 
     const waitingTraineesList = db.prepare(
-      `SELECT * FROM batches WHERE status='بانتظار تسجيل المتدربين'${deptBatches}${empFilter} ORDER BY start_date DESC`
+      `SELECT * FROM batches WHERE status='بانتظار تسجيل المتدربين'${deptBatches}${empFilter}${lineBatches} ORDER BY start_date DESC`
     ).all();
 
     const waitingLecturesList = db.prepare(
-      `SELECT * FROM batches WHERE status='بانتظار تسجيل المحاضرات'${deptBatches}${empFilter} ORDER BY start_date DESC`
+      `SELECT * FROM batches WHERE status='بانتظار تسجيل المحاضرات'${deptBatches}${empFilter}${lineBatches} ORDER BY start_date DESC`
     ).all();
 
     // 2. Expired active groups
@@ -114,36 +132,36 @@ router.get('/dashboard', (req, res) => {
          AND end_date IS NOT NULL
          AND end_date != ''
          AND end_date <= date('now', '+2 hours')
-       ${deptBatches}${empFilter}
+       ${deptBatches}${empFilter}${lineBatches}
        ORDER BY end_date DESC`
     ).all();
 
     // 3. Main lectures count — session_type='main' (uploaded from "Lecture" Excel sheet)
     const mainLecturesRow = db.prepare(
       `SELECT COUNT(*) as cnt FROM lectures
-       INNER JOIN batches ON lectures.group_name = batches.group_name
+       INNER JOIN batches ON lectures.group_name = batches.group_name${line ? ' AND batches.line = lectures.line' : ''}
        WHERE lectures.session_type = 'main'
        ${buildDateFilter('lectures.date', from_date, to_date)}
-       ${deptBatches}${empFilter}`
+       ${deptBatches}${empFilter}${lineL}`
     ).get();
 
     // 4. Side sessions count — all side sessions
     const sideLecturesRow = db.prepare(
       `SELECT COUNT(*) as cnt FROM lectures
-       INNER JOIN batches ON lectures.group_name = batches.group_name
+       INNER JOIN batches ON lectures.group_name = batches.group_name${line ? ' AND batches.line = lectures.line' : ''}
        WHERE lectures.session_type = 'side'
        ${buildDateFilter('lectures.date', from_date, to_date)}
-       ${deptBatches}${empFilter}`
+       ${deptBatches}${empFilter}${lineL}`
     ).get();
 
     // 4b. Zoom calls count — side sessions that are regular (15 min only)
     const zoomCallsRow = db.prepare(
       `SELECT COUNT(*) as cnt FROM lectures
-       INNER JOIN batches ON lectures.group_name = batches.group_name
+       INNER JOIN batches ON lectures.group_name = batches.group_name${line ? ' AND batches.line = lectures.line' : ''}
        WHERE lectures.session_type = 'side'
          AND lectures.side_session_category = 'regular'
        ${buildDateFilter('lectures.date', from_date, to_date)}
-       ${deptBatches}${empFilter}`
+       ${deptBatches}${empFilter}${lineL}`
     ).get();
 
     // 5. Absent main — Part1: absent_students with name lookup + date inference from lecture_no
@@ -164,37 +182,37 @@ router.get('/dashboard', (req, res) => {
            SELECT a.group_name,
              COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS resolved_date
            FROM absent_students a
-           LEFT JOIN batches b ON a.group_name = b.group_name
+           LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
            LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
-             AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone
+             AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone${line ? ' AND c_lu.line = a.line' : ''}
            LEFT JOIN (
-             SELECT group_name, date,
+             SELECT group_name, date, line,
                ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
-             FROM lectures WHERE session_type = 'main'
+             FROM lectures WHERE session_type = 'main'${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
            ) lec_inf ON (a.date IS NULL OR TRIM(a.date)='')
              AND lec_inf.group_name = a.group_name
              AND a.lecture_no IS NOT NULL
-             AND lec_inf.lec_num = a.lecture_no
+             AND lec_inf.lec_num = a.lecture_no${line ? ' AND lec_inf.line = a.line' : ''}
            WHERE (
              (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
              OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
            )
-           ${absentDeptB}${absentEmpB}
+           ${absentDeptB}${absentEmpB}${lineA}
          ) p1_inner
          WHERE 1=1${absentDateFP1}
          UNION ALL
          SELECT l.group_name FROM lectures l
-         INNER JOIN batches b2 ON l.group_name = b2.group_name
-         INNER JOIN clients c ON c.group_name = l.group_name
+         INNER JOIN batches b2 ON l.group_name = b2.group_name${line ? ' AND b2.line = l.line' : ''}
+         INNER JOIN clients c ON c.group_name = l.group_name${line ? ' AND c.line = l.line' : ''}
          WHERE l.session_type = 'main'
            AND (l.attendance IS NULL OR TRIM(l.attendance) = '')
            AND c.name IS NOT NULL AND TRIM(c.name)!=''
            AND c.phone IS NOT NULL AND TRIM(c.phone)!=''
            AND NOT EXISTS (
              SELECT 1 FROM absent_students a2
-             WHERE a2.group_name = l.group_name AND a2.date = l.date
+             WHERE a2.group_name = l.group_name AND a2.date = l.date${line ? ' AND a2.line = l.line' : ''}
            )
-         ${absentDateL}${absentDeptB2}${absentEmpB2}
+         ${absentDateL}${absentDeptB2}${absentEmpB2}${lineLA}
        )`
     ).get();
 
@@ -206,12 +224,12 @@ router.get('/dashboard', (req, res) => {
            SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != '' AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END) AS present_count,
            MAX(b.trainee_count) - SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != '' AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END) AS absent_count
          FROM lectures l
-         INNER JOIN batches b ON l.group_name = b.group_name
+         INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
          WHERE l.session_type = 'side'
            AND l.status = 'مؤكدة'
            AND (l.duration IS NULL OR l.duration <= '00:15')
          ${buildDateFilter('l.date', from_date, to_date)}
-         ${deptB}${empBFilter}
+         ${deptB}${empBFilter}${lineLA}
          GROUP BY l.group_name, l.date
          HAVING absent_count > 0
        )`
@@ -225,7 +243,7 @@ router.get('/dashboard', (req, res) => {
       `SELECT COUNT(*) as cnt FROM remarks
        WHERE LOWER(status) NOT IN ('closed','مغلق','resolved')
        ${buildDateFilter(remarkDateExpr, from_date, to_date)}
-       ${empRemark}${deptRemark}`
+       ${empRemark}${deptRemark}${lineRemarks}`
     ).get();
 
     const openRemarksList = db.prepare(
@@ -233,7 +251,7 @@ router.get('/dashboard', (req, res) => {
        FROM remarks
        WHERE LOWER(status) NOT IN ('closed','مغلق','resolved')
        ${buildDateFilter(remarkDateExpr, from_date, to_date)}
-       ${empRemark}${deptRemark}
+       ${empRemark}${deptRemark}${lineRemarks}
        ORDER BY added_at DESC
        LIMIT 150`
     ).all();
@@ -252,7 +270,7 @@ router.get('/dashboard', (req, res) => {
        FROM remarks
        WHERE LOWER(status) NOT IN ('closed','مغلق','resolved')
          AND ROUND((julianday('now') - julianday(added_at)) * 24, 1) >= 3
-         ${deptRemark}
+         ${deptRemark}${lineRemarks}
        ORDER BY hours_open DESC
        LIMIT 200`
     ).all();
@@ -264,7 +282,7 @@ router.get('/dashboard', (req, res) => {
          dept_type, coordinators, start_date, end_date
        FROM batches
        WHERE status='نشطة' AND scheduled_lectures > completed_lectures
-       ${deptBatches}${empFilter}
+       ${deptBatches}${empFilter}${lineBatches}
        ORDER BY missing_lectures DESC`
     ).all();
 
@@ -274,9 +292,9 @@ router.get('/dashboard', (req, res) => {
          COUNT(l.id) as side_count,
          (b.trainee_count * 7) as expected_side_count
        FROM batches b
-       LEFT JOIN lectures l ON l.group_name = b.group_name AND l.session_type = 'side'
+       LEFT JOIN lectures l ON l.group_name = b.group_name AND l.session_type = 'side'${line ? ' AND l.line = b.line' : ''}
        WHERE b.status = 'نشطة'
-       ${deptB}${empBFilter}
+       ${deptB}${empBFilter}${lineB}
        GROUP BY b.group_name
        HAVING side_count < expected_side_count
        ORDER BY (expected_side_count - side_count) DESC`
@@ -299,23 +317,23 @@ router.get('/dashboard', (req, res) => {
             // Count total absence records (main + zoom) shown in the modal
             const mainCnt = db.prepare(
               `SELECT COUNT(*) as cnt FROM absent_students a
-               LEFT JOIN batches b ON a.group_name = b.group_name
+               LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
                WHERE a.student_name IS NOT NULL AND TRIM(a.student_name) != ''
                AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
                ${buildDateFilter('a.date', from_date, to_date)}
                ${department && department !== 'All' ? ` AND (b.dept_type = '${department.replace(/'/g,"''")}' OR EXISTS (SELECT 1 FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) AND u.department='${department.replace(/'/g,"''")}'))` : ''}
-               ${buildCoordFilter('b', employee)}`
+               ${buildCoordFilter('b', employee)}${lineA}`
             ).get()?.cnt ?? 0;
             const zoomCnt = db.prepare(
               `SELECT COUNT(*) as cnt FROM (
                  SELECT DISTINCT l.group_name, l.date
                  FROM lectures l
-                 INNER JOIN batches b ON l.group_name = b.group_name
+                 INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
                  WHERE l.session_type = 'side'
                    AND l.side_session_category = 'regular'
                    AND l.status = 'مؤكدة'
                  ${buildDateFilter('l.date', from_date, to_date)}
-                 ${deptB}${empBFilter}
+                 ${deptB}${empBFilter}${lineLA}
                )`
             ).get()?.cnt ?? 0;
             return mainCnt + zoomCnt;
@@ -350,6 +368,8 @@ router.get('/lectures-list', (req, res) => {
     group_name = '', category = '',        // for ob_count popup: exact group + category
   } = req.query;
   const offset = (Number(page) - 1) * Number(limit);
+  const line = lineFilter(req);
+  const lineL = buildLineFilter('l', line);
   const deptFilter        = buildDeptFilter('b', department);
   const empFilter         = buildCoordFilter('b', employee);
   const searchEsc         = search.replace(/%/g, '\\%').replace(/_/g, '\\_');
@@ -371,18 +391,18 @@ router.get('/lectures-list', (req, res) => {
   // When min_duration is set (main lectures mode), ignore session_type filter — use duration to identify them
   const sessionTypeFilter = min_duration ? '' : ` AND l.session_type = '${session_type}'`;
 
-  const allFilters = `${sessionTypeFilter}${minDurFilter}${maxDurFilter}${dateFilter}${deptFilter}${empFilter}${trainerFilter}${coordFilter}${searchFilter}${groupFilter}${categoryFilter}`;
+  const allFilters = `${sessionTypeFilter}${minDurFilter}${maxDurFilter}${dateFilter}${deptFilter}${empFilter}${trainerFilter}${coordFilter}${searchFilter}${groupFilter}${categoryFilter}${lineL}`;
 
   // For side sessions: pre-aggregate onboarding/offboarding/compensatory per group (one JOIN instead of N subqueries)
   const sideJoin = (!min_duration && session_type === 'side')
     ? `LEFT JOIN (
-         SELECT group_name,
+         SELECT group_name, line,
            SUM(CASE WHEN side_session_category='onboarding'    THEN 1 ELSE 0 END) AS onboarding_count,
            SUM(CASE WHEN side_session_category='offboarding'   THEN 1 ELSE 0 END) AS offboarding_count,
            SUM(CASE WHEN side_session_category='compensatory'  THEN 1 ELSE 0 END) AS compensatory_count
-         FROM lectures WHERE session_type='side'
-         GROUP BY group_name
-       ) lx_counts ON lx_counts.group_name = l.group_name`
+         FROM lectures WHERE session_type='side'${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
+         GROUP BY group_name, line
+       ) lx_counts ON lx_counts.group_name = l.group_name${line ? ' AND lx_counts.line = l.line' : ''}`
     : '';
   const sideExtraFields = (!min_duration && session_type === 'side')
     ? `, COALESCE(lx_counts.onboarding_count,0) AS onboarding_count, COALESCE(lx_counts.offboarding_count,0) AS offboarding_count, COALESCE(lx_counts.compensatory_count,0) AS compensatory_count`
@@ -391,7 +411,7 @@ router.get('/lectures-list', (req, res) => {
   try {
     const totalRow = db.prepare(
       `SELECT COUNT(*) as cnt FROM lectures l
-       LEFT JOIN batches b ON l.group_name = b.group_name
+       LEFT JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
        WHERE 1=1${allFilters}`
     ).get();
 
@@ -400,7 +420,7 @@ router.get('/lectures-list', (req, res) => {
          COALESCE((SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) LIMIT 1), b.dept_type) AS dept_type,
          b.coordinators, b.lecture_duration_min${sideExtraFields}
        FROM lectures l
-       LEFT JOIN batches b ON l.group_name = b.group_name
+       LEFT JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
        ${sideJoin}
        WHERE 1=1${allFilters}
        ORDER BY l.date DESC LIMIT ${Number(limit)} OFFSET ${offset}`
@@ -420,6 +440,9 @@ router.get('/absent-list', (req, res) => {
     coordinator = '', modal_from = '', modal_to = '', modal_dept = '',
   } = req.query;
   const offset = (Number(page) - 1) * Number(limit);
+  const line = lineFilter(req);
+  const lineA = buildLineFilter('a', line);
+  const lineL = buildLineFilter('l', line);
 
   // Modal filters override outer filters when provided
   const activeDept  = modal_dept  && modal_dept  !== 'All' ? modal_dept  : (department && department !== 'All' ? department : '');
@@ -464,20 +487,20 @@ router.get('/absent-list', (req, res) => {
         ) AS dept_type,
         b.coordinators
       FROM absent_students a
-      LEFT JOIN batches b ON a.group_name = b.group_name
+      LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
       LEFT JOIN (
-        SELECT group_name, date,
+        SELECT group_name, date, line,
           ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
-        FROM lectures WHERE session_type = 'main'
+        FROM lectures WHERE session_type = 'main'${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
       ) lec_inf ON (a.date IS NULL OR TRIM(a.date)='')
         AND lec_inf.group_name = a.group_name
         AND a.lecture_no IS NOT NULL
-        AND lec_inf.lec_num = a.lecture_no
+        AND lec_inf.lec_num = a.lecture_no${line ? ' AND lec_inf.line = a.line' : ''}
       WHERE (
         (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
-        OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND EXISTS (SELECT 1 FROM clients c WHERE c.phone = a.phone))
+        OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND EXISTS (SELECT 1 FROM clients c WHERE c.phone = a.phone${line ? ' AND c.line = a.line' : ''}))
       )
-      ${deptFilter}${empFilter}${coordFilter}${searchFilter}
+      ${deptFilter}${empFilter}${coordFilter}${searchFilter}${lineA}
     ) p1_inner
     WHERE 1=1${dateFilterP1}`;
 
@@ -492,17 +515,17 @@ router.get('/absent-list', (req, res) => {
       ) AS dept_type,
       b2.coordinators
     FROM lectures l
-    INNER JOIN batches b2 ON l.group_name = b2.group_name
-    INNER JOIN clients c ON c.group_name = l.group_name
+    INNER JOIN batches b2 ON l.group_name = b2.group_name${line ? ' AND b2.line = l.line' : ''}
+    INNER JOIN clients c ON c.group_name = l.group_name${line ? ' AND c.line = l.line' : ''}
     WHERE l.session_type = 'main'
       AND (l.attendance IS NULL OR TRIM(l.attendance) = '')
       AND c.name IS NOT NULL AND TRIM(c.name)!=''
       AND c.phone IS NOT NULL AND TRIM(c.phone)!=''
       AND NOT EXISTS (
         SELECT 1 FROM absent_students a2
-        WHERE a2.group_name = l.group_name AND a2.date = l.date
+        WHERE a2.group_name = l.group_name AND a2.date = l.date${line ? ' AND a2.line = l.line' : ''}
       )
-    ${dateFilter2}${deptFilter2}${empFilter2}${coordFilter2}${searchFilter2}`;
+    ${dateFilter2}${deptFilter2}${empFilter2}${coordFilter2}${searchFilter2}${lineL}`;
 
   const unionQ = `SELECT * FROM (${part1} UNION ALL ${part2}) t`;
 
@@ -528,6 +551,8 @@ router.get('/absent-side-list', (req, res) => {
     trainer = '', coordinator = '', modal_from = '', modal_to = '', modal_dept = '',
   } = req.query;
   const offset = (Number(page) - 1) * Number(limit);
+  const line = lineFilter(req);
+  const lineL = buildLineFilter('l', line);
 
   const activeDept = modal_dept && modal_dept !== 'All' ? modal_dept : (department && department !== 'All' ? department : '');
   const activeFrom = modal_from || from_date;
@@ -547,7 +572,7 @@ router.get('/absent-side-list', (req, res) => {
     WHERE l.session_type = 'side'
       AND l.status = 'مؤكدة'
       AND (l.duration IS NULL OR l.duration <= '00:15')
-    ${dateFilter}${deptFilter}${empFilter}${trainerFilter}${coordFilter}${searchFilter}`;
+    ${dateFilter}${deptFilter}${empFilter}${trainerFilter}${coordFilter}${searchFilter}${lineL}`;
 
   const groupedQuery = `
     SELECT
@@ -567,7 +592,7 @@ router.get('/absent-side-list', (req, res) => {
                AND CAST(l.attendance AS INTEGER) > 0
                THEN 1 ELSE 0 END)                                               AS absent_count
     FROM lectures l
-    LEFT JOIN batches b ON l.group_name = b.group_name
+    LEFT JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
     ${baseWhere}
     GROUP BY l.group_name, l.date
     HAVING absent_count > 0`;
@@ -600,6 +625,9 @@ router.get('/remarks-list', (req, res) => {
     category_search = '', status_filter = '',
   } = req.query;
   const offset = (Number(page) - 1) * Number(limit);
+  const line = lineFilter(req);
+  const lineR = buildLineFilter('r', line);
+  const lineRemarks = buildLineFilter('remarks', line);
 
   const activeFrom = modal_from || from_date;
   const activeTo   = modal_to   || to_date;
@@ -651,17 +679,17 @@ router.get('/remarks-list', (req, res) => {
   const dateConvert = `(substr(r.added_at,7,4) || '-' || substr(r.added_at,4,2) || '-' || substr(r.added_at,1,2))`;
 
   const baseWhere = `WHERE LOWER(remarks.status) NOT IN ('closed','مغلق','resolved')
-    ${dateFilter}${empFilter}${assignFilter}${priorityFilter}${categoryFilter}${statusFilter}${deptFilter}${searchFilter}`;
+    ${dateFilter}${empFilter}${assignFilter}${priorityFilter}${categoryFilter}${statusFilter}${deptFilter}${searchFilter}${lineRemarks}`;
 
   // Use CTE to pre-compute active batches per phone — avoids N+1 correlated subquery
   const withCte = `
     WITH active_batches AS (
       SELECT c.phone, b.group_name, b.start_date, b.end_date
       FROM clients c
-      INNER JOIN batches b ON c.group_name = b.group_name
+      INNER JOIN batches b ON c.group_name = b.group_name${line ? ' AND b.line = c.line' : ''}
       WHERE b.status = 'نشطة'
         AND b.start_date IS NOT NULL AND b.start_date != ''
-        AND b.end_date   IS NOT NULL AND b.end_date   != ''
+        AND b.end_date   IS NOT NULL AND b.end_date   != ''${line ? ` AND c.line = '${line.replace(/'/g, "''")}'` : ''}
     )`;
 
   const baseWhereR = baseWhere.replace(/\bremarks\b/g, 'r');
@@ -709,6 +737,10 @@ router.get('/remarks-notes-main', (req, res) => {
     coordinator = '', has_remark = '',
   } = req.query;
   const offset = (Number(page) - 1) * Number(limit);
+  const line = lineFilter(req);
+  const lineA = buildLineFilter('a', line);
+  const lineL = buildLineFilter('l', line);
+  const lineR3 = buildLineFilter('r3', line);
 
   const activeFrom = modal_from || from_date;
   const activeTo   = modal_to   || to_date;
@@ -719,7 +751,7 @@ router.get('/remarks-notes-main', (req, res) => {
   let resolvedDept = activeDept;
   if (coordinator && !activeDept) {
     const coordUser = db.prepare(
-      `SELECT department FROM users WHERE LOWER(TRIM(full_name))=LOWER(TRIM(?)) AND department != 'All' LIMIT 1`
+      `SELECT department FROM users WHERE LOWER(TRIM(full_name))=LOWER(TRIM(?)) AND department != 'All' LIMIT 1${line ? ` AND line IN ('${line.replace(/'/g, "''")}','All')` : ''}`
     ).get(coordinator.trim());
     if (coordUser?.department) resolvedDept = coordUser.department;
   }
@@ -765,22 +797,22 @@ router.get('/remarks-notes-main', (req, res) => {
         b.dept_type
       ) AS dept_type
     FROM absent_students a
-    LEFT JOIN batches b ON a.group_name = b.group_name
-    LEFT JOIN (SELECT phone, MIN(name) AS name FROM clients GROUP BY phone) c_lu
+    LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
+    LEFT JOIN (SELECT phone, line, MIN(name) AS name FROM clients${line ? ` WHERE line = '${line.replace(/'/g, "''")}'` : ''} GROUP BY phone, line) c_lu
       ON (a.student_name IS NULL OR TRIM(a.student_name)='')
-      AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone
+      AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone${line ? ' AND c_lu.line = a.line' : ''}
     LEFT JOIN (
-      SELECT group_name, date,
+      SELECT group_name, date, line,
         ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
-      FROM lectures WHERE session_type = 'main'
+      FROM lectures WHERE session_type = 'main'${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
     ) lec_inf ON (a.date IS NULL OR TRIM(a.date)='')
       AND lec_inf.group_name = a.group_name
-      AND a.lecture_no IS NOT NULL AND lec_inf.lec_num = a.lecture_no
+      AND a.lecture_no IS NOT NULL AND lec_inf.lec_num = a.lecture_no${line ? ' AND lec_inf.line = a.line' : ''}
     WHERE (
       (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
       OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
     )
-    ${deptFilter1}${empFilter1}${coord1}${search1}`;
+    ${deptFilter1}${empFilter1}${coord1}${search1}${lineA}`;
 
   // Part2: clients in groups where lecture has no attendance — treated as absent
   // (mirrors absent-list Part2 so totals always match)
@@ -794,17 +826,17 @@ router.get('/remarks-notes-main', (req, res) => {
         b2.dept_type
       ) AS dept_type
     FROM lectures l
-    INNER JOIN batches b2 ON l.group_name = b2.group_name
-    INNER JOIN clients c ON c.group_name = l.group_name
+    INNER JOIN batches b2 ON l.group_name = b2.group_name${line ? ' AND b2.line = l.line' : ''}
+    INNER JOIN clients c ON c.group_name = l.group_name${line ? ' AND c.line = l.line' : ''}
     WHERE l.session_type = 'main'
       AND (l.attendance IS NULL OR TRIM(l.attendance) = '')
       AND c.name IS NOT NULL AND TRIM(c.name)!=''
       AND c.phone IS NOT NULL AND TRIM(c.phone)!=''
       AND NOT EXISTS (
         SELECT 1 FROM absent_students a2
-        WHERE a2.group_name = l.group_name AND a2.date = l.date
+        WHERE a2.group_name = l.group_name AND a2.date = l.date${line ? ' AND a2.line = l.line' : ''}
       )
-    ${deptFilter2}${empFilter2}${coord2}${search2}`;
+    ${deptFilter2}${empFilter2}${coord2}${search2}${lineL}`;
 
   // Deduplicated remarks: one remark per client per date (Attendance Main Session only)
   const remarksSubQ = `
@@ -812,7 +844,7 @@ router.get('/remarks-notes-main', (req, res) => {
       date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2)) AS rdate,
       MAX(id) AS id, MAX(details) AS details, MAX(added_at) AS added_at,
       MAX(assigned_to) AS assigned_to, MAX(status) AS status
-    FROM remarks WHERE category = 'Attendance Main Session'
+    FROM remarks WHERE category = 'Attendance Main Session'${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
     GROUP BY client_phone, date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2))`;
 
   // Part3: clients with 'Attendance Main Session' remarks who are NOT already captured by Part1
@@ -834,32 +866,32 @@ router.get('/remarks-notes-main', (req, res) => {
     -- Pick the group that was ACTIVE when the remark was made:
     -- prefer the most recently started group whose start_date <= remark_date.
     -- Fall back to alphabetically-first group if no group has started yet.
-    LEFT JOIN clients c3 ON c3.phone = r3.client_phone
+    LEFT JOIN clients c3 ON c3.phone = r3.client_phone${line ? ' AND c3.line = r3.line' : ''}
       AND c3.group_name = COALESCE(
         (SELECT cl.group_name FROM clients cl
-         INNER JOIN batches bl ON bl.group_name = cl.group_name
+         INNER JOIN batches bl ON bl.group_name = cl.group_name${line ? ' AND bl.line = cl.line' : ''}
          WHERE cl.phone = r3.client_phone
            AND bl.start_date IS NOT NULL
-           AND bl.start_date <= ${rdSQLMain}
+           AND bl.start_date <= ${rdSQLMain}${line ? ` AND cl.line = '${line.replace(/'/g, "''")}'` : ''}
          ORDER BY bl.start_date DESC LIMIT 1),
         (SELECT cl2.group_name FROM clients cl2
-         WHERE cl2.phone = r3.client_phone ORDER BY cl2.group_name ASC LIMIT 1)
+         WHERE cl2.phone = r3.client_phone${line ? ` AND cl2.line = '${line.replace(/'/g, "''")}'` : ''} ORDER BY cl2.group_name ASC LIMIT 1)
       )
-    LEFT JOIN batches b3 ON b3.group_name = c3.group_name
+    LEFT JOIN batches b3 ON b3.group_name = c3.group_name${line ? ' AND b3.line = c3.line' : ''}
     WHERE r3.category = 'Attendance Main Session'
       AND r3.client_phone IS NOT NULL AND TRIM(r3.client_phone) != ''
       AND NOT EXISTS (
         SELECT 1 FROM absent_students a3
         WHERE TRIM(a3.phone) = TRIM(r3.client_phone)
-          AND a3.date = date(${rdSQLMain}, '-1 day')
+          AND a3.date = date(${rdSQLMain}, '-1 day')${line ? ' AND a3.line = r3.line' : ''}
       )
       AND EXISTS (
         SELECT 1 FROM lectures lx
         WHERE lx.group_name = c3.group_name
           AND lx.session_type = 'main'
-          AND lx.date = date(${rdSQLMain}, '-1 day')
+          AND lx.date = date(${rdSQLMain}, '-1 day')${line ? ' AND lx.line = r3.line' : ''}
       )
-    ${deptFilter3}${empFilter3}${coord3}${search3}`;
+    ${deptFilter3}${empFilter3}${coord3}${search3}${lineR3}`;
 
   // Outer coordinator filter (second gate — guarantees correct filtering even if inner join produces duplicates)
   const outerCoordFilter = coordinator
@@ -918,6 +950,9 @@ router.get('/remarks-notes-zoom', (req, res) => {
     coordinator = '', has_remark = '',
   } = req.query;
   const offset = (Number(page) - 1) * Number(limit);
+  const line = lineFilter(req);
+  const lineA = buildLineFilter('a', line);
+  const lineR2 = buildLineFilter('r2', line);
 
   const activeFrom = modal_from || from_date;
   const activeTo   = modal_to   || to_date;
@@ -931,7 +966,7 @@ router.get('/remarks-notes-zoom', (req, res) => {
   let resolvedDept = activeDept;
   if (coordinator && !activeDept) {
     const coordUser = db.prepare(
-      `SELECT department FROM users WHERE LOWER(TRIM(full_name))=LOWER(TRIM(?)) AND department != 'All' LIMIT 1`
+      `SELECT department FROM users WHERE LOWER(TRIM(full_name))=LOWER(TRIM(?)) AND department != 'All' LIMIT 1${line ? ` AND line IN ('${line.replace(/'/g, "''")}','All')` : ''}`
     ).get(coordinator.trim());
     if (coordUser?.department) resolvedDept = coordUser.department;
   }
@@ -980,11 +1015,11 @@ router.get('/remarks-notes-zoom', (req, res) => {
         b.dept_type
       ) AS dept_type
     FROM absent_students a
-    INNER JOIN batches b ON a.group_name = b.group_name
-    LEFT JOIN (SELECT phone, MIN(name) AS name FROM clients GROUP BY phone) c_lu
+    INNER JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
+    LEFT JOIN (SELECT phone, line, MIN(name) AS name FROM clients${line ? ` WHERE line = '${line.replace(/'/g, "''")}'` : ''} GROUP BY phone, line) c_lu
       ON (a.student_name IS NULL OR TRIM(a.student_name) = '')
       AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
-      AND c_lu.phone = a.phone
+      AND c_lu.phone = a.phone${line ? ' AND c_lu.line = a.line' : ''}
     WHERE (
       (a.student_name IS NOT NULL AND TRIM(a.student_name) != '')
       OR (a.phone IS NOT NULL AND TRIM(a.phone) != '' AND c_lu.name IS NOT NULL)
@@ -994,9 +1029,9 @@ router.get('/remarks-notes-zoom', (req, res) => {
       SELECT 1 FROM lectures l
       WHERE l.group_name = a.group_name
         AND l.session_type = 'side'
-        AND l.date = a.date
+        AND l.date = a.date${line ? ' AND l.line = a.line' : ''}
     )
-    ${dept1}${emp1}${coord1}${srchA}`;
+    ${dept1}${emp1}${coord1}${srchA}${lineA}`;
 
   // Part 1: clients in groups where ALL side sessions were absent (no one attended)
   // Safe to expand all group clients because everyone is confirmed absent
@@ -1008,17 +1043,17 @@ router.get('/remarks-notes-zoom', (req, res) => {
         b.dept_type
       ) AS dept_type
     FROM (
-      SELECT l.group_name, l.date AS session_date
+      SELECT l.group_name, l.date AS session_date, l.line
       FROM lectures l
       WHERE l.session_type = 'side' AND l.status = 'مؤكدة'
-        AND (l.duration IS NULL OR l.duration <= '00:15')
-      GROUP BY l.group_name, l.date
+        AND (l.duration IS NULL OR l.duration <= '00:15')${line ? ` AND l.line = '${line.replace(/'/g, "''")}'` : ''}
+      GROUP BY l.group_name, l.date, l.line
       HAVING SUM(CASE WHEN l.attendance IS NOT NULL AND TRIM(l.attendance) != ''
                  AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END) = 0
         AND COUNT(*) > 0
     ) grp
-    INNER JOIN clients c ON c.group_name = grp.group_name
-    INNER JOIN batches b ON b.group_name = grp.group_name
+    INNER JOIN clients c ON c.group_name = grp.group_name${line ? ' AND c.line = grp.line' : ''}
+    INNER JOIN batches b ON b.group_name = grp.group_name${line ? ' AND b.line = grp.line' : ''}
     WHERE c.name IS NOT NULL AND TRIM(c.name) != ''
       AND c.phone IS NOT NULL AND TRIM(c.phone) != ''
     ${dept1}${emp1}${coord1}${srch1}`;
@@ -1043,20 +1078,20 @@ router.get('/remarks-notes-zoom', (req, res) => {
     -- Pick the group that was ACTIVE when the remark was made:
     -- prefer the most recently started group whose start_date <= remark_date.
     -- Fall back to alphabetically-first group if no group has started yet.
-    LEFT JOIN clients c2 ON c2.phone = r2.client_phone
+    LEFT JOIN clients c2 ON c2.phone = r2.client_phone${line ? ' AND c2.line = r2.line' : ''}
       AND c2.group_name = COALESCE(
         (SELECT cl.group_name FROM clients cl
-         INNER JOIN batches bl ON bl.group_name = cl.group_name
+         INNER JOIN batches bl ON bl.group_name = cl.group_name${line ? ' AND bl.line = cl.line' : ''}
          WHERE cl.phone = r2.client_phone
            AND bl.start_date IS NOT NULL
-           AND bl.start_date <= ${rdSQL}
+           AND bl.start_date <= ${rdSQL}${line ? ` AND cl.line = '${line.replace(/'/g, "''")}'` : ''}
          ORDER BY bl.start_date DESC LIMIT 1),
         (SELECT cl2.group_name FROM clients cl2
-         WHERE cl2.phone = r2.client_phone ORDER BY cl2.group_name ASC LIMIT 1)
+         WHERE cl2.phone = r2.client_phone${line ? ` AND cl2.line = '${line.replace(/'/g, "''")}'` : ''} ORDER BY cl2.group_name ASC LIMIT 1)
       )
-    LEFT JOIN batches b2 ON b2.group_name = c2.group_name
+    LEFT JOIN batches b2 ON b2.group_name = c2.group_name${line ? ' AND b2.line = c2.line' : ''}
     WHERE r2.category = 'Attendance Zoom Call'
-    ${dept2}${emp2}${coord2}${srch2}`;
+    ${dept2}${emp2}${coord2}${srch2}${lineR2}`;
 
   // Deduplicated remarks: one per client per day
   const remarksSubQ = `
@@ -1064,7 +1099,7 @@ router.get('/remarks-notes-zoom', (req, res) => {
       date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2)) AS rdate,
       MAX(id) AS id, MAX(details) AS details, MAX(added_at) AS added_at,
       MAX(assigned_to) AS assigned_to, MAX(status) AS status
-    FROM remarks WHERE category = 'Attendance Zoom Call'
+    FROM remarks WHERE category = 'Attendance Zoom Call'${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
     GROUP BY client_phone, date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2))`;
 
   // Outer coordinator filter (second gate — guarantees correct filtering even if inner join produces duplicates)
@@ -1120,6 +1155,8 @@ router.get('/remarks-categories', (req, res) => {
     assigned_to = '', category_filter = '',
   } = req.query;
   const offset = (Number(page) - 1) * Number(limit);
+  const line = lineFilter(req);
+  const lineR = buildLineFilter('r', line);
 
   const activeFrom = modal_from || from_date;
   const activeTo   = modal_to   || to_date;
@@ -1137,7 +1174,7 @@ router.get('/remarks-categories', (req, res) => {
   const dateFilter     = buildDateFilter(remarkDateSQL, activeFrom, activeTo);
 
   const baseWhere = `WHERE r.category IS NOT NULL AND TRIM(r.category) != ''
-    ${dateFilter}${deptFilter}${empFilter}${assignFilter}${catFilter}${searchFilter}`;
+    ${dateFilter}${deptFilter}${empFilter}${assignFilter}${catFilter}${searchFilter}${lineR}`;
 
   try {
     const totalRow = db.prepare(
@@ -1147,12 +1184,12 @@ router.get('/remarks-categories', (req, res) => {
     const rows = db.prepare(
       `WITH cat_counts AS (
          SELECT category, COUNT(*) as cnt FROM remarks
-         WHERE category IS NOT NULL AND TRIM(category) != ''
+         WHERE category IS NOT NULL AND TRIM(category) != ''${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
          GROUP BY category
        ),
        client_groups AS (
          SELECT c.phone, b.group_name, b.coordinators
-         FROM clients c INNER JOIN batches b ON c.group_name = b.group_name
+         FROM clients c INNER JOIN batches b ON c.group_name = b.group_name${line ? ' AND b.line = c.line' : ''}${line ? ` WHERE c.line = '${line.replace(/'/g, "''")}'` : ''}
          GROUP BY c.phone
        )
        SELECT r.id, r.category,
@@ -1181,6 +1218,10 @@ router.get('/remarks-categories', (req, res) => {
 router.get('/code-problems', (req, res) => {
   const { department, employee, show_resolved } = req.query;
   const showResolved = show_resolved === 'true';
+  const line = lineFilter(req);
+  const lineB = buildLineFilter('b', line);
+  const lineL = buildLineFilter('l', line);
+  const lineCps = buildLineFilter('', line);
 
   // Dept filter:
   // - agent:  NO dept filter — coordinator name LIKE filter already restricts to their own groups.
@@ -1282,24 +1323,24 @@ router.get('/code-problems', (req, res) => {
                 b.dept_type
               ) AS dept_type,
               b.coordinators, b.start_date
-       FROM batches b WHERE status='نشطة'${deptFilter}${empFilter}`
+       FROM batches b WHERE status='نشطة'${deptFilter}${empFilter}${lineB}`
     ).all();
 
     // fetch all main sessions with time + duration
     const mainRaw = db.prepare(
       `SELECT l.group_name, l.date, l.time, l.duration FROM lectures l
-       INNER JOIN batches b ON l.group_name=b.group_name
+       INNER JOIN batches b ON l.group_name=b.group_name${line ? ' AND b.line = l.line' : ''}
        WHERE b.status='نشطة' AND l.session_type='main'
-       ${deptFilter}${empFilter} ORDER BY l.group_name, l.date ASC`
+       ${deptFilter}${empFilter}${lineL} ORDER BY l.group_name, l.date ASC`
     ).all();
 
     // fetch only zoom call sessions (regular 15-min) for zoom-call problem checks
     const sideRaw = db.prepare(
       `SELECT l.group_name, l.date, l.time, l.duration FROM lectures l
-       INNER JOIN batches b ON l.group_name=b.group_name
+       INNER JOIN batches b ON l.group_name=b.group_name${line ? ' AND b.line = l.line' : ''}
        WHERE b.status='نشطة' AND l.session_type='side'
          AND LOWER(COALESCE(l.side_session_category,'regular')) = 'regular'
-       ${deptFilter}${empFilter} ORDER BY l.group_name, l.date ASC`
+       ${deptFilter}${empFilter}${lineL} ORDER BY l.group_name, l.date ASC`
     ).all();
 
     // group by group_name (store full rows)
@@ -1345,7 +1386,7 @@ router.get('/code-problems', (req, res) => {
     const expectedSideLast = firstDate => addDays(firstDate, 21);
 
     // Load all stored statuses into a map for O(1) lookup
-    const storedStatuses = db.prepare(`SELECT * FROM code_problem_status`).all();
+    const storedStatuses = db.prepare(`SELECT * FROM code_problem_status WHERE 1=1${lineCps}`).all();
     const statusMap = {};
     storedStatuses.forEach(s => { statusMap[`${s.group_name}|${s.problem_type}|${s.session_type}`] = s; });
 
@@ -1595,22 +1636,25 @@ router.get('/code-problems', (req, res) => {
 // ─── GET /api/reports/remarks-notes-options ──────────────────────────────────
 // Returns dropdown options for coordinator, category, assigned_to
 router.get('/remarks-notes-options', (req, res) => {
+  const line = lineFilter(req);
+  const lineBatches = buildLineFilter('batches', line);
+  const lineRemarks = buildLineFilter('remarks', line);
   try {
     const coordinators = db.prepare(
       `SELECT DISTINCT TRIM(coordinators) as val FROM batches
-       WHERE coordinators IS NOT NULL AND TRIM(coordinators) != ''
+       WHERE coordinators IS NOT NULL AND TRIM(coordinators) != ''${lineBatches}
        ORDER BY val`
     ).all().map(r => r.val);
 
     const categories = db.prepare(
       `SELECT DISTINCT TRIM(category) as val FROM remarks
-       WHERE category IS NOT NULL AND TRIM(category) != ''
+       WHERE category IS NOT NULL AND TRIM(category) != ''${lineRemarks}
        ORDER BY val`
     ).all().map(r => r.val);
 
     const assignedTo = db.prepare(
       `SELECT DISTINCT TRIM(assigned_to) as val FROM remarks
-       WHERE assigned_to IS NOT NULL AND TRIM(assigned_to) != ''
+       WHERE assigned_to IS NOT NULL AND TRIM(assigned_to) != ''${lineRemarks}
        ORDER BY val`
     ).all().map(r => r.val);
 
@@ -1638,6 +1682,12 @@ function tsFilters(q) {
 router.get('/team-summary-detail', (req, res) => {
   const { employee, metric, from_date, to_date, department } = req.query;
   if (!employee || !metric) return res.status(400).json({ error: 'employee and metric required' });
+  const line = lineFilter(req);
+  const lineBatches = buildLineFilter('batches', line);
+  const lineB = buildLineFilter('b', line);
+  const lineL = buildLineFilter('l', line);
+  const lineA = buildLineFilter('a', line);
+  const lineRemarks = buildLineFilter('', line);
   const { deptF, dateA, dateL, dateR } = tsFilters(req.query);
   const empFBatches = buildCoordFilter('batches', employee);
   const empFB       = buildCoordFilter('b', employee);
@@ -1654,7 +1704,7 @@ router.get('/team-summary-detail', (req, res) => {
            AND end_date IS NOT NULL AND end_date != ''
            AND end_date <= date('now')
            ${empFBatches}
-           ${deptF.replace('b.','').replace('AND b.','AND ')}
+           ${deptF.replace('b.','').replace('AND b.','AND ')}${lineBatches}
          ORDER BY end_date ASC`
       ).all();
 
@@ -1668,7 +1718,7 @@ router.get('/team-summary-detail', (req, res) => {
          FROM remarks
          WHERE LOWER(status) NOT IN ('closed','مغلق','resolved')
            ${empFRemarks}
-           ${dateRBase}${dateREnd}
+           ${dateRBase}${dateREnd}${lineRemarks}
            AND ROUND((julianday('now')-julianday(COALESCE(added_at,'2000-01-01')))*24,1) >=
                CASE WHEN priority='عاجلة' THEN 3
                     WHEN priority='هامة'  THEN 24
@@ -1682,16 +1732,16 @@ router.get('/team-summary-detail', (req, res) => {
       rows = db.prepare(
         `SELECT DISTINCT a.student_name, a.phone, a.group_name, a.date
          FROM absent_students a
-         INNER JOIN batches b ON a.group_name = b.group_name
+         INNER JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
          WHERE 1=1
            ${empFB}
-           ${deptF}${dateA}
+           ${deptF}${dateA}${lineA}
            AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
            AND NOT EXISTS (
              SELECT 1 FROM remarks r
              WHERE r.client_phone = a.phone
                AND r.category = 'Attendance Main Session'
-               AND LOWER(r.status) NOT IN ('closed','مغلق','resolved')
+               AND LOWER(r.status) NOT IN ('closed','مغلق','resolved')${line ? ' AND r.line = a.line' : ''}
            )
          ORDER BY a.group_name, a.date DESC`
       ).all();
@@ -1701,10 +1751,10 @@ router.get('/team-summary-detail', (req, res) => {
         `SELECT DISTINCT l.group_name, l.date, b.trainee_count,
            CAST(l.attendance AS INTEGER) as attendance
          FROM lectures l
-         INNER JOIN batches b ON l.group_name = b.group_name
+         INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
          WHERE 1=1
            ${empFB}
-           ${deptF}${dateL}
+           ${deptF}${dateL}${lineL}
            AND l.session_type = 'side'
            AND l.side_session_category = 'regular'
            AND l.status = 'مؤكدة'
@@ -1713,10 +1763,10 @@ router.get('/team-summary-detail', (req, res) => {
            AND b.trainee_count > 0
            AND NOT EXISTS (
              SELECT 1 FROM remarks r
-             INNER JOIN clients c ON r.client_phone = c.phone
+             INNER JOIN clients c ON r.client_phone = c.phone${line ? ' AND c.line = r.line' : ''}
              WHERE c.group_name = l.group_name
                AND r.category = 'Attendance Zoom Call'
-               AND LOWER(r.status) NOT IN ('closed','مغلق','resolved')
+               AND LOWER(r.status) NOT IN ('closed','مغلق','resolved')${line ? ' AND r.line = l.line' : ''}
            )
          ORDER BY l.group_name, l.date DESC`
       ).all();
@@ -1728,7 +1778,7 @@ router.get('/team-summary-detail', (req, res) => {
          FROM batches
          WHERE status = 'نشطة'
            ${empFBatches}
-           ${deptF.replace('b.','').replace('AND b.','AND ')}
+           ${deptF.replace('b.','').replace('AND b.','AND ')}${lineBatches}
            AND scheduled_lectures IS NOT NULL
            AND completed_lectures IS NOT NULL
            AND scheduled_lectures != completed_lectures
@@ -1747,6 +1797,12 @@ router.get('/team-summary-detail', (req, res) => {
 // Returns per-employee metrics — supports from_date, to_date, department, employee filters
 router.get('/team-summary', (req, res) => {
   const { from_date, to_date, department, employee: empFilter } = req.query;
+  const line = lineFilter(req);
+  const lineBatches = buildLineFilter('', line);
+  const lineRemarks = buildLineFilter('', line);
+  const lineB = buildLineFilter('b', line);
+  const lineL = buildLineFilter('l', line);
+  const lineA = buildLineFilter('a', line);
   const { deptF, dateA, dateL } = tsFilters(req.query);
   const dateRBase = from_date ? ` AND added_at >= '${from_date}'` : '';
   const dateREnd  = to_date   ? ` AND added_at <= '${to_date}'`   : '';
@@ -1770,14 +1826,14 @@ router.get('/team-summary', (req, res) => {
          AND end_date IS NOT NULL AND end_date != ''
          AND end_date <= date('now')
          AND coordinators LIKE ?
-         ${deptFNoB}`
+         ${deptFNoB}${lineBatches}`
     );
 
     const stmtOverdue = db.prepare(
       `SELECT COUNT(*) as cnt FROM remarks
        WHERE LOWER(status) NOT IN ('closed','مغلق','resolved')
          AND assigned_to LIKE ?
-         ${dateRBase}${dateREnd}
+         ${dateRBase}${dateREnd}${lineRemarks}
          AND ROUND((julianday('now') - julianday(COALESCE(added_at,'2000-01-01'))) * 24, 1) >=
              CASE WHEN priority='عاجلة' THEN 3
                   WHEN priority='هامة'  THEN 24
@@ -1790,15 +1846,15 @@ router.get('/team-summary', (req, res) => {
     const stmtMainAbsence = db.prepare(
       `SELECT COUNT(*) as cnt
        FROM absent_students a
-       INNER JOIN batches b ON a.group_name = b.group_name
+       INNER JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
        WHERE b.coordinators LIKE ?
-         ${deptF}${dateA}
+         ${deptF}${dateA}${lineA}
          AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
          AND NOT EXISTS (
            SELECT 1 FROM remarks r
            WHERE r.client_phone = a.phone
              AND r.category = 'Attendance Main Session'
-             AND LOWER(r.status) NOT IN ('closed','مغلق','resolved')
+             AND LOWER(r.status) NOT IN ('closed','مغلق','resolved')${line ? ' AND r.line = a.line' : ''}
          )`
     );
 
@@ -1806,9 +1862,9 @@ router.get('/team-summary', (req, res) => {
       `SELECT COUNT(*) as cnt FROM (
          SELECT DISTINCT l.group_name, l.date
          FROM lectures l
-         INNER JOIN batches b ON l.group_name = b.group_name
+         INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
          WHERE b.coordinators LIKE ?
-           ${deptF}${dateL}
+           ${deptF}${dateL}${lineL}
            AND l.session_type = 'side'
            AND l.side_session_category = 'regular'
            AND l.status = 'مؤكدة'
@@ -1817,10 +1873,10 @@ router.get('/team-summary', (req, res) => {
            AND b.trainee_count > 0
            AND NOT EXISTS (
              SELECT 1 FROM remarks r
-             INNER JOIN clients c ON r.client_phone = c.phone
+             INNER JOIN clients c ON r.client_phone = c.phone${line ? ' AND c.line = r.line' : ''}
              WHERE c.group_name = l.group_name
                AND r.category = 'Attendance Zoom Call'
-               AND LOWER(r.status) NOT IN ('closed','مغلق','resolved')
+               AND LOWER(r.status) NOT IN ('closed','مغلق','resolved')${line ? ' AND r.line = l.line' : ''}
            )
        )`
     );
@@ -1829,7 +1885,7 @@ router.get('/team-summary', (req, res) => {
       `SELECT COUNT(*) as cnt FROM batches
        WHERE status = 'نشطة'
          AND coordinators LIKE ?
-         ${deptFNoB}
+         ${deptFNoB}${lineBatches}
          AND scheduled_lectures IS NOT NULL
          AND completed_lectures IS NOT NULL
          AND scheduled_lectures != completed_lectures`
@@ -1860,11 +1916,14 @@ router.get('/team-summary', (req, res) => {
 
 // ─── GET /api/reports/problem-statuses ───────────────────────────────────────
 router.get('/problem-statuses', (req, res) => {
+  const line = lineFilter(req);
+  const linePs = buildLineFilter('ps', line);
   try {
     const rows = db.prepare(
       `SELECT ps.*, u.full_name as updated_by_name
        FROM code_problem_status ps
        LEFT JOIN users u ON ps.updated_by = u.id
+       WHERE 1=1${linePs}
        ORDER BY ps.updated_at DESC`
     ).all();
     return res.json(rows);
@@ -1886,12 +1945,32 @@ const RENAME_ALLOWED_STATUSES = new Set(['resolved', 'wont_repeat', 'exception']
 const GROUP_CODE_REGEX = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)_\d{1,2}_(Sat|Sun|Mon|Tue|Wed|Thu|Fri)_.+\(.+\).+$/;
 
 router.put('/problem-status', (req, res) => {
-  const { group_name, problem_type, session_type = 'main', status, note, actual, new_group_code } = req.body;
+  const { group_name, problem_type, session_type = 'main', status, note, actual, new_group_code, line: bodyLine } = req.body;
   if (!group_name || !problem_type || !status)
     return res.status(400).json({ error: 'group_name, problem_type, status required' });
   const validStatuses = ['new', 'reported', 'in_progress', 'exception', 'wont_repeat', 'resolved'];
   if (!validStatuses.includes(status))
     return res.status(400).json({ error: 'Invalid status' });
+
+  // Resolve effective line:
+  //  - 'All' admins can target a specific line via body.line (else fallback to existing row's line, else 'Ahmed Hassan')
+  //  - Non-'All' users are ALWAYS locked to their own line
+  const userLine = req.user?.line || 'Ahmed Hassan';
+  let effectiveLine;
+  if (userLine === 'All') {
+    const validLines = ['Ahmed Hassan', 'Dardasha'];
+    if (bodyLine && validLines.includes(bodyLine)) {
+      effectiveLine = bodyLine;
+    } else {
+      // Fallback: look up existing row across lines and keep its line
+      const existing = db.prepare(
+        `SELECT line FROM code_problem_status WHERE group_name=? AND problem_type=? AND session_type=? LIMIT 1`
+      ).get(group_name, problem_type, session_type);
+      effectiveLine = existing?.line || 'Ahmed Hassan';
+    }
+  } else {
+    effectiveLine = userLine;
+  }
 
   // new_group_code handling
   let newCodeValue = null;
@@ -1920,22 +1999,22 @@ router.put('/problem-status', (req, res) => {
     ? actual : null;
   try {
     db.prepare(`
-      INSERT INTO code_problem_status (group_name, problem_type, session_type, status, note, actual_at_status, new_group_code, updated_by, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+2 hours'))
-      ON CONFLICT(group_name, problem_type, session_type) DO UPDATE SET
+      INSERT INTO code_problem_status (group_name, problem_type, session_type, status, note, actual_at_status, new_group_code, updated_by, updated_at, line)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+2 hours'), ?)
+      ON CONFLICT(group_name, problem_type, session_type, line) DO UPDATE SET
         status           = excluded.status,
         note             = excluded.note,
         actual_at_status = excluded.actual_at_status,
         new_group_code   = excluded.new_group_code,
         updated_by       = excluded.updated_by,
         updated_at       = excluded.updated_at
-    `).run(group_name, problem_type, session_type, status, note ?? null, actualAtStatus, newCodeValue, req.user?.id ?? null);
+    `).run(group_name, problem_type, session_type, status, note ?? null, actualAtStatus, newCodeValue, req.user?.id ?? null, effectiveLine);
 
     const row = db.prepare(
       `SELECT ps.*, u.full_name as updated_by_name
        FROM code_problem_status ps LEFT JOIN users u ON ps.updated_by = u.id
-       WHERE ps.group_name=? AND ps.problem_type=? AND ps.session_type=?`
-    ).get(group_name, problem_type, session_type);
+       WHERE ps.group_name=? AND ps.problem_type=? AND ps.session_type=? AND ps.line=?`
+    ).get(group_name, problem_type, session_type, effectiveLine);
     return res.json(row);
   } catch (err) {
     console.error('[reports] problem-status upsert error:', err);
@@ -1947,9 +2026,11 @@ router.put('/problem-status', (req, res) => {
 router.get('/group-trainees', (req, res) => {
   const { group_name } = req.query;
   if (!group_name) return res.status(400).json({ error: 'group_name required' });
+  const line = lineFilter(req);
+  const lineClients = buildLineFilter('', line);
   try {
     const trainees = db.prepare(
-      `SELECT name, phone FROM clients WHERE group_name = ? ORDER BY name ASC`
+      `SELECT name, phone FROM clients WHERE group_name = ?${lineClients} ORDER BY name ASC`
     ).all(group_name);
     return res.json(trainees);
   } catch (err) {
@@ -1961,10 +2042,12 @@ router.get('/group-trainees', (req, res) => {
 router.get('/group-lectures', (req, res) => {
   const { group_name } = req.query;
   if (!group_name) return res.status(400).json({ error: 'group_name required' });
+  const line = lineFilter(req);
+  const lineAny = buildLineFilter('', line);
   try {
-    const batch = db.prepare(`SELECT * FROM batches WHERE group_name = ?`).get(group_name);
+    const batch = db.prepare(`SELECT * FROM batches WHERE group_name = ?${lineAny}`).get(group_name);
     const lectures = db.prepare(
-      `SELECT * FROM lectures WHERE group_name = ? ORDER BY date ASC`
+      `SELECT * FROM lectures WHERE group_name = ?${lineAny} ORDER BY date ASC`
     ).all(group_name);
     return res.json({ batch, lectures });
   } catch (err) {
@@ -1975,6 +2058,9 @@ router.get('/group-lectures', (req, res) => {
 // ─── GET /api/reports/fix-report ─────────────────────────────────────────────
 router.get('/fix-report', (req, res) => {
   const { period, date_from, date_to } = req.query;
+  const line = lineFilter(req);
+  const lineB = buildLineFilter('b', line);
+  const lineCps = buildLineFilter('cps', line);
   // No WHERE dept filter — all coordinators always appear.
   // For leaders: dept filter applied inside CASE WHEN so fixed counts only include
   // records from the leader's own department. This prevents fixed > all_count.
@@ -2030,7 +2116,8 @@ router.get('/fix-report', (req, res) => {
         SUM(CASE WHEN cps.status IN ('wont_repeat','exception','resolved')${deptCond}
               AND date(cps.updated_at)=date('now','+2 hours') THEN 1 ELSE 0 END) AS fixed_today
       FROM code_problem_status cps
-      LEFT JOIN batches b ON TRIM(LOWER(b.group_name))=TRIM(LOWER(cps.group_name))
+      LEFT JOIN batches b ON TRIM(LOWER(b.group_name))=TRIM(LOWER(cps.group_name))${line ? ' AND b.line = cps.line' : ''}
+      WHERE 1=1${lineCps}
       GROUP BY COALESCE(b.coordinators, '--')
       ORDER BY remaining DESC, fixed DESC
     `).all();
@@ -2045,6 +2132,8 @@ router.get('/fix-report', (req, res) => {
 router.get('/fix-report/detail', (req, res) => {
   const { coordinator, period, date_from, date_to } = req.query;
   if (!coordinator) return res.status(400).json({ error: 'coordinator required' });
+  const line = lineFilter(req);
+  const lineCps = buildLineFilter('cps', line);
   // For leader: coordinator's registered dept is source of truth (consistent with code-problems)
   let deptClause = '';
   if (req.user.role === 'leader') {
@@ -2092,10 +2181,10 @@ router.get('/fix-report/detail', (req, res) => {
              cps.updated_at, b.dept_type, COALESCE(b.coordinators,'--') AS coordinators,
              u.full_name AS updated_by_name
       FROM code_problem_status cps
-      LEFT JOIN batches b ON TRIM(LOWER(b.group_name))=TRIM(LOWER(cps.group_name))
+      LEFT JOIN batches b ON TRIM(LOWER(b.group_name))=TRIM(LOWER(cps.group_name))${line ? ' AND b.line = cps.line' : ''}
       LEFT JOIN users u ON u.id=cps.updated_by
       WHERE cps.status IN ('wont_repeat','exception','resolved')
-        AND COALESCE(b.coordinators,'--') LIKE '%${safe}%'${deptClause}${periodClause}
+        AND COALESCE(b.coordinators,'--') LIKE '%${safe}%'${deptClause}${periodClause}${lineCps}
       ORDER BY cps.updated_at DESC
     `).all();
     return res.json(rows);
@@ -2128,6 +2217,11 @@ router.get('/fix-report/detail', (req, res) => {
 //   - agent  → scoped to their own groups (coordinator = their name)
 router.get('/attendance-absence', (req, res) => {
   const { from_date, to_date, coordinator } = req.query;
+  const line = lineFilter(req);
+  const lineB = buildLineFilter('b', line);
+  const lineB2 = buildLineFilter('b2', line);
+  const lineL = buildLineFilter('l', line);
+  const lineA = buildLineFilter('a', line);
 
   // Role-based dept filter (applied to both 'b' and 'b2' batches aliases)
   let deptFilterB = '', deptFilterB2 = '';
@@ -2158,9 +2252,9 @@ router.get('/attendance-absence', (req, res) => {
       SELECT COALESCE(b.coordinators, '--') AS coordinator,
         COALESCE(SUM(b.trainee_count), 0) AS cnt
       FROM lectures l
-      INNER JOIN batches b ON l.group_name = b.group_name
+      INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
       WHERE l.session_type = 'main'
-      ${dateFilterL}${deptFilterB}${coordFilterB}
+      ${dateFilterL}${deptFilterB}${coordFilterB}${lineL}
       GROUP BY b.coordinators
     `).all();
 
@@ -2171,22 +2265,22 @@ router.get('/attendance-absence', (req, res) => {
         SELECT COALESCE(b.coordinators, '--') AS coordinator,
           COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS resolved_date
         FROM absent_students a
-        LEFT JOIN batches b ON a.group_name = b.group_name
+        LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
         LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
-          AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone
+          AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone${line ? ' AND c_lu.line = a.line' : ''}
         LEFT JOIN (
-          SELECT group_name, date,
+          SELECT group_name, date, line,
             ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
-          FROM lectures WHERE session_type='main'
+          FROM lectures WHERE session_type='main'${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
         ) lec_inf ON (a.date IS NULL OR TRIM(a.date)='')
           AND lec_inf.group_name = a.group_name
           AND a.lecture_no IS NOT NULL
-          AND lec_inf.lec_num = a.lecture_no
+          AND lec_inf.lec_num = a.lecture_no${line ? ' AND lec_inf.line = a.line' : ''}
         WHERE (
           (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
           OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
         )
-        ${deptFilterB}${coordFilterB}
+        ${deptFilterB}${coordFilterB}${lineA}
       ) p1
       WHERE 1=1${dateFilterResolved}
       GROUP BY coordinator
@@ -2196,17 +2290,17 @@ router.get('/attendance-absence', (req, res) => {
     const mainAbsentPart2 = db.prepare(`
       SELECT COALESCE(b2.coordinators, '--') AS coordinator, COUNT(*) AS cnt
       FROM lectures l
-      INNER JOIN batches b2 ON l.group_name = b2.group_name
-      INNER JOIN clients c ON c.group_name = l.group_name
+      INNER JOIN batches b2 ON l.group_name = b2.group_name${line ? ' AND b2.line = l.line' : ''}
+      INNER JOIN clients c ON c.group_name = l.group_name${line ? ' AND c.line = l.line' : ''}
       WHERE l.session_type = 'main'
         AND (l.attendance IS NULL OR TRIM(l.attendance) = '')
         AND c.name IS NOT NULL AND TRIM(c.name)!=''
         AND c.phone IS NOT NULL AND TRIM(c.phone)!=''
         AND NOT EXISTS (
           SELECT 1 FROM absent_students a2
-          WHERE a2.group_name = l.group_name AND a2.date = l.date
+          WHERE a2.group_name = l.group_name AND a2.date = l.date${line ? ' AND a2.line = l.line' : ''}
         )
-      ${dateFilterL}${deptFilterB2}${coordFilterB2}
+      ${dateFilterL}${deptFilterB2}${coordFilterB2}${lineL}
       GROUP BY b2.coordinators
     `).all();
 
@@ -2219,11 +2313,11 @@ router.get('/attendance-absence', (req, res) => {
         SELECT COALESCE(b.coordinators, '--') AS coordinator,
           MAX(b.trainee_count) AS expected_slots
         FROM lectures l
-        INNER JOIN batches b ON l.group_name = b.group_name
+        INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
         WHERE l.session_type = 'side'
           AND l.status = 'مؤكدة'
           AND (l.duration IS NULL OR l.duration <= '00:15')
-        ${dateFilterL}${deptFilterB}${coordFilterB}
+        ${dateFilterL}${deptFilterB}${coordFilterB}${lineL}
         GROUP BY b.coordinators, l.group_name, l.date
       ) sub
       GROUP BY coordinator
@@ -2238,11 +2332,11 @@ router.get('/attendance-absence', (req, res) => {
                      AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END)
             AS absent_count
         FROM lectures l
-        INNER JOIN batches b ON l.group_name = b.group_name
+        INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
         WHERE l.session_type = 'side'
           AND l.status = 'مؤكدة'
           AND (l.duration IS NULL OR l.duration <= '00:15')
-        ${dateFilterL}${deptFilterB}${coordFilterB}
+        ${dateFilterL}${deptFilterB}${coordFilterB}${lineL}
         GROUP BY b.coordinators, l.group_name, l.date
         HAVING absent_count > 0
       ) sub

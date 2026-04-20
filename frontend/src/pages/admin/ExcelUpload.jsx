@@ -1,8 +1,9 @@
 import { useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Upload, CheckCircle, AlertCircle, Clock, FileSpreadsheet, RefreshCw, Trash2, X } from 'lucide-react';
+import { Upload, CheckCircle, AlertCircle, Clock, FileSpreadsheet, RefreshCw, Trash2, X, AlertTriangle } from 'lucide-react';
 import api from '../../api/axios';
+import { useAuth } from '../../auth/AuthContext';
 
 const FILE_TYPES = [
   { key: 'data',          labelAr: 'الموظفون',              labelEn: 'Employees',             file: 'Data.xlsx' },
@@ -14,11 +15,69 @@ const FILE_TYPES = [
   { key: 'absent',        labelAr: 'الغيابات',             labelEn: 'Absent Students',        file: 'Absent.xlsx' },
 ];
 
-function UploadZone({ fileType, onSuccess }) {
+const AVAILABLE_LINES = ['Ahmed Hassan', 'Dardasha'];
+
+// ─── WARNINGS MODAL ───────────────────────────────────────────────────────────
+function WarningsModal({ warnings, onClose }) {
+  if (!warnings || !warnings.length) return null;
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col"
+        onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-4 bg-amber-50 border-b border-amber-200 flex items-start gap-3">
+          <AlertTriangle className="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <h3 className="font-bold text-amber-900">تنبيه: بيانات مكررة بين الـ Lines</h3>
+            <p className="text-xs text-amber-700 mt-1">
+              تم اكتشاف external_ids موجودة فى lines أخرى. البيانات اترفعت بنجاح، لكن راجع التكرارات دى.
+            </p>
+          </div>
+          <button onClick={onClose} className="p-1 hover:bg-amber-100 rounded">
+            <X size={18} className="text-amber-700" />
+          </button>
+        </div>
+        <div className="overflow-y-auto flex-1 p-5 space-y-4">
+          {warnings.map((w, i) => (
+            <div key={i} className="space-y-2">
+              <p className="text-sm font-semibold text-gray-800">{w.message}</p>
+              {w.details && w.details.length > 0 && (
+                <div className="overflow-x-auto border border-gray-200 rounded-lg">
+                  <table className="w-full text-xs">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-3 py-2 text-start font-semibold text-gray-700">External ID</th>
+                        <th className="px-3 py-2 text-start font-semibold text-gray-700">موجود فى Line</th>
+                        <th className="px-3 py-2 text-start font-semibold text-gray-700">تم رفعه على Line</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {w.details.map((d, j) => (
+                        <tr key={j} className="border-t border-gray-100">
+                          <td className="px-3 py-1.5 font-mono">{d.external_id}</td>
+                          <td className="px-3 py-1.5">{d.exists_in_line}</td>
+                          <td className="px-3 py-1.5 font-semibold text-primary">{d.uploading_to_line}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="px-5 py-3 border-t border-gray-200 bg-gray-50">
+          <button onClick={onClose} className="btn-primary text-sm px-6">تم</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function UploadZone({ fileType, selectedLine, onSuccess, onWarnings }) {
   const { t, i18n } = useTranslation();
   const isAr = i18n.language === 'ar';
   const [dragOver, setDragOver] = useState(false);
-  const [status, setStatus] = useState(null); // null | 'uploading' | 'success' | 'error'
+  const [status, setStatus] = useState(null);
   const [message, setMessage] = useState('');
   const [progress, setProgress] = useState(0);
   const inputRef = useRef();
@@ -30,6 +89,11 @@ function UploadZone({ fileType, onSuccess }) {
       setMessage(isAr ? 'يجب أن يكون الملف بصيغة Excel (.xlsx أو .xls)' : 'File must be Excel format (.xlsx or .xls)');
       return;
     }
+    if (!selectedLine) {
+      setStatus('error');
+      setMessage(isAr ? 'اختر الـ Line الأول' : 'Select a line first');
+      return;
+    }
 
     setStatus('uploading');
     setProgress(0);
@@ -37,6 +101,7 @@ function UploadZone({ fileType, onSuccess }) {
 
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('line', selectedLine);
 
     try {
       const res = await api.post(`/upload/${fileType.key}`, formData, {
@@ -46,11 +111,15 @@ function UploadZone({ fileType, onSuccess }) {
         },
       });
       setStatus('success');
+      const lineLabel = res.data.line || selectedLine;
       setMessage(
         isAr
-          ? `تم الرفع بنجاح — ${res.data.inserted ?? 0} سجل مُدرج`
-          : `Upload successful — ${res.data.inserted ?? 0} records inserted`
+          ? `تم الرفع بنجاح على ${lineLabel} — ${res.data.inserted ?? 0} سجل مُدرج`
+          : `Upload successful to ${lineLabel} — ${res.data.inserted ?? 0} records inserted`
       );
+      if (res.data.warnings && res.data.warnings.length > 0) {
+        onWarnings?.(res.data.warnings);
+      }
       onSuccess?.();
     } catch (err) {
       setStatus('error');
@@ -87,6 +156,11 @@ function UploadZone({ fileType, onSuccess }) {
         <p className="text-xs text-gray-400 mt-1">
           {isAr ? `الملف المتوقع: ${fileType.file}` : `Expected file: ${fileType.file}`}
         </p>
+        {selectedLine && (
+          <p className="text-xs font-semibold text-primary mt-2">
+            {isAr ? 'سيتم الرفع على Line:' : 'Uploading to line:'} {selectedLine}
+          </p>
+        )}
       </div>
 
       {/* Progress bar */}
@@ -196,14 +270,9 @@ function FilesStatusPanel({ onClearSuccess }) {
   const isAr = i18n.language === 'ar';
   const queryClient = useQueryClient();
 
-  // Clear-all state
   const [confirmClearAll, setConfirmClearAll] = useState(false);
   const [clearingAll, setClearingAll] = useState(false);
-
-  // Per-file clear state: key → 'confirm' | 'clearing' | null
   const [fileAction, setFileAction] = useState({});
-
-  // Global feedback message
   const [clearMsg, setClearMsg] = useState(null);
 
   const { data: statusData, isLoading, refetch } = useQuery({
@@ -224,7 +293,6 @@ function FilesStatusPanel({ onClearSuccess }) {
     onClearSuccess?.();
   };
 
-  // Clear ALL
   const handleClearAll = async () => {
     setClearingAll(true);
     setClearMsg(null);
@@ -240,7 +308,6 @@ function FilesStatusPanel({ onClearSuccess }) {
     }
   };
 
-  // Clear SINGLE file
   const handleClearFile = async (key) => {
     setFileAction(prev => ({ ...prev, [key]: 'clearing' }));
     setClearMsg(null);
@@ -267,7 +334,6 @@ function FilesStatusPanel({ onClearSuccess }) {
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden h-fit">
-      {/* Header */}
       <div className="px-4 py-3 border-b border-gray-100 bg-gradient-to-l from-[#1e3a5f]/5 to-white flex items-center justify-between">
         <div>
           <h3 className="text-sm font-bold text-gray-800">حالة الملفات</h3>
@@ -283,7 +349,6 @@ function FilesStatusPanel({ onClearSuccess }) {
         </button>
       </div>
 
-      {/* File list */}
       <div className="divide-y divide-gray-50 px-1 py-1">
         {fileInfo.map(ft => {
           const action = fileAction[ft.key];
@@ -295,7 +360,6 @@ function FilesStatusPanel({ onClearSuccess }) {
               ${ft.hasData ? 'hover:bg-green-50/50' : 'hover:bg-red-50/50 bg-red-50/30'}`}>
 
               <div className="flex items-start gap-2.5">
-                {/* Status dot */}
                 <div className={`mt-0.5 w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0
                   ${ft.hasData ? 'bg-emerald-100' : 'bg-red-100'}`}>
                   {isClearing
@@ -305,7 +369,6 @@ function FilesStatusPanel({ onClearSuccess }) {
                       : <AlertCircle size={12} className="text-red-500" />}
                 </div>
 
-                {/* Info */}
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-semibold text-gray-800 truncate">{ft.labelAr}</p>
                   <p className="text-[10px] text-gray-400 font-mono truncate">{ft.file}</p>
@@ -319,7 +382,6 @@ function FilesStatusPanel({ onClearSuccess }) {
                   )}
                 </div>
 
-                {/* Per-file delete button (only if has data) */}
                 {ft.hasData && !isConfirming && !isClearing && (
                   <button
                     onClick={() => setFileAction(prev => ({ ...prev, [ft.key]: 'confirm' }))}
@@ -330,7 +392,6 @@ function FilesStatusPanel({ onClearSuccess }) {
                 )}
               </div>
 
-              {/* Inline confirm for single file */}
               {isConfirming && (
                 <div className="mt-2 flex gap-1.5 items-center">
                   <span className="text-[10px] text-red-600 font-semibold flex-1">مسح نهائياً؟</span>
@@ -351,7 +412,6 @@ function FilesStatusPanel({ onClearSuccess }) {
         })}
       </div>
 
-      {/* Clear ALL button */}
       <div className="px-4 py-3 border-t border-gray-100 space-y-2">
         {clearMsg && (
           <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg
@@ -400,7 +460,14 @@ export default function ExcelUpload() {
   const { t, i18n } = useTranslation();
   const isAr = i18n.language === 'ar';
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState(0);
+  const [warnings, setWarnings] = useState([]);
+
+  // Line selection — required
+  const userLine = user?.line || 'Ahmed Hassan';
+  const canChooseLine = userLine === 'All';
+  const [selectedLine, setSelectedLine] = useState(canChooseLine ? 'Ahmed Hassan' : userLine);
 
   const handleSuccess = () => {
     queryClient.invalidateQueries({ queryKey: ['syncs'] });
@@ -421,17 +488,45 @@ export default function ExcelUpload() {
         </p>
       </div>
 
-      {/* Two-column layout: status panel + upload area */}
-      <div className="flex gap-5 items-start">
+      {/* Line selector banner */}
+      <div className="bg-white rounded-xl border-2 border-primary/20 p-4 flex items-center gap-4">
+        <div className="flex-shrink-0">
+          <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+            <span className="text-primary font-bold text-sm">L</span>
+          </div>
+        </div>
+        <div className="flex-1">
+          <label className="text-xs font-semibold text-gray-500 block mb-1">
+            {isAr ? 'الـ Line للرفع' : 'Target Line'}
+          </label>
+          {canChooseLine ? (
+            <select
+              value={selectedLine}
+              onChange={(e) => setSelectedLine(e.target.value)}
+              className="input max-w-xs font-semibold"
+            >
+              {AVAILABLE_LINES.map(l => <option key={l} value={l}>{l}</option>)}
+            </select>
+          ) : (
+            <p className="text-base font-bold text-primary">{userLine}</p>
+          )}
+          <p className="text-[11px] text-gray-400 mt-1">
+            {isAr
+              ? canChooseLine
+                ? '⚠ اختر الـ Line قبل رفع الملفات. كل Line بياناته منفصلة.'
+                : 'مسموحلك ترفع فقط على Line الخاص بك.'
+              : 'Each line has isolated data.'}
+          </p>
+        </div>
+      </div>
 
-        {/* ── LEFT: Files status panel ── */}
+      {/* Two-column layout */}
+      <div className="flex gap-5 items-start">
         <div className="w-64 flex-shrink-0">
           <FilesStatusPanel onClearSuccess={handleSuccess} />
         </div>
 
-        {/* ── RIGHT: Tab upload area ── */}
         <div className="flex-1 space-y-5">
-          {/* Tab bar */}
           <div className="flex flex-wrap gap-2 border-b border-gray-200 pb-0">
             {FILE_TYPES.map((ft, i) => (
               <button
@@ -447,7 +542,6 @@ export default function ExcelUpload() {
             ))}
           </div>
 
-          {/* Active tab content */}
           <div className="card">
             <div className="mb-6">
               <h2 className="text-lg font-semibold text-gray-800">
@@ -458,13 +552,20 @@ export default function ExcelUpload() {
                 <code className="bg-gray-100 px-1 rounded">{FILE_TYPES[activeTab].file}</code>
               </p>
             </div>
-            <UploadZone fileType={FILE_TYPES[activeTab]} onSuccess={handleSuccess} />
+            <UploadZone
+              fileType={FILE_TYPES[activeTab]}
+              selectedLine={selectedLine}
+              onSuccess={handleSuccess}
+              onWarnings={setWarnings}
+            />
           </div>
 
-          {/* Sync history */}
           <SyncHistory />
         </div>
       </div>
+
+      {/* Warnings modal */}
+      <WarningsModal warnings={warnings} onClose={() => setWarnings([])} />
     </div>
   );
 }

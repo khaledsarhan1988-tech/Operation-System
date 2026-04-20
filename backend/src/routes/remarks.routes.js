@@ -4,6 +4,7 @@ const db = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { computeSlaDeadline } = require('../services/excel.service');
+const { lineFilter, lineClause } = require('../utils/lineFilter');
 
 const router = express.Router();
 router.use(authenticate, requireRole('agent'));
@@ -17,14 +18,17 @@ router.post('/', (req, res) => {
   const now = new Date().toISOString();
   const sla = computeSlaDeadline(now, priority);
 
+  // Tag the new remark with the user's line (Admin defaults to Ahmed Hassan)
+  const userLine = req.user.line && req.user.line !== 'All' ? req.user.line : 'Ahmed Hassan';
+
   const result = db.prepare(`
     INSERT INTO remarks
       (task_type, assigned_to, client_name, client_phone, details, category, priority, notes,
-       status, assigned_by, added_at, last_updated, sla_deadline)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'غير منتهية', ?, datetime('now', '+2 hours'), datetime('now', '+2 hours'), ?)
+       status, assigned_by, added_at, last_updated, sla_deadline, line)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'غير منتهية', ?, datetime('now', '+2 hours'), datetime('now', '+2 hours'), ?, ?)
   `).run(task_type, req.user.full_name, client_name, client_phone || null,
     details || null, category || null, priority || 'عادية', notes || null,
-    req.user.full_name, sla);
+    req.user.full_name, sla, userLine);
 
   return res.status(201).json(db.prepare('SELECT * FROM remarks WHERE id = ?').get(result.lastInsertRowid));
 });
@@ -32,7 +36,8 @@ router.post('/', (req, res) => {
 // PUT /api/remarks/:id
 router.put('/:id', (req, res) => {
   const { id } = req.params;
-  const remark = db.prepare('SELECT * FROM remarks WHERE id = ?').get(id);
+  const lf = lineClause(req);
+  const remark = db.prepare(`SELECT * FROM remarks WHERE id = ?${lf.clause}`).get(id, ...lf.params);
   if (!remark) return res.status(404).json({ error: 'Remark not found' });
 
   // Agents can only edit their own; leaders/admins can edit all

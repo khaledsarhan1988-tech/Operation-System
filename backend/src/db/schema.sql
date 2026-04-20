@@ -26,10 +26,12 @@ CREATE TABLE IF NOT EXISTS employees (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   name        TEXT NOT NULL,
   department  TEXT NOT NULL,
+  line        TEXT NOT NULL DEFAULT 'Ahmed Hassan',
   user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
   synced_at   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_employees_name ON employees(name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_employees_line ON employees(line);
 
 -- =============================================
 -- TEAM MEMBERS (Academy Staff Directory)
@@ -60,11 +62,13 @@ CREATE TABLE IF NOT EXISTS clients (
   group_name        TEXT,
   via_company       TEXT,
   registration_time TEXT,
+  line              TEXT NOT NULL DEFAULT 'Ahmed Hassan',
   synced_at         TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_clients_name  ON clients(name COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_clients_phone ON clients(phone);
 CREATE INDEX IF NOT EXISTS idx_clients_group ON clients(group_name);
+CREATE INDEX IF NOT EXISTS idx_clients_line  ON clients(line);
 
 -- =============================================
 -- BATCHES (from Batches.xlsx)
@@ -93,8 +97,10 @@ CREATE TABLE IF NOT EXISTS batches (
   main_days            TEXT,     -- e.g. 'Mon,Thu'
   side_days            TEXT,     -- computed opposite pair
   lecture_duration_min INTEGER,  -- 90=General, 60=Private/Semi
+  line                 TEXT NOT NULL DEFAULT 'Ahmed Hassan',
   synced_at            TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_batches_line           ON batches(line);
 CREATE INDEX IF NOT EXISTS idx_batches_group          ON batches(group_name);
 CREATE INDEX IF NOT EXISTS idx_batches_status         ON batches(status);
 CREATE INDEX IF NOT EXISTS idx_batches_coordinators   ON batches(coordinators);
@@ -109,7 +115,7 @@ CREATE INDEX IF NOT EXISTS idx_batches_status_sched   ON batches(status, schedul
 -- =============================================
 CREATE TABLE IF NOT EXISTS remarks (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  external_id   INTEGER UNIQUE,
+  external_id   INTEGER,
   task_type     TEXT,
   assigned_to   TEXT,
   details       TEXT,
@@ -126,9 +132,12 @@ CREATE TABLE IF NOT EXISTS remarks (
   -- Agent-preserved fields (never overwritten by re-import)
   agent_notes   TEXT,
   resolved_at   TEXT,
-  synced_at     TEXT
+  line          TEXT NOT NULL DEFAULT 'Ahmed Hassan',
+  synced_at     TEXT,
+  UNIQUE(external_id, line)
 );
 CREATE INDEX IF NOT EXISTS idx_remarks_external    ON remarks(external_id);
+CREATE INDEX IF NOT EXISTS idx_remarks_line        ON remarks(line);
 CREATE INDEX IF NOT EXISTS idx_remarks_assigned    ON remarks(assigned_to COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_remarks_status      ON remarks(status);
 CREATE INDEX IF NOT EXISTS idx_remarks_client      ON remarks(client_name COLLATE NOCASE);
@@ -153,8 +162,10 @@ CREATE TABLE IF NOT EXISTS lectures (
   attendance            TEXT,
   session_type          TEXT NOT NULL DEFAULT 'main' CHECK(session_type IN ('main','side')),
   side_session_category TEXT,  -- 'onboarding'|'regular'|'offboarding'|'compensatory'|NULL
+  line                  TEXT NOT NULL DEFAULT 'Ahmed Hassan',
   synced_at             TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_lectures_line       ON lectures(line);
 CREATE INDEX IF NOT EXISTS idx_lectures_group      ON lectures(group_name);
 CREATE INDEX IF NOT EXISTS idx_lectures_date       ON lectures(date);
 CREATE INDEX IF NOT EXISTS idx_lectures_type       ON lectures(session_type);
@@ -180,8 +191,10 @@ CREATE TABLE IF NOT EXISTS absent_students (
   follow_up_note    TEXT,
   follow_up_by      TEXT,
   follow_up_at      TEXT,
+  line              TEXT NOT NULL DEFAULT 'Ahmed Hassan',
   synced_at         TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_absent_line    ON absent_students(line);
 CREATE INDEX IF NOT EXISTS idx_absent_group   ON absent_students(group_name);
 CREATE INDEX IF NOT EXISTS idx_absent_student ON absent_students(student_name COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_absent_phone   ON absent_students(phone);
@@ -204,8 +217,10 @@ CREATE TABLE IF NOT EXISTS side_session_checks (
   checked_by           INTEGER REFERENCES users(id),
   checked_at           TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
   updated_by           INTEGER REFERENCES users(id),
-  updated_at           TEXT
+  updated_at           TEXT,
+  line                 TEXT NOT NULL DEFAULT 'Ahmed Hassan'
 );
+CREATE INDEX IF NOT EXISTS idx_ssc_line    ON side_session_checks(line);
 CREATE INDEX IF NOT EXISTS idx_ssc_group   ON side_session_checks(group_name);
 CREATE INDEX IF NOT EXISTS idx_ssc_date    ON side_session_checks(session_date);
 CREATE INDEX IF NOT EXISTS idx_ssc_checked ON side_session_checks(checked_by);
@@ -238,10 +253,12 @@ CREATE TABLE IF NOT EXISTS code_problem_status (
   new_group_code    TEXT,
   updated_by        INTEGER REFERENCES users(id) ON DELETE SET NULL,
   updated_at        TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
-  UNIQUE(group_name, problem_type, session_type)
+  line              TEXT NOT NULL DEFAULT 'Ahmed Hassan',
+  UNIQUE(group_name, problem_type, session_type, line)
 );
 CREATE INDEX IF NOT EXISTS idx_cps_group  ON code_problem_status(group_name);
 CREATE INDEX IF NOT EXISTS idx_cps_status ON code_problem_status(status);
+CREATE INDEX IF NOT EXISTS idx_cps_line   ON code_problem_status(line);
 
 -- =============================================
 -- JWT REFRESH TOKENS

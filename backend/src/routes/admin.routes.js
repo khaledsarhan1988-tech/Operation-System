@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const db = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
+const { lineFilter } = require('../utils/lineFilter');
 
 const router = express.Router();
 router.use(authenticate, requireRole('leader'));
@@ -11,10 +12,6 @@ router.use(authenticate, requireRole('leader'));
 // ─── USER MANAGEMENT ──────────────────────────────────────────────────────────
 
 // GET /api/admin/users
-// Line-based visibility (strict):
-//   - requester.line === 'All'          → sees everyone
-//   - requester.line === 'Ahmed Hassan' → sees Ahmed Hassan users only
-//   - requester.line === 'Dardasha'     → sees Dardasha users only
 router.get('/users', (req, res) => {
   const requesterLine = req.user.line || 'All';
   let sql = 'SELECT id, username, full_name, role, department, management, line, language, is_active, created_at FROM users';
@@ -106,7 +103,10 @@ router.delete('/users/:id', (req, res) => {
 
 // ─── SIDE SESSION CHECKS — Admin only delete ─────────────────────────────────
 router.delete('/side-session-checks/:id', (req, res) => {
-  const check = db.prepare('SELECT id FROM side_session_checks WHERE id = ?').get(req.params.id);
+  const line = lineFilter(req);
+  const lineClause = line ? ' AND line = ?' : '';
+  const lineParams = line ? [line] : [];
+  const check = db.prepare(`SELECT id FROM side_session_checks WHERE id = ?${lineClause}`).get(req.params.id, ...lineParams);
   if (!check) return res.status(404).json({ error: 'Check record not found' });
   db.prepare('DELETE FROM side_session_checks WHERE id = ?').run(req.params.id);
   return res.json({ message: 'Deleted' });
@@ -122,21 +122,26 @@ router.get('/syncs', (req, res) => {
       ORDER BY es.created_at DESC
       LIMIT 50
     `).all();
-    return res.json({ syncs }); // wrapped so frontend data.syncs works
+    return res.json({ syncs });
   } catch (err) {
     return res.json({ syncs: [] });
   }
 });
 
 // ─── helper ──────────────────────────────────────────────────────────────────
-function safeCount(db, sql) {
-  try { return db.prepare(sql).get()?.c ?? 0; } catch { return 0; }
+function safeCount(db, sql, params = []) {
+  try { return db.prepare(sql).get(...params)?.c ?? 0; } catch { return 0; }
+}
+function lineWhere(line, prefix = 'WHERE') {
+  return line ? ` ${prefix} line = ?` : '';
+}
+function lineAnd(line) {
+  return line ? ' AND line = ?' : '';
 }
 
-// ─── UPLOAD STATUS (last upload per file type + live counts) ─────────────────
+// ─── UPLOAD STATUS ───────────────────────────────────────────────────────────
 router.get('/upload-status', (req, res) => {
   try {
-    // Last successful upload per file_type — uses rows_imported (correct column name)
     let uploadMap = {};
     try {
       db.prepare(`
@@ -144,17 +149,19 @@ router.get('/upload-status', (req, res) => {
         FROM excel_syncs WHERE status = 'success'
         GROUP BY file_type
       `).all().forEach(r => { uploadMap[r.file_type] = r; });
-    } catch {}  // excel_syncs might be empty or missing — silently skip
+    } catch {}
 
-    // Live counts from actual tables (correct table per file_type)
+    const line = lineFilter(req);
+    const lp = line ? [line] : [];
+    // Line-scoped counts (NULL alias means 'no alias')
     const counts = {
-      data:          safeCount(db, "SELECT COUNT(*) as c FROM employees"),
-      trainees:      safeCount(db, "SELECT COUNT(*) as c FROM clients"),
-      batches:       safeCount(db, "SELECT COUNT(*) as c FROM batches"),
-      remarks:       safeCount(db, "SELECT COUNT(*) as c FROM remarks"),
-      lectures:      safeCount(db, "SELECT COUNT(*) as c FROM lectures WHERE session_type='main'"),
-      side_sessions: safeCount(db, "SELECT COUNT(*) as c FROM lectures WHERE session_type='side'"),
-      absent:        safeCount(db, "SELECT COUNT(*) as c FROM absent_students"),
+      data:          safeCount(db, `SELECT COUNT(*) as c FROM employees${lineWhere(line)}`, lp),
+      trainees:      safeCount(db, `SELECT COUNT(*) as c FROM clients${lineWhere(line)}`, lp),
+      batches:       safeCount(db, `SELECT COUNT(*) as c FROM batches${lineWhere(line)}`, lp),
+      remarks:       safeCount(db, `SELECT COUNT(*) as c FROM remarks${lineWhere(line)}`, lp),
+      lectures:      safeCount(db, `SELECT COUNT(*) as c FROM lectures WHERE session_type='main'${lineAnd(line)}`, lp),
+      side_sessions: safeCount(db, `SELECT COUNT(*) as c FROM lectures WHERE session_type='side'${lineAnd(line)}`, lp),
+      absent:        safeCount(db, `SELECT COUNT(*) as c FROM absent_students${lineWhere(line)}`, lp),
     };
 
     const FILE_KEYS = ['data','trainees','batches','remarks','lectures','side_sessions','absent'];
@@ -170,23 +177,27 @@ router.get('/upload-status', (req, res) => {
   }
 });
 
-// ─── CLEAR SINGLE FILE TYPE DATA ─────────────────────────────────────────────
+// ─── CLEAR SINGLE FILE TYPE DATA (line-scoped) ───────────────────────────────
 router.delete('/clear-excel-data/:fileType', (req, res) => {
   const { fileType } = req.params;
+  const line = lineFilter(req);
+  const lineW  = lineWhere(line);
+  const lineA  = lineAnd(line);
+  const lp = line ? [line] : [];
+
   const FILE_DELETE = {
-    data:          () => { safeRun(db, 'DELETE FROM employees'); },
-    trainees:      () => { safeRun(db, 'DELETE FROM clients'); },
-    batches:       () => { safeRun(db, 'DELETE FROM batches'); },
-    remarks:       () => { safeRun(db, 'DELETE FROM remarks'); },
-    lectures:      () => { safeRun(db, "DELETE FROM lectures WHERE session_type='main'"); },
-    side_sessions: () => { safeRun(db, "DELETE FROM lectures WHERE session_type='side'"); },
-    absent:        () => { safeRun(db, 'DELETE FROM absent_students'); },
+    data:          () => { safeRun(db, `DELETE FROM employees${lineW}`, lp); },
+    trainees:      () => { safeRun(db, `DELETE FROM clients${lineW}`, lp); },
+    batches:       () => { safeRun(db, `DELETE FROM batches${lineW}`, lp); },
+    remarks:       () => { safeRun(db, `DELETE FROM remarks${lineW}`, lp); },
+    lectures:      () => { safeRun(db, `DELETE FROM lectures WHERE session_type='main'${lineA}`, lp); },
+    side_sessions: () => { safeRun(db, `DELETE FROM lectures WHERE session_type='side'${lineA}`, lp); },
+    absent:        () => { safeRun(db, `DELETE FROM absent_students${lineW}`, lp); },
   };
   if (!FILE_DELETE[fileType])
     return res.status(400).json({ error: `Unknown fileType: ${fileType}` });
   try {
     FILE_DELETE[fileType]();
-    // Remove that file's sync history too
     try { db.prepare("DELETE FROM excel_syncs WHERE file_type = ?").run(fileType); } catch {}
     return res.json({ message: `Cleared: ${fileType}` });
   } catch (err) {
@@ -194,52 +205,67 @@ router.delete('/clear-excel-data/:fileType', (req, res) => {
   }
 });
 
-function safeRun(db, sql) {
-  try { db.prepare(sql).run(); } catch {}
+function safeRun(db, sql, params = []) {
+  try { db.prepare(sql).run(...params); } catch {}
 }
 
-// ─── CLEAR ALL EXCEL DATA ─────────────────────────────────────────────────────
+// ─── CLEAR ALL EXCEL DATA (line-scoped) ───────────────────────────────────────
 router.delete('/clear-excel-data', (req, res) => {
   try {
-    ['lectures','absent_students','clients','batches','remarks'].forEach(t => safeRun(db, `DELETE FROM ${t}`));
-    safeRun(db, 'DELETE FROM employees');
-    safeRun(db, 'DELETE FROM excel_syncs');
-    return res.json({ message: 'All Excel data cleared' });
+    const line = lineFilter(req);
+    const lineW = lineWhere(line);
+    const lp = line ? [line] : [];
+    ['lectures','absent_students','clients','batches','remarks','employees'].forEach(t =>
+      safeRun(db, `DELETE FROM ${t}${lineW}`, lp)
+    );
+    if (!line) {
+      // Only wipe sync audit log if admin is clearing everything
+      safeRun(db, 'DELETE FROM excel_syncs');
+    }
+    return res.json({ message: 'All Excel data cleared' + (line ? ` (${line})` : '') });
   } catch (err) {
     console.error('[admin] clear-excel-data error:', err);
     return res.status(500).json({ error: err.message });
   }
 });
 
-// ─── SYSTEM KPIs ─────────────────────────────────────────────────────────────
+// ─── SYSTEM KPIs (line-scoped) ─────────────────────────────────────────────
 router.get('/kpis', (req, res) => {
+  const line = lineFilter(req);
+  const lineW = lineWhere(line);
+  const lineA = lineAnd(line);
+  const lp = line ? [line] : [];
+
   const kpis = {
-    total_clients:   db.prepare('SELECT COUNT(*) AS c FROM clients').get().c,
-    total_batches:   db.prepare("SELECT COUNT(*) AS c FROM batches WHERE status = 'نشطة'").get().c,
-    total_remarks:   db.prepare('SELECT COUNT(*) AS c FROM remarks').get().c,
-    pending_remarks: db.prepare("SELECT COUNT(*) AS c FROM remarks WHERE status != 'إنتهت'").get().c,
-    overdue_remarks: db.prepare("SELECT COUNT(*) AS c FROM remarks WHERE status != 'إنتهت' AND sla_deadline < datetime('now', '+2 hours')").get().c,
-    total_agents:    db.prepare("SELECT COUNT(*) AS c FROM users WHERE role = 'agent' AND is_active = 1").get().c,
-    absent_pending:  db.prepare("SELECT COUNT(*) AS c FROM absent_students WHERE follow_up_status = 'pending'").get().c,
+    total_clients:   db.prepare(`SELECT COUNT(*) AS c FROM clients${lineW}`).get(...lp).c,
+    total_batches:   db.prepare(`SELECT COUNT(*) AS c FROM batches WHERE status = 'نشطة'${lineA}`).get(...lp).c,
+    total_remarks:   db.prepare(`SELECT COUNT(*) AS c FROM remarks${lineW}`).get(...lp).c,
+    pending_remarks: db.prepare(`SELECT COUNT(*) AS c FROM remarks WHERE status != 'إنتهت'${lineA}`).get(...lp).c,
+    overdue_remarks: db.prepare(`SELECT COUNT(*) AS c FROM remarks WHERE status != 'إنتهت' AND sla_deadline < datetime('now', '+2 hours')${lineA}`).get(...lp).c,
+    total_agents:    db.prepare(`SELECT COUNT(*) AS c FROM users WHERE role = 'agent' AND is_active = 1${lineA}`).get(...lp).c,
+    absent_pending:  db.prepare(`SELECT COUNT(*) AS c FROM absent_students WHERE follow_up_status = 'pending'${lineA}`).get(...lp).c,
     last_sync:       db.prepare("SELECT created_at FROM excel_syncs WHERE status = 'success' ORDER BY created_at DESC LIMIT 1").get()?.created_at || null,
-    session_checks_today: db.prepare("SELECT COUNT(*) AS c FROM side_session_checks WHERE date(checked_at) = date('now')").get().c,
+    session_checks_today: db.prepare(`SELECT COUNT(*) AS c FROM side_session_checks WHERE date(checked_at) = date('now')${lineA}`).get(...lp).c,
   };
   return res.json(kpis);
 });
 
 // ─── KPI DRILL-DOWN DETAILS ──────────────────────────────────────────────────
-// Returns the full data behind each KPI card on the admin dashboard.
 router.get('/kpis/details/:metric', (req, res) => {
   const { metric } = req.params;
+  const line = lineFilter(req);
+  const lineW = lineWhere(line);
+  const lineA = lineAnd(line);
+  const lp = line ? [line] : [];
   try {
     let rows = [];
     switch (metric) {
       case 'clients':
         rows = db.prepare(`
           SELECT id, name, phone, email, group_name, via_company, registration_time
-          FROM clients
+          FROM clients${lineW}
           ORDER BY name COLLATE NOCASE
-        `).all();
+        `).all(...lp);
         break;
 
       case 'batches':
@@ -248,18 +274,18 @@ router.get('/kpis/details/:metric', (req, res) => {
                  trainee_count, max_trainees, scheduled_lectures, completed_lectures,
                  start_date, end_date, dept_type
           FROM batches
-          WHERE status = 'نشطة'
+          WHERE status = 'نشطة'${lineA}
           ORDER BY group_name
-        `).all();
+        `).all(...lp);
         break;
 
       case 'remarks':
         rows = db.prepare(`
           SELECT id, client_name, client_phone, task_type, category, priority, status,
                  assigned_to, assigned_by, added_at, sla_deadline, last_updated
-          FROM remarks
+          FROM remarks${lineW}
           ORDER BY added_at DESC
-        `).all();
+        `).all(...lp);
         break;
 
       case 'pending-remarks':
@@ -267,9 +293,9 @@ router.get('/kpis/details/:metric', (req, res) => {
           SELECT id, client_name, client_phone, task_type, category, priority, status,
                  assigned_to, assigned_by, added_at, sla_deadline
           FROM remarks
-          WHERE status != 'إنتهت'
+          WHERE status != 'إنتهت'${lineA}
           ORDER BY sla_deadline ASC
-        `).all();
+        `).all(...lp);
         break;
 
       case 'overdue-remarks':
@@ -278,18 +304,18 @@ router.get('/kpis/details/:metric', (req, res) => {
                  assigned_to, assigned_by, added_at, sla_deadline
           FROM remarks
           WHERE status != 'إنتهت'
-            AND sla_deadline < datetime('now', '+2 hours')
+            AND sla_deadline < datetime('now', '+2 hours')${lineA}
           ORDER BY sla_deadline ASC
-        `).all();
+        `).all(...lp);
         break;
 
       case 'agents':
         rows = db.prepare(`
           SELECT id, username, full_name, role, department, management, line, language, is_active, created_at
           FROM users
-          WHERE role = 'agent' AND is_active = 1
+          WHERE role = 'agent' AND is_active = 1${lineA}
           ORDER BY full_name COLLATE NOCASE
-        `).all();
+        `).all(...lp);
         break;
 
       case 'absent-pending':
@@ -297,9 +323,9 @@ router.get('/kpis/details/:metric', (req, res) => {
           SELECT id, group_name, student_name, phone, date, time, lecture_no,
                  follow_up_status, follow_up_note, follow_up_by, follow_up_at
           FROM absent_students
-          WHERE follow_up_status = 'pending'
+          WHERE follow_up_status = 'pending'${lineA}
           ORDER BY date DESC, group_name
-        `).all();
+        `).all(...lp);
         break;
 
       case 'session-checks-today':
@@ -311,9 +337,9 @@ router.get('/kpis/details/:metric', (req, res) => {
                  s.checked_at, u.full_name AS checked_by_name
           FROM side_session_checks s
           LEFT JOIN users u ON u.id = s.checked_by
-          WHERE date(s.checked_at) = date('now')
+          WHERE date(s.checked_at) = date('now')${line ? ' AND s.line = ?' : ''}
           ORDER BY s.checked_at DESC
-        `).all();
+        `).all(...lp);
         break;
 
       default:

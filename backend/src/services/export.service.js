@@ -17,7 +17,7 @@ function applyHeaders(sheet, columns) {
 }
 
 // ─── SIDE SESSION CHECKS REPORT ───────────────────────────────────────────────
-async function exportSideSessions({ date, group }) {
+async function exportSideSessions({ date, group, line }) {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Academy System';
   const ws = wb.addWorksheet('Side Session Checks');
@@ -42,7 +42,8 @@ async function exportSideSessions({ date, group }) {
     WHERE 1=1
   `;
   const params = [];
-  if (date) { query += ' AND ssc.session_date = ?'; params.push(date); }
+  if (line)  { query += ' AND ssc.line = ?'; params.push(line); }
+  if (date)  { query += ' AND ssc.session_date = ?'; params.push(date); }
   if (group) { query += ' AND ssc.group_name LIKE ?'; params.push(`%${group}%`); }
   query += ' ORDER BY ssc.session_date DESC, ssc.group_name';
 
@@ -61,7 +62,7 @@ async function exportSideSessions({ date, group }) {
 }
 
 // ─── REMARKS REPORT ──────────────────────────────────────────────────────────
-async function exportRemarks({ from, to, agent, status }) {
+async function exportRemarks({ from, to, agent, status, line }) {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Academy System';
   const ws = wb.addWorksheet('Remarks Report');
@@ -83,6 +84,7 @@ async function exportRemarks({ from, to, agent, status }) {
 
   let query = 'SELECT * FROM remarks WHERE 1=1';
   const params = [];
+  if (line)   { query += ' AND line = ?'; params.push(line); }
   if (from)   { query += ' AND added_at >= ?'; params.push(from); }
   if (to)     { query += ' AND added_at <= ?'; params.push(to); }
   if (agent)  { query += ' AND assigned_to LIKE ?'; params.push(`%${agent}%`); }
@@ -95,7 +97,7 @@ async function exportRemarks({ from, to, agent, status }) {
 }
 
 // ─── ABSENT STUDENTS REPORT ──────────────────────────────────────────────────
-async function exportAbsent({ from, to, group }) {
+async function exportAbsent({ from, to, group, line }) {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Academy System';
   const ws = wb.addWorksheet('Absent Students');
@@ -114,6 +116,7 @@ async function exportAbsent({ from, to, group }) {
 
   let query = 'SELECT * FROM absent_students WHERE 1=1';
   const params = [];
+  if (line)  { query += ' AND line = ?'; params.push(line); }
   if (from)  { query += ' AND date >= ?'; params.push(from); }
   if (to)    { query += ' AND date <= ?'; params.push(to); }
   if (group) { query += ' AND group_name LIKE ?'; params.push(`%${group}%`); }
@@ -125,7 +128,7 @@ async function exportAbsent({ from, to, group }) {
 }
 
 // ─── TEAM PERFORMANCE REPORT ─────────────────────────────────────────────────
-async function exportTeamPerformance({ from, to }) {
+async function exportTeamPerformance({ from, to, line }) {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Academy System';
   const ws = wb.addWorksheet('Team Performance');
@@ -155,6 +158,7 @@ async function exportTeamPerformance({ from, to }) {
     WHERE 1=1
   `;
   const params = [];
+  if (line) { query += ' AND line = ?'; params.push(line); }
   if (from) { query += ' AND added_at >= ?'; params.push(from); }
   if (to)   { query += ' AND added_at <= ?'; params.push(to); }
   query += ' GROUP BY assigned_to ORDER BY total DESC';
