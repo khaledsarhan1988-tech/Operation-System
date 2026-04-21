@@ -1703,6 +1703,20 @@ router.get('/code-problems', (req, res) => {
           zoomProblems: zoomProblems.length,
         },
         sample_coordinators: [...new Set(batches.map(b => b.coordinators))].slice(0, 30),
+        coordinators_by_count: Object.fromEntries(
+          Object.entries(batches.reduce((acc, b) => {
+            const c = b.coordinators || '(null)';
+            acc[c] = (acc[c] || 0) + 1;
+            return acc;
+          }, {})).sort((a, b) => b[1] - a[1])
+        ),
+        alia_batches: batches.filter(b => (b.coordinators || '').toLowerCase().includes('alia')).map(b => ({
+          group_name: b.group_name,
+          dept_type: b.dept_type,
+          coordinators: b.coordinators,
+          trainee_count: b.trainee_count,
+        })),
+        alia_user_record: db.prepare("SELECT id, username, full_name, department, management, line FROM users WHERE LOWER(full_name) LIKE '%alia%'").all(),
       },
     });
   } catch (err) {
