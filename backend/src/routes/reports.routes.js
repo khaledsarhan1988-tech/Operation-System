@@ -1674,51 +1674,7 @@ router.get('/code-problems', (req, res) => {
     });
 
     return res.json({ main_problems: mainProblems, zoom_problems: zoomProblems,
-      total: mainProblems.length + zoomProblems.length,
-      // ── temporary diagnostic block — remove after Mai/Dardasha filter issue resolved ──
-      _debug: {
-        user: {
-          id: req.user.id,
-          role: req.user.role,
-          department: req.user.department,
-          management: req.user.management,
-          line: req.user.line,
-        },
-        filters: {
-          deptFilter: deptFilter || '(empty)',
-          empFilter:  empFilter  || '(empty)',
-          lineB:      lineB      || '(empty)',
-          lineL:      lineL      || '(empty)',
-        },
-        query_params: {
-          employee: employee || '(none)',
-          department: department || '(none)',
-          show_resolved: showResolved,
-        },
-        counts: {
-          batches: batches.length,
-          mainRaw: mainRaw.length,
-          sideRaw: sideRaw.length,
-          mainProblems: mainProblems.length,
-          zoomProblems: zoomProblems.length,
-        },
-        sample_coordinators: [...new Set(batches.map(b => b.coordinators))].slice(0, 30),
-        coordinators_by_count: Object.fromEntries(
-          Object.entries(batches.reduce((acc, b) => {
-            const c = b.coordinators || '(null)';
-            acc[c] = (acc[c] || 0) + 1;
-            return acc;
-          }, {})).sort((a, b) => b[1] - a[1])
-        ),
-        alia_batches: batches.filter(b => (b.coordinators || '').toLowerCase().includes('alia')).map(b => ({
-          group_name: b.group_name,
-          dept_type: b.dept_type,
-          coordinators: b.coordinators,
-          trainee_count: b.trainee_count,
-        })),
-        alia_user_record: db.prepare("SELECT id, username, full_name, department, management, line FROM users WHERE LOWER(full_name) LIKE '%alia%'").all(),
-      },
-    });
+      total: mainProblems.length + zoomProblems.length });
   } catch (err) {
     console.error('[reports] code-problems error:', err);
     return res.status(500).json({ error: err.message });
