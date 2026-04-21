@@ -196,7 +196,7 @@ function buildRemarksNotesMainInnerQ({ from_date, to_date, department, employee,
     FROM lectures l
     INNER JOIN batches b2 ON l.group_name = b2.group_name${line ? ' AND b2.line = l.line' : ''}
     INNER JOIN clients c ON c.group_name = l.group_name${line ? ' AND c.line = l.line' : ''}
-    WHERE l.session_type = 'main' AND l.status != 'غير مؤكدة'
+    WHERE l.session_type = 'main' AND l.status = 'مؤكدة'
       AND (l.attendance IS NULL OR TRIM(l.attendance) = '')
       AND c.name IS NOT NULL AND TRIM(c.name)!=''
       AND c.phone IS NOT NULL AND TRIM(c.phone)!=''
@@ -370,7 +370,7 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
       SELECT l.group_name, l.date AS session_date, l.line,
         COUNT(*) AS slot_count_on_date
       FROM lectures l
-      WHERE l.session_type = 'side' AND l.status != 'غير مؤكدة'
+      WHERE l.session_type = 'side' AND l.status = 'مؤكدة'
         AND (l.duration IS NULL OR l.duration <= '00:15')${line ? ` AND l.line = '${line.replace(/'/g, "''")}'` : ''}
       GROUP BY l.group_name, l.date, l.line
       HAVING SUM(CASE WHEN l.attendance IS NOT NULL AND TRIM(l.attendance) != ''
@@ -608,7 +608,7 @@ router.get('/dashboard', (req, res) => {
          INNER JOIN batches b2 ON l.group_name = b2.group_name${line ? ' AND b2.line = l.line' : ''}
          INNER JOIN clients c ON c.group_name = l.group_name${line ? ' AND c.line = l.line' : ''}
          WHERE l.session_type = 'main'
-           AND l.status != 'غير مؤكدة'
+           AND l.status = 'مؤكدة'
            AND (l.attendance IS NULL OR TRIM(l.attendance) = '')
            AND c.name IS NOT NULL AND TRIM(c.name)!=''
            AND c.phone IS NOT NULL AND TRIM(c.phone)!=''
@@ -634,7 +634,7 @@ router.get('/dashboard', (req, res) => {
          FROM lectures l
          INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
          WHERE l.session_type = 'side'
-           AND l.status != 'غير مؤكدة'
+           AND l.status = 'مؤكدة'
            AND (l.duration IS NULL OR l.duration <= '00:15')
          ${buildDateFilter('l.date', from_date, to_date)}
          ${deptB}${empBFilter}${lineLA}
@@ -921,7 +921,7 @@ router.get('/absent-list', (req, res) => {
     INNER JOIN batches b2 ON l.group_name = b2.group_name${line ? ' AND b2.line = l.line' : ''}
     INNER JOIN clients c ON c.group_name = l.group_name${line ? ' AND c.line = l.line' : ''}
     WHERE l.session_type = 'main'
-      AND l.status != 'غير مؤكدة'
+      AND l.status = 'مؤكدة'
       AND (l.attendance IS NULL OR TRIM(l.attendance) = '')
       AND c.name IS NOT NULL AND TRIM(c.name)!=''
       AND c.phone IS NOT NULL AND TRIM(c.phone)!=''
@@ -974,7 +974,7 @@ router.get('/absent-side-list', (req, res) => {
 
   const baseWhere = `
     WHERE l.session_type = 'side'
-      AND l.status != 'غير مؤكدة'
+      AND l.status = 'مؤكدة'
       AND (l.duration IS NULL OR l.duration <= '00:15')
     ${dateFilter}${deptFilter}${empFilter}${trainerFilter}${coordFilter}${searchFilter}${lineL}`;
 
@@ -2345,7 +2345,7 @@ router.get('/attendance-absence', (req, res) => {
       INNER JOIN batches b2 ON l.group_name = b2.group_name${line ? ' AND b2.line = l.line' : ''}
       INNER JOIN clients c ON c.group_name = l.group_name${line ? ' AND c.line = l.line' : ''}
       WHERE l.session_type = 'main'
-        AND l.status != 'غير مؤكدة'
+        AND l.status = 'مؤكدة'
         AND (l.attendance IS NULL OR TRIM(l.attendance) = '')
         AND c.name IS NOT NULL AND TRIM(c.name)!=''
         AND c.phone IS NOT NULL AND TRIM(c.phone)!=''
@@ -2369,7 +2369,7 @@ router.get('/attendance-absence', (req, res) => {
         FROM lectures l
         INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
         WHERE l.session_type = 'side'
-          AND l.status != 'غير مؤكدة'
+          AND l.status = 'مؤكدة'
           AND (l.duration IS NULL OR l.duration <= '00:15')
         ${dateFilterL}${deptFilterB}${coordFilterB}${lineL}
         GROUP BY b.coordinators, l.group_name, l.date
@@ -2389,7 +2389,7 @@ router.get('/attendance-absence', (req, res) => {
         FROM lectures l
         INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
         WHERE l.session_type = 'side'
-          AND l.status != 'غير مؤكدة'
+          AND l.status = 'مؤكدة'
           AND (l.duration IS NULL OR l.duration <= '00:15')
         ${dateFilterL}${deptFilterB}${coordFilterB}${lineL}
         GROUP BY b.coordinators, l.group_name, l.date
