@@ -1674,7 +1674,37 @@ router.get('/code-problems', (req, res) => {
     });
 
     return res.json({ main_problems: mainProblems, zoom_problems: zoomProblems,
-      total: mainProblems.length + zoomProblems.length });
+      total: mainProblems.length + zoomProblems.length,
+      // ── temporary diagnostic block — remove after Mai/Dardasha filter issue resolved ──
+      _debug: {
+        user: {
+          id: req.user.id,
+          role: req.user.role,
+          department: req.user.department,
+          management: req.user.management,
+          line: req.user.line,
+        },
+        filters: {
+          deptFilter: deptFilter || '(empty)',
+          empFilter:  empFilter  || '(empty)',
+          lineB:      lineB      || '(empty)',
+          lineL:      lineL      || '(empty)',
+        },
+        query_params: {
+          employee: employee || '(none)',
+          department: department || '(none)',
+          show_resolved: showResolved,
+        },
+        counts: {
+          batches: batches.length,
+          mainRaw: mainRaw.length,
+          sideRaw: sideRaw.length,
+          mainProblems: mainProblems.length,
+          zoomProblems: zoomProblems.length,
+        },
+        sample_coordinators: [...new Set(batches.map(b => b.coordinators))].slice(0, 30),
+      },
+    });
   } catch (err) {
     console.error('[reports] code-problems error:', err);
     return res.status(500).json({ error: err.message });
