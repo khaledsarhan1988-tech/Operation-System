@@ -909,7 +909,16 @@ router.get('/remarks-notes-main', (req, res) => {
     ? ` AND TRIM(LOWER(abs_base.coordinators)) LIKE LOWER('%${coordinator.replace(/'/g,"''")}%')`
     : '';
 
-  // Combine all three parts, join with remarks, apply date + outer coord filter
+  // Combine all three parts → dedupe at logical-key level → join remarks
+  //
+  // DEDUP KEY: (phone-or-name-fallback, group_name, absence_date)
+  // Rationale: UNION ALL keeps rows if ANY column differs. But partA/part1/part2/part3
+  // may disagree on casing of student_name or source of coordinators (r3.assigned_to
+  // vs b3.coordinators), producing apparent duplicates for the same underlying client.
+  // Window function picks ONE canonical row per logical key, preferring:
+  //   1. A filled student_name
+  //   2. dept_type != 'All' (resolved department over fallback)
+  //   3. A filled coordinator
   const innerQ = `
     SELECT
       abs_base.student_name, abs_base.student_phone, abs_base.group_name,
@@ -919,11 +928,28 @@ router.get('/remarks-notes-main', (req, res) => {
       r.assigned_to, r.status AS remark_status,
       CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END AS has_remark
     FROM (
-      SELECT * FROM (${part1}) p1 WHERE absence_date IS NOT NULL
-      UNION ALL
-      SELECT * FROM (${part2}) p2
-      UNION ALL
-      SELECT * FROM (${part3}) p3
+      SELECT student_name, student_phone, group_name, absence_date, coordinators, dept_type
+      FROM (
+        SELECT *,
+          ROW_NUMBER() OVER (
+            PARTITION BY
+              COALESCE(NULLIF(TRIM(student_phone),''), LOWER(TRIM(COALESCE(student_name,'')))),
+              group_name,
+              absence_date
+            ORDER BY
+              CASE WHEN student_name IS NOT NULL AND TRIM(student_name) != '' THEN 0 ELSE 1 END,
+              CASE WHEN dept_type IS NOT NULL AND dept_type != 'All' THEN 0 ELSE 1 END,
+              CASE WHEN coordinators IS NOT NULL AND TRIM(coordinators) != '' THEN 0 ELSE 1 END
+          ) AS _rn
+        FROM (
+          SELECT * FROM (${part1}) p1 WHERE absence_date IS NOT NULL
+          UNION ALL
+          SELECT * FROM (${part2}) p2
+          UNION ALL
+          SELECT * FROM (${part3}) p3
+        ) _u
+      ) _ranked
+      WHERE _rn = 1
     ) abs_base
     LEFT JOIN (${remarksSubQ}) r
       ON r.client_phone = abs_base.student_phone
@@ -1155,7 +1181,12 @@ router.get('/remarks-notes-zoom', (req, res) => {
     ? ` AND TRIM(LOWER(abs_union.coordinators)) LIKE LOWER('%${safeCoord}%')`
     : '';
 
-  // Combine sources → LEFT JOIN remarks → apply date & having filters
+  // Combine sources → dedupe at logical-key level → LEFT JOIN remarks
+  //
+  // DEDUP KEY: (phone-or-name-fallback, group_name, session_date)
+  // Rationale: partA/part1/part2 can disagree on casing of client_name or source of
+  // coordinators, and UNION only dedupes fully-identical rows. Window function picks
+  // ONE canonical row per logical key using the same tie-breakers as main-notes.
   const innerQ = `
     SELECT
       abs_union.client_name, abs_union.client_phone, abs_union.group_name,
@@ -1165,11 +1196,28 @@ router.get('/remarks-notes-zoom', (req, res) => {
       r.assigned_to, r.status AS remark_status,
       CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END AS has_remark
     FROM (
-      SELECT * FROM (${partA}) pA
-      UNION
-      SELECT * FROM (${part1}) p1
-      UNION
-      SELECT * FROM (${part2}) p2
+      SELECT client_name, client_phone, group_name, session_date, coordinators, dept_type
+      FROM (
+        SELECT *,
+          ROW_NUMBER() OVER (
+            PARTITION BY
+              COALESCE(NULLIF(TRIM(client_phone),''), LOWER(TRIM(COALESCE(client_name,'')))),
+              group_name,
+              session_date
+            ORDER BY
+              CASE WHEN client_name IS NOT NULL AND TRIM(client_name) != '' THEN 0 ELSE 1 END,
+              CASE WHEN dept_type IS NOT NULL AND dept_type != 'All' THEN 0 ELSE 1 END,
+              CASE WHEN coordinators IS NOT NULL AND TRIM(coordinators) != '' THEN 0 ELSE 1 END
+          ) AS _rn
+        FROM (
+          SELECT * FROM (${partA}) pA
+          UNION ALL
+          SELECT * FROM (${part1}) p1
+          UNION ALL
+          SELECT * FROM (${part2}) p2
+        ) _u
+      ) _ranked
+      WHERE _rn = 1
     ) abs_union
     LEFT JOIN (${remarksSubQ}) r
       ON r.client_phone = abs_union.client_phone
