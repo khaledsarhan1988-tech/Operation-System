@@ -188,7 +188,7 @@ router.get('/absent', (req, res) => {
   const baseFrom = `
     FROM absent_students a
     LEFT JOIN batches b ON a.group_name = b.group_name${batchJoinLine}
-    LEFT JOIN lectures l ON a.group_name = l.group_name AND a.date = l.date${lectJoinLine}
+    LEFT JOIN lectures l ON a.group_name = l.group_name AND a.date = l.date AND l.status != 'غير مؤكدة'${lectJoinLine}
     WHERE ${where}
   `;
 

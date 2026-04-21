@@ -179,13 +179,15 @@ function syncLectures(buffer, line) {
     `);
     rows.forEach(r => insert.run(r.group_name, r.date, r.time, r.duration, r.trainer, r.status, r.location, r.attendance, line));
 
-    // Update completed_lectures ONLY for this line's batches
+    // Update completed_lectures ONLY for this line's batches — count CONFIRMED lectures only
+    // (unconfirmed lectures are excluded from all CS reports per business rule).
     db.prepare(`
       UPDATE batches
       SET completed_lectures = (
         SELECT COUNT(*) FROM lectures l
         WHERE l.group_name = batches.group_name
           AND l.session_type = 'main'
+          AND l.status != 'غير مؤكدة'
           AND l.line = batches.line
       )
       WHERE line = ?

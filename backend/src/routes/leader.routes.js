@@ -256,7 +256,7 @@ router.get('/side-sessions-summary', (req, res) => {
     LEFT JOIN batches b ON b.group_name = l.group_name${batchJoinLine}
     LEFT JOIN side_session_checks ssc ON ssc.lecture_id = l.id AND ssc.session_date = ?${sscJoinLine}
     LEFT JOIN users u ON u.id = ssc.checked_by
-    WHERE l.date = ? AND l.session_type = 'side'${lineClause}${deptClause}
+    WHERE l.date = ? AND l.session_type = 'side' AND l.status != 'غير مؤكدة'${lineClause}${deptClause}
     ORDER BY l.group_name, l.time
   `).all(...params);
   return res.json(data);

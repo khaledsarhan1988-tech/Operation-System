@@ -61,9 +61,422 @@ function buildCoordFilter(table, value) {
   return ` AND ${table}.coordinators LIKE '%${safe}%'`;
 }
 
+// Department filter for the `remarks` table — coordinator-first rule (Fix 16) + Fix 9 fallback.
+// Rules:
+//   1. Client HAS a group → match if coordinator registered in this dept,
+//      OR (coordinator not registered anywhere AND batch.dept_type matches).
+//      Prevents leaks where batch dept_type disagrees with coordinator's registered dept.
+//   2. Client has NO group → fall back to team_members.section match on assigned_to (Fix 9).
+// `alias` is the remarks table alias in the outer query (e.g. 'remarks', 'r').
+function buildDeptRemarkFilter(alias, department) {
+  if (!department || department === 'All') return '';
+  const safe = department.replace(/'/g, "''");
+  const a = alias || 'remarks';
+  return ` AND (
+    EXISTS (
+      SELECT 1 FROM clients c
+      INNER JOIN batches b ON c.group_name = b.group_name
+      WHERE c.phone = ${a}.client_phone
+        AND (
+          EXISTS (
+            SELECT 1 FROM users u
+            WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
+              AND u.department = '${safe}'
+          )
+          OR (
+            b.dept_type = '${safe}'
+            AND NOT EXISTS (
+              SELECT 1 FROM users u
+              WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
+                AND u.department IS NOT NULL AND u.department != 'All'
+            )
+          )
+        )
+    )
+    OR (
+      NOT EXISTS (
+        SELECT 1 FROM clients c
+        INNER JOIN batches b ON c.group_name = b.group_name
+        WHERE c.phone = ${a}.client_phone
+      )
+      AND EXISTS (
+        SELECT 1 FROM team_members tm
+        WHERE LOWER(TRIM(tm.name)) LIKE LOWER('%' || TRIM(${a}.assigned_to) || '%')
+          AND LOWER(tm.section) = LOWER('${safe}')
+      )
+    )
+  )`;
+}
+
 function escapeLike(s) {
   if (!s) return '';
   return s.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
+// Builds the inner UNION+dedup query used by /remarks-notes-main.
+// Returns an SQL string that can be wrapped in `SELECT ... FROM (${innerQ}) t WHERE 1=1 ${havingFilter}`.
+// Used by the endpoint AND by the dashboard KPI so both always agree on the count.
+function buildRemarksNotesMainInnerQ({ from_date, to_date, department, employee, coordinator = '', search = '', line }) {
+  const lineA  = buildLineFilter('a', line);
+  const lineL  = buildLineFilter('l', line);
+  const lineR3 = buildLineFilter('r3', line);
+
+  // Coordinator → auto-resolve their registered dept (strict) when no explicit dept given
+  let resolvedDept = department && department !== 'All' ? department : '';
+  if (coordinator && !resolvedDept) {
+    const coordUser = db.prepare(
+      `SELECT department FROM users WHERE LOWER(TRIM(full_name))=LOWER(TRIM(?)) AND department != 'All' LIMIT 1${line ? ` AND line IN ('${line.replace(/'/g, "''")}','All')` : ''}`
+    ).get(coordinator.trim());
+    if (coordUser?.department) resolvedDept = coordUser.department;
+  }
+
+  const deptFilter1 = buildStrictDeptFilter('b', resolvedDept);
+  const empFilter1  = buildCoordFilter('b', employee);
+  const coord1      = buildCoordFilter('b', coordinator);
+  const search1     = search ? ` AND (a.student_name LIKE '%${escapeLike(search)}%' OR a.group_name LIKE '%${escapeLike(search)}%' OR a.phone LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
+
+  const deptFilter2 = buildStrictDeptFilter('b2', resolvedDept);
+  const empFilter2  = buildCoordFilter('b2', employee);
+  const coord2      = buildCoordFilter('b2', coordinator);
+  const search2     = search ? ` AND (c.name LIKE '%${escapeLike(search)}%' OR l.group_name LIKE '%${escapeLike(search)}%' OR c.phone LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
+
+  const safeCoord3  = coordinator ? coordinator.replace(/'/g, "''") : '';
+  const safeDept3   = resolvedDept ? resolvedDept.replace(/'/g, "''") : '';
+  const deptFilter3 = safeDept3  ? ` AND (b3.dept_type = '${safeDept3}' OR b3.coordinators IS NULL)` : '';
+  const empFilter3  = employee   ? ` AND (b3.coordinators LIKE '%${employee.replace(/'/g,"''")}%' OR b3.coordinators IS NULL)` : '';
+  const coord3      = safeCoord3 ? ` AND (b3.coordinators LIKE '%${safeCoord3}%' OR b3.coordinators IS NULL)` : '';
+  const search3     = search ? ` AND (COALESCE(c3.name, r3.client_name) LIKE '%${escapeLike(search)}%' OR c3.group_name LIKE '%${escapeLike(search)}%' OR r3.client_phone LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
+
+  const dateFilter = from_date && to_date
+    ? ` AND absence_date BETWEEN '${from_date}' AND '${to_date}'`
+    : from_date ? ` AND absence_date >= '${from_date}'`
+    : to_date   ? ` AND absence_date <= '${to_date}'` : '';
+
+  const outerCoordFilter = coordinator
+    ? ` AND TRIM(LOWER(abs_base.coordinators)) LIKE LOWER('%${coordinator.replace(/'/g,"''")}%')`
+    : '';
+
+  const part1 = `
+    SELECT
+      COALESCE(c_lu.name, NULLIF(TRIM(a.student_name),'')) AS student_name,
+      a.phone AS student_phone, a.group_name,
+      COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS absence_date,
+      b.coordinators,
+      COALESCE(
+        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) AND u.department != 'All' LIMIT 1),
+        b.dept_type
+      ) AS dept_type
+    FROM absent_students a
+    LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
+    LEFT JOIN (SELECT phone, line, MIN(name) AS name FROM clients${line ? ` WHERE line = '${line.replace(/'/g, "''")}'` : ''} GROUP BY phone, line) c_lu
+      ON (a.student_name IS NULL OR TRIM(a.student_name)='')
+      AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone${line ? ' AND c_lu.line = a.line' : ''}
+    LEFT JOIN (
+      SELECT group_name, date, line,
+        ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
+      FROM lectures WHERE session_type = 'main' AND status != 'غير مؤكدة'${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
+    ) lec_inf ON (a.date IS NULL OR TRIM(a.date)='')
+      AND lec_inf.group_name = a.group_name
+      AND a.lecture_no IS NOT NULL AND lec_inf.lec_num = a.lecture_no${line ? ' AND lec_inf.line = a.line' : ''}
+    WHERE (
+      (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
+      OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+    )
+    ${deptFilter1}${empFilter1}${coord1}${search1}${lineA}`;
+
+  const part2 = `
+    SELECT
+      c.name AS student_name, c.phone AS student_phone,
+      l.group_name, l.date AS absence_date,
+      b2.coordinators,
+      COALESCE(
+        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b2.coordinators)) AND u.department != 'All' LIMIT 1),
+        b2.dept_type
+      ) AS dept_type
+    FROM lectures l
+    INNER JOIN batches b2 ON l.group_name = b2.group_name${line ? ' AND b2.line = l.line' : ''}
+    INNER JOIN clients c ON c.group_name = l.group_name${line ? ' AND c.line = l.line' : ''}
+    WHERE l.session_type = 'main' AND l.status != 'غير مؤكدة'
+      AND (l.attendance IS NULL OR TRIM(l.attendance) = '')
+      AND c.name IS NOT NULL AND TRIM(c.name)!=''
+      AND c.phone IS NOT NULL AND TRIM(c.phone)!=''
+      AND NOT EXISTS (
+        SELECT 1 FROM absent_students a2
+        WHERE a2.group_name = l.group_name AND a2.date = l.date${line ? ' AND a2.line = l.line' : ''}
+      )
+    ${deptFilter2}${empFilter2}${coord2}${search2}${lineL}`;
+
+  const remarksSubQ = `
+    SELECT client_phone,
+      date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2)) AS rdate,
+      MAX(id) AS id, MAX(details) AS details, MAX(added_at) AS added_at,
+      MAX(assigned_to) AS assigned_to, MAX(status) AS status
+    FROM remarks WHERE category = 'Attendance Main Session'${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
+    GROUP BY client_phone, date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2))`;
+
+  const rdSQLMain = `date(substr(r3.added_at,7,4)||'-'||substr(r3.added_at,4,2)||'-'||substr(r3.added_at,1,2))`;
+  const part3 = `
+    SELECT DISTINCT
+      COALESCE(c3.name, r3.client_name) AS student_name,
+      r3.client_phone                   AS student_phone,
+      COALESCE(c3.group_name, '--')     AS group_name,
+      date(${rdSQLMain}, '-1 day')      AS absence_date,
+      COALESCE(b3.coordinators, r3.assigned_to) AS coordinators,
+      COALESCE(
+        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(COALESCE(b3.coordinators, r3.assigned_to))) AND u.department != 'All' LIMIT 1),
+        b3.dept_type
+      ) AS dept_type
+    FROM remarks r3
+    LEFT JOIN clients c3 ON c3.phone = r3.client_phone${line ? ' AND c3.line = r3.line' : ''}
+      AND c3.group_name = COALESCE(
+        (SELECT cl.group_name FROM clients cl
+         INNER JOIN batches bl ON bl.group_name = cl.group_name${line ? ' AND bl.line = cl.line' : ''}
+         WHERE cl.phone = r3.client_phone
+           AND bl.start_date IS NOT NULL
+           AND bl.start_date <= ${rdSQLMain}${line ? ` AND cl.line = '${line.replace(/'/g, "''")}'` : ''}
+         ORDER BY bl.start_date DESC LIMIT 1),
+        (SELECT cl2.group_name FROM clients cl2
+         WHERE cl2.phone = r3.client_phone${line ? ` AND cl2.line = '${line.replace(/'/g, "''")}'` : ''} ORDER BY cl2.group_name ASC LIMIT 1)
+      )
+    LEFT JOIN batches b3 ON b3.group_name = c3.group_name${line ? ' AND b3.line = c3.line' : ''}
+    WHERE r3.category = 'Attendance Main Session'
+      AND r3.client_phone IS NOT NULL AND TRIM(r3.client_phone) != ''
+      AND NOT EXISTS (
+        SELECT 1 FROM absent_students a3
+        WHERE TRIM(a3.phone) = TRIM(r3.client_phone)
+          AND a3.date = date(${rdSQLMain}, '-1 day')${line ? ' AND a3.line = r3.line' : ''}
+      )
+      AND EXISTS (
+        SELECT 1 FROM lectures lx
+        WHERE lx.group_name = c3.group_name
+          AND lx.session_type = 'main'
+          AND lx.status != 'غير مؤكدة'
+          AND lx.date = date(${rdSQLMain}, '-1 day')${line ? ' AND lx.line = r3.line' : ''}
+      )
+    ${deptFilter3}${empFilter3}${coord3}${search3}${lineR3}`;
+
+  return `
+    SELECT
+      abs_base.student_name, abs_base.student_phone, abs_base.group_name,
+      abs_base.absence_date, abs_base.coordinators, abs_base.dept_type,
+      date(abs_base.absence_date, '+1 day') AS expected_remark_date,
+      r.id AS remark_id, r.details AS remark_details, r.added_at AS remark_date,
+      r.assigned_to, r.status AS remark_status,
+      CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END AS has_remark
+    FROM (
+      SELECT student_name, student_phone, group_name, absence_date, coordinators, dept_type
+      FROM (
+        SELECT *,
+          ROW_NUMBER() OVER (
+            PARTITION BY
+              COALESCE(NULLIF(TRIM(student_phone),''), LOWER(TRIM(COALESCE(student_name,'')))),
+              group_name,
+              absence_date
+            ORDER BY
+              CASE WHEN student_name IS NOT NULL AND TRIM(student_name) != '' THEN 0 ELSE 1 END,
+              CASE WHEN dept_type IS NOT NULL AND dept_type != 'All' THEN 0 ELSE 1 END,
+              CASE WHEN coordinators IS NOT NULL AND TRIM(coordinators) != '' THEN 0 ELSE 1 END
+          ) AS _rn
+        FROM (
+          SELECT * FROM (${part1}) p1 WHERE absence_date IS NOT NULL
+          UNION ALL
+          SELECT * FROM (${part2}) p2
+          UNION ALL
+          SELECT * FROM (${part3}) p3
+        ) _u
+      ) _ranked
+      WHERE _rn = 1
+    ) abs_base
+    LEFT JOIN (${remarksSubQ}) r
+      ON r.client_phone = abs_base.student_phone
+      AND r.rdate = date(abs_base.absence_date, '+1 day')
+    WHERE abs_base.absence_date IS NOT NULL ${dateFilter}${outerCoordFilter}`;
+}
+
+// Builds the inner UNION+dedup query used by /remarks-notes-zoom.
+// Mirrors buildRemarksNotesMainInnerQ's contract — used by both the endpoint
+// and the dashboard KPI so counts stay in lock-step.
+function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee, coordinator = '', search = '', line }) {
+  const lineA  = buildLineFilter('a', line);
+  const lineR2 = buildLineFilter('r2', line);
+
+  const safeEmp   = employee    ? employee.replace(/'/g, "''")    : '';
+  const safeCoord = coordinator ? coordinator.replace(/'/g, "''") : '';
+
+  let resolvedDept = department && department !== 'All' ? department : '';
+  if (coordinator && !resolvedDept) {
+    const coordUser = db.prepare(
+      `SELECT department FROM users WHERE LOWER(TRIM(full_name))=LOWER(TRIM(?)) AND department != 'All' LIMIT 1${line ? ` AND line IN ('${line.replace(/'/g, "''")}','All')` : ''}`
+    ).get(coordinator.trim());
+    if (coordUser?.department) resolvedDept = coordUser.department;
+  }
+  const safeDept = resolvedDept ? resolvedDept.replace(/'/g, "''") : '';
+
+  const dept1  = buildStrictDeptFilter('b', resolvedDept);
+  const emp1   = buildCoordFilter('b', employee);
+  const coord1 = buildCoordFilter('b', coordinator);
+  const srch1  = search ? ` AND (c.name LIKE '%${escapeLike(search)}%' OR c.phone LIKE '%${escapeLike(search)}%' OR c.group_name LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
+  const srchA  = search ? ` AND (a.student_name LIKE '%${escapeLike(search)}%' OR a.phone LIKE '%${escapeLike(search)}%' OR a.group_name LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
+
+  const dept2  = safeDept  ? ` AND (b2.dept_type = '${safeDept}' OR EXISTS (SELECT 1 FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(r2.assigned_to)) AND u.department='${safeDept}'))` : '';
+  const emp2   = safeEmp   ? ` AND (b2.coordinators LIKE '%${safeEmp}%' OR r2.assigned_to LIKE '%${safeEmp}%')` : '';
+  const coord2 = safeCoord ? ` AND (b2.coordinators LIKE '%${safeCoord}%' OR r2.assigned_to LIKE '%${safeCoord}%')` : '';
+  const srch2  = search ? ` AND (r2.client_name LIKE '%${escapeLike(search)}%' OR r2.client_phone LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
+
+  const dateFilter = from_date && to_date
+    ? ` AND abs_union.session_date BETWEEN '${from_date}' AND '${to_date}'`
+    : from_date ? ` AND abs_union.session_date >= '${from_date}'`
+    : to_date   ? ` AND abs_union.session_date <= '${to_date}'` : '';
+
+  const partA = `
+    SELECT DISTINCT
+      COALESCE(c_lu.name, NULLIF(TRIM(a.student_name),'')) AS client_name,
+      a.phone AS client_phone,
+      a.group_name,
+      a.date AS session_date,
+      b.coordinators,
+      COALESCE(
+        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) AND u.department != 'All' LIMIT 1),
+        b.dept_type
+      ) AS dept_type
+    FROM absent_students a
+    INNER JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
+    LEFT JOIN (SELECT phone, line, MIN(name) AS name FROM clients${line ? ` WHERE line = '${line.replace(/'/g, "''")}'` : ''} GROUP BY phone, line) c_lu
+      ON (a.student_name IS NULL OR TRIM(a.student_name) = '')
+      AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
+      AND c_lu.phone = a.phone${line ? ' AND c_lu.line = a.line' : ''}
+    WHERE (
+      (a.student_name IS NOT NULL AND TRIM(a.student_name) != '')
+      OR (a.phone IS NOT NULL AND TRIM(a.phone) != '' AND c_lu.name IS NOT NULL)
+    )
+    AND a.date IS NOT NULL AND TRIM(a.date) != ''
+    AND EXISTS (
+      SELECT 1 FROM lectures l
+      WHERE l.group_name = a.group_name
+        AND l.session_type = 'side'
+        AND l.status != 'غير مؤكدة'
+        AND l.date = a.date${line ? ' AND l.line = a.line' : ''}
+    )
+    ${dept1}${emp1}${coord1}${srchA}${lineA}`;
+
+  const part1 = `
+    SELECT DISTINCT c.name AS client_name, c.phone AS client_phone,
+      c.group_name, grp.session_date, b.coordinators,
+      COALESCE(
+        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) AND u.department != 'All' LIMIT 1),
+        b.dept_type
+      ) AS dept_type
+    FROM (
+      SELECT l.group_name, l.date AS session_date, l.line,
+        COUNT(*) AS slot_count_on_date
+      FROM lectures l
+      WHERE l.session_type = 'side' AND l.status != 'غير مؤكدة'
+        AND (l.duration IS NULL OR l.duration <= '00:15')${line ? ` AND l.line = '${line.replace(/'/g, "''")}'` : ''}
+      GROUP BY l.group_name, l.date, l.line
+      HAVING SUM(CASE WHEN l.attendance IS NOT NULL AND TRIM(l.attendance) != ''
+                 AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END) = 0
+        AND COUNT(*) > 0
+    ) grp
+    INNER JOIN clients c ON c.group_name = grp.group_name${line ? ' AND c.line = grp.line' : ''}
+    INNER JOIN batches b ON b.group_name = grp.group_name${line ? ' AND b.line = grp.line' : ''}
+    WHERE c.name IS NOT NULL AND TRIM(c.name) != ''
+      AND c.phone IS NOT NULL AND TRIM(c.phone) != ''
+      AND (
+        grp.slot_count_on_date >= (
+          SELECT COUNT(*) FROM clients c_cnt
+          WHERE c_cnt.group_name = grp.group_name${line ? ' AND c_cnt.line = grp.line' : ''}
+            AND c_cnt.name IS NOT NULL AND TRIM(c_cnt.name) != ''
+            AND c_cnt.phone IS NOT NULL AND TRIM(c_cnt.phone) != ''
+        )
+        OR EXISTS (
+          SELECT 1 FROM absent_students a_p1
+          WHERE a_p1.group_name = grp.group_name
+            AND a_p1.date = grp.session_date${line ? ' AND a_p1.line = grp.line' : ''}
+            AND (
+              (a_p1.phone IS NOT NULL AND TRIM(a_p1.phone) = TRIM(c.phone))
+              OR (a_p1.student_name IS NOT NULL AND LOWER(TRIM(a_p1.student_name)) = LOWER(TRIM(c.name)))
+            )
+        )
+      )
+    ${dept1}${emp1}${coord1}${srch1}`;
+
+  const rdSQL = `date(substr(r2.added_at,7,4)||'-'||substr(r2.added_at,4,2)||'-'||substr(r2.added_at,1,2))`;
+  const part2 = `
+    SELECT DISTINCT
+      COALESCE(c2.name, r2.client_name)       AS client_name,
+      r2.client_phone,
+      c2.group_name,
+      date(${rdSQL}, '-1 day')                AS session_date,
+      COALESCE(r2.assigned_to, b2.coordinators) AS coordinators,
+      COALESCE(
+        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(r2.assigned_to)) AND u.department != 'All' LIMIT 1),
+        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b2.coordinators)) AND u.department != 'All' LIMIT 1),
+        b2.dept_type
+      ) AS dept_type
+    FROM remarks r2
+    LEFT JOIN clients c2 ON c2.phone = r2.client_phone${line ? ' AND c2.line = r2.line' : ''}
+      AND c2.group_name = COALESCE(
+        (SELECT cl.group_name FROM clients cl
+         INNER JOIN batches bl ON bl.group_name = cl.group_name${line ? ' AND bl.line = cl.line' : ''}
+         WHERE cl.phone = r2.client_phone
+           AND bl.start_date IS NOT NULL
+           AND bl.start_date <= ${rdSQL}${line ? ` AND cl.line = '${line.replace(/'/g, "''")}'` : ''}
+         ORDER BY bl.start_date DESC LIMIT 1),
+        (SELECT cl2.group_name FROM clients cl2
+         WHERE cl2.phone = r2.client_phone${line ? ` AND cl2.line = '${line.replace(/'/g, "''")}'` : ''} ORDER BY cl2.group_name ASC LIMIT 1)
+      )
+    LEFT JOIN batches b2 ON b2.group_name = c2.group_name${line ? ' AND b2.line = c2.line' : ''}
+    WHERE r2.category = 'Attendance Zoom Call'
+    ${dept2}${emp2}${coord2}${srch2}${lineR2}`;
+
+  const remarksSubQ = `
+    SELECT client_phone,
+      date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2)) AS rdate,
+      MAX(id) AS id, MAX(details) AS details, MAX(added_at) AS added_at,
+      MAX(assigned_to) AS assigned_to, MAX(status) AS status
+    FROM remarks WHERE category = 'Attendance Zoom Call'${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
+    GROUP BY client_phone, date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2))`;
+
+  const outerCoordFilter = safeCoord
+    ? ` AND TRIM(LOWER(abs_union.coordinators)) LIKE LOWER('%${safeCoord}%')`
+    : '';
+
+  return `
+    SELECT
+      abs_union.client_name, abs_union.client_phone, abs_union.group_name,
+      abs_union.session_date, abs_union.coordinators, abs_union.dept_type,
+      date(abs_union.session_date, '+1 day') AS expected_remark_date,
+      r.id AS remark_id, r.details AS remark_details, r.added_at AS remark_date,
+      r.assigned_to, r.status AS remark_status,
+      CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END AS has_remark
+    FROM (
+      SELECT client_name, client_phone, group_name, session_date, coordinators, dept_type
+      FROM (
+        SELECT *,
+          ROW_NUMBER() OVER (
+            PARTITION BY
+              COALESCE(NULLIF(TRIM(client_phone),''), LOWER(TRIM(COALESCE(client_name,'')))),
+              group_name,
+              session_date
+            ORDER BY
+              CASE WHEN client_name IS NOT NULL AND TRIM(client_name) != '' THEN 0 ELSE 1 END,
+              CASE WHEN dept_type IS NOT NULL AND dept_type != 'All' THEN 0 ELSE 1 END,
+              CASE WHEN coordinators IS NOT NULL AND TRIM(coordinators) != '' THEN 0 ELSE 1 END
+          ) AS _rn
+        FROM (
+          SELECT * FROM (${partA}) pA
+          UNION ALL
+          SELECT * FROM (${part1}) p1
+          UNION ALL
+          SELECT * FROM (${part2}) p2
+        ) _u
+      ) _ranked
+      WHERE _rn = 1
+    ) abs_union
+    LEFT JOIN (${remarksSubQ}) r
+      ON r.client_phone = abs_union.client_phone
+      AND r.rdate = date(abs_union.session_date, '+1 day')
+    WHERE abs_union.session_date IS NOT NULL ${dateFilter}${outerCoordFilter}`;
 }
 
 // Multi-line tenant filter — appends " AND <alias>.line = '<line>'" to a WHERE clause.
@@ -93,23 +506,9 @@ router.get('/dashboard', (req, res) => {
   const empBFilter  = buildCoordFilter('b', employee);
   const empRemark   = employee ? ` AND remarks.assigned_to LIKE '%${employee.replace(/'/g,"''")}%'` : '';
 
-  // للملاحظات: ربط العميل بالمجموعة للفلترة بالقسم
-  // Match batch dept OR coordinator's registered dept to handle mismatched stored dept_type
-  const deptRemark  = department && department !== 'All'
-    ? ` AND EXISTS (
-          SELECT 1 FROM clients c
-          INNER JOIN batches b ON c.group_name = b.group_name
-          WHERE c.phone = remarks.client_phone
-            AND (
-              b.dept_type = '${department.replace(/'/g,"''")}'
-              OR EXISTS (
-                SELECT 1 FROM users u
-                WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
-                  AND u.department = '${department.replace(/'/g,"''")}'
-              )
-            )
-        )`
-    : '';
+  // Remarks dept filter — coordinator-first (Fix 16) + team_members fallback (Fix 9).
+  // Centralized helper ensures dashboard KPIs and /remarks-list match exactly.
+  const deptRemark  = buildDeptRemarkFilter('remarks', department);
 
   try {
     // 1. Active groups (3 statuses)
@@ -137,28 +536,32 @@ router.get('/dashboard', (req, res) => {
     ).all();
 
     // 3. Main lectures count — session_type='main' (uploaded from "Lecture" Excel sheet)
+    // Only confirmed lectures count — status='مؤكدة'
     const mainLecturesRow = db.prepare(
       `SELECT COUNT(*) as cnt FROM lectures
        INNER JOIN batches ON lectures.group_name = batches.group_name${line ? ' AND batches.line = lectures.line' : ''}
        WHERE lectures.session_type = 'main'
+         AND lectures.status != 'غير مؤكدة'
        ${buildDateFilter('lectures.date', from_date, to_date)}
        ${deptBatches}${empFilter}${lineL}`
     ).get();
 
-    // 4. Side sessions count — all side sessions
+    // 4. Side sessions count — all confirmed side sessions
     const sideLecturesRow = db.prepare(
       `SELECT COUNT(*) as cnt FROM lectures
        INNER JOIN batches ON lectures.group_name = batches.group_name${line ? ' AND batches.line = lectures.line' : ''}
        WHERE lectures.session_type = 'side'
+         AND lectures.status != 'غير مؤكدة'
        ${buildDateFilter('lectures.date', from_date, to_date)}
        ${deptBatches}${empFilter}${lineL}`
     ).get();
 
-    // 4b. Zoom calls count — side sessions that are regular (15 min only)
+    // 4b. Zoom calls count — confirmed regular side sessions (15 min only)
     const zoomCallsRow = db.prepare(
       `SELECT COUNT(*) as cnt FROM lectures
        INNER JOIN batches ON lectures.group_name = batches.group_name${line ? ' AND batches.line = lectures.line' : ''}
        WHERE lectures.session_type = 'side'
+         AND lectures.status != 'غير مؤكدة'
          AND lectures.side_session_category = 'regular'
        ${buildDateFilter('lectures.date', from_date, to_date)}
        ${deptBatches}${empFilter}${lineL}`
@@ -188,7 +591,7 @@ router.get('/dashboard', (req, res) => {
            LEFT JOIN (
              SELECT group_name, date, line,
                ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
-             FROM lectures WHERE session_type = 'main'${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
+             FROM lectures WHERE session_type = 'main' AND status != 'غير مؤكدة'${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
            ) lec_inf ON (a.date IS NULL OR TRIM(a.date)='')
              AND lec_inf.group_name = a.group_name
              AND a.lecture_no IS NOT NULL
@@ -205,6 +608,7 @@ router.get('/dashboard', (req, res) => {
          INNER JOIN batches b2 ON l.group_name = b2.group_name${line ? ' AND b2.line = l.line' : ''}
          INNER JOIN clients c ON c.group_name = l.group_name${line ? ' AND c.line = l.line' : ''}
          WHERE l.session_type = 'main'
+           AND l.status != 'غير مؤكدة'
            AND (l.attendance IS NULL OR TRIM(l.attendance) = '')
            AND c.name IS NOT NULL AND TRIM(c.name)!=''
            AND c.phone IS NOT NULL AND TRIM(c.phone)!=''
@@ -230,7 +634,7 @@ router.get('/dashboard', (req, res) => {
          FROM lectures l
          INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
          WHERE l.session_type = 'side'
-           AND l.status = 'مؤكدة'
+           AND l.status != 'غير مؤكدة'
            AND (l.duration IS NULL OR l.duration <= '00:15')
          ${buildDateFilter('l.date', from_date, to_date)}
          ${deptB}${empBFilter}${lineLA}
@@ -296,7 +700,7 @@ router.get('/dashboard', (req, res) => {
          COUNT(l.id) as side_count,
          (b.trainee_count * 7) as expected_side_count
        FROM batches b
-       LEFT JOIN lectures l ON l.group_name = b.group_name AND l.session_type = 'side'${line ? ' AND l.line = b.line' : ''}
+       LEFT JOIN lectures l ON l.group_name = b.group_name AND l.session_type = 'side' AND l.status != 'غير مؤكدة'${line ? ' AND l.line = b.line' : ''}
        WHERE b.status = 'نشطة'
        ${deptB}${empBFilter}${lineB}
        GROUP BY b.group_name
@@ -317,31 +721,23 @@ router.get('/dashboard', (req, res) => {
         absent_zoom:           absentSideRow?.cnt ?? 0,
         open_remarks:          openRemarksCount?.cnt ?? 0,
         remarks_notes:         (() => {
+          // KPI = sum of the totals returned by /remarks-notes-main and
+          // /remarks-notes-zoom. Uses the SAME builders the endpoints use so
+          // the KPI always equals the grand total shown in the drill-down modal.
           try {
-            // Count total absence records (main + zoom) shown in the modal
-            const mainCnt = db.prepare(
-              `SELECT COUNT(*) as cnt FROM absent_students a
-               LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
-               WHERE a.student_name IS NOT NULL AND TRIM(a.student_name) != ''
-               AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
-               ${buildDateFilter('a.date', from_date, to_date)}
-               ${department && department !== 'All' ? ` AND (b.dept_type = '${department.replace(/'/g,"''")}' OR EXISTS (SELECT 1 FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) AND u.department='${department.replace(/'/g,"''")}'))` : ''}
-               ${buildCoordFilter('b', employee)}${lineA}`
-            ).get()?.cnt ?? 0;
-            const zoomCnt = db.prepare(
-              `SELECT COUNT(*) as cnt FROM (
-                 SELECT DISTINCT l.group_name, l.date
-                 FROM lectures l
-                 INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
-                 WHERE l.session_type = 'side'
-                   AND l.side_session_category = 'regular'
-                   AND l.status = 'مؤكدة'
-                 ${buildDateFilter('l.date', from_date, to_date)}
-                 ${deptB}${empBFilter}${lineLA}
-               )`
-            ).get()?.cnt ?? 0;
+            const mainQ = buildRemarksNotesMainInnerQ({
+              from_date, to_date, department, employee, line,
+            });
+            const zoomQ = buildRemarksNotesZoomInnerQ({
+              from_date, to_date, department, employee, line,
+            });
+            const mainCnt = db.prepare(`SELECT COUNT(*) as cnt FROM (${mainQ}) t`).get()?.cnt ?? 0;
+            const zoomCnt = db.prepare(`SELECT COUNT(*) as cnt FROM (${zoomQ}) t`).get()?.cnt ?? 0;
             return mainCnt + zoomCnt;
-          } catch(e) { return 0; }
+          } catch (e) {
+            console.error('[reports] remarks_notes KPI error:', e);
+            return 0;
+          }
         })(),
       },
       active_groups_list:     activeGroupsList,
@@ -394,17 +790,20 @@ router.get('/lectures-list', (req, res) => {
 
   // When min_duration is set (main lectures mode), ignore session_type filter — use duration to identify them
   const sessionTypeFilter = min_duration ? '' : ` AND l.session_type = '${session_type}'`;
+  // Only confirmed lectures count in any CS report
+  const statusFilter = ` AND l.status != 'غير مؤكدة'`;
 
-  const allFilters = `${sessionTypeFilter}${minDurFilter}${maxDurFilter}${dateFilter}${deptFilter}${empFilter}${trainerFilter}${coordFilter}${searchFilter}${groupFilter}${categoryFilter}${lineL}`;
+  const allFilters = `${sessionTypeFilter}${statusFilter}${minDurFilter}${maxDurFilter}${dateFilter}${deptFilter}${empFilter}${trainerFilter}${coordFilter}${searchFilter}${groupFilter}${categoryFilter}${lineL}`;
 
   // For side sessions: pre-aggregate onboarding/offboarding/compensatory per group (one JOIN instead of N subqueries)
+  // Only confirmed sessions are counted toward category totals
   const sideJoin = (!min_duration && session_type === 'side')
     ? `LEFT JOIN (
          SELECT group_name, line,
            SUM(CASE WHEN side_session_category='onboarding'    THEN 1 ELSE 0 END) AS onboarding_count,
            SUM(CASE WHEN side_session_category='offboarding'   THEN 1 ELSE 0 END) AS offboarding_count,
            SUM(CASE WHEN side_session_category='compensatory'  THEN 1 ELSE 0 END) AS compensatory_count
-         FROM lectures WHERE session_type='side'${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
+         FROM lectures WHERE session_type='side' AND status != 'غير مؤكدة'${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
          GROUP BY group_name, line
        ) lx_counts ON lx_counts.group_name = l.group_name${line ? ' AND lx_counts.line = l.line' : ''}`
     : '';
@@ -495,7 +894,7 @@ router.get('/absent-list', (req, res) => {
       LEFT JOIN (
         SELECT group_name, date, line,
           ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
-        FROM lectures WHERE session_type = 'main'${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
+        FROM lectures WHERE session_type = 'main' AND status != 'غير مؤكدة'${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
       ) lec_inf ON (a.date IS NULL OR TRIM(a.date)='')
         AND lec_inf.group_name = a.group_name
         AND a.lecture_no IS NOT NULL
@@ -522,6 +921,7 @@ router.get('/absent-list', (req, res) => {
     INNER JOIN batches b2 ON l.group_name = b2.group_name${line ? ' AND b2.line = l.line' : ''}
     INNER JOIN clients c ON c.group_name = l.group_name${line ? ' AND c.line = l.line' : ''}
     WHERE l.session_type = 'main'
+      AND l.status != 'غير مؤكدة'
       AND (l.attendance IS NULL OR TRIM(l.attendance) = '')
       AND c.name IS NOT NULL AND TRIM(c.name)!=''
       AND c.phone IS NOT NULL AND TRIM(c.phone)!=''
@@ -574,7 +974,7 @@ router.get('/absent-side-list', (req, res) => {
 
   const baseWhere = `
     WHERE l.session_type = 'side'
-      AND l.status = 'مؤكدة'
+      AND l.status != 'غير مؤكدة'
       AND (l.duration IS NULL OR l.duration <= '00:15')
     ${dateFilter}${deptFilter}${empFilter}${trainerFilter}${coordFilter}${searchFilter}${lineL}`;
 
@@ -654,35 +1054,9 @@ router.get('/remarks-list', (req, res) => {
   const categoryFilter = category_search ? ` AND category LIKE '%${escapeLike(category_search)}%' ESCAPE '\\'` : '';
   const statusFilter   = status_filter   ? ` AND status = '${status_filter}'` : '';
   const searchFilter   = search          ? ` AND (client_name LIKE '%${escapeLike(search)}%' OR details LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
-  const deptFilter     = activeDept
-    ? ` AND (
-          EXISTS (
-            SELECT 1 FROM clients c
-            INNER JOIN batches b ON c.group_name = b.group_name
-            WHERE c.phone = remarks.client_phone
-              AND (
-                b.dept_type = '${activeDept.replace(/'/g,"''")}'
-                OR EXISTS (
-                  SELECT 1 FROM users u
-                  WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
-                    AND u.department = '${activeDept.replace(/'/g,"''")}'
-                )
-              )
-          )
-          OR (
-            NOT EXISTS (
-              SELECT 1 FROM clients c
-              INNER JOIN batches b ON c.group_name = b.group_name
-              WHERE c.phone = remarks.client_phone
-            )
-            AND EXISTS (
-              SELECT 1 FROM team_members tm
-              WHERE LOWER(TRIM(tm.name)) LIKE LOWER('%' || TRIM(remarks.assigned_to) || '%')
-                AND LOWER(tm.section) = LOWER('${activeDept.replace(/'/g,"''")}')
-            )
-          )
-        )`
-    : '';
+  // Coordinator-first dept filter (Fix 16) with team_members fallback (Fix 9).
+  // Uses alias 'remarks' — baseWhereR swap below converts to 'r' for the joined query.
+  const deptFilter     = buildDeptRemarkFilter('remarks', activeDept);
 
   // added_at is stored as "DD/MM/YYYY, HH:MM AM/PM"
   // Convert to YYYY-MM-DD for date comparison with batches.start_date / end_date
@@ -748,213 +1122,18 @@ router.get('/remarks-notes-main', (req, res) => {
   } = req.query;
   const offset = (Number(page) - 1) * Number(limit);
   const line = lineFilter(req);
-  const lineA = buildLineFilter('a', line);
-  const lineL = buildLineFilter('l', line);
-  const lineR3 = buildLineFilter('r3', line);
 
   const activeFrom = modal_from || from_date;
   const activeTo   = modal_to   || to_date;
   const activeDept = modal_dept && modal_dept !== 'All' ? modal_dept : (department && department !== 'All' ? department : '');
 
-  // When coordinator is selected with no explicit dept, auto-apply their registered department (strict)
-  // Prevents cross-dept leakage: Shrouk Ali (General) should not show Semi groups she coordinates
-  let resolvedDept = activeDept;
-  if (coordinator && !activeDept) {
-    const coordUser = db.prepare(
-      `SELECT department FROM users WHERE LOWER(TRIM(full_name))=LOWER(TRIM(?)) AND department != 'All' LIMIT 1${line ? ` AND line IN ('${line.replace(/'/g, "''")}','All')` : ''}`
-    ).get(coordinator.trim());
-    if (coordUser?.department) resolvedDept = coordUser.department;
-  }
-
-  // Part1 filters (alias b) — use strict dept filter to prevent OR EXISTS cross-dept leakage
-  const deptFilter1  = buildStrictDeptFilter('b', resolvedDept);
-  const empFilter1   = buildCoordFilter('b', employee);
-  const coord1       = buildCoordFilter('b', coordinator);
-  const search1      = search ? ` AND (a.student_name LIKE '%${escapeLike(search)}%' OR a.group_name LIKE '%${escapeLike(search)}%' OR a.phone LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
-
-  // Part2 filters (alias b2) — same strict dept filter
-  const deptFilter2  = buildStrictDeptFilter('b2', resolvedDept);
-  const empFilter2   = buildCoordFilter('b2', employee);
-  const coord2       = buildCoordFilter('b2', coordinator);
-  const search2      = search ? ` AND (c.name LIKE '%${escapeLike(search)}%' OR l.group_name LIKE '%${escapeLike(search)}%' OR c.phone LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
-
-  // Part3 filters (alias b3) — same strict dept filter, NULL b3 allowed through (same as zoom Part2)
-  const safeCoord3   = coordinator ? coordinator.replace(/'/g, "''") : '';
-  const safeDept3    = resolvedDept ? resolvedDept.replace(/'/g, "''") : '';
-  const deptFilter3  = safeDept3  ? ` AND (b3.dept_type = '${safeDept3}' OR b3.coordinators IS NULL)` : '';
-  const empFilter3   = employee   ? ` AND (b3.coordinators LIKE '%${employee.replace(/'/g,"''")}%' OR b3.coordinators IS NULL)` : '';
-  const coord3       = safeCoord3 ? ` AND (b3.coordinators LIKE '%${safeCoord3}%' OR b3.coordinators IS NULL)` : '';
-  const search3      = search ? ` AND (COALESCE(c3.name, r3.client_name) LIKE '%${escapeLike(search)}%' OR c3.group_name LIKE '%${escapeLike(search)}%' OR r3.client_phone LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
-
-  // Date filter applied on the UNION result
-  const dateFilter = activeFrom && activeTo
-    ? ` AND absence_date BETWEEN '${activeFrom}' AND '${activeTo}'`
-    : activeFrom ? ` AND absence_date >= '${activeFrom}'`
-    : activeTo   ? ` AND absence_date <= '${activeTo}'` : '';
+  const innerQ = buildRemarksNotesMainInnerQ({
+    from_date: activeFrom, to_date: activeTo, department: activeDept,
+    employee, coordinator, search, line,
+  });
 
   const havingFilter = has_remark === '1' ? ` AND has_remark = 1`
                      : has_remark === '0' ? ` AND has_remark = 0` : '';
-
-  // Part1: students in absent_students table (with date inference from lecture_no)
-  // dept_type uses u.department != 'All' so UNION dedup is consistent across parts
-  const part1 = `
-    SELECT
-      COALESCE(c_lu.name, NULLIF(TRIM(a.student_name),'')) AS student_name,
-      a.phone AS student_phone, a.group_name,
-      COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS absence_date,
-      b.coordinators,
-      COALESCE(
-        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) AND u.department != 'All' LIMIT 1),
-        b.dept_type
-      ) AS dept_type
-    FROM absent_students a
-    LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
-    LEFT JOIN (SELECT phone, line, MIN(name) AS name FROM clients${line ? ` WHERE line = '${line.replace(/'/g, "''")}'` : ''} GROUP BY phone, line) c_lu
-      ON (a.student_name IS NULL OR TRIM(a.student_name)='')
-      AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone${line ? ' AND c_lu.line = a.line' : ''}
-    LEFT JOIN (
-      SELECT group_name, date, line,
-        ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
-      FROM lectures WHERE session_type = 'main'${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
-    ) lec_inf ON (a.date IS NULL OR TRIM(a.date)='')
-      AND lec_inf.group_name = a.group_name
-      AND a.lecture_no IS NOT NULL AND lec_inf.lec_num = a.lecture_no${line ? ' AND lec_inf.line = a.line' : ''}
-    WHERE (
-      (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
-      OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
-    )
-    ${deptFilter1}${empFilter1}${coord1}${search1}${lineA}`;
-
-  // Part2: clients in groups where lecture has no attendance — treated as absent
-  // (mirrors absent-list Part2 so totals always match)
-  const part2 = `
-    SELECT
-      c.name AS student_name, c.phone AS student_phone,
-      l.group_name, l.date AS absence_date,
-      b2.coordinators,
-      COALESCE(
-        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b2.coordinators)) AND u.department != 'All' LIMIT 1),
-        b2.dept_type
-      ) AS dept_type
-    FROM lectures l
-    INNER JOIN batches b2 ON l.group_name = b2.group_name${line ? ' AND b2.line = l.line' : ''}
-    INNER JOIN clients c ON c.group_name = l.group_name${line ? ' AND c.line = l.line' : ''}
-    WHERE l.session_type = 'main'
-      AND (l.attendance IS NULL OR TRIM(l.attendance) = '')
-      AND c.name IS NOT NULL AND TRIM(c.name)!=''
-      AND c.phone IS NOT NULL AND TRIM(c.phone)!=''
-      AND NOT EXISTS (
-        SELECT 1 FROM absent_students a2
-        WHERE a2.group_name = l.group_name AND a2.date = l.date${line ? ' AND a2.line = l.line' : ''}
-      )
-    ${deptFilter2}${empFilter2}${coord2}${search2}${lineL}`;
-
-  // Deduplicated remarks: one remark per client per date (Attendance Main Session only)
-  const remarksSubQ = `
-    SELECT client_phone,
-      date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2)) AS rdate,
-      MAX(id) AS id, MAX(details) AS details, MAX(added_at) AS added_at,
-      MAX(assigned_to) AS assigned_to, MAX(status) AS status
-    FROM remarks WHERE category = 'Attendance Main Session'${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
-    GROUP BY client_phone, date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2))`;
-
-  // Part3: clients with 'Attendance Main Session' remarks who are NOT already captured by Part1
-  // (handles absent_students rows where date=NULL and lecture_no=NULL — no date can be inferred)
-  // Uses remark_date − 1 day as the absence_date, mirroring the zoom endpoint's Part2 approach.
-  const rdSQLMain = `date(substr(r3.added_at,7,4)||'-'||substr(r3.added_at,4,2)||'-'||substr(r3.added_at,1,2))`;
-  const part3 = `
-    SELECT DISTINCT
-      COALESCE(c3.name, r3.client_name) AS student_name,
-      r3.client_phone                   AS student_phone,
-      COALESCE(c3.group_name, '--')     AS group_name,
-      date(${rdSQLMain}, '-1 day')      AS absence_date,
-      COALESCE(b3.coordinators, r3.assigned_to) AS coordinators,
-      COALESCE(
-        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(COALESCE(b3.coordinators, r3.assigned_to))) AND u.department != 'All' LIMIT 1),
-        b3.dept_type
-      ) AS dept_type
-    FROM remarks r3
-    -- Pick the group that was ACTIVE when the remark was made:
-    -- prefer the most recently started group whose start_date <= remark_date.
-    -- Fall back to alphabetically-first group if no group has started yet.
-    LEFT JOIN clients c3 ON c3.phone = r3.client_phone${line ? ' AND c3.line = r3.line' : ''}
-      AND c3.group_name = COALESCE(
-        (SELECT cl.group_name FROM clients cl
-         INNER JOIN batches bl ON bl.group_name = cl.group_name${line ? ' AND bl.line = cl.line' : ''}
-         WHERE cl.phone = r3.client_phone
-           AND bl.start_date IS NOT NULL
-           AND bl.start_date <= ${rdSQLMain}${line ? ` AND cl.line = '${line.replace(/'/g, "''")}'` : ''}
-         ORDER BY bl.start_date DESC LIMIT 1),
-        (SELECT cl2.group_name FROM clients cl2
-         WHERE cl2.phone = r3.client_phone${line ? ` AND cl2.line = '${line.replace(/'/g, "''")}'` : ''} ORDER BY cl2.group_name ASC LIMIT 1)
-      )
-    LEFT JOIN batches b3 ON b3.group_name = c3.group_name${line ? ' AND b3.line = c3.line' : ''}
-    WHERE r3.category = 'Attendance Main Session'
-      AND r3.client_phone IS NOT NULL AND TRIM(r3.client_phone) != ''
-      AND NOT EXISTS (
-        SELECT 1 FROM absent_students a3
-        WHERE TRIM(a3.phone) = TRIM(r3.client_phone)
-          AND a3.date = date(${rdSQLMain}, '-1 day')${line ? ' AND a3.line = r3.line' : ''}
-      )
-      AND EXISTS (
-        SELECT 1 FROM lectures lx
-        WHERE lx.group_name = c3.group_name
-          AND lx.session_type = 'main'
-          AND lx.date = date(${rdSQLMain}, '-1 day')${line ? ' AND lx.line = r3.line' : ''}
-      )
-    ${deptFilter3}${empFilter3}${coord3}${search3}${lineR3}`;
-
-  // Outer coordinator filter (second gate — guarantees correct filtering even if inner join produces duplicates)
-  const outerCoordFilter = coordinator
-    ? ` AND TRIM(LOWER(abs_base.coordinators)) LIKE LOWER('%${coordinator.replace(/'/g,"''")}%')`
-    : '';
-
-  // Combine all three parts → dedupe at logical-key level → join remarks
-  //
-  // DEDUP KEY: (phone-or-name-fallback, group_name, absence_date)
-  // Rationale: UNION ALL keeps rows if ANY column differs. But partA/part1/part2/part3
-  // may disagree on casing of student_name or source of coordinators (r3.assigned_to
-  // vs b3.coordinators), producing apparent duplicates for the same underlying client.
-  // Window function picks ONE canonical row per logical key, preferring:
-  //   1. A filled student_name
-  //   2. dept_type != 'All' (resolved department over fallback)
-  //   3. A filled coordinator
-  const innerQ = `
-    SELECT
-      abs_base.student_name, abs_base.student_phone, abs_base.group_name,
-      abs_base.absence_date, abs_base.coordinators, abs_base.dept_type,
-      date(abs_base.absence_date, '+1 day') AS expected_remark_date,
-      r.id AS remark_id, r.details AS remark_details, r.added_at AS remark_date,
-      r.assigned_to, r.status AS remark_status,
-      CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END AS has_remark
-    FROM (
-      SELECT student_name, student_phone, group_name, absence_date, coordinators, dept_type
-      FROM (
-        SELECT *,
-          ROW_NUMBER() OVER (
-            PARTITION BY
-              COALESCE(NULLIF(TRIM(student_phone),''), LOWER(TRIM(COALESCE(student_name,'')))),
-              group_name,
-              absence_date
-            ORDER BY
-              CASE WHEN student_name IS NOT NULL AND TRIM(student_name) != '' THEN 0 ELSE 1 END,
-              CASE WHEN dept_type IS NOT NULL AND dept_type != 'All' THEN 0 ELSE 1 END,
-              CASE WHEN coordinators IS NOT NULL AND TRIM(coordinators) != '' THEN 0 ELSE 1 END
-          ) AS _rn
-        FROM (
-          SELECT * FROM (${part1}) p1 WHERE absence_date IS NOT NULL
-          UNION ALL
-          SELECT * FROM (${part2}) p2
-          UNION ALL
-          SELECT * FROM (${part3}) p3
-        ) _u
-      ) _ranked
-      WHERE _rn = 1
-    ) abs_base
-    LEFT JOIN (${remarksSubQ}) r
-      ON r.client_phone = abs_base.student_phone
-      AND r.rdate = date(abs_base.absence_date, '+1 day')
-    WHERE abs_base.absence_date IS NOT NULL ${dateFilter}${outerCoordFilter}`;
 
   try {
     const totalRow = db.prepare(
@@ -988,241 +1167,18 @@ router.get('/remarks-notes-zoom', (req, res) => {
   } = req.query;
   const offset = (Number(page) - 1) * Number(limit);
   const line = lineFilter(req);
-  const lineA = buildLineFilter('a', line);
-  const lineR2 = buildLineFilter('r2', line);
 
   const activeFrom = modal_from || from_date;
   const activeTo   = modal_to   || to_date;
   const activeDept = modal_dept && modal_dept !== 'All' ? modal_dept : (department && department !== 'All' ? department : '');
 
-  const safeEmp   = employee    ? employee.replace(/'/g, "''")    : '';
-  const safeCoord = coordinator ? coordinator.replace(/'/g, "''") : '';
-
-  // When coordinator is selected with no explicit dept, auto-apply their registered department (strict)
-  // Prevents cross-dept leakage: coordinator from General should not show Semi groups
-  let resolvedDept = activeDept;
-  if (coordinator && !activeDept) {
-    const coordUser = db.prepare(
-      `SELECT department FROM users WHERE LOWER(TRIM(full_name))=LOWER(TRIM(?)) AND department != 'All' LIMIT 1${line ? ` AND line IN ('${line.replace(/'/g, "''")}','All')` : ''}`
-    ).get(coordinator.trim());
-    if (coordUser?.department) resolvedDept = coordUser.department;
-  }
-  const safeDept = resolvedDept ? resolvedDept.replace(/'/g, "''") : '';
-
-  // Part 1 filters — b = batches via INNER JOIN
-  // Use strict dept filter to prevent OR EXISTS cross-dept leakage
-  const dept1  = buildStrictDeptFilter('b', resolvedDept);
-  const emp1   = buildCoordFilter('b', employee);
-  const coord1 = buildCoordFilter('b', coordinator);
-  const srch1  = search ? ` AND (c.name LIKE '%${escapeLike(search)}%' OR c.phone LIKE '%${escapeLike(search)}%' OR c.group_name LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
-  // Part A search filter — uses absent_students column aliases
-  const srchA  = search ? ` AND (a.student_name LIKE '%${escapeLike(search)}%' OR a.phone LIKE '%${escapeLike(search)}%' OR a.group_name LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
-
-  // Part 2 filters — b2 = batches via LEFT JOIN (may be NULL when client not in clients table)
-  // IMPORTANT: r2.assigned_to is the primary coordinator for Part 2 (remark-based).
-  // When a student is in multiple groups, the correlated subquery may pick a different group than
-  // where the absence occurred. We therefore filter by the REMARK's assigned_to first, then fall
-  // back to the resolved batch coordinator. This prevents incorrect exclusion due to the wrong group
-  // being selected by the correlated subquery.
-  const dept2  = safeDept  ? ` AND (b2.dept_type = '${safeDept}' OR EXISTS (SELECT 1 FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(r2.assigned_to)) AND u.department='${safeDept}'))` : '';
-  const emp2   = safeEmp   ? ` AND (b2.coordinators LIKE '%${safeEmp}%' OR r2.assigned_to LIKE '%${safeEmp}%')` : '';
-  const coord2 = safeCoord ? ` AND (b2.coordinators LIKE '%${safeCoord}%' OR r2.assigned_to LIKE '%${safeCoord}%')` : '';
-  const srch2  = search ? ` AND (r2.client_name LIKE '%${escapeLike(search)}%' OR r2.client_phone LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
-
-  // Date filter applied on the UNION result
-  const dateFilter = activeFrom && activeTo
-    ? ` AND abs_union.session_date BETWEEN '${activeFrom}' AND '${activeTo}'`
-    : activeFrom ? ` AND abs_union.session_date >= '${activeFrom}'`
-    : activeTo   ? ` AND abs_union.session_date <= '${activeTo}'` : '';
+  const innerQ = buildRemarksNotesZoomInnerQ({
+    from_date: activeFrom, to_date: activeTo, department: activeDept,
+    employee, coordinator, search, line,
+  });
 
   const havingFilter = has_remark === '1' ? ` AND has_remark = 1`
                      : has_remark === '0' ? ` AND has_remark = 0` : '';
-
-  // Part A: students from absent_students table whose absence date matches a SIDE session
-  // Mirrors Part 1 of remarks-notes-main but filtered to session_type='side' lectures
-  // dept_type resolution mirrors part2 (u.department != 'All') to prevent UNION
-  // keeping two copies of the same row with dept_type = 'All' vs Semi/Private/General
-  const partA = `
-    SELECT DISTINCT
-      COALESCE(c_lu.name, NULLIF(TRIM(a.student_name),'')) AS client_name,
-      a.phone AS client_phone,
-      a.group_name,
-      a.date AS session_date,
-      b.coordinators,
-      COALESCE(
-        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) AND u.department != 'All' LIMIT 1),
-        b.dept_type
-      ) AS dept_type
-    FROM absent_students a
-    INNER JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
-    LEFT JOIN (SELECT phone, line, MIN(name) AS name FROM clients${line ? ` WHERE line = '${line.replace(/'/g, "''")}'` : ''} GROUP BY phone, line) c_lu
-      ON (a.student_name IS NULL OR TRIM(a.student_name) = '')
-      AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
-      AND c_lu.phone = a.phone${line ? ' AND c_lu.line = a.line' : ''}
-    WHERE (
-      (a.student_name IS NOT NULL AND TRIM(a.student_name) != '')
-      OR (a.phone IS NOT NULL AND TRIM(a.phone) != '' AND c_lu.name IS NOT NULL)
-    )
-    AND a.date IS NOT NULL AND TRIM(a.date) != ''
-    AND EXISTS (
-      SELECT 1 FROM lectures l
-      WHERE l.group_name = a.group_name
-        AND l.session_type = 'side'
-        AND l.date = a.date${line ? ' AND l.line = a.line' : ''}
-    )
-    ${dept1}${emp1}${coord1}${srchA}${lineA}`;
-
-  // Part 1: clients in groups where ALL side sessions were absent on a date.
-  //
-  // IMPORTANT: Side sessions are per-student 15-min slots — each lecture row
-  // represents ONE student's scheduled session, NOT a group-wide session.
-  // So we CANNOT naively expand all group clients as absent — a group with 2
-  // trainees might only have 1 slot on a given date (the other trainee's slot
-  // is on a different date). Expanding would falsely mark the non-scheduled
-  // trainee as absent.
-  //
-  // Fix: a client qualifies if EITHER
-  //   (a) the number of side slots that day >= number of group clients
-  //       (meaning every student in the group was scheduled that day — safe
-  //        to expand all), OR
-  //   (b) an absent_students record matches this client by phone or name
-  //       on that specific date (explicit confirmation).
-  // This covers the single-trainee group case (Apr_6_Mon_11AM_General_5_P)
-  // while excluding the wrong trainee in multi-trainee split-day groups.
-  const part1 = `
-    SELECT DISTINCT c.name AS client_name, c.phone AS client_phone,
-      c.group_name, grp.session_date, b.coordinators,
-      COALESCE(
-        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) AND u.department != 'All' LIMIT 1),
-        b.dept_type
-      ) AS dept_type
-    FROM (
-      SELECT l.group_name, l.date AS session_date, l.line,
-        COUNT(*) AS slot_count_on_date
-      FROM lectures l
-      WHERE l.session_type = 'side' AND l.status = 'مؤكدة'
-        AND (l.duration IS NULL OR l.duration <= '00:15')${line ? ` AND l.line = '${line.replace(/'/g, "''")}'` : ''}
-      GROUP BY l.group_name, l.date, l.line
-      HAVING SUM(CASE WHEN l.attendance IS NOT NULL AND TRIM(l.attendance) != ''
-                 AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END) = 0
-        AND COUNT(*) > 0
-    ) grp
-    INNER JOIN clients c ON c.group_name = grp.group_name${line ? ' AND c.line = grp.line' : ''}
-    INNER JOIN batches b ON b.group_name = grp.group_name${line ? ' AND b.line = grp.line' : ''}
-    WHERE c.name IS NOT NULL AND TRIM(c.name) != ''
-      AND c.phone IS NOT NULL AND TRIM(c.phone) != ''
-      AND (
-        -- Case (a): slots >= total group clients → everyone was scheduled, expand all
-        grp.slot_count_on_date >= (
-          SELECT COUNT(*) FROM clients c_cnt
-          WHERE c_cnt.group_name = grp.group_name${line ? ' AND c_cnt.line = grp.line' : ''}
-            AND c_cnt.name IS NOT NULL AND TRIM(c_cnt.name) != ''
-            AND c_cnt.phone IS NOT NULL AND TRIM(c_cnt.phone) != ''
-        )
-        -- Case (b): explicit absent_students match for this client on this date
-        OR EXISTS (
-          SELECT 1 FROM absent_students a_p1
-          WHERE a_p1.group_name = grp.group_name
-            AND a_p1.date = grp.session_date${line ? ' AND a_p1.line = grp.line' : ''}
-            AND (
-              (a_p1.phone IS NOT NULL AND TRIM(a_p1.phone) = TRIM(c.phone))
-              OR (a_p1.student_name IS NOT NULL AND LOWER(TRIM(a_p1.student_name)) = LOWER(TRIM(c.name)))
-            )
-        )
-      )
-    ${dept1}${emp1}${coord1}${srch1}`;
-
-  // Part 2: clients confirmed absent via 'Attendance Zoom Call' remarks
-  // Covers: (a) partial-attendance groups where only specific clients are absent
-  //         (b) groups not in clients table (uses remark's built-in client info)
-  const rdSQL = `date(substr(r2.added_at,7,4)||'-'||substr(r2.added_at,4,2)||'-'||substr(r2.added_at,1,2))`;
-  const part2 = `
-    SELECT DISTINCT
-      COALESCE(c2.name, r2.client_name)       AS client_name,
-      r2.client_phone,
-      c2.group_name,
-      date(${rdSQL}, '-1 day')                AS session_date,
-      COALESCE(r2.assigned_to, b2.coordinators) AS coordinators,
-      COALESCE(
-        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(r2.assigned_to)) AND u.department != 'All' LIMIT 1),
-        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b2.coordinators)) AND u.department != 'All' LIMIT 1),
-        b2.dept_type
-      ) AS dept_type
-    FROM remarks r2
-    -- Pick the group that was ACTIVE when the remark was made:
-    -- prefer the most recently started group whose start_date <= remark_date.
-    -- Fall back to alphabetically-first group if no group has started yet.
-    LEFT JOIN clients c2 ON c2.phone = r2.client_phone${line ? ' AND c2.line = r2.line' : ''}
-      AND c2.group_name = COALESCE(
-        (SELECT cl.group_name FROM clients cl
-         INNER JOIN batches bl ON bl.group_name = cl.group_name${line ? ' AND bl.line = cl.line' : ''}
-         WHERE cl.phone = r2.client_phone
-           AND bl.start_date IS NOT NULL
-           AND bl.start_date <= ${rdSQL}${line ? ` AND cl.line = '${line.replace(/'/g, "''")}'` : ''}
-         ORDER BY bl.start_date DESC LIMIT 1),
-        (SELECT cl2.group_name FROM clients cl2
-         WHERE cl2.phone = r2.client_phone${line ? ` AND cl2.line = '${line.replace(/'/g, "''")}'` : ''} ORDER BY cl2.group_name ASC LIMIT 1)
-      )
-    LEFT JOIN batches b2 ON b2.group_name = c2.group_name${line ? ' AND b2.line = c2.line' : ''}
-    WHERE r2.category = 'Attendance Zoom Call'
-    ${dept2}${emp2}${coord2}${srch2}${lineR2}`;
-
-  // Deduplicated remarks: one per client per day
-  const remarksSubQ = `
-    SELECT client_phone,
-      date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2)) AS rdate,
-      MAX(id) AS id, MAX(details) AS details, MAX(added_at) AS added_at,
-      MAX(assigned_to) AS assigned_to, MAX(status) AS status
-    FROM remarks WHERE category = 'Attendance Zoom Call'${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
-    GROUP BY client_phone, date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2))`;
-
-  // Outer coordinator filter (second gate — guarantees correct filtering even if inner join produces duplicates)
-  const outerCoordFilter = safeCoord
-    ? ` AND TRIM(LOWER(abs_union.coordinators)) LIKE LOWER('%${safeCoord}%')`
-    : '';
-
-  // Combine sources → dedupe at logical-key level → LEFT JOIN remarks
-  //
-  // DEDUP KEY: (phone-or-name-fallback, group_name, session_date)
-  // Rationale: partA/part1/part2 can disagree on casing of client_name or source of
-  // coordinators, and UNION only dedupes fully-identical rows. Window function picks
-  // ONE canonical row per logical key using the same tie-breakers as main-notes.
-  const innerQ = `
-    SELECT
-      abs_union.client_name, abs_union.client_phone, abs_union.group_name,
-      abs_union.session_date, abs_union.coordinators, abs_union.dept_type,
-      date(abs_union.session_date, '+1 day') AS expected_remark_date,
-      r.id AS remark_id, r.details AS remark_details, r.added_at AS remark_date,
-      r.assigned_to, r.status AS remark_status,
-      CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END AS has_remark
-    FROM (
-      SELECT client_name, client_phone, group_name, session_date, coordinators, dept_type
-      FROM (
-        SELECT *,
-          ROW_NUMBER() OVER (
-            PARTITION BY
-              COALESCE(NULLIF(TRIM(client_phone),''), LOWER(TRIM(COALESCE(client_name,'')))),
-              group_name,
-              session_date
-            ORDER BY
-              CASE WHEN client_name IS NOT NULL AND TRIM(client_name) != '' THEN 0 ELSE 1 END,
-              CASE WHEN dept_type IS NOT NULL AND dept_type != 'All' THEN 0 ELSE 1 END,
-              CASE WHEN coordinators IS NOT NULL AND TRIM(coordinators) != '' THEN 0 ELSE 1 END
-          ) AS _rn
-        FROM (
-          SELECT * FROM (${partA}) pA
-          UNION ALL
-          SELECT * FROM (${part1}) p1
-          UNION ALL
-          SELECT * FROM (${part2}) p2
-        ) _u
-      ) _ranked
-      WHERE _rn = 1
-    ) abs_union
-    LEFT JOIN (${remarksSubQ}) r
-      ON r.client_phone = abs_union.client_phone
-      AND r.rdate = date(abs_union.session_date, '+1 day')
-    WHERE abs_union.session_date IS NOT NULL ${dateFilter}${outerCoordFilter}`;
 
   try {
     const totalRow = db.prepare(
@@ -1422,19 +1378,19 @@ router.get('/code-problems', (req, res) => {
        FROM batches b WHERE status='نشطة'${deptFilter}${empFilter}${lineB}`
     ).all();
 
-    // fetch all main sessions with time + duration
+    // fetch all CONFIRMED main sessions with time + duration
     const mainRaw = db.prepare(
       `SELECT l.group_name, l.date, l.time, l.duration FROM lectures l
        INNER JOIN batches b ON l.group_name=b.group_name${line ? ' AND b.line = l.line' : ''}
-       WHERE b.status='نشطة' AND l.session_type='main'
+       WHERE b.status='نشطة' AND l.session_type='main' AND l.status != 'غير مؤكدة'
        ${deptFilter}${empFilter}${lineL} ORDER BY l.group_name, l.date ASC`
     ).all();
 
-    // fetch only zoom call sessions (regular 15-min) for zoom-call problem checks
+    // fetch only CONFIRMED zoom call sessions (regular 15-min) for zoom-call problem checks
     const sideRaw = db.prepare(
       `SELECT l.group_name, l.date, l.time, l.duration FROM lectures l
        INNER JOIN batches b ON l.group_name=b.group_name${line ? ' AND b.line = l.line' : ''}
-       WHERE b.status='نشطة' AND l.session_type='side'
+       WHERE b.status='نشطة' AND l.session_type='side' AND l.status != 'غير مؤكدة'
          AND LOWER(COALESCE(l.side_session_category,'regular')) = 'regular'
        ${deptFilter}${empFilter}${lineL} ORDER BY l.group_name, l.date ASC`
     ).all();
@@ -1853,7 +1809,7 @@ router.get('/team-summary-detail', (req, res) => {
            ${deptF}${dateL}${lineL}
            AND l.session_type = 'side'
            AND l.side_session_category = 'regular'
-           AND l.status = 'مؤكدة'
+           AND l.status != 'غير مؤكدة'
            AND l.attendance IS NOT NULL
            AND CAST(l.attendance AS INTEGER) < b.trainee_count
            AND b.trainee_count > 0
@@ -1963,7 +1919,7 @@ router.get('/team-summary', (req, res) => {
            ${deptF}${dateL}${lineL}
            AND l.session_type = 'side'
            AND l.side_session_category = 'regular'
-           AND l.status = 'مؤكدة'
+           AND l.status != 'غير مؤكدة'
            AND l.attendance IS NOT NULL
            AND CAST(l.attendance AS INTEGER) < b.trainee_count
            AND b.trainee_count > 0
@@ -2349,7 +2305,7 @@ router.get('/attendance-absence', (req, res) => {
         COALESCE(SUM(b.trainee_count), 0) AS cnt
       FROM lectures l
       INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
-      WHERE l.session_type = 'main'
+      WHERE l.session_type = 'main' AND l.status != 'غير مؤكدة'
       ${dateFilterL}${deptFilterB}${coordFilterB}${lineL}
       GROUP BY b.coordinators
     `).all();
@@ -2367,7 +2323,7 @@ router.get('/attendance-absence', (req, res) => {
         LEFT JOIN (
           SELECT group_name, date, line,
             ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
-          FROM lectures WHERE session_type='main'${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
+          FROM lectures WHERE session_type='main' AND status != 'غير مؤكدة'${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
         ) lec_inf ON (a.date IS NULL OR TRIM(a.date)='')
           AND lec_inf.group_name = a.group_name
           AND a.lecture_no IS NOT NULL
@@ -2389,6 +2345,7 @@ router.get('/attendance-absence', (req, res) => {
       INNER JOIN batches b2 ON l.group_name = b2.group_name${line ? ' AND b2.line = l.line' : ''}
       INNER JOIN clients c ON c.group_name = l.group_name${line ? ' AND c.line = l.line' : ''}
       WHERE l.session_type = 'main'
+        AND l.status != 'غير مؤكدة'
         AND (l.attendance IS NULL OR TRIM(l.attendance) = '')
         AND c.name IS NOT NULL AND TRIM(c.name)!=''
         AND c.phone IS NOT NULL AND TRIM(c.phone)!=''
@@ -2412,7 +2369,7 @@ router.get('/attendance-absence', (req, res) => {
         FROM lectures l
         INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
         WHERE l.session_type = 'side'
-          AND l.status = 'مؤكدة'
+          AND l.status != 'غير مؤكدة'
           AND (l.duration IS NULL OR l.duration <= '00:15')
         ${dateFilterL}${deptFilterB}${coordFilterB}${lineL}
         GROUP BY b.coordinators, l.group_name, l.date
@@ -2432,7 +2389,7 @@ router.get('/attendance-absence', (req, res) => {
         FROM lectures l
         INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
         WHERE l.session_type = 'side'
-          AND l.status = 'مؤكدة'
+          AND l.status != 'غير مؤكدة'
           AND (l.duration IS NULL OR l.duration <= '00:15')
         ${dateFilterL}${deptFilterB}${coordFilterB}${lineL}
         GROUP BY b.coordinators, l.group_name, l.date
