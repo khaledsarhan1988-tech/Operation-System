@@ -220,6 +220,14 @@ router.post('/preview', (req, res) => {
 
     if (!clients.length) return res.status(400).json({ error: 'لم يتم العثور على عملاء في الملف' });
 
+    // ── Sort clients by subscription date ascending (DD/MM/YYYY) ─────────────
+    const parseDMYSort = dmy => {
+      if (!dmy) return new Date(0);
+      const [d, m, y] = dmy.split('/');
+      return y ? new Date(+y, +m - 1, +d) : new Date(0);
+    };
+    clients.sort((a, b) => parseDMYSort(a.date) - parseDMYSort(b.date));
+
     // ── Build phone→coordinator map in ONE bulk query ─────────────────────────
     const allCoords = db.prepare(`
       SELECT
@@ -322,9 +330,15 @@ router.post('/preview', (req, res) => {
       );
     })();
 
-    const savedItems = db.prepare(
-      `SELECT * FROM distribution_items WHERE session_id = ? ORDER BY id`
-    ).all(sessionId);
+    // Order by date ascending: convert DD/MM/YYYY → YYYYMMDD for correct sort
+    const savedItems = db.prepare(`
+      SELECT * FROM distribution_items WHERE session_id = ?
+      ORDER BY
+        CASE WHEN client_date IS NULL OR client_date = '' THEN '99999999' ELSE
+          SUBSTR(client_date,7,4) || SUBSTR(client_date,4,2) || SUBSTR(client_date,1,2)
+        END ASC,
+        id ASC
+    `).all(sessionId);
 
     // ── Build agent summary ───────────────────────────────────────────────────
     const summaryMap = {};
