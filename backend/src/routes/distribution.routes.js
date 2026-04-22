@@ -35,6 +35,20 @@ function deadline(hours) {
   return new Date(Date.now() + hours * 3600_000).toISOString();
 }
 
+/**
+ * Convert an Excel column-A cell to a display date string.
+ * With cellDates:true, date cells arrive as JS Date objects.
+ * Falls back to raw string for any non-date value.
+ */
+function parseExcelDate(raw) {
+  if (raw === null || raw === undefined || raw === '') return '';
+  if (raw instanceof Date) {
+    const pad = n => String(n).padStart(2, '0');
+    return `${pad(raw.getDate())}/${pad(raw.getMonth() + 1)}/${raw.getFullYear()}`;
+  }
+  return String(raw).trim();
+}
+
 // ─── TASK TYPES ───────────────────────────────────────────────────────────────
 
 // GET /api/distribution/task-types
@@ -80,23 +94,23 @@ router.post('/scan-dates', (req, res) => {
 
   try {
     const buffer = Buffer.from(file_base64, 'base64');
-    const wb   = XLSX.read(buffer, { type: 'buffer', raw: true });
+    const wb   = XLSX.read(buffer, { type: 'buffer', cellDates: true });
     const ws   = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
 
     const dateSet = new Set();
     for (let i = 1; i < rows.length; i++) {
-      const row  = rows[i];
-      const date = String(row[0] || '').trim();
+      const date = parseExcelDate(rows[i][0]);
       if (date) dateSet.add(date);
     }
 
-    // Sort dates — try natural sort; non-date strings fall back to lexicographic
+    // Sort DD/MM/YYYY ascending; fall back to locale compare
+    const parseDMY = s => {
+      const [d, m, y] = s.split('/');
+      return new Date(+y, +m - 1, +d);
+    };
     const dates = [...dateSet].sort((a, b) => {
-      const da = new Date(a);
-      const db_ = new Date(b);
-      if (!isNaN(da) && !isNaN(db_)) return da - db_;
-      return a.localeCompare(b, 'ar');
+      try { return parseDMY(a) - parseDMY(b); } catch { return a.localeCompare(b, 'ar'); }
     });
 
     return res.json({ dates });
@@ -174,7 +188,7 @@ router.post('/preview', (req, res) => {
   try {
     // ── Parse Excel from base64 ───────────────────────────────────────────────
     const buffer = Buffer.from(file_base64, 'base64');
-    const wb   = XLSX.read(buffer, { type: 'buffer', raw: true });
+    const wb   = XLSX.read(buffer, { type: 'buffer', cellDates: true });
     const ws   = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
 
@@ -185,7 +199,7 @@ router.post('/preview', (req, res) => {
     const clients = [];
     for (let i = 1; i < rows.length; i++) {
       const row   = rows[i];
-      const date  = String(row[0] || '').trim();
+      const date  = parseExcelDate(row[0]);
       const pages = String(row[1] || '').trim();
       const name  = String(row[2] || '').trim();
       const phone = normalisePhone(row[3]);
