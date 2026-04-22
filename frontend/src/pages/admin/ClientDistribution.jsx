@@ -197,9 +197,7 @@ export default function ClientDistribution() {
 
   // ── mutations ──
   const previewMut = useMutation({
-    mutationFn: fd => api.post('/distribution/preview', fd, {
-      headers: { 'Content-Type': undefined },
-    }),
+    mutationFn: fd => api.post('/distribution/preview', fd),
     onSuccess: ({ data }) => {
       setPreview(data);
       setOverrides({});
@@ -422,7 +420,15 @@ export default function ClientDistribution() {
               {previewMut.isError && (
                 <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
                   <AlertCircle size={16} className="text-red-500 flex-shrink-0" />
-                  <p className="text-sm text-red-700">{previewMut.error?.response?.data?.error || 'حدث خطأ'}</p>
+                  <p className="text-sm text-red-700">
+                    {previewMut.error?.response?.data?.error
+                      || (typeof previewMut.error?.response?.data === 'string' && previewMut.error.response.data)
+                      || previewMut.error?.message
+                      || 'حدث خطأ'}
+                    {previewMut.error?.response?.status && (
+                      <span className="text-xs opacity-60 mr-2">[{previewMut.error.response.status}]</span>
+                    )}
+                  </p>
                 </div>
               )}
 

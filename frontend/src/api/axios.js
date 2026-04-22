@@ -15,10 +15,14 @@ let _refreshQueue = [];
 export function setAccessToken(token) { _accessToken = token; }
 export function clearAccessToken() { _accessToken = null; }
 
-// Request: attach access token
+// Request: attach access token + fix FormData Content-Type
 api.interceptors.request.use(config => {
   if (_accessToken) {
     config.headers.Authorization = `Bearer ${_accessToken}`;
+  }
+  // For FormData, delete Content-Type so browser sets it with correct boundary
+  if (config.data instanceof FormData) {
+    delete config.headers['Content-Type'];
   }
   return config;
 });
