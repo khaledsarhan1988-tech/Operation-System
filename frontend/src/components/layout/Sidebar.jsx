@@ -4,7 +4,7 @@ import { useAuth } from '../../auth/AuthContext';
 import {
   LayoutDashboard, ClipboardList, Search, UserX, Calendar,
   Video, Users, BarChart2, Globe, UserCog, Upload, FileText,
-  LogOut, Headphones, GraduationCap, ShieldCheck, AlertTriangle, Activity
+  LogOut, Headphones, GraduationCap, ShieldCheck, AlertTriangle, Activity, Shuffle
 } from 'lucide-react';
 
 const AGENT_LINKS = [
@@ -52,7 +52,8 @@ function getAdminLinks(user) {
     { to: '/admin/users',   label: 'nav.users',     icon: UserCog },
     { to: '/admin/upload',  label: 'nav.excelUpload', icon: Upload },
     { to: '/admin/team',    label: 'nav.team',      icon: Users },
-    { to: '/admin/control', label: 'لوحة التحكم',   icon: LayoutDashboard },
+    { to: '/admin/control',       label: 'لوحة التحكم',   icon: LayoutDashboard },
+    { to: '/admin/distribution', label: 'توزيع العملاء', icon: Shuffle },
     { type: 'section', label: 'التقارير' },
   ];
   const mgmt = user?.management;

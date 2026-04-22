@@ -240,6 +240,59 @@ initDb().then(db => {
     console.error('code_problem_status multi-line migration error:', e.message);
   }
 
+  // 7. Distribution tables (client distribution feature)
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS distribution_sessions (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        line           TEXT    NOT NULL,
+        total_clients  INTEGER NOT NULL DEFAULT 0,
+        matched        INTEGER NOT NULL DEFAULT 0,
+        distributed    INTEGER NOT NULL DEFAULT 0,
+        status         TEXT    NOT NULL DEFAULT 'pending'
+                       CHECK(status IN ('pending','confirmed','cancelled')),
+        task_type      TEXT    NOT NULL DEFAULT 'متابعة مشترك جديد',
+        priority       TEXT    NOT NULL DEFAULT 'عادية',
+        created_by     INTEGER REFERENCES users(id),
+        confirmed_by   INTEGER REFERENCES users(id),
+        created_at     TEXT    NOT NULL DEFAULT (datetime('now','+2 hours')),
+        confirmed_at   TEXT
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_dist_sessions_line   ON distribution_sessions(line)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_dist_sessions_status ON distribution_sessions(status)`);
+
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS distribution_items (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id   INTEGER NOT NULL REFERENCES distribution_sessions(id) ON DELETE CASCADE,
+        client_name  TEXT    NOT NULL,
+        client_phone TEXT,
+        client_line  TEXT,
+        client_date  TEXT,
+        match_type   TEXT    NOT NULL CHECK(match_type IN ('existing_coordinator','auto_distributed')),
+        assigned_to  TEXT    NOT NULL,
+        remark_id    INTEGER REFERENCES remarks(id) ON DELETE SET NULL,
+        created_at   TEXT    NOT NULL DEFAULT (datetime('now','+2 hours'))
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_dist_items_session ON distribution_items(session_id)`);
+
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS distribution_task_types (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        name       TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+        is_default INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT    NOT NULL DEFAULT (datetime('now','+2 hours'))
+      )
+    `);
+    // Seed the one default type if not already present
+    db._raw.run(`INSERT OR IGNORE INTO distribution_task_types (name, is_default) VALUES ('متابعة مشترك جديد', 1)`);
+    console.log('✅ Migration: distribution tables ready');
+  } catch (e) {
+    console.error('distribution migration error:', e.message);
+  }
+
   const app = express();
 
   app.use(cors({
@@ -271,8 +324,9 @@ initDb().then(db => {
   app.use('/api/leader',  require('./routes/leader.routes'));
   app.use('/api/admin',   require('./routes/admin.routes'));
   app.use('/api/export',  require('./routes/export.routes'));
-  app.use('/api/reports', require('./routes/reports.routes'));
-  app.use('/api/team',    require('./routes/team.routes'));
+  app.use('/api/reports',       require('./routes/reports.routes'));
+  app.use('/api/team',          require('./routes/team.routes'));
+  app.use('/api/distribution',  require('./routes/distribution.routes'));
 
   // 404
   app.use((req, res) => res.status(404).json({ error: 'Not found' }));

@@ -31,6 +31,7 @@ import EducationReports from './pages/admin/EducationReports';
 import QualityReports from './pages/admin/QualityReports';
 import TeamPage from './pages/admin/TeamPage';
 import DashboardDetail from './pages/admin/DashboardDetail';
+import ClientDistribution from './pages/admin/ClientDistribution';
 
 // Shared pages
 import FixReport from './pages/shared/FixReport';
@@ -96,6 +97,7 @@ const router = createBrowserRouter([
       { path: 'reports/quality',              element: <QualityReports /> },
       { path: 'reports/fix-report',           element: <FixReport /> },
       { path: 'reports/attendance-absence',   element: <AttendanceAbsenceReport /> },
+      { path: 'distribution',                  element: <ClientDistribution /> },
     ],
   },
 
