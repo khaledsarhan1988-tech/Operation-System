@@ -47,7 +47,7 @@ const router = createBrowserRouter([
     path: '/agent',
     element: <PrivateRoute role="agent"><AppShell /></PrivateRoute>,
     children: [
-      { index: true, element: <Navigate to="dashboard" replace /> },
+      { index: true, element: <Navigate to="pipeline" replace /> },
       { path: 'dashboard',          element: <AgentDashboard /> },
       { path: 'tasks',              element: <MyTasks /> },
       { path: 'clients',            element: <ClientSearch /> },
