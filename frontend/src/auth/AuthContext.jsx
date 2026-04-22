@@ -1,6 +1,15 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import axios from 'axios';
 import api, { setAccessToken, clearAccessToken } from '../api/axios';
 import i18n from '../i18n';
+
+// Plain axios instance for bootstrap refresh — bypasses the interceptor
+// that could cause _isRefreshing deadlock on page load
+const plainAxios = axios.create({
+  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3001/api',
+  withCredentials: true,
+  timeout: 15000,
+});
 
 const AuthContext = createContext(null);
 
@@ -9,8 +18,9 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   // Restore session on mount using refresh cookie
+  // Use plainAxios (no interceptor) to avoid _isRefreshing deadlock
   useEffect(() => {
-    api.post('/auth/refresh')
+    plainAxios.post('/auth/refresh')
       .then(({ data }) => {
         setAccessToken(data.accessToken);
         return api.get('/auth/me');
