@@ -240,6 +240,17 @@ initDb().then(db => {
     console.error('code_problem_status multi-line migration error:', e.message);
   }
 
+  // 9. Add client_date to remarks (store original Excel date for filtering)
+  try {
+    const cols9 = db._raw.exec(`PRAGMA table_info(remarks)`)[0]?.values.map(r => r[1]) || [];
+    if (!cols9.includes('client_date')) {
+      db._raw.run(`ALTER TABLE remarks ADD COLUMN client_date TEXT`);
+      db._raw.run(`CREATE INDEX IF NOT EXISTS idx_remarks_client_date ON remarks(client_date)`);
+      saveNow();
+      console.log('✅ Migration: added client_date to remarks');
+    }
+  } catch(e) { console.error('client_date migration:', e.message); }
+
   // 8. CRM Pipeline: remark_interactions + next_followup_at on remarks
   try {
     db._raw.run(`CREATE TABLE IF NOT EXISTS remark_interactions (

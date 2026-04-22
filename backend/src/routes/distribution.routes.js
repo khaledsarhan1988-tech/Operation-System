@@ -49,6 +49,16 @@ function parseExcelDate(raw) {
   return String(raw).trim();
 }
 
+/** Convert DD/MM/YYYY → YYYY-MM-DD for ISO storage (sortable for date range queries) */
+function dmyToISO(dmy) {
+  if (!dmy) return null;
+  const parts = dmy.split('/');
+  if (parts.length === 3 && parts[2].length === 4) {
+    return `${parts[2]}-${String(parts[1]).padStart(2,'0')}-${String(parts[0]).padStart(2,'0')}`;
+  }
+  return null;
+}
+
 // ─── TASK TYPES ───────────────────────────────────────────────────────────────
 
 // GET /api/distribution/task-types
@@ -412,8 +422,8 @@ router.post('/sessions/:sid/confirm', (req, res) => {
     INSERT INTO remarks
       (task_type, assigned_to, details, category, status,
        client_name, client_phone, priority, assigned_by,
-       added_at, last_updated, sla_deadline, line, synced_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now','+2 hours'))
+       added_at, last_updated, sla_deadline, line, client_date, synced_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now','+2 hours'))
   `);
   const updateItem = db.prepare(
     `UPDATE distribution_items SET remark_id = ? WHERE id = ?`
@@ -437,7 +447,8 @@ router.post('/sessions/:sid/confirm', (req, res) => {
         byName,
         ts, ts,
         slaDeadline,
-        session.line
+        session.line,
+        dmyToISO(item.client_date)   // YYYY-MM-DD from DD/MM/YYYY
       );
       updateItem.run(r.lastInsertRowid, item.id);
     }

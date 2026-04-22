@@ -173,6 +173,14 @@ function ClientCard({ remark, stageKey, onSelect, onMove }) {
           </span>
         </div>
 
+        {/* client date from excel */}
+        {remark.client_date && (
+          <div className="mt-2 flex items-center gap-1 text-[11px] text-blue-600 bg-blue-50 rounded-xl px-2 py-1 border border-blue-100">
+            <Calendar size={10} />
+            <span>تاريخ التسجيل: {remark.client_date}</span>
+          </div>
+        )}
+
         {/* next followup */}
         {remark.next_followup_at && (
           <div className="mt-2 flex items-center gap-1 text-[11px] text-violet-700 bg-violet-50 rounded-xl px-2 py-1 border border-violet-100">
@@ -504,11 +512,18 @@ function ClientDetailModal({ remark: init, onClose, onUpdate }) {
 export default function Pipeline() {
   const [selected,  setSelected]  = useState(null);
   const [search,    setSearch]    = useState('');
+  const [dateFrom,  setDateFrom]  = useState('');
+  const [dateTo,    setDateTo]    = useState('');
   const qc = useQueryClient();
 
   const { data: pipeline, isLoading, refetch, isFetching } = useQuery({
-    queryKey: ['agent-pipeline'],
-    queryFn: () => api.get('/agent/pipeline').then(r => r.data),
+    queryKey: ['agent-pipeline', dateFrom, dateTo],
+    queryFn: () => api.get('/agent/pipeline', {
+      params: {
+        ...(dateFrom ? { date_from: dateFrom } : {}),
+        ...(dateTo   ? { date_to:   dateTo   } : {}),
+      },
+    }).then(r => r.data),
     refetchInterval: 120_000,
   });
 
@@ -582,20 +597,37 @@ export default function Pipeline() {
         </div>
       )}
 
-      {/* ── search bar ── */}
-      <div className="relative">
-        <Search size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400" />
-        <input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="ابحث باسم العميل أو رقم الموبايل أو نوع المهمة..."
-          className="w-full bg-white border border-gray-200 rounded-2xl pr-10 pl-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 shadow-sm"
-        />
-        {search && (
-          <button onClick={() => setSearch('')} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
-            <X size={15} />
-          </button>
-        )}
+      {/* ── search + date filter ── */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-3 flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[180px]">
+          <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="بحث باسم أو موبايل..."
+            className="w-full border border-gray-200 rounded-xl pr-9 pl-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+          {search && (
+            <button onClick={() => setSearch('')} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+              <X size={13} />
+            </button>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Calendar size={14} className="text-gray-400 flex-shrink-0"/>
+          <span className="text-xs text-gray-500">من:</span>
+          <input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)}
+            className="border border-gray-200 rounded-xl px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"/>
+          <span className="text-xs text-gray-400">—</span>
+          <input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)}
+            className="border border-gray-200 rounded-xl px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"/>
+          {(dateFrom||dateTo) && (
+            <button onClick={()=>{setDateFrom('');setDateTo('');}}
+              className="p-1 hover:bg-red-50 rounded-lg text-red-400 transition">
+              <X size={13}/>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* ── kanban board ── */}

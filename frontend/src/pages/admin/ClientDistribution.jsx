@@ -659,53 +659,59 @@ export default function ClientDistribution() {
                 ))}
               </div>
 
-              {/* Client distribution table */}
+              {/* Client distribution table — compact scrollable */}
               <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-                <div className="px-5 py-3 border-b bg-gray-50 flex items-center justify-between">
-                  <h3 className="font-bold text-gray-800">تفاصيل التوزيع</h3>
+                <div className="px-4 py-2.5 border-b bg-gray-50 flex items-center justify-between">
+                  <h3 className="font-semibold text-gray-800 text-sm">تفاصيل التوزيع</h3>
                   <span className="text-xs text-gray-500">{displayItems.length} عميل — يمكنك تغيير الموظف لأي عميل</span>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-gray-50 border-b">
+                  <table className="w-full text-xs">
+                    <thead className="bg-gray-50 border-b sticky top-0 z-10">
                       <tr>
-                        <th className="px-4 py-2.5 text-start font-semibold text-gray-600">#</th>
-                        <th className="px-4 py-2.5 text-start font-semibold text-gray-600">اسم العميل</th>
-                        <th className="px-4 py-2.5 text-start font-semibold text-gray-600">الموبايل</th>
-                        <th className="px-4 py-2.5 text-start font-semibold text-gray-600">نوع التوزيع</th>
-                        <th className="px-4 py-2.5 text-start font-semibold text-gray-600">الموظف المُعين</th>
+                        <th className="px-3 py-2 text-start font-semibold text-gray-500 w-8">#</th>
+                        <th className="px-3 py-2 text-start font-semibold text-gray-500">اسم العميل</th>
+                        <th className="px-3 py-2 text-start font-semibold text-gray-500">الموبايل</th>
+                        <th className="px-3 py-2 text-start font-semibold text-gray-500">التاريخ</th>
+                        <th className="px-3 py-2 text-start font-semibold text-gray-500">النوع</th>
+                        <th className="px-3 py-2 text-start font-semibold text-gray-500">الموظف المُعين</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {displayItems.map((item, idx) => (
-                        <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                          <td className="px-4 py-2.5 text-gray-400 text-xs">{idx + 1}</td>
-                          <td className="px-4 py-2.5 font-medium text-gray-900">{item.client_name}</td>
-                          <td className="px-4 py-2.5 font-mono text-xs text-gray-600">{item.client_phone || '—'}</td>
-                          <td className="px-4 py-2.5">
-                            <Badge type={item.match_type} map={MATCH_BADGE} />
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <div className="relative">
-                              <select
-                                value={item.assigned_to}
-                                onChange={e => handleOverride(item.id, e.target.value)}
-                                className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-primary/40 appearance-none pr-6"
-                              >
-                                {agentsData.map(a => (
-                                  <option key={a.id} value={a.full_name}>{a.full_name}</option>
-                                ))}
-                                {!agentsData.find(a => a.full_name === item.assigned_to) && (
-                                  <option value={item.assigned_to}>{item.assigned_to}</option>
-                                )}
-                              </select>
-                              <ChevronDown size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
                   </table>
+                  <div className="max-h-[360px] overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <tbody className="divide-y divide-gray-100">
+                        {displayItems.map((item, idx) => (
+                          <tr key={item.id} className="hover:bg-blue-50/40 transition-colors">
+                            <td className="px-3 py-1.5 text-gray-400 w-8">{idx + 1}</td>
+                            <td className="px-3 py-1.5 font-medium text-gray-900 max-w-[180px] truncate">{item.client_name}</td>
+                            <td className="px-3 py-1.5 font-mono text-gray-500">{item.client_phone || '—'}</td>
+                            <td className="px-3 py-1.5 text-gray-500">{item.client_date || '—'}</td>
+                            <td className="px-3 py-1.5">
+                              <Badge type={item.match_type} map={MATCH_BADGE} />
+                            </td>
+                            <td className="px-3 py-1.5">
+                              <div className="relative">
+                                <select
+                                  value={item.assigned_to}
+                                  onChange={e => handleOverride(item.id, e.target.value)}
+                                  className="border border-gray-300 rounded-lg px-2 py-1 text-xs font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-primary/40 appearance-none pr-5 min-w-[100px]"
+                                >
+                                  {agentsData.map(a => (
+                                    <option key={a.id} value={a.full_name}>{a.full_name}</option>
+                                  ))}
+                                  {!agentsData.find(a => a.full_name === item.assigned_to) && (
+                                    <option value={item.assigned_to}>{item.assigned_to}</option>
+                                  )}
+                                </select>
+                                <ChevronDown size={10} className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
 

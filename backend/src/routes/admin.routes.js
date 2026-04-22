@@ -393,16 +393,20 @@ function getSlaStatus(slaDeadline, priority) {
   return 'on_time';
 }
 
-// GET /api/admin/pipeline?line=&agent=
+// GET /api/admin/pipeline?line=&agent=&date_from=YYYY-MM-DD&date_to=YYYY-MM-DD
 router.get('/pipeline', (req, res) => {
-  const line  = effectiveLine(req);
-  const agent = (req.query.agent || '').trim();
+  const line      = effectiveLine(req);
+  const agent     = (req.query.agent     || '').trim();
+  const dateFrom  = (req.query.date_from || '').trim();
+  const dateTo    = (req.query.date_to   || '').trim();
 
   const conditions = ['1=1'];
   const params     = [];
 
-  if (line)  { conditions.push('r.line = ?');        params.push(line);  }
-  if (agent) { conditions.push('r.assigned_to = ?'); params.push(agent); }
+  if (line)     { conditions.push('r.line = ?');                    params.push(line);     }
+  if (agent)    { conditions.push('r.assigned_to = ?');             params.push(agent);    }
+  if (dateFrom) { conditions.push('r.client_date >= ?');            params.push(dateFrom); }
+  if (dateTo)   { conditions.push('r.client_date <= ?');            params.push(dateTo);   }
 
   const where = conditions.join(' AND ');
 
@@ -411,7 +415,7 @@ router.get('/pipeline', (req, res) => {
       SELECT r.id, r.client_name, r.client_phone, r.task_type, r.status,
              r.priority, r.sla_deadline, r.added_at, r.last_updated,
              r.next_followup_at, r.agent_notes, r.category,
-             r.line, r.assigned_to
+             r.line, r.assigned_to, r.client_date
       FROM remarks r
       WHERE ${where} AND ${stageWhere}
       ORDER BY

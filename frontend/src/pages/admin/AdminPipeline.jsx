@@ -104,6 +104,12 @@ function ClientCard({ remark, stageKey, onSelect, onMove }) {
           </span>
         </div>
 
+        {remark.client_date && (
+          <div className="flex items-center gap-1 text-[11px] text-blue-600 bg-blue-50 rounded-xl px-2 py-1 border border-blue-100 mb-2">
+            <Calendar size={10} />تاريخ العميل: {remark.client_date}
+          </div>
+        )}
+
         {remark.next_followup_at && (
           <div className="flex items-center gap-1 text-[11px] text-violet-700 bg-violet-50 rounded-xl px-2 py-1 border border-violet-100 mb-2">
             <Clock size={10} />متابعة: {fmtDT(remark.next_followup_at)}
@@ -372,6 +378,8 @@ export default function AdminPipeline() {
   const [search,     setSearch]     = useState('');
   const [filterLine, setFilterLine] = useState('');
   const [filterAgent,setFilterAgent]= useState('');
+  const [dateFrom,   setDateFrom]   = useState('');
+  const [dateTo,     setDateTo]     = useState('');
   const qc = useQueryClient();
 
   const { data: agentList = [] } = useQuery({
@@ -380,11 +388,13 @@ export default function AdminPipeline() {
   });
 
   const { data: pipeline, isLoading, refetch, isFetching } = useQuery({
-    queryKey: ['admin-pipeline', filterLine, filterAgent],
+    queryKey: ['admin-pipeline', filterLine, filterAgent, dateFrom, dateTo],
     queryFn:  () => api.get('/admin/pipeline', {
       params: {
-        ...(filterLine  ? { line:  filterLine  } : {}),
-        ...(filterAgent ? { agent: filterAgent } : {}),
+        ...(filterLine ? { line:  filterLine  } : {}),
+        ...(filterAgent? { agent: filterAgent } : {}),
+        ...(dateFrom   ? { date_from: dateFrom } : {}),
+        ...(dateTo     ? { date_to:   dateTo   } : {}),
       },
     }).then(r => r.data),
     refetchInterval: 120_000,
@@ -431,11 +441,21 @@ export default function AdminPipeline() {
 
       {/* filters */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <Filter size={15} className="text-gray-400"/>
-          <span className="text-sm font-semibold text-gray-700">تصفية</span>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Filter size={15} className="text-gray-400"/>
+            <span className="text-sm font-semibold text-gray-700">تصفية</span>
+          </div>
+          {(filterLine||filterAgent||dateFrom||dateTo||search) && (
+            <button
+              onClick={()=>{setFilterLine('');setFilterAgent('');setDateFrom('');setDateTo('');setSearch('');}}
+              className="text-xs text-red-500 hover:text-red-700 flex items-center gap-1 transition"
+            >
+              <X size={12}/> مسح الفلاتر
+            </button>
+          )}
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div className="relative">
             <Search size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"/>
             <input value={search} onChange={e=>setSearch(e.target.value)}
@@ -452,7 +472,32 @@ export default function AdminPipeline() {
             <option value="">كل الأجنتس</option>
             {agentList.map(a=><option key={a} value={a}>{a}</option>)}
           </select>
+          {/* date range */}
+          <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1 flex-1 border border-gray-200 rounded-xl px-2 py-1.5 focus-within:ring-2 focus-within:ring-primary/30">
+              <Calendar size={13} className="text-gray-400 flex-shrink-0"/>
+              <input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)}
+                title="من تاريخ"
+                className="flex-1 text-xs text-gray-700 focus:outline-none bg-transparent min-w-0"/>
+            </div>
+            <span className="text-gray-400 text-xs flex-shrink-0">—</span>
+            <div className="flex items-center gap-1 flex-1 border border-gray-200 rounded-xl px-2 py-1.5 focus-within:ring-2 focus-within:ring-primary/30">
+              <Calendar size={13} className="text-gray-400 flex-shrink-0"/>
+              <input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)}
+                title="إلى تاريخ"
+                className="flex-1 text-xs text-gray-700 focus:outline-none bg-transparent min-w-0"/>
+            </div>
+          </div>
         </div>
+        {(dateFrom||dateTo) && (
+          <p className="text-xs text-primary mt-2 flex items-center gap-1">
+            <Calendar size={11}/>
+            تصفية بتاريخ العميل:
+            {dateFrom && <span className="font-semibold">{dateFrom}</span>}
+            {dateFrom && dateTo && ' ← '}
+            {dateTo   && <span className="font-semibold">{dateTo}</span>}
+          </p>
+        )}
       </div>
 
       {/* stats */}

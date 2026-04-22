@@ -114,25 +114,32 @@ router.put('/tasks/:id', (req, res) => {
 
 // ─── PIPELINE (CRM Kanban) ────────────────────────────────────────────────────
 
-// GET /api/agent/pipeline
+// GET /api/agent/pipeline?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD
 router.get('/pipeline', (req, res) => {
-  const name = req.user.full_name;
-  const lf   = lineClause(req);
+  const name     = req.user.full_name;
+  const lf       = lineClause(req);
+  const dateFrom = (req.query.date_from || '').trim();
+  const dateTo   = (req.query.date_to   || '').trim();
+
+  const dateParams  = [];
+  let   dateClause  = '';
+  if (dateFrom) { dateClause += ' AND client_date >= ?'; dateParams.push(dateFrom); }
+  if (dateTo)   { dateClause += ' AND client_date <= ?'; dateParams.push(dateTo);   }
 
   const buildCol = (where) =>
     db.prepare(`
       SELECT id, client_name, client_phone, task_type, status, priority,
              sla_deadline, added_at, last_updated, next_followup_at,
-             agent_notes, category, line, details
+             agent_notes, category, line, details, client_date
       FROM remarks
       WHERE assigned_to = ?
-        AND ${where}${lf.clause}
+        AND ${where}${lf.clause}${dateClause}
       ORDER BY
         CASE priority WHEN 'عاجلة' THEN 1 WHEN 'هامة' THEN 2 ELSE 3 END ASC,
         CASE WHEN sla_deadline < datetime('now','+2 hours') THEN 0 ELSE 1 END ASC,
         added_at ASC
       LIMIT 60
-    `).all(name, ...lf.params)
+    `).all(name, ...lf.params, ...dateParams)
       .map(r => ({ ...r, sla_status: getSlaStatus(r.sla_deadline, r.priority) }));
 
   try {
