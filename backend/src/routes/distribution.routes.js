@@ -176,8 +176,10 @@ router.post('/preview', (req, res) => {
     }
 
     // ── Load-balanced distribution for unmatched ──────────────────────────────
-    const ql = line ? ` AND r.line = '${line.replace(/'/g,"''")}'` : '';
-    const ul = line ? ` AND u.line = '${line.replace(/'/g,"''")}'` : '';
+    const safeL = line ? line.replace(/'/g, "''") : '';
+    const ql = line ? ` AND r.line = '${safeL}'` : '';       // for LEFT JOIN ... r
+    const wl = line ? ` AND line = '${safeL}'` : '';         // for plain WHERE on remarks
+    const ul = line ? ` AND u.line = '${safeL}'` : '';       // for WHERE on users
 
     const agents = db.prepare(`
       SELECT u.full_name, u.department, u.line,
@@ -247,7 +249,7 @@ router.post('/preview', (req, res) => {
       if (!summaryMap[item.assigned_to]) {
         const ag  = db.prepare(`SELECT department FROM users WHERE full_name = ? LIMIT 1`).get(item.assigned_to);
         const cnt = db.prepare(
-          `SELECT COUNT(*) as cnt FROM remarks WHERE assigned_to = ? AND LOWER(status) NOT IN ('إنتهت','closed','resolved')${ql}`
+          `SELECT COUNT(*) as cnt FROM remarks WHERE assigned_to = ? AND LOWER(status) NOT IN ('إنتهت','closed','resolved')${wl}`
         ).get(item.assigned_to)?.cnt ?? 0;
         summaryMap[item.assigned_to] = {
           full_name: item.assigned_to, department: ag?.department ?? '',
