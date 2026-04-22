@@ -461,7 +461,7 @@ export default function ClientDistribution() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">توزيع العملاء الجدد</h1>
-          <p className="text-sm text-gray-500 mt-1">رفع شيت العملاء وتوزيعهم تلقائياً على الأجنتس</p>
+          <p className="text-sm text-gray-500 mt-1">رفع شيت العملاء وتوزيعهم تلقائياً على المنسقين</p>
         </div>
         <div className="flex gap-2">
           <button
@@ -660,7 +660,7 @@ export default function ClientDistribution() {
               {/* Active agents chips */}
               {agentsData.length > 0 && (
                 <div>
-                  <p className="text-xs font-semibold text-gray-500 mb-2">الأجنتس النشطين</p>
+                  <p className="text-xs font-semibold text-gray-500 mb-2">المنسقين النشطين</p>
                   <div className="flex flex-wrap gap-2">
                     {agentsData.map(a => (
                       <div key={a.id} className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-xl px-3 py-1.5">
@@ -712,7 +712,7 @@ export default function ClientDistribution() {
                   { label: 'إجمالي العملاء',    value: preview.total,           icon: Users,     color: 'text-blue-600   bg-blue-50'   },
                   { label: 'منسق موجود',        value: preview.matched,         icon: UserCheck, color: 'text-green-600  bg-green-50'  },
                   { label: 'توزيع تلقائي',      value: preview.distributed,     icon: Shuffle,   color: 'text-purple-600 bg-purple-50' },
-                  { label: 'الأجنتس المشاركين', value: agentSummaryLive.length, icon: Users,     color: 'text-amber-600  bg-amber-50'  },
+                  { label: 'المنسقين المشاركين', value: agentSummaryLive.length, icon: Users,     color: 'text-amber-600  bg-amber-50'  },
                 ].map(({ label, value, icon: Icon, color }) => (
                   <div key={label} className="bg-white rounded-2xl border border-gray-200 p-4 flex items-center gap-3 shadow-sm">
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${color.split(' ')[1]}`}>
@@ -825,7 +825,7 @@ export default function ClientDistribution() {
               <div>
                 <h2 className="text-xl font-bold text-gray-900">تم التوزيع بنجاح!</h2>
                 <p className="text-gray-500 mt-1">
-                  تم إنشاء <span className="font-bold text-primary">{doneResult.remarks_created}</span> مهمة جديدة للأجنتس
+                  تم إنشاء <span className="font-bold text-primary">{doneResult.remarks_created}</span> مهمة جديدة للمنسقين
                 </p>
               </div>
               <div className="flex justify-center gap-3">

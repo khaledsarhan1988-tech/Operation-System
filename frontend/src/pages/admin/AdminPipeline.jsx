@@ -469,7 +469,7 @@ export default function AdminPipeline() {
           </select>
           <select value={filterAgent} onChange={e=>setFilterAgent(e.target.value)}
             className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-white">
-            <option value="">كل الأجنتس</option>
+            <option value="">كل المنسقين</option>
             {agentList.map(a=><option key={a} value={a}>{a}</option>)}
           </select>
           {/* date range */}
