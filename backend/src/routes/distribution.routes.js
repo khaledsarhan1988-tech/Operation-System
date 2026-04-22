@@ -16,7 +16,6 @@ const SLA_HOURS    = { 'عاجلة': 3, 'هامة': 24, 'عادية': 48 };
 /** Normalise any phone value coming from Excel (handles scientific notation). */
 function normalisePhone(raw) {
   if (raw === null || raw === undefined || raw === '') return '';
-  // Excel stores large numbers as floats → convert to integer string first
   let s = typeof raw === 'number' ? Math.round(raw).toString() : String(raw);
   return s.replace(/[^0-9]/g, '');
 }
@@ -70,6 +69,43 @@ router.delete('/task-types/:id', (req, res) => {
   return res.json({ message: 'Deleted' });
 });
 
+// ─── SCAN DATES (new) ─────────────────────────────────────────────────────────
+
+// POST /api/distribution/scan-dates
+// Body: { file_base64 }
+// Returns: { dates: ["date1", "date2", ...] } sorted unique list from column A
+router.post('/scan-dates', (req, res) => {
+  const { file_base64 } = req.body;
+  if (!file_base64) return res.status(400).json({ error: 'file_base64 مطلوب' });
+
+  try {
+    const buffer = Buffer.from(file_base64, 'base64');
+    const wb   = XLSX.read(buffer, { type: 'buffer', raw: true });
+    const ws   = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+    const dateSet = new Set();
+    for (let i = 1; i < rows.length; i++) {
+      const row  = rows[i];
+      const date = String(row[0] || '').trim();
+      if (date) dateSet.add(date);
+    }
+
+    // Sort dates — try natural sort; non-date strings fall back to lexicographic
+    const dates = [...dateSet].sort((a, b) => {
+      const da = new Date(a);
+      const db_ = new Date(b);
+      if (!isNaN(da) && !isNaN(db_)) return da - db_;
+      return a.localeCompare(b, 'ar');
+    });
+
+    return res.json({ dates });
+  } catch (err) {
+    console.error('[distribution/scan-dates]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── AGENTS WORKLOAD ──────────────────────────────────────────────────────────
 
 // GET /api/distribution/agents?line=
@@ -93,11 +129,43 @@ router.get('/agents', (req, res) => {
   return res.json(agents);
 });
 
+// ─── COORDINATOR STATS (new) ──────────────────────────────────────────────────
+
+// GET /api/distribution/coordinator-stats?line=
+// Returns per-coordinator breakdown from remarks WHERE category='توزيع عملاء'
+router.get('/coordinator-stats', (req, res) => {
+  const { line } = req.query;
+  const lf = line ? ` AND line = '${line.replace(/'/g, "''")}'` : '';
+
+  try {
+    const rows = db.prepare(`
+      SELECT
+        assigned_to,
+        COUNT(*) as total,
+        SUM(CASE WHEN LOWER(status) NOT IN ('إنتهت','closed','resolved') THEN 1 ELSE 0 END) as open_count,
+        SUM(CASE WHEN LOWER(status) IN ('إنتهت','closed','resolved') THEN 1 ELSE 0 END) as closed_count,
+        SUM(CASE WHEN status = 'جديدة' THEN 1 ELSE 0 END) as new_count,
+        SUM(CASE WHEN LOWER(status) NOT IN ('إنتهت','closed','resolved','جديدة') THEN 1 ELSE 0 END) as in_progress_count
+      FROM remarks
+      WHERE category = 'توزيع عملاء'${lf}
+      GROUP BY assigned_to
+      ORDER BY open_count DESC, assigned_to COLLATE NOCASE
+    `).all();
+
+    return res.json(rows);
+  } catch (err) {
+    console.error('[distribution/coordinator-stats]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── PREVIEW (upload + analyse) ───────────────────────────────────────────────
 
-// POST /api/distribution/preview  (JSON: { file_base64, filename, line, task_type, priority })
+// POST /api/distribution/preview
+// Body: { file_base64, filename, line, task_type, priority, dates? }
+// If `dates` is a non-empty array, only clients whose date (col A) is in the array are included.
 router.post('/preview', (req, res) => {
-  const { file_base64, line, task_type = 'متابعة مشترك جديد', priority = 'عادية' } = req.body;
+  const { file_base64, line, task_type = 'متابعة مشترك جديد', priority = 'عادية', dates } = req.body;
 
   if (!file_base64) return res.status(400).json({ error: 'لم يتم رفع ملف' });
   if (!line)        return res.status(400).json({ error: 'line مطلوب' });
@@ -108,8 +176,10 @@ router.post('/preview', (req, res) => {
     const buffer = Buffer.from(file_base64, 'base64');
     const wb   = XLSX.read(buffer, { type: 'buffer', raw: true });
     const ws   = wb.Sheets[wb.SheetNames[0]];
-    // raw:true gives us numeric values, cellText not needed
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+    // Build optional date filter set
+    const filterDates = Array.isArray(dates) && dates.length > 0 ? new Set(dates) : null;
 
     // Skip header (row 0) — columns: A=date, B=pages/line, C=name, D=phone
     const clients = [];
@@ -120,13 +190,13 @@ router.post('/preview', (req, res) => {
       const name  = String(row[2] || '').trim();
       const phone = normalisePhone(row[3]);
       if (!name && !phone) continue;
+      if (filterDates && !filterDates.has(date)) continue;
       clients.push({ date, pages, name, phone });
     }
 
     if (!clients.length) return res.status(400).json({ error: 'لم يتم العثور على عملاء في الملف' });
 
     // ── Build phone→coordinator map in ONE bulk query ─────────────────────────
-    // Fetches all active-batch coordinators at once — no per-client SQL loop
     const allCoords = db.prepare(`
       SELECT
         REPLACE(REPLACE(REPLACE(c.phone,' ',''),'-',''),'+','') AS norm_phone,
@@ -138,7 +208,6 @@ router.post('/preview', (req, res) => {
       ORDER BY b.start_date DESC
     `).all();
 
-    // coordMap: normalized_phone → coordinator name (first active batch wins)
     const coordMap = {};
     for (const row of allCoords) {
       if (row.norm_phone && !coordMap[row.norm_phone]) {
@@ -147,12 +216,12 @@ router.post('/preview', (req, res) => {
     }
 
     // Build active-agent set for fast O(1) validation
-    const activeAgents = db.prepare(`
-      SELECT full_name FROM users WHERE role = 'agent' AND is_active = 1
-    `).all();
+    const activeAgents = db.prepare(
+      `SELECT full_name FROM users WHERE role = 'agent' AND is_active = 1`
+    ).all();
     const agentSet = new Set(activeAgents.map(a => a.full_name.trim().toLowerCase()));
 
-    // ── Match each client in memory (O(1) per client) ──────────────────────
+    // ── Match each client in memory (O(1) per client) ─────────────────────────
     const matched   = [];
     const unmatched = [];
 
@@ -161,7 +230,6 @@ router.post('/preview', (req, res) => {
       if (client.phone) {
         const coordinator = coordMap[client.phone];
         if (coordinator && agentSet.has(coordinator.trim().toLowerCase())) {
-          // Find the exact-case name from activeAgents
           const agentObj = activeAgents.find(
             a => a.full_name.trim().toLowerCase() === coordinator.trim().toLowerCase()
           );
@@ -177,9 +245,9 @@ router.post('/preview', (req, res) => {
 
     // ── Load-balanced distribution for unmatched ──────────────────────────────
     const safeL = line ? line.replace(/'/g, "''") : '';
-    const ql = line ? ` AND r.line = '${safeL}'` : '';       // for LEFT JOIN ... r
-    const wl = line ? ` AND line = '${safeL}'` : '';         // for plain WHERE on remarks
-    const ul = line ? ` AND u.line = '${safeL}'` : '';       // for WHERE on users
+    const ql = line ? ` AND r.line = '${safeL}'` : '';
+    const wl = line ? ` AND line = '${safeL}'` : '';
+    const ul = line ? ` AND u.line = '${safeL}'` : '';
 
     const agents = db.prepare(`
       SELECT u.full_name, u.department, u.line,
@@ -196,12 +264,10 @@ router.post('/preview', (req, res) => {
     if (!agents.length)
       return res.status(400).json({ error: 'لا يوجد أجنتس نشطين لهذا الخط' });
 
-    // workload map: name → current count (copy to mutate during distribution)
     const workload = {};
     agents.forEach(a => { workload[a.full_name] = a.open_tasks; });
 
     const distributed = unmatched.map(client => {
-      // Pick agent with smallest current workload
       const minAgent = Object.entries(workload).sort(([,a],[,b]) => a - b)[0][0];
       workload[minAgent]++;
       return { ...client, assigned_to: minAgent, match_type: 'auto_distributed' };
@@ -232,7 +298,6 @@ router.post('/preview', (req, res) => {
       );
     })();
 
-    // Fetch back with real IDs
     const savedItems = db.prepare(
       `SELECT * FROM distribution_items WHERE session_id = ? ORDER BY id`
     ).all(sessionId);

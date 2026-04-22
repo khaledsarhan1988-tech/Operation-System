@@ -4,20 +4,21 @@ import {
   Upload, Users, CheckCircle, XCircle, Clock, RefreshCw,
   ChevronDown, Plus, Trash2, History, ArrowLeft,
   UserCheck, Shuffle, AlertCircle, FileSpreadsheet, X, Eye,
+  Calendar,
 } from 'lucide-react';
 import api from '../../api/axios';
 
-const LINES     = ['Ahmed Hassan', 'Dardasha'];
+const LINES      = ['Ahmed Hassan', 'Dardasha'];
 const PRIORITIES = ['عادية', 'هامة', 'عاجلة'];
 
 // ─── small helpers ────────────────────────────────────────────────────────────
 const STATUS_BADGE = {
-  pending:   { label: 'معلقة',   cls: 'bg-amber-100  text-amber-800'  },
-  confirmed: { label: 'مؤكدة',   cls: 'bg-green-100  text-green-800'  },
-  cancelled: { label: 'ملغاة',   cls: 'bg-red-100    text-red-800'    },
+  pending:   { label: 'معلقة',  cls: 'bg-amber-100  text-amber-800' },
+  confirmed: { label: 'مؤكدة',  cls: 'bg-green-100  text-green-800' },
+  cancelled: { label: 'ملغاة',  cls: 'bg-red-100    text-red-800'   },
 };
 const MATCH_BADGE = {
-  existing_coordinator: { label: 'منسق موجود',  cls: 'bg-blue-100  text-blue-800'  },
+  existing_coordinator: { label: 'منسق موجود',   cls: 'bg-blue-100  text-blue-800'   },
   auto_distributed:     { label: 'توزيع تلقائي', cls: 'bg-purple-100 text-purple-800' },
 };
 
@@ -56,7 +57,6 @@ function TaskTypeManager({ onClose }) {
           <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg"><X size={18} /></button>
         </div>
         <div className="p-5 space-y-4">
-          {/* Add new */}
           <div className="flex gap-2">
             <input
               value={name}
@@ -76,7 +76,6 @@ function TaskTypeManager({ onClose }) {
           {add.isError && (
             <p className="text-xs text-red-600">{add.error?.response?.data?.error || 'حدث خطأ'}</p>
           )}
-          {/* List */}
           <ul className="divide-y divide-gray-100 max-h-64 overflow-y-auto">
             {types.map(t => (
               <li key={t.id} className="flex items-center justify-between py-2.5">
@@ -159,24 +158,127 @@ function HistoryDetail({ sessionId, onClose }) {
   );
 }
 
+// ─── COORDINATOR STATS component ──────────────────────────────────────────────
+function CoordinatorStats() {
+  const [statsLine, setStatsLine] = useState('');
+
+  const { data: rows = [], isLoading, isError } = useQuery({
+    queryKey: ['dist-coordinator-stats', statsLine],
+    queryFn: () =>
+      api.get('/distribution/coordinator-stats', { params: statsLine ? { line: statsLine } : {} })
+        .then(r => r.data),
+  });
+
+  const progressColor = (pct) => {
+    if (pct >= 80) return 'bg-green-500';
+    if (pct >= 50) return 'bg-blue-500';
+    return 'bg-amber-500';
+  };
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+      {/* Header row with line filter */}
+      <div className="px-5 py-3 border-b bg-gray-50 flex items-center justify-between gap-4">
+        <h3 className="font-bold text-gray-800 flex items-center gap-2">
+          <UserCheck size={18} className="text-primary" />
+          حالة المنسقين
+        </h3>
+        <select
+          value={statsLine}
+          onChange={e => setStatsLine(e.target.value)}
+          className="border border-gray-300 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+        >
+          <option value="">كل الخطوط</option>
+          {LINES.map(l => <option key={l} value={l}>{l}</option>)}
+        </select>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-12">
+          <RefreshCw className="animate-spin text-primary" size={28} />
+        </div>
+      ) : isError ? (
+        <div className="text-center py-12 text-red-500 text-sm">حدث خطأ أثناء تحميل البيانات</div>
+      ) : rows.length === 0 ? (
+        <div className="text-center py-12 text-gray-400 text-sm">لا توجد بيانات توزيع بعد</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 border-b">
+              <tr>
+                <th className="px-4 py-2.5 text-start font-semibold text-gray-600">المنسق</th>
+                <th className="px-4 py-2.5 text-center font-semibold text-gray-600">جديدة</th>
+                <th className="px-4 py-2.5 text-center font-semibold text-gray-600">قيد المتابعة</th>
+                <th className="px-4 py-2.5 text-center font-semibold text-gray-600">منتهية</th>
+                <th className="px-4 py-2.5 text-center font-semibold text-gray-600">الإجمالي</th>
+                <th className="px-4 py-2.5 text-start font-semibold text-gray-600 min-w-[140px]">نسبة الإنجاز</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {rows.map(row => {
+                const pct = row.total > 0 ? Math.round((row.closed_count / row.total) * 100) : 0;
+                return (
+                  <tr key={row.assigned_to} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-4 py-3 font-semibold text-gray-900">{row.assigned_to}</td>
+                    <td className="px-4 py-3 text-center">
+                      <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-50 text-blue-700 font-bold text-xs">
+                        {row.new_count}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-amber-50 text-amber-700 font-bold text-xs">
+                        {row.in_progress_count}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-green-50 text-green-700 font-bold text-xs">
+                        {row.closed_count}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-center font-bold text-gray-900">{row.total}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 bg-gray-200 rounded-full h-2">
+                          <div
+                            className={`${progressColor(pct)} rounded-full h-2 transition-all`}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                        <span className="text-xs font-semibold text-gray-600 w-9 text-left">{pct}%</span>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 export default function ClientDistribution() {
   const qc = useQueryClient();
 
   // ── state ──
-  const [tab,        setTab]        = useState('new');    // 'new' | 'history'
-  const [step,       setStep]       = useState('upload'); // 'upload' | 'preview' | 'done'
-  const [dragging,   setDragging]   = useState(false);
-  const [file,       setFile]       = useState(null);
-  const [line,       setLine]       = useState('Ahmed Hassan');
-  const [taskType,   setTaskType]   = useState('متابعة مشترك جديد');
-  const [priority,   setPriority]   = useState('عادية');
-  const [preview,    setPreview]    = useState(null);    // API response
-  const [overrides,  setOverrides]  = useState({});     // itemId → agentName
-  const [doneResult, setDoneResult] = useState(null);
-  const [showTTMgr,  setShowTTMgr]  = useState(false);
-  const [detailId,   setDetailId]   = useState(null);
-  const [histPage,   setHistPage]   = useState(1);
+  const [tab,            setTab]           = useState('new');    // 'new' | 'history' | 'coords'
+  const [step,           setStep]          = useState('upload'); // 'upload' | 'preview' | 'done'
+  const [dragging,       setDragging]      = useState(false);
+  const [file,           setFile]          = useState(null);
+  const [fileBase64,     setFileBase64]    = useState(null);
+  const [availableDates, setAvailableDates] = useState([]);
+  const [selectedDates,  setSelectedDates] = useState(new Set());
+  const [line,           setLine]          = useState('Ahmed Hassan');
+  const [taskType,       setTaskType]      = useState('متابعة مشترك جديد');
+  const [priority,       setPriority]      = useState('عادية');
+  const [preview,        setPreview]       = useState(null);
+  const [overrides,      setOverrides]     = useState({});
+  const [doneResult,     setDoneResult]    = useState(null);
+  const [showTTMgr,      setShowTTMgr]     = useState(false);
+  const [detailId,       setDetailId]      = useState(null);
+  const [histPage,       setHistPage]      = useState(1);
 
   const fileRef = useRef();
 
@@ -226,14 +328,34 @@ export default function ClientDistribution() {
 
   // ── handlers ──
   const resetUpload = useCallback(() => {
-    setStep('upload'); setFile(null); setPreview(null);
-    setOverrides({}); setDoneResult(null);
+    setStep('upload');
+    setFile(null);
+    setFileBase64(null);
+    setAvailableDates([]);
+    setSelectedDates(new Set());
+    setPreview(null);
+    setOverrides({});
+    setDoneResult(null);
   }, []);
 
   const onFileDrop = useCallback(f => {
     if (!f) return;
     if (!f.name.match(/\.xlsx?$/i)) return alert('يرجى رفع ملف Excel فقط (.xlsx)');
     setFile(f);
+    setAvailableDates([]);
+    setSelectedDates(new Set());
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const b64 = e.target.result.split(',')[1];
+      setFileBase64(b64);
+      api.post('/distribution/scan-dates', { file_base64: b64 })
+        .then(r => {
+          setAvailableDates(r.data.dates);
+          setSelectedDates(new Set(r.data.dates));
+        })
+        .catch(() => {}); // silent fail — user can still analyze without date filter
+    };
+    reader.readAsDataURL(f);
   }, []);
 
   const handleDrop = useCallback(e => {
@@ -242,14 +364,26 @@ export default function ClientDistribution() {
   }, [onFileDrop]);
 
   const handleAnalyse = () => {
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      // Convert file to base64 and send as JSON (avoids multipart/CORS issues)
-      const base64 = e.target.result.split(',')[1];
-      previewMut.mutate({ file_base64: base64, filename: file.name, line, task_type: taskType, priority });
+    if (!fileBase64) return;
+    const payload = {
+      file_base64: fileBase64,
+      filename: file?.name || 'file.xlsx',
+      line,
+      task_type: taskType,
+      priority,
     };
-    reader.readAsDataURL(file);
+    if (selectedDates.size > 0 && selectedDates.size < availableDates.length) {
+      payload.dates = [...selectedDates];
+    }
+    previewMut.mutate(payload);
+  };
+
+  const toggleDate = (date) => {
+    setSelectedDates(prev => {
+      const next = new Set(prev);
+      if (next.has(date)) { next.delete(date); } else { next.add(date); }
+      return next;
+    });
   };
 
   const handleOverride = useCallback((itemId, agent) => {
@@ -286,20 +420,29 @@ export default function ClientDistribution() {
       {detailId  && <HistoryDetail sessionId={detailId} onClose={() => setDetailId(null)} />}
 
       {/* ── Header ── */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">توزيع العملاء الجدد</h1>
           <p className="text-sm text-gray-500 mt-1">رفع شيت العملاء وتوزيعهم تلقائياً على الأجنتس</p>
         </div>
         <div className="flex gap-2">
           <button
-            onClick={() => { setTab('new');     setStep('upload'); }}
+            onClick={() => { setTab('new'); setStep('upload'); }}
             className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
               tab === 'new' ? 'bg-primary text-white shadow' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
             }`}
           >
             <Upload size={16} className="inline ml-1.5" />
             توزيع جديد
+          </button>
+          <button
+            onClick={() => setTab('coords')}
+            className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
+              tab === 'coords' ? 'bg-primary text-white shadow' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            <UserCheck size={16} className="inline ml-1.5" />
+            حالة المنسقين
           </button>
           <button
             onClick={() => setTab('history')}
@@ -318,7 +461,7 @@ export default function ClientDistribution() {
         <>
           {/* ── STEP: UPLOAD ────────────────────────────────────────────── */}
           {step === 'upload' && (
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 space-y-6">
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 space-y-5">
               {/* Drop zone */}
               <div
                 onDragOver={e => { e.preventDefault(); setDragging(true); }}
@@ -352,6 +495,53 @@ export default function ClientDistribution() {
                   </div>
                 )}
               </div>
+
+              {/* Date filter — shown only after scan */}
+              {availableDates.length > 0 && (
+                <div className="border border-gray-200 rounded-xl p-4 space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      <Calendar size={16} className="text-primary" />
+                      <span className="text-sm font-semibold text-gray-700">تصفية بالتاريخ</span>
+                      <span className="text-xs text-gray-500">
+                        {selectedDates.size} يوم محدد من {availableDates.length}
+                      </span>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setSelectedDates(new Set(availableDates))}
+                        className="text-xs px-3 py-1 rounded-lg bg-primary/10 text-primary font-semibold hover:bg-primary/20 transition"
+                      >
+                        تحديد الكل
+                      </button>
+                      <button
+                        onClick={() => setSelectedDates(new Set())}
+                        className="text-xs px-3 py-1 rounded-lg bg-gray-100 text-gray-600 font-semibold hover:bg-gray-200 transition"
+                      >
+                        إلغاء الكل
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {availableDates.map(date => {
+                      const active = selectedDates.has(date);
+                      return (
+                        <button
+                          key={date}
+                          onClick={() => toggleDate(date)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition ${
+                            active
+                              ? 'bg-primary text-white border-primary shadow-sm'
+                              : 'bg-white text-gray-600 border-gray-300 hover:border-primary hover:text-primary'
+                          }`}
+                        >
+                          {date}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Settings row */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -400,14 +590,14 @@ export default function ClientDistribution() {
                 </div>
               </div>
 
-              {/* Agents preview */}
+              {/* Active agents chips */}
               {agentsData.length > 0 && (
                 <div>
-                  <p className="text-xs font-semibold text-gray-500 mb-2">الأجنتس النشطين — الحمل الحالي</p>
+                  <p className="text-xs font-semibold text-gray-500 mb-2">الأجنتس النشطين</p>
                   <div className="flex flex-wrap gap-2">
                     {agentsData.map(a => (
                       <div key={a.id} className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-xl px-3 py-1.5">
-                        <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs">
+                        <div className="w-5 h-5 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs">
                           {a.full_name[0]}
                         </div>
                         <span className="text-xs font-semibold text-gray-700">{a.full_name}</span>
@@ -435,7 +625,7 @@ export default function ClientDistribution() {
 
               <div className="flex justify-end">
                 <button
-                  disabled={!file || previewMut.isPending}
+                  disabled={!fileBase64 || previewMut.isPending}
                   onClick={handleAnalyse}
                   className="btn-primary px-6 py-2.5 text-sm font-semibold disabled:opacity-50 flex items-center gap-2"
                 >
@@ -449,13 +639,13 @@ export default function ClientDistribution() {
           {/* ── STEP: PREVIEW ───────────────────────────────────────────── */}
           {step === 'preview' && preview && (
             <div className="space-y-5">
-              {/* Summary cards */}
+              {/* Summary KPI cards */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                 {[
-                  { label: 'إجمالي العملاء',    value: preview.total,       icon: Users,     color: 'text-blue-600   bg-blue-50'  },
-                  { label: 'منسق موجود',        value: preview.matched,     icon: UserCheck, color: 'text-green-600  bg-green-50' },
-                  { label: 'توزيع تلقائي',      value: preview.distributed, icon: Shuffle,   color: 'text-purple-600 bg-purple-50'},
-                  { label: 'الأجنتس المشاركين', value: agentSummaryLive.length, icon: Users, color: 'text-amber-600  bg-amber-50' },
+                  { label: 'إجمالي العملاء',    value: preview.total,           icon: Users,     color: 'text-blue-600   bg-blue-50'   },
+                  { label: 'منسق موجود',        value: preview.matched,         icon: UserCheck, color: 'text-green-600  bg-green-50'  },
+                  { label: 'توزيع تلقائي',      value: preview.distributed,     icon: Shuffle,   color: 'text-purple-600 bg-purple-50' },
+                  { label: 'الأجنتس المشاركين', value: agentSummaryLive.length, icon: Users,     color: 'text-amber-600  bg-amber-50'  },
                 ].map(({ label, value, icon: Icon, color }) => (
                   <div key={label} className="bg-white rounded-2xl border border-gray-200 p-4 flex items-center gap-3 shadow-sm">
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${color.split(' ')[1]}`}>
@@ -467,39 +657,6 @@ export default function ClientDistribution() {
                     </div>
                   </div>
                 ))}
-              </div>
-
-              {/* Agent workload cards */}
-              <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
-                <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-                  <Users size={18} className="text-primary" /> توزيع الحمل على الأجنتس
-                </h3>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                  {agentSummaryLive.map(a => (
-                    <div key={a.full_name} className="bg-gray-50 rounded-xl p-3 space-y-2">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-sm">
-                          {a.full_name[0]}
-                        </div>
-                        <span className="text-sm font-semibold text-gray-800 truncate">{a.full_name}</span>
-                      </div>
-                      <div className="flex items-center justify-between text-xs text-gray-500">
-                        <span>مهام حالية</span>
-                        <span className="font-bold text-gray-700">{a.current_tasks}</span>
-                      </div>
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-gray-500">عملاء جدد</span>
-                        <span className="font-bold text-green-600">+{a.new_clients}</span>
-                      </div>
-                      <div className="w-full bg-gray-200 rounded-full h-1.5">
-                        <div
-                          className="bg-primary rounded-full h-1.5 transition-all"
-                          style={{ width: `${Math.min(100, ((a.current_tasks + a.new_clients) / Math.max(1, ...agentSummaryLive.map(x => x.current_tasks + x.new_clients))) * 100)}%` }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
               </div>
 
               {/* Client distribution table */}
@@ -529,7 +686,6 @@ export default function ClientDistribution() {
                             <Badge type={item.match_type} map={MATCH_BADGE} />
                           </td>
                           <td className="px-4 py-2.5">
-                            {/* Inline agent selector */}
                             <div className="relative">
                               <select
                                 value={item.assigned_to}
@@ -539,7 +695,6 @@ export default function ClientDistribution() {
                                 {agentsData.map(a => (
                                   <option key={a.id} value={a.full_name}>{a.full_name}</option>
                                 ))}
-                                {/* Include current if not in agentsData */}
                                 {!agentsData.find(a => a.full_name === item.assigned_to) && (
                                   <option value={item.assigned_to}>{item.assigned_to}</option>
                                 )}
@@ -554,7 +709,7 @@ export default function ClientDistribution() {
                 </div>
               </div>
 
-              {/* Actions */}
+              {/* Actions bar */}
               <div className="flex items-center justify-between bg-white rounded-2xl border border-gray-200 p-4 shadow-sm">
                 <button
                   onClick={() => cancelMut.mutate(preview.session_id)}
@@ -618,6 +773,9 @@ export default function ClientDistribution() {
           )}
         </>
       )}
+
+      {/* ═══════════════════ TAB: COORDINATOR STATS ══════════════════════════ */}
+      {tab === 'coords' && <CoordinatorStats />}
 
       {/* ═══════════════════ TAB: HISTORY ════════════════════════════════════ */}
       {tab === 'history' && (
@@ -691,12 +849,12 @@ export default function ClientDistribution() {
               {/* Pagination */}
               {histData?.total > 15 && (
                 <div className="flex justify-center gap-2 p-4 border-t">
-                  <button disabled={histPage <= 1} onClick={() => setHistPage(p => p-1)}
+                  <button disabled={histPage <= 1} onClick={() => setHistPage(p => p - 1)}
                     className="px-3 py-1.5 text-sm rounded-lg border hover:bg-gray-50 disabled:opacity-40">
                     السابق
                   </button>
                   <span className="px-3 py-1.5 text-sm text-gray-600">صفحة {histPage}</span>
-                  <button disabled={histPage * 15 >= histData?.total} onClick={() => setHistPage(p => p+1)}
+                  <button disabled={histPage * 15 >= histData?.total} onClick={() => setHistPage(p => p + 1)}
                     className="px-3 py-1.5 text-sm rounded-lg border hover:bg-gray-50 disabled:opacity-40">
                     التالي
                   </button>
