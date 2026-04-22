@@ -125,37 +125,49 @@ router.post('/preview', (req, res) => {
 
     if (!clients.length) return res.status(400).json({ error: 'لم يتم العثور على عملاء في الملف' });
 
-    // ── Match each client to an existing coordinator ──────────────────────────
-    const stmtCoord = db.prepare(`
-      SELECT b.coordinators
+    // ── Build phone→coordinator map in ONE bulk query ─────────────────────────
+    // Fetches all active-batch coordinators at once — no per-client SQL loop
+    const allCoords = db.prepare(`
+      SELECT
+        REPLACE(REPLACE(REPLACE(c.phone,' ',''),'-',''),'+','') AS norm_phone,
+        b.coordinators
       FROM clients c
-      INNER JOIN batches b ON b.group_name = c.group_name AND b.line = c.line
-      WHERE REPLACE(REPLACE(REPLACE(c.phone,' ',''),'-',''),'+','') = ?
-        AND b.status = 'نشطة'
+      INNER JOIN batches b ON b.group_name = c.group_name
+      WHERE b.status = 'نشطة'
+        AND c.phone IS NOT NULL AND c.phone != ''
       ORDER BY b.start_date DESC
-      LIMIT 1
-    `);
-    const stmtAgent = db.prepare(`
-      SELECT full_name FROM users
-      WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?))
-        AND role = 'agent' AND is_active = 1
-      LIMIT 1
-    `);
+    `).all();
 
+    // coordMap: normalized_phone → coordinator name (first active batch wins)
+    const coordMap = {};
+    for (const row of allCoords) {
+      if (row.norm_phone && !coordMap[row.norm_phone]) {
+        coordMap[row.norm_phone] = row.coordinators;
+      }
+    }
+
+    // Build active-agent set for fast O(1) validation
+    const activeAgents = db.prepare(`
+      SELECT full_name FROM users WHERE role = 'agent' AND is_active = 1
+    `).all();
+    const agentSet = new Set(activeAgents.map(a => a.full_name.trim().toLowerCase()));
+
+    // ── Match each client in memory (O(1) per client) ──────────────────────
     const matched   = [];
     const unmatched = [];
 
     for (const client of clients) {
       let assignedTo = null;
-
       if (client.phone) {
-        const row = stmtCoord.get(client.phone);
-        if (row?.coordinators) {
-          const agent = stmtAgent.get(row.coordinators);
-          if (agent) assignedTo = agent.full_name;
+        const coordinator = coordMap[client.phone];
+        if (coordinator && agentSet.has(coordinator.trim().toLowerCase())) {
+          // Find the exact-case name from activeAgents
+          const agentObj = activeAgents.find(
+            a => a.full_name.trim().toLowerCase() === coordinator.trim().toLowerCase()
+          );
+          if (agentObj) assignedTo = agentObj.full_name;
         }
       }
-
       if (assignedTo) {
         matched.push({ ...client, assigned_to: assignedTo, match_type: 'existing_coordinator' });
       } else {
