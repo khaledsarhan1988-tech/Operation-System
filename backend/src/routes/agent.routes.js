@@ -77,7 +77,7 @@ router.get('/tasks', (req, res) => {
 // PUT /api/agent/tasks/:id
 router.put('/tasks/:id', (req, res) => {
   const { id } = req.params;
-  const { agent_notes, status, resolved_at } = req.body;
+  const { agent_notes, status, resolved_at, next_followup_at } = req.body;
   const lf = lineClause(req);
   const remark = db.prepare(`SELECT * FROM remarks WHERE id = ? AND assigned_to = ?${lf.clause}`).get(id, req.user.full_name, ...lf.params);
   if (!remark) return res.status(404).json({ error: 'Task not found' });
@@ -91,16 +91,114 @@ router.put('/tasks/:id', (req, res) => {
 
   db.prepare(`
     UPDATE remarks
-    SET agent_notes = COALESCE(?, agent_notes),
-        status = COALESCE(?, status),
-        resolved_at = COALESCE(?, resolved_at),
-        sla_deadline = ?,
-        last_updated = datetime('now', '+2 hours')
+    SET agent_notes      = COALESCE(?, agent_notes),
+        status           = COALESCE(?, status),
+        resolved_at      = COALESCE(?, resolved_at),
+        next_followup_at = CASE WHEN ? IS NOT NULL THEN ? ELSE next_followup_at END,
+        sla_deadline     = ?,
+        last_updated     = datetime('now', '+2 hours')
     WHERE id = ?
-  `).run(agent_notes || null, status || null, resolved_at || null, newSlaDeadline, id);
+  `).run(
+    agent_notes || null,
+    status || null,
+    resolved_at || null,
+    next_followup_at !== undefined ? next_followup_at : null,
+    next_followup_at !== undefined ? next_followup_at : null,
+    newSlaDeadline,
+    id
+  );
 
   const updated = db.prepare('SELECT * FROM remarks WHERE id = ?').get(id);
   return res.json({ ...updated, sla_status: getSlaStatus(updated.sla_deadline, updated.priority) });
+});
+
+// ─── PIPELINE (CRM Kanban) ────────────────────────────────────────────────────
+
+// GET /api/agent/pipeline
+router.get('/pipeline', (req, res) => {
+  const name = req.user.full_name;
+  const lf   = lineClause(req);
+
+  const buildCol = (where) =>
+    db.prepare(`
+      SELECT id, client_name, client_phone, task_type, status, priority,
+             sla_deadline, added_at, last_updated, next_followup_at,
+             agent_notes, category, line, details
+      FROM remarks
+      WHERE assigned_to = ?
+        AND ${where}${lf.clause}
+      ORDER BY
+        CASE priority WHEN 'عاجلة' THEN 1 WHEN 'هامة' THEN 2 ELSE 3 END ASC,
+        CASE WHEN sla_deadline < datetime('now','+2 hours') THEN 0 ELSE 1 END ASC,
+        added_at ASC
+      LIMIT 60
+    `).all(name, ...lf.params)
+      .map(r => ({ ...r, sla_status: getSlaStatus(r.sla_deadline, r.priority) }));
+
+  try {
+    return res.json({
+      'جديدة':         buildCol(`status NOT IN ('إنتهت','قيد المتابعة','في المتابعة','بانتظار الرد')`),
+      'قيد المتابعة':  buildCol(`status IN ('قيد المتابعة','في المتابعة')`),
+      'بانتظار الرد':  buildCol(`status = 'بانتظار الرد'`),
+      'مكتملة':        buildCol(`status = 'إنتهت'`),
+    });
+  } catch (err) {
+    console.error('[agent/pipeline]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/agent/tasks/:id/log  — record an interaction
+router.post('/tasks/:id/log', (req, res) => {
+  const { id } = req.params;
+  const { interaction_type = 'call', outcome, notes, next_followup_at, status } = req.body;
+
+  const lf = lineClause(req);
+  const remark = db.prepare(`SELECT * FROM remarks WHERE id = ? AND assigned_to = ?${lf.clause}`)
+    .get(id, req.user.full_name, ...lf.params);
+  if (!remark) return res.status(404).json({ error: 'Task not found' });
+
+  const log = db.prepare(`
+    INSERT INTO remark_interactions (remark_id, agent_name, interaction_type, outcome, notes, next_followup_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(id, req.user.full_name, interaction_type, outcome || null, notes || null, next_followup_at || null);
+
+  // Optionally update remark status + next_followup_at
+  if (status || next_followup_at !== undefined) {
+    db.prepare(`
+      UPDATE remarks
+      SET status           = CASE WHEN ? IS NOT NULL THEN ? ELSE status END,
+          next_followup_at = CASE WHEN ? IS NOT NULL THEN ? ELSE next_followup_at END,
+          last_updated     = datetime('now','+2 hours')
+      WHERE id = ?
+    `).run(
+      status || null, status || null,
+      next_followup_at !== undefined ? next_followup_at : null,
+      next_followup_at !== undefined ? next_followup_at : null,
+      id
+    );
+  }
+
+  const updated = db.prepare('SELECT * FROM remarks WHERE id = ?').get(id);
+  return res.status(201).json({
+    log_id: log.lastInsertRowid,
+    remark: { ...updated, sla_status: getSlaStatus(updated.sla_deadline, updated.priority) },
+  });
+});
+
+// GET /api/agent/tasks/:id/logs
+router.get('/tasks/:id/logs', (req, res) => {
+  const { id } = req.params;
+  const lf = lineClause(req);
+  const remark = db.prepare(`SELECT id FROM remarks WHERE id = ? AND assigned_to = ?${lf.clause}`)
+    .get(id, req.user.full_name, ...lf.params);
+  if (!remark) return res.status(404).json({ error: 'Task not found' });
+
+  const logs = db.prepare(
+    `SELECT * FROM remark_interactions WHERE remark_id = ? ORDER BY created_at DESC`
+  ).all(id);
+
+  return res.json(logs);
 });
 
 // GET /api/agent/schedule?date=YYYY-MM-DD

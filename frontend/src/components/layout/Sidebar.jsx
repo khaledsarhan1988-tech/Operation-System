@@ -4,11 +4,12 @@ import { useAuth } from '../../auth/AuthContext';
 import {
   LayoutDashboard, ClipboardList, Search, UserX, Calendar,
   Video, Users, BarChart2, Globe, UserCog, Upload, FileText,
-  LogOut, Headphones, GraduationCap, ShieldCheck, AlertTriangle, Activity, Shuffle
+  LogOut, Headphones, GraduationCap, ShieldCheck, AlertTriangle, Activity, Shuffle, Kanban
 } from 'lucide-react';
 
 const AGENT_LINKS = [
   { to: '/agent',               label: 'nav.dashboard',       icon: LayoutDashboard, end: true },
+  { to: '/agent/pipeline',      label: 'بايبلاين العملاء',    icon: Kanban },
   { to: '/agent/tasks',         label: 'nav.myTasks',         icon: ClipboardList },
   { to: '/agent/clients',       label: 'nav.clientSearch',    icon: Search },
   { to: '/agent/absent',        label: 'nav.absentFollowUp',  icon: UserX },

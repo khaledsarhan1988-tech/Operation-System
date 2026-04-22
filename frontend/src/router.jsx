@@ -12,6 +12,7 @@ import AbsentFollowUp from './pages/agent/AbsentFollowUp';
 import TodaySchedule from './pages/agent/TodaySchedule';
 import SideSessionCheck from './pages/agent/SideSessionCheck';
 import AgentCodeProblems from './pages/agent/AgentCodeProblems';
+import Pipeline from './pages/agent/Pipeline';
 
 // Leader pages
 import LeaderDashboard from './pages/leader/LeaderDashboard';
@@ -54,6 +55,7 @@ const router = createBrowserRouter([
       { path: 'schedule',           element: <TodaySchedule /> },
       { path: 'side-session-check', element: <SideSessionCheck /> },
       { path: 'code-problems',      element: <AgentCodeProblems /> },
+      { path: 'pipeline',           element: <Pipeline /> },
     ],
   },
 

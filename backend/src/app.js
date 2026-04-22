@@ -240,6 +240,32 @@ initDb().then(db => {
     console.error('code_problem_status multi-line migration error:', e.message);
   }
 
+  // 8. CRM Pipeline: remark_interactions + next_followup_at on remarks
+  try {
+    db._raw.run(`CREATE TABLE IF NOT EXISTS remark_interactions (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      remark_id        INTEGER NOT NULL REFERENCES remarks(id) ON DELETE CASCADE,
+      agent_name       TEXT    NOT NULL,
+      interaction_type TEXT    NOT NULL DEFAULT 'call'
+                       CHECK(interaction_type IN ('call','message','visit','note')),
+      outcome          TEXT,
+      notes            TEXT,
+      next_followup_at TEXT,
+      created_at       TEXT    NOT NULL DEFAULT (datetime('now','+2 hours'))
+    )`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_ri_remark ON remark_interactions(remark_id)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_ri_agent  ON remark_interactions(agent_name)`);
+    const riCols = db._raw.exec(`PRAGMA table_info(remarks)`)[0]?.values.map(r => r[1]) || [];
+    if (!riCols.includes('next_followup_at')) {
+      db._raw.run(`ALTER TABLE remarks ADD COLUMN next_followup_at TEXT`);
+      db._raw.run(`CREATE INDEX IF NOT EXISTS idx_remarks_followup ON remarks(next_followup_at)`);
+    }
+    saveNow();
+    console.log('✅ Migration: remark_interactions + next_followup_at ready');
+  } catch (e) {
+    console.error('CRM pipeline migration error:', e.message);
+  }
+
   // 7. Distribution tables (client distribution feature)
   try {
     db._raw.run(`
