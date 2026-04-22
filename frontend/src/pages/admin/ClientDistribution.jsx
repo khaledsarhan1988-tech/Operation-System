@@ -294,6 +294,9 @@ export default function ClientDistribution() {
   const [showTTMgr,      setShowTTMgr]     = useState(false);
   const [detailId,       setDetailId]      = useState(null);
   const [histPage,       setHistPage]      = useState(1);
+  // Preview-step date filter
+  const [pvDateFrom,     setPvDateFrom]    = useState(''); // YYYY-MM-DD
+  const [pvDateTo,       setPvDateTo]      = useState(''); // YYYY-MM-DD
 
   const fileRef = useRef();
 
@@ -333,7 +336,10 @@ export default function ClientDistribution() {
   });
 
   const confirmMut = useMutation({
-    mutationFn: sid => api.post(`/distribution/sessions/${sid}/confirm`),
+    mutationFn: ({ sid, itemIds }) => {
+      const body = itemIds ? { item_ids: itemIds } : {};
+      return api.post(`/distribution/sessions/${sid}/confirm`, body);
+    },
     onSuccess: ({ data }) => {
       setDoneResult(data);
       setStep('done');
@@ -353,6 +359,8 @@ export default function ClientDistribution() {
     setPreview(null);
     setOverrides({});
     setDoneResult(null);
+    setPvDateFrom('');
+    setPvDateTo('');
   }, []);
 
   // min/max ISO dates derived from available dates
@@ -449,6 +457,41 @@ export default function ClientDistribution() {
         return Object.values(map).filter(a => a.new_clients > 0);
       })()
     : [];
+
+  // ── Preview-step date filter ───────────────────────────────────────────────
+  const filteredDisplayItems = useMemo(() => {
+    if (!pvDateFrom && !pvDateTo) return displayItems;
+    const from = pvDateFrom ? new Date(pvDateFrom) : null;
+    const to   = pvDateTo   ? new Date(pvDateTo)   : null;
+    return displayItems.filter(item => {
+      if (!item.client_date) return false; // exclude items with no date when filter is active
+      const [d, m, y] = item.client_date.split('/');
+      if (!y) return false;
+      const dt = new Date(+y, +m - 1, +d);
+      if (from && dt < from) return false;
+      if (to   && dt > to)   return false;
+      return true;
+    });
+  }, [displayItems, pvDateFrom, pvDateTo]);
+
+  const pvFiltered    = pvDateFrom || pvDateTo;
+  const pvMatched     = filteredDisplayItems.filter(i => i.match_type === 'existing_coordinator').length;
+  const pvDistributed = filteredDisplayItems.filter(i => i.match_type === 'auto_distributed').length;
+  const pvAgents      = new Set(filteredDisplayItems.map(i => i.assigned_to)).size;
+
+  // min/max dates from all display items for the preview range pickers
+  const pvMinDate = useMemo(() => {
+    const dates = displayItems.map(i => i.client_date).filter(Boolean);
+    if (!dates.length) return '';
+    const iso = dates.map(dmyToISO).filter(Boolean).sort();
+    return iso[0] || '';
+  }, [displayItems]);
+  const pvMaxDate = useMemo(() => {
+    const dates = displayItems.map(i => i.client_date).filter(Boolean);
+    if (!dates.length) return '';
+    const iso = dates.map(dmyToISO).filter(Boolean).sort();
+    return iso[iso.length - 1] || '';
+  }, [displayItems]);
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
@@ -706,13 +749,72 @@ export default function ClientDistribution() {
           {/* ── STEP: PREVIEW ───────────────────────────────────────────── */}
           {step === 'preview' && preview && (
             <div className="space-y-5">
+
+              {/* ── Date filter bar ── */}
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center">
+                      <Calendar size={15} className="text-primary" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-gray-800">فلتر التوزيع بالتاريخ</p>
+                      <p className="text-xs text-gray-400">اختر نطاق زمني ليتم توزيع عملائه فقط — أو اتركه فارغاً لتوزيع الجميع</p>
+                    </div>
+                  </div>
+                  {pvFiltered && (
+                    <button onClick={() => { setPvDateFrom(''); setPvDateTo(''); }}
+                      className="text-xs px-3 py-1.5 rounded-xl bg-gray-100 text-gray-600 hover:bg-gray-200 transition flex items-center gap-1.5 font-semibold">
+                      <X size={12} /> توزيع الكل ({displayItems.length})
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-gray-500">من تاريخ</label>
+                    <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 focus-within:ring-2 focus-within:ring-primary/30 transition">
+                      <Calendar size={13} className="text-gray-400 flex-shrink-0" />
+                      <input type="date" value={pvDateFrom}
+                        min={pvMinDate} max={pvMaxDate}
+                        onChange={e => setPvDateFrom(e.target.value)}
+                        className="flex-1 text-sm text-gray-800 focus:outline-none bg-transparent" />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-gray-500">إلى تاريخ</label>
+                    <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 focus-within:ring-2 focus-within:ring-primary/30 transition">
+                      <Calendar size={13} className="text-gray-400 flex-shrink-0" />
+                      <input type="date" value={pvDateTo}
+                        min={pvMinDate} max={pvMaxDate}
+                        onChange={e => setPvDateTo(e.target.value)}
+                        className="flex-1 text-sm text-gray-800 focus:outline-none bg-transparent" />
+                    </div>
+                  </div>
+                </div>
+                {pvFiltered && (
+                  <div className={`flex items-center justify-between rounded-xl px-4 py-2.5 ${
+                    filteredDisplayItems.length === 0 ? 'bg-red-50 border border-red-200' : 'bg-emerald-50 border border-emerald-200'
+                  }`}>
+                    <div className="flex items-center gap-2">
+                      <CheckCircle size={14} className={filteredDisplayItems.length === 0 ? 'text-red-400' : 'text-emerald-500'} />
+                      <span className={`text-sm font-semibold ${filteredDisplayItems.length === 0 ? 'text-red-700' : 'text-emerald-800'}`}>
+                        {filteredDisplayItems.length === 0
+                          ? 'لا يوجد عملاء في هذا النطاق'
+                          : <><span className="font-black text-base mx-0.5">{filteredDisplayItems.length}</span> عميل سيتم توزيعه</>}
+                      </span>
+                    </div>
+                    <span className="text-xs text-gray-500">من إجمالي {displayItems.length} عميل</span>
+                  </div>
+                )}
+              </div>
+
               {/* Summary KPI cards */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                 {[
-                  { label: 'إجمالي العملاء',    value: preview.total,           icon: Users,     color: 'text-blue-600   bg-blue-50'   },
-                  { label: 'منسق موجود',        value: preview.matched,         icon: UserCheck, color: 'text-green-600  bg-green-50'  },
-                  { label: 'توزيع تلقائي',      value: preview.distributed,     icon: Shuffle,   color: 'text-purple-600 bg-purple-50' },
-                  { label: 'المنسقين المشاركين', value: agentSummaryLive.length, icon: Users,     color: 'text-amber-600  bg-amber-50'  },
+                  { label: 'إجمالي العملاء',    value: pvFiltered ? filteredDisplayItems.length : preview.total,  icon: Users,     color: 'text-blue-600   bg-blue-50'   },
+                  { label: 'منسق موجود',        value: pvFiltered ? pvMatched     : preview.matched,              icon: UserCheck, color: 'text-green-600  bg-green-50'  },
+                  { label: 'توزيع تلقائي',      value: pvFiltered ? pvDistributed : preview.distributed,          icon: Shuffle,   color: 'text-purple-600 bg-purple-50' },
+                  { label: 'المنسقين المشاركين', value: pvFiltered ? pvAgents      : agentSummaryLive.length,      icon: Users,     color: 'text-amber-600  bg-amber-50'  },
                 ].map(({ label, value, icon: Icon, color }) => (
                   <div key={label} className="bg-white rounded-2xl border border-gray-200 p-4 flex items-center gap-3 shadow-sm">
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${color.split(' ')[1]}`}>
@@ -730,7 +832,11 @@ export default function ClientDistribution() {
               <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
                 <div className="px-4 py-2.5 border-b bg-gray-50 flex items-center justify-between">
                   <h3 className="font-semibold text-gray-800 text-sm">تفاصيل التوزيع</h3>
-                  <span className="text-xs text-gray-500">{displayItems.length} عميل — يمكنك تغيير الموظف لأي عميل</span>
+                  <span className="text-xs text-gray-500">
+                    {pvFiltered
+                      ? <><span className="font-bold text-primary">{filteredDisplayItems.length}</span> من {displayItems.length} عميل</>
+                      : <>{displayItems.length} عميل — يمكنك تغيير الموظف لأي عميل</>}
+                  </span>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
@@ -739,7 +845,7 @@ export default function ClientDistribution() {
                         <th className="px-3 py-2 text-start font-semibold text-gray-500 w-8">#</th>
                         <th className="px-3 py-2 text-start font-semibold text-gray-500">اسم العميل</th>
                         <th className="px-3 py-2 text-start font-semibold text-gray-500">الموبايل</th>
-                        <th className="px-3 py-2 text-start font-semibold text-gray-500">التاريخ</th>
+                        <th className="px-3 py-2 text-start font-semibold text-gray-500">تاريخ الاشتراك</th>
                         <th className="px-3 py-2 text-start font-semibold text-gray-500">النوع</th>
                         <th className="px-3 py-2 text-start font-semibold text-gray-500">الموظف المُعين</th>
                       </tr>
@@ -748,7 +854,7 @@ export default function ClientDistribution() {
                   <div className="max-h-[360px] overflow-y-auto">
                     <table className="w-full text-xs">
                       <tbody className="divide-y divide-gray-100">
-                        {displayItems.map((item, idx) => (
+                        {filteredDisplayItems.map((item, idx) => (
                           <tr key={item.id} className="hover:bg-blue-50/40 transition-colors">
                             <td className="px-3 py-1.5 text-gray-400 w-8">{idx + 1}</td>
                             <td className="px-3 py-1.5 font-medium text-gray-900 max-w-[180px] truncate">{item.client_name}</td>
@@ -776,6 +882,13 @@ export default function ClientDistribution() {
                             </td>
                           </tr>
                         ))}
+                        {filteredDisplayItems.length === 0 && (
+                          <tr>
+                            <td colSpan={6} className="text-center py-10 text-gray-400 text-sm">
+                              لا يوجد عملاء في هذا النطاق الزمني
+                            </td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -796,14 +909,17 @@ export default function ClientDistribution() {
                     <ArrowLeft size={16} /> رفع ملف آخر
                   </button>
                   <button
-                    onClick={() => confirmMut.mutate(preview.session_id)}
-                    disabled={confirmMut.isPending}
+                    onClick={() => confirmMut.mutate({
+                      sid: preview.session_id,
+                      itemIds: pvFiltered ? filteredDisplayItems.map(i => i.id) : null,
+                    })}
+                    disabled={confirmMut.isPending || filteredDisplayItems.length === 0}
                     className="btn-primary flex items-center gap-2 px-6 py-2.5 text-sm font-semibold disabled:opacity-50"
                   >
                     {confirmMut.isPending
                       ? <RefreshCw size={16} className="animate-spin" />
                       : <CheckCircle size={16} />}
-                    {confirmMut.isPending ? 'جاري التأكيد...' : `تأكيد التوزيع (${displayItems.length} عميل)`}
+                    {confirmMut.isPending ? 'جاري التأكيد...' : `تأكيد التوزيع (${filteredDisplayItems.length} عميل)`}
                   </button>
                 </div>
               </div>

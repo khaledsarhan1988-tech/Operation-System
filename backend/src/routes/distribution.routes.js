@@ -418,15 +418,27 @@ router.delete('/sessions/:sid', (req, res) => {
 // ─── CONFIRM session → create remarks ─────────────────────────────────────────
 
 // POST /api/distribution/sessions/:sid/confirm
+// Body (optional): { item_ids: [1,2,3] } — if provided, only distribute those items
 router.post('/sessions/:sid/confirm', (req, res) => {
   const session = db.prepare(`SELECT * FROM distribution_sessions WHERE id = ?`).get(req.params.sid);
   if (!session) return res.status(404).json({ error: 'الجلسة غير موجودة' });
   if (session.status !== 'pending')
     return res.status(400).json({ error: 'الجلسة مؤكدة أو ملغاة بالفعل' });
 
-  const items = db.prepare(
-    `SELECT * FROM distribution_items WHERE session_id = ?`
-  ).all(req.params.sid);
+  // Support partial confirmation via item_ids filter
+  const { item_ids } = req.body;
+  let items;
+  if (Array.isArray(item_ids) && item_ids.length > 0) {
+    const ph = item_ids.map(() => '?').join(',');
+    items = db.prepare(
+      `SELECT * FROM distribution_items WHERE session_id = ? AND id IN (${ph})`
+    ).all(req.params.sid, ...item_ids);
+  } else {
+    items = db.prepare(
+      `SELECT * FROM distribution_items WHERE session_id = ?`
+    ).all(req.params.sid);
+  }
+  if (!items.length) return res.status(400).json({ error: 'لا يوجد عملاء لتوزيعهم في هذا النطاق' });
 
   const ts          = nowTs();
   const slaDeadline = deadline(SLA_HOURS[session.priority] ?? 48);
