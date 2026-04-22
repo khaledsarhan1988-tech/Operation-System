@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Upload, Users, CheckCircle, XCircle, Clock, RefreshCw,
@@ -10,6 +10,19 @@ import api from '../../api/axios';
 
 const LINES      = ['Ahmed Hassan', 'Dardasha'];
 const PRIORITIES = ['عادية', 'هامة', 'عاجلة'];
+
+// DD/MM/YYYY  ↔  YYYY-MM-DD
+function dmyToISO(dmy) {
+  if (!dmy) return '';
+  const [d, m, y] = dmy.split('/');
+  if (!y) return '';
+  return `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+}
+function isoToDMY(iso) {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+}
 
 // ─── small helpers ────────────────────────────────────────────────────────────
 const STATUS_BADGE = {
@@ -270,6 +283,8 @@ export default function ClientDistribution() {
   const [fileBase64,     setFileBase64]    = useState(null);
   const [availableDates, setAvailableDates] = useState([]);
   const [selectedDates,  setSelectedDates] = useState(new Set());
+  const [dateRangeFrom,  setDateRangeFrom] = useState(''); // YYYY-MM-DD
+  const [dateRangeTo,    setDateRangeTo]   = useState(''); // YYYY-MM-DD
   const [line,           setLine]          = useState('Ahmed Hassan');
   const [taskType,       setTaskType]      = useState('متابعة مشترك جديد');
   const [priority,       setPriority]      = useState('عادية');
@@ -333,10 +348,41 @@ export default function ClientDistribution() {
     setFileBase64(null);
     setAvailableDates([]);
     setSelectedDates(new Set());
+    setDateRangeFrom('');
+    setDateRangeTo('');
     setPreview(null);
     setOverrides({});
     setDoneResult(null);
   }, []);
+
+  // min/max ISO dates derived from available dates
+  const { minISO, maxISO } = useMemo(() => {
+    if (!availableDates.length) return { minISO: '', maxISO: '' };
+    return {
+      minISO: dmyToISO(availableDates[0]),
+      maxISO: dmyToISO(availableDates[availableDates.length - 1]),
+    };
+  }, [availableDates]);
+
+  // When date range changes, update selectedDates to match
+  useEffect(() => {
+    if (!availableDates.length) return;
+    if (!dateRangeFrom && !dateRangeTo) {
+      setSelectedDates(new Set(availableDates));
+      return;
+    }
+    const from = dateRangeFrom ? new Date(dateRangeFrom) : null;
+    const to   = dateRangeTo   ? new Date(dateRangeTo)   : null;
+    const filtered = availableDates.filter(dmy => {
+      const iso = dmyToISO(dmy);
+      if (!iso) return false;
+      const dt = new Date(iso);
+      if (from && dt < from) return false;
+      if (to   && dt > to)   return false;
+      return true;
+    });
+    setSelectedDates(new Set(filtered));
+  }, [dateRangeFrom, dateRangeTo, availableDates]);
 
   const onFileDrop = useCallback(f => {
     if (!f) return;
@@ -376,14 +422,6 @@ export default function ClientDistribution() {
       payload.dates = [...selectedDates];
     }
     previewMut.mutate(payload);
-  };
-
-  const toggleDate = (date) => {
-    setSelectedDates(prev => {
-      const next = new Set(prev);
-      if (next.has(date)) { next.delete(date); } else { next.add(date); }
-      return next;
-    });
   };
 
   const handleOverride = useCallback((itemId, agent) => {
@@ -498,47 +536,76 @@ export default function ClientDistribution() {
 
               {/* Date filter — shown only after scan */}
               {availableDates.length > 0 && (
-                <div className="border border-gray-200 rounded-xl p-4 space-y-3">
+                <div className="border border-primary/20 bg-primary/3 rounded-2xl p-4 space-y-4">
+                  {/* Header */}
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <div className="flex items-center gap-2">
-                      <Calendar size={16} className="text-primary" />
-                      <span className="text-sm font-semibold text-gray-700">تصفية بالتاريخ</span>
-                      <span className="text-xs text-gray-500">
-                        {selectedDates.size} يوم محدد من {availableDates.length}
-                      </span>
+                      <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center">
+                        <Calendar size={16} className="text-primary" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-gray-800">تصفية بالتاريخ</p>
+                        <p className="text-xs text-gray-500">
+                          اختر نطاق زمني من <span className="font-semibold text-gray-700">{availableDates[0]}</span> إلى <span className="font-semibold text-gray-700">{availableDates[availableDates.length - 1]}</span>
+                        </p>
+                      </div>
                     </div>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => setSelectedDates(new Set(availableDates))}
-                        className="text-xs px-3 py-1 rounded-lg bg-primary/10 text-primary font-semibold hover:bg-primary/20 transition"
-                      >
-                        تحديد الكل
-                      </button>
-                      <button
-                        onClick={() => setSelectedDates(new Set())}
-                        className="text-xs px-3 py-1 rounded-lg bg-gray-100 text-gray-600 font-semibold hover:bg-gray-200 transition"
-                      >
-                        إلغاء الكل
-                      </button>
+                    <button
+                      onClick={() => { setDateRangeFrom(''); setDateRangeTo(''); }}
+                      className="text-xs px-3 py-1.5 rounded-xl bg-white border border-gray-200 text-gray-600 font-semibold hover:bg-gray-50 transition flex items-center gap-1.5 shadow-sm"
+                    >
+                      <X size={12} /> تحديد الكل
+                    </button>
+                  </div>
+
+                  {/* Range pickers */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-gray-600">من تاريخ</label>
+                      <div className="flex items-center gap-2 bg-white border border-gray-300 rounded-xl px-3 py-2.5 focus-within:ring-2 focus-within:ring-primary/40 transition">
+                        <Calendar size={14} className="text-gray-400 flex-shrink-0" />
+                        <input
+                          type="date"
+                          value={dateRangeFrom}
+                          min={minISO} max={maxISO}
+                          onChange={e => setDateRangeFrom(e.target.value)}
+                          className="flex-1 text-sm text-gray-800 focus:outline-none bg-transparent"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-gray-600">إلى تاريخ</label>
+                      <div className="flex items-center gap-2 bg-white border border-gray-300 rounded-xl px-3 py-2.5 focus-within:ring-2 focus-within:ring-primary/40 transition">
+                        <Calendar size={14} className="text-gray-400 flex-shrink-0" />
+                        <input
+                          type="date"
+                          value={dateRangeTo}
+                          min={minISO} max={maxISO}
+                          onChange={e => setDateRangeTo(e.target.value)}
+                          className="flex-1 text-sm text-gray-800 focus:outline-none bg-transparent"
+                        />
+                      </div>
                     </div>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    {availableDates.map(date => {
-                      const active = selectedDates.has(date);
-                      return (
-                        <button
-                          key={date}
-                          onClick={() => toggleDate(date)}
-                          className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition ${
-                            active
-                              ? 'bg-primary text-white border-primary shadow-sm'
-                              : 'bg-white text-gray-600 border-gray-300 hover:border-primary hover:text-primary'
-                          }`}
-                        >
-                          {date}
-                        </button>
-                      );
-                    })}
+
+                  {/* Result summary */}
+                  <div className={`flex items-center justify-between rounded-xl px-4 py-2.5 ${
+                    selectedDates.size === 0
+                      ? 'bg-red-50 border border-red-200'
+                      : 'bg-emerald-50 border border-emerald-200'
+                  }`}>
+                    <div className="flex items-center gap-2">
+                      <CheckCircle size={15} className={selectedDates.size === 0 ? 'text-red-400' : 'text-emerald-500'} />
+                      <span className={`text-sm font-semibold ${selectedDates.size === 0 ? 'text-red-700' : 'text-emerald-800'}`}>
+                        {selectedDates.size === 0
+                          ? 'لا يوجد عملاء في هذا النطاق'
+                          : <>سيتم تضمين <span className="font-black text-lg mx-0.5">{selectedDates.size}</span> يوم</>
+                        }
+                      </span>
+                    </div>
+                    <span className="text-xs text-gray-500">
+                      من إجمالي {availableDates.length} يوم في الملف
+                    </span>
                   </div>
                 </div>
               )}
