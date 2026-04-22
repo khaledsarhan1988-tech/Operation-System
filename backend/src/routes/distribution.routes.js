@@ -526,11 +526,37 @@ router.get('/sessions/:sid', (req, res) => {
   ).get(req.params.sid);
   if (!session) return res.status(404).json({ error: 'Not found' });
 
-  const items = db.prepare(
-    `SELECT * FROM distribution_items WHERE session_id = ? ORDER BY id`
-  ).all(req.params.sid);
+  // Sort items chronologically (DD/MM/YYYY → YYYYMMDD)
+  const items = db.prepare(`
+    SELECT * FROM distribution_items WHERE session_id = ?
+    ORDER BY
+      CASE WHEN client_date IS NULL OR client_date = '' THEN '99999999' ELSE
+        SUBSTR(client_date,7,4) || SUBSTR(client_date,4,2) || SUBSTR(client_date,1,2)
+      END ASC, id ASC
+  `).all(req.params.sid);
 
-  return res.json({ ...session, items });
+  // Compute date range from items' client_date
+  const dateRange = db.prepare(`
+    SELECT
+      MIN(SUBSTR(client_date,7,4)||'-'||SUBSTR(client_date,4,2)||'-'||SUBSTR(client_date,1,2)) AS date_from_iso,
+      MAX(SUBSTR(client_date,7,4)||'-'||SUBSTR(client_date,4,2)||'-'||SUBSTR(client_date,1,2)) AS date_to_iso
+    FROM distribution_items
+    WHERE session_id = ? AND client_date IS NOT NULL AND LENGTH(client_date) = 10
+  `).get(req.params.sid);
+
+  // Convert ISO → DD/MM/YYYY for display
+  const toDisplay = iso => {
+    if (!iso) return null;
+    const [y, m, d] = iso.split('-');
+    return `${d}/${m}/${y}`;
+  };
+
+  return res.json({
+    ...session,
+    items,
+    date_from: toDisplay(dateRange?.date_from_iso),
+    date_to:   toDisplay(dateRange?.date_to_iso),
+  });
 });
 
 module.exports = router;

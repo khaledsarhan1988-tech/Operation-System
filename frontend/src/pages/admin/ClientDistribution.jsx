@@ -128,20 +128,49 @@ function HistoryDetail({ sessionId, onClose }) {
 
   const session = data;
   const items   = data?.items || [];
+  const hasDateRange = session?.date_from || session?.date_to;
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b">
-          <div>
-            <h3 className="font-bold text-gray-900">تفاصيل جلسة التوزيع #{session?.id}</h3>
-            <p className="text-xs text-gray-500 mt-0.5">
-              {session?.line} · {session?.total_clients} عميل ·{' '}
-              <Badge type={session?.status} map={STATUS_BADGE} />
-            </p>
+
+        {/* Header */}
+        <div className="px-5 py-4 border-b">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="font-bold text-gray-900">تفاصيل جلسة التوزيع #{session?.id}</h3>
+              <div className="flex items-center flex-wrap gap-2 mt-1">
+                <span className="text-xs text-gray-500">{session?.line}</span>
+                <span className="text-xs text-gray-400">·</span>
+                <span className="text-xs text-gray-500">{session?.total_clients} عميل</span>
+                <span className="text-xs text-gray-400">·</span>
+                <Badge type={session?.status} map={STATUS_BADGE} />
+              </div>
+            </div>
+            <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg flex-shrink-0"><X size={18} /></button>
           </div>
-          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg"><X size={18} /></button>
+
+          {/* Date range banner */}
+          {hasDateRange && (
+            <div className="mt-3 flex items-center gap-2.5 bg-primary/5 border border-primary/20 rounded-xl px-4 py-2.5">
+              <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+                <Calendar size={14} className="text-primary" />
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-gray-500">تم التوزيع بناءً على الفترة الزمنية</p>
+                <p className="text-sm font-bold text-primary">
+                  {session.date_from && session.date_to
+                    ? `${session.date_from}  ←  ${session.date_to}`
+                    : session.date_from
+                    ? `من ${session.date_from}`
+                    : `حتى ${session.date_to}`}
+                </p>
+              </div>
+            </div>
+          )}
         </div>
+
+        {/* Table */}
         <div className="overflow-y-auto flex-1 p-5">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -149,6 +178,7 @@ function HistoryDetail({ sessionId, onClose }) {
                 <tr>
                   <th className="px-3 py-2 text-start font-semibold text-gray-600">العميل</th>
                   <th className="px-3 py-2 text-start font-semibold text-gray-600">الموبايل</th>
+                  <th className="px-3 py-2 text-start font-semibold text-gray-600">تاريخ الاشتراك</th>
                   <th className="px-3 py-2 text-start font-semibold text-gray-600">الموظف</th>
                   <th className="px-3 py-2 text-start font-semibold text-gray-600">النوع</th>
                 </tr>
@@ -158,6 +188,7 @@ function HistoryDetail({ sessionId, onClose }) {
                   <tr key={item.id} className="hover:bg-gray-50">
                     <td className="px-3 py-2">{item.client_name}</td>
                     <td className="px-3 py-2 font-mono text-xs">{item.client_phone || '—'}</td>
+                    <td className="px-3 py-2 text-xs text-gray-500">{item.client_date || '—'}</td>
                     <td className="px-3 py-2 font-semibold">{item.assigned_to}</td>
                     <td className="px-3 py-2"><Badge type={item.match_type} map={MATCH_BADGE} /></td>
                   </tr>
