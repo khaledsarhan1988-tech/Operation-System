@@ -197,7 +197,7 @@ export default function ClientDistribution() {
 
   // ── mutations ──
   const previewMut = useMutation({
-    mutationFn: fd => api.post('/distribution/preview', fd),
+    mutationFn: payload => api.post('/distribution/preview', payload),
     onSuccess: ({ data }) => {
       setPreview(data);
       setOverrides({});
@@ -243,12 +243,13 @@ export default function ClientDistribution() {
 
   const handleAnalyse = () => {
     if (!file) return;
-    const fd = new FormData();
-    fd.append('file', file);
-    fd.append('line', line);
-    fd.append('task_type', taskType);
-    fd.append('priority', priority);
-    previewMut.mutate(fd);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      // Convert file to base64 and send as JSON (avoids multipart/CORS issues)
+      const base64 = e.target.result.split(',')[1];
+      previewMut.mutate({ file_base64: base64, filename: file.name, line, task_type: taskType, priority });
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleOverride = useCallback((itemId, agent) => {

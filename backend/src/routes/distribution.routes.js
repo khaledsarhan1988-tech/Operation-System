@@ -1,6 +1,5 @@
 'use strict';
 const express  = require('express');
-const multer   = require('multer');
 const XLSX     = require('xlsx');
 const db       = require('../config/database');
 const { authenticate }  = require('../middleware/auth');
@@ -8,11 +7,6 @@ const { requireRole }   = require('../middleware/roles');
 
 const router = express.Router();
 router.use(authenticate, requireRole('admin'));
-
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
-});
 
 const VALID_LINES  = ['Ahmed Hassan', 'Dardasha'];
 const SLA_HOURS    = { 'عاجلة': 3, 'هامة': 24, 'عادية': 48 };
@@ -101,18 +95,18 @@ router.get('/agents', (req, res) => {
 
 // ─── PREVIEW (upload + analyse) ───────────────────────────────────────────────
 
-// POST /api/distribution/preview  (multipart/form-data)
-// Fields:  file (xlsx), line, task_type, priority
-router.post('/preview', upload.single('file'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'لم يتم رفع ملف' });
+// POST /api/distribution/preview  (JSON: { file_base64, filename, line, task_type, priority })
+router.post('/preview', (req, res) => {
+  const { file_base64, line, task_type = 'متابعة مشترك جديد', priority = 'عادية' } = req.body;
 
-  const { line, task_type = 'متابعة مشترك جديد', priority = 'عادية' } = req.body;
-  if (!line)                  return res.status(400).json({ error: 'line مطلوب' });
+  if (!file_base64) return res.status(400).json({ error: 'لم يتم رفع ملف' });
+  if (!line)        return res.status(400).json({ error: 'line مطلوب' });
   if (!VALID_LINES.includes(line)) return res.status(400).json({ error: 'line غير صالح' });
 
   try {
-    // ── Parse Excel ──────────────────────────────────────────────────────────
-    const wb   = XLSX.read(req.file.buffer, { type: 'buffer', raw: true });
+    // ── Parse Excel from base64 ───────────────────────────────────────────────
+    const buffer = Buffer.from(file_base64, 'base64');
+    const wb   = XLSX.read(buffer, { type: 'buffer', raw: true });
     const ws   = wb.Sheets[wb.SheetNames[0]];
     // raw:true gives us numeric values, cellText not needed
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
