@@ -363,6 +363,19 @@ export default function ClientDistribution() {
     setPvDateTo('');
   }, []);
 
+  // Start another batch from the SAME file — keep fileBase64 + availableDates
+  const startAnotherBatch = useCallback(() => {
+    setStep('upload');
+    setPreview(null);
+    setOverrides({});
+    setDoneResult(null);
+    setPvDateFrom('');
+    setPvDateTo('');
+    setDateRangeFrom('');
+    setDateRangeTo('');
+    // file, fileBase64, availableDates intentionally kept
+  }, []);
+
   // min/max ISO dates derived from available dates
   const { minISO, maxISO } = useMemo(() => {
     if (!availableDates.length) return { minISO: '', maxISO: '' };
@@ -934,28 +947,69 @@ export default function ClientDistribution() {
 
           {/* ── STEP: DONE ──────────────────────────────────────────────── */}
           {step === 'done' && doneResult && (
-            <div className="bg-white rounded-2xl border border-gray-200 p-10 text-center shadow-sm space-y-5">
-              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto">
-                <CheckCircle className="text-green-500" size={36} />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">تم التوزيع بنجاح!</h2>
-                <p className="text-gray-500 mt-1">
-                  تم إنشاء <span className="font-bold text-primary">{doneResult.remarks_created}</span> مهمة جديدة للمنسقين
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+              {/* Success banner */}
+              <div className="bg-gradient-to-l from-emerald-500 to-green-600 px-8 py-8 text-center">
+                <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <CheckCircle className="text-white" size={36} />
+                </div>
+                <h2 className="text-xl font-bold text-white">تم التوزيع بنجاح!</h2>
+                <p className="text-white/80 mt-1 text-sm">
+                  تم إنشاء <span className="font-black text-white text-lg">{doneResult.remarks_created}</span> مهمة جديدة للمنسقين
                 </p>
               </div>
-              <div className="flex justify-center gap-3">
+
+              {/* Next action cards */}
+              <div className="p-6 space-y-3">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4">ماذا تريد أن تفعل الآن؟</p>
+
+                {/* Option 1: Another batch from same file */}
+                {fileBase64 && (
+                  <button
+                    onClick={startAnotherBatch}
+                    className="w-full flex items-center gap-4 p-4 rounded-2xl border-2 border-primary/20 bg-primary/5 hover:bg-primary/10 hover:border-primary/40 transition text-right group"
+                  >
+                    <div className="w-11 h-11 rounded-xl bg-primary flex items-center justify-center flex-shrink-0 shadow-sm group-hover:scale-105 transition">
+                      <Calendar size={20} className="text-white" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-bold text-gray-900 text-sm">توزيع دفعة أخرى من نفس الملف</p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        اختر نطاق تاريخ مختلف (مثلاً فبراير) من <span className="font-semibold text-gray-700">{file?.name}</span>
+                      </p>
+                    </div>
+                    <ArrowLeft size={18} className="text-primary flex-shrink-0 mr-auto" />
+                  </button>
+                )}
+
+                {/* Option 2: New file */}
                 <button
                   onClick={resetUpload}
-                  className="btn-primary px-6 py-2.5 text-sm font-semibold flex items-center gap-2"
+                  className="w-full flex items-center gap-4 p-4 rounded-2xl border border-gray-200 hover:bg-gray-50 transition text-right group"
                 >
-                  <Upload size={16} /> توزيع جديد
+                  <div className="w-11 h-11 rounded-xl bg-gray-100 flex items-center justify-center flex-shrink-0 group-hover:bg-gray-200 transition">
+                    <Upload size={20} className="text-gray-600" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-bold text-gray-800 text-sm">رفع ملف جديد</p>
+                    <p className="text-xs text-gray-400 mt-0.5">ابدأ توزيعاً جديداً بملف Excel مختلف</p>
+                  </div>
+                  <ArrowLeft size={18} className="text-gray-400 flex-shrink-0 mr-auto" />
                 </button>
+
+                {/* Option 3: View history */}
                 <button
                   onClick={() => setTab('history')}
-                  className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-gray-100 text-gray-700 hover:bg-gray-200 transition flex items-center gap-2"
+                  className="w-full flex items-center gap-4 p-4 rounded-2xl border border-gray-200 hover:bg-gray-50 transition text-right group"
                 >
-                  <History size={16} /> عرض السجل
+                  <div className="w-11 h-11 rounded-xl bg-gray-100 flex items-center justify-center flex-shrink-0 group-hover:bg-gray-200 transition">
+                    <History size={20} className="text-gray-600" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-bold text-gray-800 text-sm">عرض سجل التوزيع</p>
+                    <p className="text-xs text-gray-400 mt-0.5">مراجعة جميع عمليات التوزيع السابقة</p>
+                  </div>
+                  <ArrowLeft size={18} className="text-gray-400 flex-shrink-0 mr-auto" />
                 </button>
               </div>
             </div>
