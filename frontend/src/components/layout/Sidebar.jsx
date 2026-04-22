@@ -55,6 +55,7 @@ function getAdminLinks(user) {
     { to: '/admin/team',    label: 'nav.team',      icon: Users },
     { to: '/admin/control',       label: 'لوحة التحكم',   icon: LayoutDashboard },
     { to: '/admin/distribution', label: 'توزيع العملاء', icon: Shuffle },
+    { to: '/admin/pipeline',     label: 'بايبلاين العملاء', icon: Kanban },
     { type: 'section', label: 'التقارير' },
   ];
   const mgmt = user?.management;

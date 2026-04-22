@@ -380,4 +380,96 @@ router.get('/kpis/details/:metric', (req, res) => {
   }
 });
 
+// ─── ADMIN PIPELINE ──────────────────────────────────────────────────────────
+
+function getSlaStatus(slaDeadline, priority) {
+  if (!slaDeadline) return 'on_time';
+  const deadline = new Date(slaDeadline);
+  const now = new Date();
+  const WARN = { 'عاجلة': 3, 'هامة': 24, 'عادية': 48 };
+  const warnMs = (WARN[priority] || 48) * 3600000;
+  if (now > deadline) return 'breached';
+  if (deadline - now <= warnMs) return 'at_risk';
+  return 'on_time';
+}
+
+// GET /api/admin/pipeline?line=&agent=
+router.get('/pipeline', (req, res) => {
+  const line  = effectiveLine(req);
+  const agent = (req.query.agent || '').trim();
+
+  const conditions = ['1=1'];
+  const params     = [];
+
+  if (line)  { conditions.push('r.line = ?');        params.push(line);  }
+  if (agent) { conditions.push('r.assigned_to = ?'); params.push(agent); }
+
+  const where = conditions.join(' AND ');
+
+  const buildCol = (stageWhere) =>
+    db.prepare(`
+      SELECT r.id, r.client_name, r.client_phone, r.task_type, r.status,
+             r.priority, r.sla_deadline, r.added_at, r.last_updated,
+             r.next_followup_at, r.agent_notes, r.category,
+             r.line, r.assigned_to
+      FROM remarks r
+      WHERE ${where} AND ${stageWhere}
+      ORDER BY
+        CASE r.priority WHEN 'عاجلة' THEN 1 WHEN 'هامة' THEN 2 ELSE 3 END ASC,
+        CASE WHEN r.sla_deadline < datetime('now','+2 hours') THEN 0 ELSE 1 END ASC,
+        r.added_at ASC
+      LIMIT 100
+    `).all(...params)
+      .map(r => ({ ...r, sla_status: getSlaStatus(r.sla_deadline, r.priority) }));
+
+  try {
+    return res.json({
+      'جديدة':        buildCol(`r.status NOT IN ('إنتهت','قيد المتابعة','في المتابعة','بانتظار الرد')`),
+      'قيد المتابعة': buildCol(`r.status IN ('قيد المتابعة','في المتابعة')`),
+      'بانتظار الرد': buildCol(`r.status = 'بانتظار الرد'`),
+      'مكتملة':       buildCol(`r.status = 'إنتهت'`),
+    });
+  } catch (err) {
+    console.error('[admin/pipeline]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/pipeline/agents?line=  — list agents for filter dropdown
+router.get('/pipeline/agents', (req, res) => {
+  const line = effectiveLine(req);
+  const lf   = line ? ` AND line = '${line.replace(/'/g,"''")}'` : '';
+  const rows = db.prepare(
+    `SELECT DISTINCT assigned_to FROM remarks WHERE assigned_to IS NOT NULL${lf} ORDER BY assigned_to COLLATE NOCASE`
+  ).all();
+  return res.json(rows.map(r => r.assigned_to));
+});
+
+// PUT /api/admin/pipeline/tasks/:id  — admin can move any card
+router.put('/pipeline/tasks/:id', (req, res) => {
+  const { id } = req.params;
+  const { status, next_followup_at } = req.body;
+  const line = effectiveLine(req);
+  const lf   = line ? ` AND line = '${line.replace(/'/g,"''")}'` : '';
+
+  const remark = db.prepare(`SELECT * FROM remarks WHERE id = ?${lf}`).get(id);
+  if (!remark) return res.status(404).json({ error: 'Task not found' });
+
+  db.prepare(`
+    UPDATE remarks
+    SET status           = CASE WHEN ? IS NOT NULL THEN ? ELSE status END,
+        next_followup_at = CASE WHEN ? IS NOT NULL THEN ? ELSE next_followup_at END,
+        last_updated     = datetime('now','+2 hours')
+    WHERE id = ?
+  `).run(
+    status || null, status || null,
+    next_followup_at !== undefined ? next_followup_at : null,
+    next_followup_at !== undefined ? next_followup_at : null,
+    id
+  );
+
+  const updated = db.prepare('SELECT * FROM remarks WHERE id = ?').get(id);
+  return res.json({ ...updated, sla_status: getSlaStatus(updated.sla_deadline, updated.priority) });
+});
+
 module.exports = router;
