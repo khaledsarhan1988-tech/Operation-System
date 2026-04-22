@@ -197,9 +197,7 @@ export default function ClientDistribution() {
 
   // ── mutations ──
   const previewMut = useMutation({
-    mutationFn: fd => api.post('/distribution/preview', fd, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    }),
+    mutationFn: fd => api.post('/distribution/preview', fd),
     onSuccess: ({ data }) => {
       setPreview(data);
       setOverrides({});
