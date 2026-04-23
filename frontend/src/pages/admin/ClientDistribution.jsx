@@ -718,6 +718,12 @@ export default function ClientDistribution() {
     onSuccess: () => { resetUpload(); qc.invalidateQueries(['dist-sessions']); },
   });
 
+  // Cancel from history tab — no resetUpload
+  const histCancelMut = useMutation({
+    mutationFn: sid => api.delete(`/distribution/sessions/${sid}`),
+    onSuccess: () => qc.invalidateQueries(['dist-sessions']),
+  });
+
   const confirmMut = useMutation({
     mutationFn: ({ sid, itemIds }) => {
       const body = itemIds ? { item_ids: itemIds } : {};
@@ -1511,13 +1517,25 @@ export default function ClientDistribution() {
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1">
                             {s.status === 'pending' && (
-                              <button
-                                onClick={() => setResumeSession(s)}
-                                title="استكمال التوزيع"
-                                className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold bg-primary/10 text-primary hover:bg-primary/20 rounded-lg transition"
-                              >
-                                <PlayCircle size={13} /> استكمال
-                              </button>
+                              <>
+                                <button
+                                  onClick={() => setResumeSession(s)}
+                                  title="استكمال التوزيع"
+                                  className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold bg-primary/10 text-primary hover:bg-primary/20 rounded-lg transition"
+                                >
+                                  <PlayCircle size={13} /> استكمال
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    if (window.confirm(`إلغاء جلسة #${s.id}؟ لا يمكن التراجع.`))
+                                      histCancelMut.mutate(s.id);
+                                  }}
+                                  title="إلغاء الجلسة"
+                                  className="p-1.5 hover:bg-red-50 rounded-lg text-red-400 hover:text-red-600 transition"
+                                >
+                                  <XCircle size={15} />
+                                </button>
+                              </>
                             )}
                             <button
                               onClick={() => setDetailId(s.id)}
