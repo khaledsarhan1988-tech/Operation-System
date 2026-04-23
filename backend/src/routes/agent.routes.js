@@ -456,34 +456,18 @@ router.get('/absent', (req, res) => {
   return res.json({ total, page: parseInt(page), data, filter_opts: { departments: depts, coordinators: coords } });
 });
 
-// GET /api/agent/absent-zoom — individual absent students from Zoom (side) sessions
-// Uses UNION of two sources (mirrors admin's /reports/remarks-notes-zoom):
-//   Part A: absent_students WHERE EXISTS confirmed side session on same date
-//   Part B: all clients in groups where the ENTIRE group had 0 attendance on a side session
+// GET /api/agent/absent-zoom — Zoom (side) session absence, grouped per group+date
+// Mirrors admin's /reports/absent-side-list, scoped to agent's groups
 router.get('/absent-zoom', (req, res) => {
   const name = req.user.full_name;
   const { page = 1, limit = 25, from_date, to_date, q } = req.query;
   const offset = (parseInt(page) - 1) * parseInt(limit);
   const line   = lineFilter(req);
   const bf     = lineClause(req);
+  const lineL  = line ? ` AND l.line = '${line.replace(/'/g, "''")}'` : '';
+  const lineB  = line ? ' AND b.line = l.line' : '';
 
-  // Build inline line filters (same pattern as admin reports routes)
-  const lineA   = line ? ` AND a.line = '${line.replace(/'/g, "''")}'` : '';
-  const lineLx  = line ? ` AND lx.line = '${line.replace(/'/g, "''")}'` : '';
-  const lineL   = line ? ` AND l.line = '${line.replace(/'/g, "''")}'` : '';
-  const lineCLu = line ? ` AND c_lu.line = '${line.replace(/'/g, "''")}'` : '';
-  const lineCG  = line ? ` AND c.line = grp.line` : '';
-
-  // Date filters per source
-  const dateA = from_date && to_date ? ` AND a.date BETWEEN '${from_date}' AND '${to_date}'`
-              : from_date ? ` AND a.date >= '${from_date}'`
-              : to_date   ? ` AND a.date <= '${to_date}'` : '';
-
-  const dateL = from_date && to_date ? ` AND l.date BETWEEN '${from_date}' AND '${to_date}'`
-              : from_date ? ` AND l.date >= '${from_date}'`
-              : to_date   ? ` AND l.date <= '${to_date}'` : '';
-
-  // Get agent's group names (all batches, no status restriction)
+  // Agent's group names (all batches, no status restriction)
   const batchRows = db.prepare(
     `SELECT group_name FROM batches WHERE coordinators LIKE ?${bf.clause}`
   ).all(`%${name}%`, ...bf.params);
@@ -494,69 +478,48 @@ router.get('/absent-zoom', (req, res) => {
   const groupNames = batchRows.map(b => b.group_name);
   const gph        = groupNames.map(() => '?').join(',');
 
-  const esc        = q ? q.replace(/%/g, '\\%').replace(/_/g, '\\_') : '';
-  const searchCond = q
-    ? ` AND (student_name LIKE '%${esc}%' OR phone LIKE '%${esc}%' OR group_name LIKE '%${esc}%') ESCAPE '\\'`
+  const dateFilter = from_date && to_date
+    ? ` AND l.date BETWEEN '${from_date}' AND '${to_date}'`
+    : from_date ? ` AND l.date >= '${from_date}'`
+    : to_date   ? ` AND l.date <= '${to_date}'` : '';
+
+  const searchFilter = q
+    ? ` AND l.group_name LIKE '%${q.replace(/%/g, '\\%').replace(/_/g, '\\_')}%' ESCAPE '\\'`
     : '';
 
-  // ── Part A: from absent_students where a confirmed side session exists ──────
-  const partA = `
-    SELECT DISTINCT
-      COALESCE(c_lu.name, NULLIF(TRIM(a.student_name), '')) AS student_name,
-      COALESCE(NULLIF(TRIM(a.phone), ''), c_lu.phone)        AS phone,
-      a.group_name,
-      a.date
-    FROM absent_students a
-    LEFT JOIN clients c_lu ON c_lu.phone = a.phone${lineCLu}
-    WHERE a.group_name IN (${gph})${lineA}${dateA}
-      AND ((a.student_name IS NOT NULL AND TRIM(a.student_name) != '')
-           OR  (a.phone IS NOT NULL AND TRIM(a.phone) != ''))
-      AND EXISTS (
-        SELECT 1 FROM lectures lx
-        WHERE lx.group_name = a.group_name
-          AND lx.session_type = 'side'
-          AND lx.status != 'غير مؤكدة'
-          AND lx.date = a.date${lineLx}
-      )
-  `;
-
-  // ── Part B: clients in groups where ALL slots had attendance = 0 ──────────
-  const partB = `
-    SELECT DISTINCT c.name AS student_name, c.phone, c.group_name, grp.session_date AS date
-    FROM (
-      SELECT l.group_name, l.date AS session_date${line ? ', l.line' : ''}
-      FROM lectures l
-      WHERE l.session_type = 'side'
-        AND l.status = 'مؤكدة'
-        AND (l.duration IS NULL OR l.duration <= '00:15')
-        AND l.group_name IN (${gph})${lineL}${dateL}
-      GROUP BY l.group_name, l.date${line ? ', l.line' : ''}
-      HAVING SUM(CASE WHEN l.attendance IS NOT NULL AND TRIM(l.attendance) != ''
-                      AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END) = 0
-         AND COUNT(*) > 0
-    ) grp
-    INNER JOIN clients c ON c.group_name = grp.group_name${lineCG}
-    WHERE c.name IS NOT NULL AND TRIM(c.name) != ''
-      AND c.phone IS NOT NULL AND TRIM(c.phone) != ''
-  `;
-
-  // UNION both sources, dedup, apply search, then paginate
-  const combined = `
-    SELECT student_name, phone, group_name, date
-    FROM (
-      SELECT student_name, phone, group_name, date FROM (${partA})
-      UNION
-      SELECT student_name, phone, group_name, date FROM (${partB})
-    )
-    WHERE student_name IS NOT NULL${searchCond}
-    ORDER BY date DESC, group_name
+  // Same formula as admin /reports/absent-side-list
+  const groupedQuery = `
+    SELECT
+      l.group_name,
+      l.date                                                                AS session_date,
+      MAX(l.trainer)                                                        AS trainer,
+      MAX(b.coordinators)                                                   AS coordinators,
+      COALESCE(
+        (SELECT u.department FROM users u
+         WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
+           AND u.department != 'All' LIMIT 1),
+        MAX(b.dept_type)
+      )                                                                     AS dept_type,
+      COUNT(*)                                                              AS trainee_count,
+      SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != ''
+               AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END)   AS present_count,
+      COUNT(*) -
+      SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != ''
+               AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END)   AS absent_count
+    FROM lectures l
+    LEFT JOIN batches b ON l.group_name = b.group_name${lineB}
+    WHERE l.session_type = 'side'
+      AND l.status = 'مؤكدة'
+      AND (l.duration IS NULL OR l.duration <= '00:15')
+      AND l.group_name IN (${gph})${lineL}${dateFilter}${searchFilter}
+    GROUP BY l.group_name, l.date
+    HAVING absent_count > 0
   `;
 
   try {
-    // groupNames twice: once for partA, once for partB
-    const params = [...groupNames, ...groupNames];
-    const total  = db.prepare(`SELECT COUNT(*) AS cnt FROM (${combined})`).get(...params).cnt;
-    const data   = db.prepare(`${combined} LIMIT ? OFFSET ?`).all(...params, parseInt(limit), offset);
+    const total = db.prepare(`SELECT COUNT(*) AS cnt FROM (${groupedQuery})`).get(...groupNames).cnt;
+    const data  = db.prepare(`${groupedQuery} ORDER BY session_date DESC LIMIT ? OFFSET ?`)
+                    .all(...groupNames, parseInt(limit), offset);
     return res.json({ total, page: parseInt(page), data });
   } catch (err) {
     console.error('[agent/absent-zoom]', err);
