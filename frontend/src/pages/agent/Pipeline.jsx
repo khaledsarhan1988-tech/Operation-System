@@ -360,8 +360,9 @@ function ReminderPanel({ apiPath }) {
 // ─── TransferModal ────────────────────────────────────────────────────────────
 function TransferModal({ count, targets, onConfirm, onClose, isPending, userRole }) {
   const [target, setTarget] = useState('');
-  const agents  = targets.filter(t => t.role === 'agent');
+  const admins  = targets.filter(t => t.role === 'admin');
   const leaders = targets.filter(t => t.role === 'leader');
+  const agents  = targets.filter(t => t.role === 'agent');
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -394,6 +395,11 @@ function TransferModal({ count, targets, onConfirm, onClose, isPending, userRole
           className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/30 mb-5"
         >
           <option value="">— اختر —</option>
+          {admins.length > 0 && (
+            <optgroup label="المسؤولون">
+              {admins.map(t => <option key={t.full_name} value={t.full_name}>🛡️ {t.full_name}</option>)}
+            </optgroup>
+          )}
           {leaders.length > 0 && (
             <optgroup label="قادة الفريق">
               {leaders.map(t => <option key={t.full_name} value={t.full_name}>👑 {t.full_name} ({t.department})</option>)}

@@ -509,7 +509,7 @@ router.get('/transfer-targets', (req, res) => {
   const user = req.user;
   let rows;
   if (user.role === 'leader') {
-    // Leader: own agents + all other leaders (not themselves)
+    // Leader: own agents + all other leaders + admins (not themselves)
     rows = db.prepare(`
       SELECT full_name, role, department, line FROM users
       WHERE is_active = 1
@@ -517,16 +517,26 @@ router.get('/transfer-targets', (req, res) => {
         AND (
           (role = 'agent'  AND department = ?)
           OR role = 'leader'
+          OR role = 'admin'
         )
-      ORDER BY role DESC, full_name COLLATE NOCASE
+      ORDER BY
+        CASE role WHEN 'admin' THEN 1 WHEN 'leader' THEN 2 ELSE 3 END ASC,
+        full_name COLLATE NOCASE
     `).all(user.full_name, user.department);
   } else {
-    // Agent: only their department's leader(s)
+    // Agent: their department's leader(s) + admins
     rows = db.prepare(`
       SELECT full_name, role, department FROM users
-      WHERE is_active = 1 AND role = 'leader' AND department = ?
-      ORDER BY full_name COLLATE NOCASE
-    `).all(user.department || '');
+      WHERE is_active = 1
+        AND full_name != ?
+        AND (
+          (role = 'leader' AND department = ?)
+          OR role = 'admin'
+        )
+      ORDER BY
+        CASE role WHEN 'admin' THEN 1 ELSE 2 END ASC,
+        full_name COLLATE NOCASE
+    `).all(user.full_name, user.department || '');
   }
   return res.json(rows);
 });
@@ -545,15 +555,16 @@ router.put('/bulk-transfer', (req, res) => {
 
   // ── Permission check ──────────────────────────────────────────────────────
   if (user.role === 'agent') {
-    // Agent → only to their department's leader
-    if (target.role !== 'leader' || target.department !== user.department) {
-      return res.status(403).json({ error: 'يمكنك إحالة العملاء لقائد فريقك فقط' });
-    }
+    // Agent → their department's leader OR any admin
+    const ok = target.role === 'admin'
+             || (target.role === 'leader' && target.department === user.department);
+    if (!ok) return res.status(403).json({ error: 'يمكنك إحالة العملاء لقائد فريقك أو المسؤول فقط' });
   } else if (user.role === 'leader') {
-    // Leader → their agents OR any leader
-    const ok = (target.role === 'agent' && target.department === user.department)
-              || target.role === 'leader';
-    if (!ok) return res.status(403).json({ error: 'يمكنك النقل لموظفي قسمك أو قادة الفرق فقط' });
+    // Leader → their agents OR any leader OR any admin
+    const ok = target.role === 'admin'
+             || target.role === 'leader'
+             || (target.role === 'agent' && target.department === user.department);
+    if (!ok) return res.status(403).json({ error: 'يمكنك النقل لموظفي قسمك أو قادة الفرق أو المسؤولين فقط' });
   }
   // admin role unreachable here (admin uses /api/admin/* routes)
 
