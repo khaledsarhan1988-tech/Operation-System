@@ -450,7 +450,6 @@ router.get('/pipeline/reminders', (req, res) => {
   const conditions = [
     `ri.next_followup_at IS NOT NULL`,
     `ri.next_followup_at != ''`,
-    `ri.next_followup_at >= datetime('now', '+2 hours', '-30 days')`,
     `r.category = 'توزيع عملاء'`,
     `r.status NOT IN ('Retention Done','إنتهت')`,
   ];

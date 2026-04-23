@@ -119,9 +119,14 @@ function ReminderPanel({ apiPath, agent }) {
     if (abs < 1440) return `${Math.round(abs / 60)} ساعة`;
     return `${Math.round(abs / 1440)} يوم`;
   };
-  const now     = new Date();
-  const overdue = reminders.filter(r => { const d = parseEgypt(r.next_followup_at); return d && d < now; });
-  const total   = reminders.length;
+  const now        = new Date();
+  const THIRTY_DAYS= 30 * 24 * 60 * 60 * 1000;
+  const visible  = reminders.filter(r => {
+    const d = parseEgypt(r.next_followup_at);
+    return d && Math.abs(now - d) <= THIRTY_DAYS;
+  });
+  const overdue  = visible.filter(r => { const d = parseEgypt(r.next_followup_at); return d && d < now; });
+  const total    = visible.length;
 
   useEffect(() => {
     if (!total) return;
@@ -178,7 +183,7 @@ function ReminderPanel({ apiPath, agent }) {
 
       {open && (
         <div className={`border-t divide-y max-h-72 overflow-y-auto ${overdue.length > 0 ? 'border-red-200 divide-red-100' : 'border-amber-200 divide-amber-100'}`}>
-          {reminders.map(r => {
+          {visible.map(r => {
             const due     = parseEgypt(r.next_followup_at);
             const isLate  = due && due < now;
             const minsLeft= due ? (due - now) / 60000 : 0;
