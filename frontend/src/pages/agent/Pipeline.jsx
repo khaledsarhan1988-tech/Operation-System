@@ -1,9 +1,9 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Phone, Calendar, Clock, RefreshCw, X, Plus,
   PhoneCall, MessageCircle, StickyNote, MapPin,
-  CheckCircle2, ChevronRight, AlertTriangle, Search,
+  CheckCircle2, ChevronLeft, ChevronRight, AlertTriangle, Search,
   TrendingUp, Zap, Users, BarChart3,
 } from 'lucide-react';
 import api from '../../api/axios';
@@ -208,11 +208,21 @@ function ClientCard({ remark, stageKey, onSelect, onMove }) {
 }
 
 // ─── KanbanColumn ─────────────────────────────────────────────────────────────
+const PAGE_SIZE = 50;
+
 function KanbanColumn({ stage, cards, onSelect, onMove }) {
   const StageIcon = stage.icon;
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(cards.length / PAGE_SIZE));
+
+  // Reset to first page whenever cards list changes (filter applied)
+  useEffect(() => { setPage(1); }, [cards.length]);
+
+  const pageCards = cards.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
   return (
     <div className="flex flex-col rounded-2xl overflow-hidden border border-gray-200 shadow-sm bg-gray-50/50 min-h-[500px]">
-      {/* gradient header */}
+      {/* ── header: shows total count ── */}
       <div className={`bg-gradient-to-l ${stage.gradient} px-4 py-3`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -225,7 +235,7 @@ function KanbanColumn({ stage, cards, onSelect, onMove }) {
         </div>
       </div>
 
-      {/* card list */}
+      {/* ── card list (current page only) ── */}
       <div
         className="flex-1 overflow-y-auto p-2.5 space-y-2.5"
         style={{ maxHeight: 'calc(100vh - 280px)' }}
@@ -236,7 +246,7 @@ function KanbanColumn({ stage, cards, onSelect, onMove }) {
             <p className="text-xs">لا توجد مهام</p>
           </div>
         ) : (
-          cards.map(card => (
+          pageCards.map(card => (
             <ClientCard
               key={card.id}
               remark={card}
@@ -247,6 +257,45 @@ function KanbanColumn({ stage, cards, onSelect, onMove }) {
           ))
         )}
       </div>
+
+      {/* ── pagination bar (shown only when more than one page) ── */}
+      {totalPages > 1 && (
+        <div className="px-2 py-2 border-t border-gray-200 bg-white">
+          <div className="flex items-center justify-center gap-1 flex-wrap" dir="ltr">
+            <button
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page === 1}
+              className="w-6 h-6 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition"
+            >
+              <ChevronLeft size={14} />
+            </button>
+            {Array.from({ length: totalPages }, (_, i) => {
+              const pg  = i + 1;
+              const cnt = Math.min(PAGE_SIZE, cards.length - i * PAGE_SIZE);
+              return (
+                <button
+                  key={pg}
+                  onClick={() => setPage(pg)}
+                  className={`px-1.5 py-0.5 rounded-lg text-[10px] font-semibold transition whitespace-nowrap ${
+                    page === pg
+                      ? 'bg-primary text-white shadow-sm'
+                      : 'text-gray-500 hover:bg-gray-100'
+                  }`}
+                >
+                  {pg} ({cnt})
+                </button>
+              );
+            })}
+            <button
+              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages}
+              className="w-6 h-6 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition"
+            >
+              <ChevronRight size={14} />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
