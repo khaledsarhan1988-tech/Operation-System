@@ -90,7 +90,7 @@ function daysAgo(s) {
 }
 function fmtDT(s) {
   if (!s) return '';
-  return new Date(s).toLocaleString('ar-EG', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
+  return new Date(s).toLocaleString('ar-EG', { year:'numeric', day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
 }
 
 // ─── ReminderPanel ───────────────────────────────────────────────────────────
@@ -197,6 +197,12 @@ function ReminderPanel({ apiPath, agent }) {
                     <Phone size={9} />{r.client_phone}
                     {r.assigned_to && <span className="mr-1 text-primary font-medium">· {r.assigned_to}</span>}
                   </p>
+                  {due && (
+                    <p className="text-[10px] text-gray-400 mt-0.5 flex items-center gap-1">
+                      <Clock size={8} />
+                      {due.toLocaleString('ar-EG', { year:'numeric', day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' })}
+                    </p>
+                  )}
                 </div>
                 <div className={`text-[11px] font-bold px-2.5 py-1 rounded-xl text-center flex-shrink-0 ${isLate ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-800'}`}>
                   {isLate ? '⚠ ' : '⏰ '}{timeLabel}
