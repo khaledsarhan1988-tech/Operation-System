@@ -113,14 +113,20 @@ function fmtDateTime(s) {
 }
 
 // ─── ClientCard ───────────────────────────────────────────────────────────────
-function ClientCard({ remark, stageKey, onSelect, onMove }) {
+function ClientCard({ remark, stageKey, onSelect, onMove, onDragEnd }) {
   const pri  = PRIORITY_STYLE[remark.priority] || PRIORITY_STYLE['عادية'];
   const sla  = SLA_STYLE[remark.sla_status]    || SLA_STYLE.on_time;
 
   return (
     <div
+      draggable
+      onDragStart={e => {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('application/json', JSON.stringify({ id: remark.id, from: stageKey }));
+      }}
+      onDragEnd={onDragEnd}
       onClick={() => onSelect(remark)}
-      className="group relative bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 cursor-pointer overflow-hidden"
+      className="group relative bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 cursor-grab active:cursor-grabbing overflow-hidden"
     >
       {/* priority stripe */}
       <div className={`absolute top-0 right-0 w-1 h-full ${pri.bar} rounded-r-2xl`} />
@@ -201,7 +207,7 @@ function ClientCard({ remark, stageKey, onSelect, onMove }) {
 // ─── KanbanColumn ─────────────────────────────────────────────────────────────
 const PAGE_SIZE = 50;
 
-function KanbanColumn({ stage, cards, onSelect, onMove }) {
+function KanbanColumn({ stage, cards, onSelect, onMove, isDragOver, onColDragOver, onColDrop, onDragEnd }) {
   const StageIcon = stage.icon;
   const [page, setPage] = useState(1);
   const totalPages = Math.max(1, Math.ceil(cards.length / PAGE_SIZE));
@@ -212,7 +218,19 @@ function KanbanColumn({ stage, cards, onSelect, onMove }) {
   const pageCards = cards.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   return (
-    <div className="flex flex-col rounded-2xl overflow-hidden border border-gray-200 shadow-sm bg-gray-50/50 min-h-[500px]">
+    <div
+      className={`flex flex-col rounded-2xl overflow-hidden border shadow-sm bg-gray-50/50 min-h-[500px] transition-all duration-200 ${
+        isDragOver ? 'border-primary ring-2 ring-primary/30 bg-primary/5 scale-[1.01]' : 'border-gray-200'
+      }`}
+      onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; onColDragOver?.(stage.key); }}
+      onDrop={e => {
+        e.preventDefault();
+        try {
+          const { id, from } = JSON.parse(e.dataTransfer.getData('application/json'));
+          if (from !== stage.key) onColDrop?.(id, stage.key);
+        } catch {}
+      }}
+    >
       {/* ── header: shows total count ── */}
       <div className={`bg-gradient-to-l ${stage.gradient} px-4 py-3`}>
         <div className="flex items-center justify-between">
@@ -288,6 +306,7 @@ function KanbanColumn({ stage, cards, onSelect, onMove }) {
               stageKey={stage.key}
               onSelect={onSelect}
               onMove={onMove}
+              onDragEnd={onDragEnd}
             />
           ))
         )}
@@ -564,10 +583,12 @@ function currentMonthRange() {
 
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 export default function Pipeline() {
-  const [selected,  setSelected]  = useState(null);
-  const [search,    setSearch]    = useState('');
-  const [dateFrom,  setDateFrom]  = useState('');
-  const [dateTo,    setDateTo]    = useState('');
+  const [selected,     setSelected]     = useState(null);
+  const [search,       setSearch]       = useState('');
+  const [filterStage,  setFilterStage]  = useState('');
+  const [dateFrom,     setDateFrom]     = useState('');
+  const [dateTo,       setDateTo]       = useState('');
+  const [dragOverStage,setDragOverStage]= useState(null);
   const qc = useQueryClient();
 
   const { data: pipeline, isLoading, refetch, isFetching } = useQuery({
@@ -586,7 +607,15 @@ export default function Pipeline() {
     onSuccess:  () => qc.invalidateQueries(['agent-pipeline']),
   });
 
-  const handleMove = useCallback((id, stage) => moveMut.mutate({ id, stage }), [moveMut]);
+  const handleMove       = useCallback((id, stage) => moveMut.mutate({ id, stage }), [moveMut]);
+  const handleColDragOver= useCallback((key) => setDragOverStage(key), []);
+  const handleColDrop    = useCallback((id, toStage) => {
+    setDragOverStage(null);
+    moveMut.mutate({ id, stage: toStage });
+  }, [moveMut]);
+  const handleDragEnd    = useCallback(() => setDragOverStage(null), []);
+
+  const visibleStages = filterStage ? STAGES.filter(s => s.key === filterStage) : STAGES;
 
   // filter cards by search term
   const filtered = useMemo(() => {
@@ -652,9 +681,9 @@ export default function Pipeline() {
         </div>
       )}
 
-      {/* ── search + date filter ── */}
+      {/* ── search + stage filter + date filter ── */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-3 flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 min-w-[180px]">
+        <div className="relative flex-1 min-w-[160px]">
           <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
             value={search}
@@ -668,6 +697,15 @@ export default function Pipeline() {
             </button>
           )}
         </div>
+        <select value={filterStage} onChange={e=>setFilterStage(e.target.value)}
+          className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-white">
+          <option value="">كل المراحل</option>
+          {STAGES.map(s=>(
+            <option key={s.key} value={s.key}>
+              {s.label}{s.group ? ` — ${s.group}` : ''}
+            </option>
+          ))}
+        </select>
         <div className="flex items-center gap-1.5">
           <Calendar size={14} className="text-gray-400 flex-shrink-0"/>
           <span className="text-xs text-gray-500">من:</span>
@@ -676,8 +714,8 @@ export default function Pipeline() {
           <span className="text-xs text-gray-400">—</span>
           <input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)}
             className="border border-gray-200 rounded-xl px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"/>
-          {(dateFrom||dateTo) && (
-            <button onClick={()=>{setDateFrom('');setDateTo('');}}
+          {(dateFrom||dateTo||filterStage) && (
+            <button onClick={()=>{setDateFrom('');setDateTo('');setFilterStage('');}}
               className="p-1 hover:bg-red-50 rounded-lg text-red-400 transition">
               <X size={13}/>
             </button>
@@ -693,13 +731,17 @@ export default function Pipeline() {
         </div>
       ) : (
         <div className="flex gap-4 pb-6 overflow-x-auto">
-          {STAGES.map(stage => (
-            <div key={stage.key} className="flex-shrink-0 w-72">
+          {visibleStages.map(stage => (
+            <div key={stage.key} className={`flex-shrink-0 ${filterStage ? 'w-full max-w-sm' : 'w-72'}`}>
               <KanbanColumn
                 stage={stage}
                 cards={filtered?.[stage.key] || []}
                 onSelect={setSelected}
                 onMove={handleMove}
+                isDragOver={dragOverStage === stage.key}
+                onColDragOver={handleColDragOver}
+                onColDrop={handleColDrop}
+                onDragEnd={handleDragEnd}
               />
             </div>
           ))}

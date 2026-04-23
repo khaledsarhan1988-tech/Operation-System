@@ -93,13 +93,19 @@ function fmtDT(s) {
 }
 
 // ─── ClientCard ───────────────────────────────────────────────────────────────
-function ClientCard({ remark, stageKey, onSelect, onMove }) {
+function ClientCard({ remark, stageKey, onSelect, onMove, onDragEnd }) {
   const pri = PRIORITY_STYLE[remark.priority] || PRIORITY_STYLE['عادية'];
   const sla = SLA_STYLE[remark.sla_status]    || SLA_STYLE.on_time;
   return (
     <div
+      draggable
+      onDragStart={e => {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('application/json', JSON.stringify({ id: remark.id, from: stageKey }));
+      }}
+      onDragEnd={onDragEnd}
       onClick={() => onSelect(remark)}
-      className="group relative bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 cursor-pointer overflow-hidden"
+      className="group relative bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 cursor-grab active:cursor-grabbing overflow-hidden"
     >
       <div className={`absolute top-0 right-0 w-1 h-full ${pri.bar} rounded-r-2xl`} />
       <div className="p-3.5 pr-4">
@@ -175,7 +181,7 @@ function ClientCard({ remark, stageKey, onSelect, onMove }) {
 // ─── KanbanColumn ─────────────────────────────────────────────────────────────
 const PAGE_SIZE = 50;
 
-function KanbanColumn({ stage, cards, onSelect, onMove }) {
+function KanbanColumn({ stage, cards, onSelect, onMove, isDragOver, onColDragOver, onColDrop, onDragEnd }) {
   const StageIcon = stage.icon;
   const [page, setPage] = useState(1);
   const totalPages = Math.max(1, Math.ceil(cards.length / PAGE_SIZE));
@@ -186,7 +192,19 @@ function KanbanColumn({ stage, cards, onSelect, onMove }) {
   const pageCards = cards.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   return (
-    <div className="flex flex-col rounded-2xl overflow-hidden border border-gray-200 shadow-sm bg-gray-50/50 min-h-[500px]">
+    <div
+      className={`flex flex-col rounded-2xl overflow-hidden border shadow-sm bg-gray-50/50 min-h-[500px] transition-all duration-200 ${
+        isDragOver ? 'border-primary ring-2 ring-primary/30 bg-primary/5 scale-[1.01]' : 'border-gray-200'
+      }`}
+      onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; onColDragOver?.(stage.key); }}
+      onDrop={e => {
+        e.preventDefault();
+        try {
+          const { id, from } = JSON.parse(e.dataTransfer.getData('application/json'));
+          if (from !== stage.key) onColDrop?.(id, stage.key);
+        } catch {}
+      }}
+    >
       {/* ── header: shows total count ── */}
       <div className={`bg-gradient-to-l ${stage.gradient} px-4 py-3`}>
         <div className="flex items-center justify-between">
@@ -252,7 +270,7 @@ function KanbanColumn({ stage, cards, onSelect, onMove }) {
             <p className="text-xs">لا توجد مهام</p>
           </div>
         ) : pageCards.map(c => (
-          <ClientCard key={c.id} remark={c} stageKey={stage.key} onSelect={onSelect} onMove={onMove} />
+          <ClientCard key={c.id} remark={c} stageKey={stage.key} onSelect={onSelect} onMove={onMove} onDragEnd={onDragEnd} />
         ))}
       </div>
     </div>
@@ -479,12 +497,14 @@ function currentMonthRange() {
 }
 
 export default function AdminPipeline() {
-  const [selected,   setSelected]   = useState(null);
-  const [search,     setSearch]     = useState('');
-  const [filterLine, setFilterLine] = useState('');
-  const [filterAgent,setFilterAgent]= useState('');
-  const [dateFrom,   setDateFrom]   = useState('');
-  const [dateTo,     setDateTo]     = useState('');
+  const [selected,     setSelected]     = useState(null);
+  const [search,       setSearch]       = useState('');
+  const [filterLine,   setFilterLine]   = useState('');
+  const [filterAgent,  setFilterAgent]  = useState('');
+  const [filterStage,  setFilterStage]  = useState('');
+  const [dateFrom,     setDateFrom]     = useState('');
+  const [dateTo,       setDateTo]       = useState('');
+  const [dragOverStage,setDragOverStage]= useState(null);
   const qc = useQueryClient();
 
   const { data: agentList = [] } = useQuery({
@@ -510,7 +530,15 @@ export default function AdminPipeline() {
     onSuccess:  () => qc.invalidateQueries(['admin-pipeline']),
   });
 
-  const handleMove = useCallback((id, stage) => moveMut.mutate({ id, stage }), [moveMut]);
+  const handleMove       = useCallback((id, stage) => moveMut.mutate({ id, stage }), [moveMut]);
+  const handleColDragOver= useCallback((key) => setDragOverStage(key), []);
+  const handleColDrop    = useCallback((id, toStage) => {
+    setDragOverStage(null);
+    moveMut.mutate({ id, stage: toStage });
+  }, [moveMut]);
+  const handleDragEnd    = useCallback(() => setDragOverStage(null), []);
+
+  const visibleStages = filterStage ? STAGES.filter(s => s.key === filterStage) : STAGES;
 
   const filtered = useMemo(() => {
     if (!pipeline || !search.trim()) return pipeline;
@@ -551,16 +579,16 @@ export default function AdminPipeline() {
             <Filter size={15} className="text-gray-400"/>
             <span className="text-sm font-semibold text-gray-700">تصفية</span>
           </div>
-          {(filterLine||filterAgent||dateFrom||dateTo||search) && (
+          {(filterLine||filterAgent||filterStage||dateFrom||dateTo||search) && (
             <button
-              onClick={()=>{setFilterLine('');setFilterAgent('');setDateFrom('');setDateTo('');setSearch('');}}
+              onClick={()=>{setFilterLine('');setFilterAgent('');setFilterStage('');setDateFrom('');setDateTo('');setSearch('');}}
               className="text-xs text-red-500 hover:text-red-700 flex items-center gap-1 transition"
             >
               <X size={12}/> مسح الفلاتر
             </button>
           )}
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           <div className="relative">
             <Search size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"/>
             <input value={search} onChange={e=>setSearch(e.target.value)}
@@ -576,6 +604,15 @@ export default function AdminPipeline() {
             className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-white">
             <option value="">كل المنسقين</option>
             {agentList.map(a=><option key={a} value={a}>{a}</option>)}
+          </select>
+          <select value={filterStage} onChange={e=>setFilterStage(e.target.value)}
+            className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-white">
+            <option value="">كل المراحل</option>
+            {STAGES.map(s=>(
+              <option key={s.key} value={s.key}>
+                {s.label}{s.group ? ` — ${s.group}` : ''}
+              </option>
+            ))}
           </select>
           {/* date range */}
           <div className="flex items-center gap-1.5">
@@ -635,10 +672,18 @@ export default function AdminPipeline() {
         </div>
       ) : (
         <div className="flex gap-4 pb-6 overflow-x-auto">
-          {STAGES.map(stage=>(
-            <div key={stage.key} className="flex-shrink-0 w-72">
-              <KanbanColumn stage={stage} cards={filtered?.[stage.key]||[]}
-                onSelect={setSelected} onMove={handleMove}/>
+          {visibleStages.map(stage=>(
+            <div key={stage.key} className={`flex-shrink-0 ${filterStage ? 'w-full max-w-sm' : 'w-72'}`}>
+              <KanbanColumn
+                stage={stage}
+                cards={filtered?.[stage.key]||[]}
+                onSelect={setSelected}
+                onMove={handleMove}
+                isDragOver={dragOverStage === stage.key}
+                onColDragOver={handleColDragOver}
+                onColDrop={handleColDrop}
+                onDragEnd={handleDragEnd}
+              />
             </div>
           ))}
         </div>
