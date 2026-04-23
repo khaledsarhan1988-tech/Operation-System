@@ -500,6 +500,25 @@ router.put('/pipeline/tasks/:id', (req, res) => {
   return res.json({ ...updated, sla_status: getSlaStatus(updated.sla_deadline, updated.priority) });
 });
 
+// PUT /api/admin/pipeline/bulk-reassign  — reassign a list of remarks to another agent
+router.put('/pipeline/bulk-reassign', (req, res) => {
+  const { ids, assigned_to } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0 || !assigned_to) {
+    return res.status(400).json({ error: 'ids[] and assigned_to are required' });
+  }
+  const line = effectiveLine(req);
+  const lf   = line ? ` AND line = '${line.replace(/'/g,"''")}'` : '';
+  const ph   = ids.map(() => '?').join(',');
+  const info = db.prepare(`
+    UPDATE remarks
+    SET assigned_to  = ?,
+        last_updated = datetime('now','+2 hours')
+    WHERE id IN (${ph})${lf}
+      AND category = 'توزيع عملاء'
+  `).run(assigned_to, ...ids);
+  return res.json({ updated: info.changes });
+});
+
 // GET /api/admin/pipeline/tasks/:id/logs  — admin: view any task's interaction logs
 router.get('/pipeline/tasks/:id/logs', (req, res) => {
   const { id } = req.params;

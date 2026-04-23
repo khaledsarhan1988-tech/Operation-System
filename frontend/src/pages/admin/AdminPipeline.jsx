@@ -6,7 +6,7 @@ import {
   CheckCircle2, ChevronLeft, ChevronRight, AlertTriangle, Search,
   TrendingUp, Zap, Users, Filter,
   BookOpen, PhoneOff, MinusCircle,
-  Bell, ChevronDown,
+  Bell, ChevronDown, CheckSquare, Square, ArrowRightLeft,
 } from 'lucide-react';
 import api from '../../api/axios';
 
@@ -196,21 +196,84 @@ function ReminderPanel({ apiPath, agent }) {
   );
 }
 
+// ─── ReassignModal ────────────────────────────────────────────────────────────
+function ReassignModal({ count, agentList, onConfirm, onClose, isPending }) {
+  const [target, setTarget] = useState('');
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6" dir="rtl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-11 h-11 rounded-2xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+            <ArrowRightLeft size={20} className="text-primary" />
+          </div>
+          <div>
+            <h3 className="font-bold text-gray-900 text-base">نقل عملاء</h3>
+            <p className="text-sm text-gray-400">{count} عميل محدد</p>
+          </div>
+        </div>
+
+        <label className="text-xs font-semibold text-gray-600 block mb-1.5">اختر المنسق الجديد</label>
+        <select
+          value={target}
+          onChange={e => setTarget(e.target.value)}
+          className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/30 mb-5"
+        >
+          <option value="">— اختر منسق —</option>
+          {agentList.map(a => <option key={a} value={a}>{a}</option>)}
+        </select>
+
+        <div className="flex gap-2">
+          <button onClick={onClose}
+            className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-500 hover:bg-gray-50 transition">
+            إلغاء
+          </button>
+          <button
+            disabled={!target || isPending}
+            onClick={() => onConfirm(target)}
+            className="flex-1 py-2.5 bg-gradient-to-l from-primary to-primary-light text-white rounded-xl text-sm font-bold disabled:opacity-40 flex items-center justify-center gap-2 shadow-md transition"
+          >
+            {isPending ? <RefreshCw size={14} className="animate-spin" /> : <ArrowRightLeft size={14} />}
+            تأكيد النقل
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── ClientCard ───────────────────────────────────────────────────────────────
-function ClientCard({ remark, stageKey, onSelect, onMove, onDragEnd }) {
+function ClientCard({ remark, stageKey, onSelect, onMove, onDragEnd, selectionMode, selected, onToggle }) {
   const pri = PRIORITY_STYLE[remark.priority] || PRIORITY_STYLE['عادية'];
   const sla = SLA_STYLE[remark.sla_status]    || SLA_STYLE.on_time;
+
+  const handleClick = () => selectionMode ? onToggle(remark.id) : onSelect(remark);
+
   return (
     <div
-      draggable
-      onDragStart={e => {
+      draggable={!selectionMode}
+      onDragStart={!selectionMode ? e => {
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('application/json', JSON.stringify({ id: remark.id, from: stageKey }));
-      }}
-      onDragEnd={onDragEnd}
-      onClick={() => onSelect(remark)}
-      className="group relative bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 cursor-grab active:cursor-grabbing overflow-hidden"
+      } : undefined}
+      onDragEnd={!selectionMode ? onDragEnd : undefined}
+      onClick={handleClick}
+      className={`group relative bg-white rounded-2xl border shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden ${
+        selectionMode
+          ? selected
+            ? 'border-primary ring-2 ring-primary/30 bg-primary/5 cursor-pointer'
+            : 'border-gray-200 cursor-pointer hover:border-primary/40'
+          : 'border-gray-100 hover:shadow-lg hover:-translate-y-0.5 cursor-grab active:cursor-grabbing'
+      }`}
     >
+      {/* selection checkbox */}
+      {selectionMode && (
+        <div className="absolute top-2 left-2 z-10" onClick={e => { e.stopPropagation(); onToggle(remark.id); }}>
+          {selected
+            ? <CheckSquare size={18} className="text-primary fill-primary" />
+            : <Square size={18} className="text-gray-300" />
+          }
+        </div>
+      )}
       <div className={`absolute top-0 right-0 w-1 h-full ${pri.bar} rounded-r-2xl`} />
       <div className="p-3.5 pr-4">
         <div className="flex items-center gap-2.5 mb-2.5">
@@ -285,7 +348,7 @@ function ClientCard({ remark, stageKey, onSelect, onMove, onDragEnd }) {
 // ─── KanbanColumn ─────────────────────────────────────────────────────────────
 const PAGE_SIZE = 50;
 
-function KanbanColumn({ stage, cards, onSelect, onMove, isDragOver, onColDragOver, onColDrop, onDragEnd }) {
+function KanbanColumn({ stage, cards, onSelect, onMove, isDragOver, onColDragOver, onColDrop, onDragEnd, selectionMode, selectedIds, onToggle }) {
   const StageIcon = stage.icon;
   const [page, setPage] = useState(1);
   const totalPages = Math.max(1, Math.ceil(cards.length / PAGE_SIZE));
@@ -374,7 +437,11 @@ function KanbanColumn({ stage, cards, onSelect, onMove, isDragOver, onColDragOve
             <p className="text-xs">لا توجد مهام</p>
           </div>
         ) : pageCards.map(c => (
-          <ClientCard key={c.id} remark={c} stageKey={stage.key} onSelect={onSelect} onMove={onMove} onDragEnd={onDragEnd} />
+          <ClientCard
+            key={c.id} remark={c} stageKey={stage.key}
+            onSelect={onSelect} onMove={onMove} onDragEnd={onDragEnd}
+            selectionMode={selectionMode} selected={selectedIds?.has(c.id)} onToggle={onToggle}
+          />
         ))}
       </div>
     </div>
@@ -610,6 +677,9 @@ export default function AdminPipeline() {
   const [dateFrom,     setDateFrom]     = useState('');
   const [dateTo,       setDateTo]       = useState('');
   const [dragOverStage,setDragOverStage]= useState(null);
+  const [selectionMode,setSelectionMode]= useState(false);
+  const [selectedIds,  setSelectedIds]  = useState(new Set());
+  const [showReassign, setShowReassign] = useState(false);
   const qc = useQueryClient();
 
   const { data: agentList = [] } = useQuery({
@@ -635,6 +705,17 @@ export default function AdminPipeline() {
     onSuccess:  () => qc.invalidateQueries(['admin-pipeline']),
   });
 
+  const reassignMut = useMutation({
+    mutationFn: ({ ids, assigned_to }) =>
+      api.put('/admin/pipeline/bulk-reassign', { ids: [...ids], assigned_to }),
+    onSuccess: () => {
+      qc.invalidateQueries(['admin-pipeline']);
+      setSelectedIds(new Set());
+      setSelectionMode(false);
+      setShowReassign(false);
+    },
+  });
+
   const handleMove       = useCallback((id, stage) => moveMut.mutate({ id, stage }), [moveMut]);
   const handleColDragOver= useCallback((key) => setDragOverStage(key), []);
   const handleColDrop    = useCallback((id, toStage) => {
@@ -642,6 +723,19 @@ export default function AdminPipeline() {
     moveMut.mutate({ id, stage: toStage });
   }, [moveMut]);
   const handleDragEnd    = useCallback(() => setDragOverStage(null), []);
+
+  const toggleSelect = useCallback((id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setSelectedIds(new Set());
+    setSelectionMode(false);
+  }, []);
 
   const visibleStages = filterStage ? STAGES.filter(s => s.key === filterStage) : STAGES;
 
@@ -671,10 +765,23 @@ export default function AdminPipeline() {
             {isLoading ? '...' : `${totalOpen} مهمة نشطة · نسبة الإنجاز ${doneRate}%`}
           </p>
         </div>
-        <button onClick={()=>refetch()} disabled={isFetching}
-          className="flex items-center gap-2 px-4 py-2.5 text-sm bg-white border border-gray-200 rounded-xl hover:bg-gray-50 disabled:opacity-50 transition shadow-sm">
-          <RefreshCw size={14} className={isFetching?'animate-spin':''}/> تحديث
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => { setSelectionMode(m => !m); setSelectedIds(new Set()); }}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm rounded-xl border transition shadow-sm font-medium ${
+              selectionMode
+                ? 'bg-primary text-white border-primary'
+                : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            <CheckSquare size={14} />
+            {selectionMode ? 'إلغاء التحديد' : 'تحديد'}
+          </button>
+          <button onClick={()=>refetch()} disabled={isFetching}
+            className="flex items-center gap-2 px-4 py-2.5 text-sm bg-white border border-gray-200 rounded-xl hover:bg-gray-50 disabled:opacity-50 transition shadow-sm">
+            <RefreshCw size={14} className={isFetching?'animate-spin':''}/> تحديث
+          </button>
+        </div>
       </div>
 
       {/* filters */}
@@ -791,6 +898,9 @@ export default function AdminPipeline() {
                 onColDragOver={handleColDragOver}
                 onColDrop={handleColDrop}
                 onDragEnd={handleDragEnd}
+                selectionMode={selectionMode}
+                selectedIds={selectedIds}
+                onToggle={toggleSelect}
               />
             </div>
           ))}
@@ -800,6 +910,39 @@ export default function AdminPipeline() {
       {selected && (
         <ClientDetailModal remark={selected} onClose={()=>setSelected(null)}
           onUpdate={()=>{ qc.invalidateQueries(['admin-pipeline']); setSelected(null); }}/>
+      )}
+
+      {/* ── floating selection bar ── */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 bg-gray-900 text-white rounded-2xl shadow-2xl px-5 py-3" dir="rtl">
+          <div className="flex items-center gap-2">
+            <span className="bg-primary text-white text-xs font-black w-7 h-7 rounded-full flex items-center justify-center">
+              {selectedIds.size}
+            </span>
+            <span className="text-sm font-semibold">عميل محدد</span>
+          </div>
+          <div className="w-px h-5 bg-white/20 mx-1" />
+          <button
+            onClick={() => setShowReassign(true)}
+            className="flex items-center gap-2 bg-primary hover:bg-primary-light px-4 py-2 rounded-xl text-sm font-bold transition"
+          >
+            <ArrowRightLeft size={14} /> نقل إلى منسق
+          </button>
+          <button onClick={clearSelection} className="p-1.5 hover:bg-white/10 rounded-lg transition">
+            <X size={15} className="text-gray-400" />
+          </button>
+        </div>
+      )}
+
+      {/* ── reassign modal ── */}
+      {showReassign && (
+        <ReassignModal
+          count={selectedIds.size}
+          agentList={agentList}
+          isPending={reassignMut.isPending}
+          onClose={() => setShowReassign(false)}
+          onConfirm={(assigned_to) => reassignMut.mutate({ ids: selectedIds, assigned_to })}
+        />
       )}
     </div>
   );
