@@ -348,7 +348,7 @@ function ClientCard({ remark, stageKey, onSelect, onMove, onDragEnd, selectionMo
 // ─── KanbanColumn ─────────────────────────────────────────────────────────────
 const PAGE_SIZE = 50;
 
-function KanbanColumn({ stage, cards, onSelect, onMove, isDragOver, onColDragOver, onColDrop, onDragEnd, selectionMode, selectedIds, onToggle }) {
+function KanbanColumn({ stage, cards, onSelect, onMove, isDragOver, onColDragOver, onColDrop, onDragEnd, selectionMode, selectedIds, onToggle, onSelectAll }) {
   const StageIcon = stage.icon;
   const [page, setPage] = useState(1);
   const totalPages = Math.max(1, Math.ceil(cards.length / PAGE_SIZE));
@@ -356,7 +356,8 @@ function KanbanColumn({ stage, cards, onSelect, onMove, isDragOver, onColDragOve
   // Reset to first page whenever cards list changes (filter applied)
   useEffect(() => { setPage(1); }, [cards.length]);
 
-  const pageCards = cards.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const pageCards   = cards.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const allSelected = selectionMode && cards.length > 0 && cards.every(c => selectedIds?.has(c.id));
 
   return (
     <div
@@ -384,9 +385,24 @@ function KanbanColumn({ stage, cards, onSelect, onMove, isDragOver, onColDragOve
               )}
             </div>
           </div>
-          <span className="bg-white/25 text-white text-xs font-bold px-2.5 py-0.5 rounded-full flex-shrink-0">
-            {cards.length}
-          </span>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {selectionMode && cards.length > 0 && (
+              <button
+                onClick={() => onSelectAll?.(cards, allSelected)}
+                className={`flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-lg transition ${
+                  allSelected
+                    ? 'bg-white text-primary'
+                    : 'bg-white/20 text-white hover:bg-white/30'
+                }`}
+              >
+                {allSelected ? <CheckSquare size={12}/> : <Square size={12}/>}
+                {allSelected ? 'إلغاء الكل' : 'تحديد الكل'}
+              </button>
+            )}
+            <span className="bg-white/25 text-white text-xs font-bold px-2.5 py-0.5 rounded-full">
+              {cards.length}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -737,6 +753,18 @@ export default function AdminPipeline() {
     setSelectionMode(false);
   }, []);
 
+  const handleSelectAll = useCallback((cards, allSelected) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (allSelected) {
+        cards.forEach(c => next.delete(c.id));  // deselect all in column
+      } else {
+        cards.forEach(c => next.add(c.id));     // select all in column
+      }
+      return next;
+    });
+  }, []);
+
   const visibleStages = filterStage ? STAGES.filter(s => s.key === filterStage) : STAGES;
 
   const filtered = useMemo(() => {
@@ -901,6 +929,7 @@ export default function AdminPipeline() {
                 selectionMode={selectionMode}
                 selectedIds={selectedIds}
                 onToggle={toggleSelect}
+                onSelectAll={handleSelectAll}
               />
             </div>
           ))}
