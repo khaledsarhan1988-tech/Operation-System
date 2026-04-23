@@ -30,10 +30,10 @@ function SessionCard({ session: s }) {
 }
 
 // ─── ZoomTable — table view matching admin modal ──────────────────────────────
-function ZoomTable() {
+function ZoomTable({ date = '' }) {
   const [searchDraft, setSearchDraft] = useState('');
-  const [filters,     setFilters]     = useState({ from_date: '', to_date: '', trainer: '' });
-  const [applied,     setApplied]     = useState({ q: '', from_date: '', to_date: '', trainer: '' });
+  const [filters,     setFilters]     = useState({ from_date: date, to_date: date, trainer: '' });
+  const [applied,     setApplied]     = useState({ q: '', from_date: date, to_date: date, trainer: '' });
   const [page,        setPage]        = useState(1);
   const LIMIT = 25;
 
@@ -248,7 +248,7 @@ export default function TodaySchedule() {
       </div>
 
       {/* ── Zoom tab: full table with filters ── */}
-      {activeTab === 'side' && <ZoomTable />}
+      {activeTab === 'side' && <ZoomTable key={date} date={date} />}
 
       {/* ── Main tab: cards (unchanged) ── */}
       {activeTab === 'main' && (
