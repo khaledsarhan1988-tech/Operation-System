@@ -400,13 +400,13 @@ router.get('/pipeline', (req, res) => {
   const dateFrom  = (req.query.date_from || '').trim();
   const dateTo    = (req.query.date_to   || '').trim();
 
-  const conditions = ['1=1'];
+  const conditions = [`r.category = 'توزيع عملاء'`];
   const params     = [];
 
-  if (line)     { conditions.push('r.line = ?');                    params.push(line);     }
-  if (agent)    { conditions.push('r.assigned_to = ?');             params.push(agent);    }
-  if (dateFrom) { conditions.push('r.client_date >= ?');            params.push(dateFrom); }
-  if (dateTo)   { conditions.push('r.client_date <= ?');            params.push(dateTo);   }
+  if (line)     { conditions.push('r.line = ?');         params.push(line);     }
+  if (agent)    { conditions.push('r.assigned_to = ?');  params.push(agent);    }
+  if (dateFrom) { conditions.push('r.client_date >= ?'); params.push(dateFrom); }
+  if (dateTo)   { conditions.push('r.client_date <= ?'); params.push(dateTo);   }
 
   const where = conditions.join(' AND ');
 
@@ -422,7 +422,7 @@ router.get('/pipeline', (req, res) => {
         CASE r.priority WHEN 'عاجلة' THEN 1 WHEN 'هامة' THEN 2 ELSE 3 END ASC,
         CASE WHEN r.sla_deadline < datetime('now','+2 hours') THEN 0 ELSE 1 END ASC,
         r.added_at ASC
-      LIMIT 100
+      LIMIT 200
     `).all(...params)
       .map(r => ({ ...r, sla_status: getSlaStatus(r.sla_deadline, r.priority) }));
 
