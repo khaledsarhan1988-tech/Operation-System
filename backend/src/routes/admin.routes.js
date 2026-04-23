@@ -405,15 +405,9 @@ router.get('/pipeline', (req, res) => {
 
   if (line)     { conditions.push('r.line = ?');         params.push(line);     }
   if (agent)    { conditions.push('r.assigned_to = ?');  params.push(agent);    }
-  // client_date is stored as DD/MM/YYYY — convert to YYYY-MM-DD for correct range comparison
-  if (dateFrom) {
-    conditions.push(`SUBSTR(r.client_date,7,4)||'-'||SUBSTR(r.client_date,4,2)||'-'||SUBSTR(r.client_date,1,2) >= ?`);
-    params.push(dateFrom);
-  }
-  if (dateTo) {
-    conditions.push(`SUBSTR(r.client_date,7,4)||'-'||SUBSTR(r.client_date,4,2)||'-'||SUBSTR(r.client_date,1,2) <= ?`);
-    params.push(dateTo);
-  }
+  // client_date in remarks is stored as YYYY-MM-DD (via dmyToISO on confirm) — direct comparison is correct
+  if (dateFrom) { conditions.push('r.client_date >= ?'); params.push(dateFrom); }
+  if (dateTo)   { conditions.push('r.client_date <= ?'); params.push(dateTo);   }
 
   const where = conditions.join(' AND ');
 
