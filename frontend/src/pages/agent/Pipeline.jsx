@@ -216,8 +216,11 @@ function ReminderPanel({ apiPath }) {
     refetchInterval: 60_000, // poll every minute
   });
 
+  // Egypt is UTC+2; next_followup_at stored as local Egypt time (from datetime-local input).
+  // We parse it as UTC+2 by appending +02:00 so comparison is timezone-aware.
+  const parseEgypt = (s) => s ? new Date(s.includes('T') ? s + '+02:00' : s) : null;
   const now     = new Date();
-  const overdue = reminders.filter(r => new Date(r.next_followup_at) < now);
+  const overdue = reminders.filter(r => { const d = parseEgypt(r.next_followup_at); return d && d < now; });
   const total   = reminders.length;
 
   // Browser notification for new upcoming reminders
@@ -227,10 +230,12 @@ function ReminderPanel({ apiPath }) {
       let perm = Notification.permission;
       if (perm === 'default') perm = await Notification.requestPermission();
       if (perm !== 'granted') return;
+      const now2 = new Date();
       reminders.forEach(r => {
         if (notifiedIds.has(r.id)) return;
-        const due = new Date(r.next_followup_at);
-        const minsLeft = Math.round((due - now) / 60000);
+        const due = parseEgypt(r.next_followup_at);
+        if (!due) return;
+        const minsLeft = Math.round((due - now2) / 60000);
         // Only notify for overdue or due within 30 min
         if (minsLeft > 30) return;
         const isLate = minsLeft <= 0;
@@ -278,14 +283,14 @@ function ReminderPanel({ apiPath }) {
       {open && (
         <div className={`border-t divide-y max-h-72 overflow-y-auto ${overdue.length > 0 ? 'border-red-200 divide-red-100' : 'border-amber-200 divide-amber-100'}`}>
           {reminders.map(r => {
-            const due     = new Date(r.next_followup_at);
-            const isLate  = due < now;
-            const minsLeft= Math.round((due - now) / 60000);
+            const due     = parseEgypt(r.next_followup_at);
+            const isLate  = due && due < now;
+            const minsLeft= due ? Math.round((due - now) / 60000) : 0;
             const timeLabel = isLate
               ? `متأخر ${Math.abs(minsLeft)} دقيقة`
               : minsLeft < 60
               ? `بعد ${minsLeft} دقيقة`
-              : `${due.toLocaleString('ar-EG', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })}`;
+              : due ? due.toLocaleString('ar-EG', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short', timeZone: 'Africa/Cairo' }) : '';
             return (
               <div key={r.id} className={`px-4 py-3 flex items-center gap-3 ${isLate ? 'bg-red-50' : 'bg-white'}`}>
                 <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isLate ? 'bg-red-500 animate-pulse' : 'bg-amber-400'}`} />

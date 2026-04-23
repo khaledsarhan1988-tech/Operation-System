@@ -500,4 +500,55 @@ router.put('/pipeline/tasks/:id', (req, res) => {
   return res.json({ ...updated, sla_status: getSlaStatus(updated.sla_deadline, updated.priority) });
 });
 
+// GET /api/admin/pipeline/tasks/:id/logs  — admin: view any task's interaction logs
+router.get('/pipeline/tasks/:id/logs', (req, res) => {
+  const { id } = req.params;
+  const line = effectiveLine(req);
+  const lf   = line ? ` AND line = '${line.replace(/'/g,"''")}'` : '';
+  const remark = db.prepare(`SELECT id FROM remarks WHERE id = ?${lf}`).get(id);
+  if (!remark) return res.status(404).json({ error: 'Task not found' });
+  const logs = db.prepare(
+    'SELECT * FROM remark_interactions WHERE remark_id = ? ORDER BY created_at DESC'
+  ).all(id);
+  return res.json(logs);
+});
+
+// POST /api/admin/pipeline/tasks/:id/log  — admin: log interaction on any task
+router.post('/pipeline/tasks/:id/log', (req, res) => {
+  const { id } = req.params;
+  const { interaction_type = 'call', outcome, notes, next_followup_at, status } = req.body;
+  const line = effectiveLine(req);
+  const lf   = line ? ` AND line = '${line.replace(/'/g,"''")}'` : '';
+
+  const remark = db.prepare(`SELECT * FROM remarks WHERE id = ?${lf}`).get(id);
+  if (!remark) return res.status(404).json({ error: 'Task not found' });
+
+  const log = db.prepare(`
+    INSERT INTO remark_interactions
+      (remark_id, agent_name, interaction_type, outcome, notes, next_followup_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(id, req.user.full_name, interaction_type, outcome || null, notes || null, next_followup_at || null);
+
+  if (status || next_followup_at !== undefined) {
+    db.prepare(`
+      UPDATE remarks
+      SET status           = CASE WHEN ? IS NOT NULL THEN ? ELSE status END,
+          next_followup_at = CASE WHEN ? IS NOT NULL THEN ? ELSE next_followup_at END,
+          last_updated     = datetime('now','+2 hours')
+      WHERE id = ?
+    `).run(
+      status || null, status || null,
+      next_followup_at !== undefined ? next_followup_at : null,
+      next_followup_at !== undefined ? next_followup_at : null,
+      id
+    );
+  }
+
+  const updated = db.prepare('SELECT * FROM remarks WHERE id = ?').get(id);
+  return res.status(201).json({
+    log_id: log.lastInsertRowid,
+    remark: { ...updated, sla_status: getSlaStatus(updated.sla_deadline, updated.priority) },
+  });
+});
+
 module.exports = router;
