@@ -214,10 +214,8 @@ export default function TodaySchedule() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="text-xl font-bold text-gray-900">{t('nav.todaySchedule')}</h1>
-        {activeTab === 'main' && (
-          <input type="date" value={date} onChange={e => setDate(e.target.value)}
-            className="input w-44" />
-        )}
+        <input type="date" value={date} onChange={e => setDate(e.target.value)}
+          className="input w-44" />
       </div>
 
       {/* Tabs */}
