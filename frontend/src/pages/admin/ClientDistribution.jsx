@@ -832,6 +832,12 @@ export default function ClientDistribution() {
     onSuccess: () => qc.invalidateQueries(['dist-sessions']),
   });
 
+  // Hard-delete any session (confirmed/cancelled/pending) — admin only
+  const histForceDeleteMut = useMutation({
+    mutationFn: sid => api.delete(`/distribution/sessions/${sid}/force`),
+    onSuccess: () => qc.invalidateQueries(['dist-sessions']),
+  });
+
   const confirmMut = useMutation({
     mutationFn: ({ sid, itemIds }) => {
       const body = itemIds ? { item_ids: itemIds } : {};
@@ -1661,6 +1667,16 @@ export default function ClientDistribution() {
                               className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-500"
                             >
                               <Eye size={15} />
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (window.confirm(`حذف جلسة #${s.id} نهائياً؟ لا يمكن التراجع.`))
+                                  histForceDeleteMut.mutate(s.id);
+                              }}
+                              title="حذف نهائي"
+                              className="p-1.5 hover:bg-red-50 rounded-lg text-red-300 hover:text-red-600 transition"
+                            >
+                              <Trash2 size={15} />
                             </button>
                           </div>
                         </td>

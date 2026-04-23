@@ -462,6 +462,19 @@ router.delete('/sessions/:sid', (req, res) => {
   return res.json({ message: 'تم إلغاء الجلسة' });
 });
 
+// DELETE /api/distribution/sessions/:sid/force  — hard-delete any session (admin)
+router.delete('/sessions/:sid/force', (req, res) => {
+  const session = db.prepare(`SELECT * FROM distribution_sessions WHERE id = ?`).get(req.params.sid);
+  if (!session) return res.status(404).json({ error: 'الجلسة غير موجودة' });
+
+  db.transaction(() => {
+    db.prepare(`DELETE FROM distribution_items    WHERE session_id = ?`).run(req.params.sid);
+    db.prepare(`DELETE FROM distribution_sessions WHERE id = ?`).run(req.params.sid);
+  })();
+
+  return res.json({ message: 'تم حذف الجلسة نهائياً' });
+});
+
 // ─── CONFIRM session → create remarks ─────────────────────────────────────────
 
 // POST /api/distribution/sessions/:sid/confirm
