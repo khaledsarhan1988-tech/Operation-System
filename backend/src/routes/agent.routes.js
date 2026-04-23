@@ -114,22 +114,24 @@ router.put('/tasks/:id', (req, res) => {
 
 // ─── REMINDERS ───────────────────────────────────────────────────────────────
 
-// GET /api/agent/reminders — tasks with pending next_followup_at assigned to me
+// GET /api/agent/reminders — all logged follow-ups (from remark_interactions) for open tasks assigned to me
 router.get('/reminders', (req, res) => {
   const name = req.user.full_name;
   const lf   = lineClause(req);
   const rows = db.prepare(`
-    SELECT id, client_name, client_phone, task_type, status, priority,
-           next_followup_at, agent_notes, line, assigned_to
-    FROM remarks
-    WHERE assigned_to = ?
-      AND category    = 'توزيع عملاء'
-      AND next_followup_at IS NOT NULL
-      AND next_followup_at != ''
-      AND status NOT IN ('Retention Done','إنتهت')
+    SELECT ri.id, ri.next_followup_at, ri.agent_name, ri.created_at,
+           r.id        AS remark_id,
+           r.client_name, r.client_phone, r.status, r.assigned_to, r.line
+    FROM remark_interactions ri
+    JOIN remarks r ON r.id = ri.remark_id
+    WHERE ri.next_followup_at IS NOT NULL
+      AND ri.next_followup_at != ''
+      AND r.category    = 'توزيع عملاء'
+      AND r.assigned_to = ?
+      AND r.status NOT IN ('Retention Done','إنتهت')
       ${lf.clause}
-    ORDER BY next_followup_at ASC
-    LIMIT 100
+    ORDER BY ri.next_followup_at ASC
+    LIMIT 200
   `).all(name, ...lf.params);
   return res.json(rows);
 });

@@ -104,8 +104,21 @@ function ReminderPanel({ apiPath, agent }) {
     refetchInterval: 60_000,
   });
 
-  // Egypt is UTC+2; next_followup_at stored as local Egypt time (from datetime-local input).
-  const parseEgypt = (s) => s ? new Date(s.includes('T') ? s + '+02:00' : s) : null;
+  // Parse datetime stored as Egypt local time (UTC+2). Handles both T and space separators.
+  const parseEgypt = (s) => {
+    if (!s) return null;
+    const norm = s.trim().replace(' ', 'T').replace(/\.\d+$/, '');
+    const withTz = (norm.includes('+') || norm.endsWith('Z')) ? norm : norm + '+02:00';
+    const d = new Date(withTz);
+    return isNaN(d.getTime()) ? null : d;
+  };
+  // Human-readable delay: يوم / ساعة / دقيقة
+  const fmtDelay = (mins) => {
+    const abs = Math.abs(Math.round(mins));
+    if (abs < 60)   return `${abs} دقيقة`;
+    if (abs < 1440) return `${Math.round(abs / 60)} ساعة`;
+    return `${Math.round(abs / 1440)} يوم`;
+  };
   const now     = new Date();
   const overdue = reminders.filter(r => { const d = parseEgypt(r.next_followup_at); return d && d < now; });
   const total   = reminders.length;
@@ -168,12 +181,10 @@ function ReminderPanel({ apiPath, agent }) {
           {reminders.map(r => {
             const due     = parseEgypt(r.next_followup_at);
             const isLate  = due && due < now;
-            const minsLeft= due ? Math.round((due - now) / 60000) : 0;
+            const minsLeft= due ? (due - now) / 60000 : 0;
             const timeLabel = isLate
-              ? `متأخر ${Math.abs(minsLeft)} دقيقة`
-              : minsLeft < 60
-              ? `بعد ${minsLeft} دقيقة`
-              : due ? due.toLocaleString('ar-EG', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short', timeZone: 'Africa/Cairo' }) : '';
+              ? `متأخر ${fmtDelay(minsLeft)}`
+              : `بعد ${fmtDelay(minsLeft)}`;
             return (
               <div key={r.id} className={`px-4 py-3 flex items-center gap-3 ${isLate ? 'bg-red-50' : 'bg-white'}`}>
                 <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isLate ? 'bg-red-500 animate-pulse' : 'bg-amber-400'}`} />
