@@ -299,6 +299,7 @@ function ResumeModal({ session, onClose, onDone }) {
   const [showDups,    setShowDups]    = useState(false);
   const [useManual,   setUseManual]   = useState(false);
   const [assignments, setAssignments] = useState([{ agent: '', count: '' }]);
+  const [filterType,  setFilterType]  = useState(null); // null=all | 'existing_coordinator' | 'auto_distributed' | 'manual'
 
   // Fetch active agents for this line
   const { data: agentList = [] } = useQuery({
@@ -496,24 +497,36 @@ function ResumeModal({ session, onClose, onDone }) {
           {/* ── STEP: PREVIEW ── */}
           {step === 'preview' && forked && (
             <div className="space-y-4">
-              {/* KPI cards */}
+              {/* KPI cards — clickable to filter table */}
               <div className={`grid gap-3 ${forked.manual > 0 ? 'grid-cols-4' : 'grid-cols-3'}`}>
                 {[
-                  { label: 'إجمالي العملاء',  value: forked.total,       icon: Users,     color: 'text-blue-600   bg-blue-50'   },
-                  { label: 'منسق موجود',       value: forked.matched,     icon: UserCheck, color: 'text-green-600  bg-green-50'  },
-                  ...(forked.manual > 0 ? [{ label: 'يدوي', value: forked.manual, icon: Users, color: 'text-amber-600 bg-amber-50' }] : []),
-                  { label: 'توزيع تلقائي',     value: forked.distributed, icon: Shuffle,   color: 'text-purple-600 bg-purple-50' },
-                ].map(({ label, value, icon: Icon, color }) => (
-                  <div key={label} className="bg-gray-50 rounded-xl border border-gray-200 p-3 flex items-center gap-3">
-                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${color.split(' ')[1]} flex-shrink-0`}>
-                      <Icon size={18} className={color.split(' ')[0]} />
-                    </div>
-                    <div>
-                      <p className="text-xl font-bold text-gray-900">{value}</p>
-                      <p className="text-[11px] text-gray-500">{label}</p>
-                    </div>
-                  </div>
-                ))}
+                  { label: 'إجمالي العملاء',  value: forked.total,       icon: Users,     color: 'text-blue-600   bg-blue-50',   key: null                   },
+                  { label: 'منسق موجود',       value: forked.matched,     icon: UserCheck, color: 'text-green-600  bg-green-50',  key: 'existing_coordinator' },
+                  ...(forked.manual > 0 ? [{ label: 'يدوي', value: forked.manual, icon: Users, color: 'text-amber-600 bg-amber-50', key: 'manual' }] : []),
+                  { label: 'توزيع تلقائي',     value: forked.distributed, icon: Shuffle,   color: 'text-purple-600 bg-purple-50', key: 'auto_distributed'     },
+                ].map(({ label, value, icon: Icon, color, key }) => {
+                  const isActive = filterType === key;
+                  return (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => setFilterType(prev => prev === key ? null : key)}
+                      className={`rounded-xl border p-3 flex items-center gap-3 transition text-right w-full
+                        ${isActive
+                          ? 'border-primary bg-primary/5 ring-2 ring-primary/30'
+                          : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
+                        }`}
+                    >
+                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${color.split(' ')[1]} flex-shrink-0`}>
+                        <Icon size={18} className={color.split(' ')[0]} />
+                      </div>
+                      <div>
+                        <p className="text-xl font-bold text-gray-900">{value}</p>
+                        <p className="text-[11px] text-gray-500">{label}</p>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
 
               {/* Duplicates badge */}
@@ -563,23 +576,43 @@ function ResumeModal({ session, onClose, onDone }) {
               {/* Items table */}
               <div className="border border-gray-200 rounded-xl overflow-hidden">
                 <div className="px-4 py-2 bg-gray-50 border-b flex items-center justify-between">
-                  <span className="text-sm font-semibold text-gray-700">تفاصيل التوزيع</span>
-                  <span className="text-xs text-gray-400">{forked.total} عميل</span>
+                  <span className="text-sm font-semibold text-gray-700">
+                    تفاصيل التوزيع
+                    {filterType && (
+                      <span className="mr-2 text-xs font-normal text-primary bg-primary/10 px-2 py-0.5 rounded-full">
+                        {filterType === 'existing_coordinator' ? 'منسق موجود'
+                         : filterType === 'auto_distributed'   ? 'توزيع تلقائي'
+                         : 'يدوي'}
+                        {' '}· <button type="button" onClick={() => setFilterType(null)} className="underline">عرض الكل</button>
+                      </span>
+                    )}
+                  </span>
+                  <span className="text-xs text-gray-400">
+                    {filterType
+                      ? `${forked.items.filter(i => i.match_type === filterType).length} / ${forked.total} عميل`
+                      : `${forked.total} عميل`
+                    }
+                  </span>
                 </div>
                 <div className="max-h-48 overflow-y-auto">
                   <table className="w-full text-xs">
                     <thead className="bg-gray-50 sticky top-0">
                       <tr>
                         <th className="px-3 py-2 text-start font-semibold text-gray-500">الاسم</th>
+                        <th className="px-3 py-2 text-start font-semibold text-gray-500">الموبايل</th>
                         <th className="px-3 py-2 text-start font-semibold text-gray-500">التاريخ</th>
                         <th className="px-3 py-2 text-start font-semibold text-gray-500">الموظف</th>
                         <th className="px-3 py-2 text-start font-semibold text-gray-500">النوع</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {forked.items.map(item => (
+                      {(filterType
+                        ? forked.items.filter(i => i.match_type === filterType)
+                        : forked.items
+                      ).map(item => (
                         <tr key={item.id} className="hover:bg-gray-50">
-                          <td className="px-3 py-1.5 font-medium truncate max-w-[150px]">{item.client_name}</td>
+                          <td className="px-3 py-1.5 font-medium truncate max-w-[140px]">{item.client_name}</td>
+                          <td className="px-3 py-1.5 font-mono text-gray-700 select-all">{item.client_phone || '—'}</td>
                           <td className="px-3 py-1.5 text-gray-500">{item.client_date || '—'}</td>
                           <td className="px-3 py-1.5 font-semibold text-primary">{item.assigned_to}</td>
                           <td className="px-3 py-1.5">
