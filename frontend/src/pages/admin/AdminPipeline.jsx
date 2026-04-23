@@ -373,13 +373,23 @@ function ClientDetailModal({ remark: init, onClose, onUpdate }) {
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 const LINES = ['Ahmed Hassan', 'Dardasha'];
 
+// Returns first and last day of current month as YYYY-MM-DD
+function currentMonthRange() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const last = new Date(y, now.getMonth() + 1, 0).getDate();
+  return { from: `${y}-${m}-01`, to: `${y}-${m}-${last}` };
+}
+
 export default function AdminPipeline() {
+  const { from: defaultFrom, to: defaultTo } = currentMonthRange();
   const [selected,   setSelected]   = useState(null);
   const [search,     setSearch]     = useState('');
   const [filterLine, setFilterLine] = useState('');
   const [filterAgent,setFilterAgent]= useState('');
-  const [dateFrom,   setDateFrom]   = useState('');
-  const [dateTo,     setDateTo]     = useState('');
+  const [dateFrom,   setDateFrom]   = useState(defaultFrom);
+  const [dateTo,     setDateTo]     = useState(defaultTo);
   const qc = useQueryClient();
 
   const { data: agentList = [] } = useQuery({

@@ -422,7 +422,7 @@ router.get('/pipeline', (req, res) => {
         CASE r.priority WHEN 'عاجلة' THEN 1 WHEN 'هامة' THEN 2 ELSE 3 END ASC,
         CASE WHEN r.sla_deadline < datetime('now','+2 hours') THEN 0 ELSE 1 END ASC,
         r.added_at ASC
-      LIMIT 200
+      LIMIT 500
     `).all(...params)
       .map(r => ({ ...r, sla_status: getSlaStatus(r.sla_deadline, r.priority) }));
 
