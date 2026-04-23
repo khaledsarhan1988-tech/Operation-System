@@ -112,6 +112,28 @@ router.put('/tasks/:id', (req, res) => {
   return res.json({ ...updated, sla_status: getSlaStatus(updated.sla_deadline, updated.priority) });
 });
 
+// ─── REMINDERS ───────────────────────────────────────────────────────────────
+
+// GET /api/agent/reminders — tasks with pending next_followup_at assigned to me
+router.get('/reminders', (req, res) => {
+  const name = req.user.full_name;
+  const lf   = lineClause(req);
+  const rows = db.prepare(`
+    SELECT id, client_name, client_phone, task_type, status, priority,
+           next_followup_at, agent_notes, line, assigned_to
+    FROM remarks
+    WHERE assigned_to = ?
+      AND category    = 'توزيع عملاء'
+      AND next_followup_at IS NOT NULL
+      AND next_followup_at != ''
+      AND status NOT IN ('Retention Done','إنتهت')
+      ${lf.clause}
+    ORDER BY next_followup_at ASC
+    LIMIT 100
+  `).all(name, ...lf.params);
+  return res.json(rows);
+});
+
 // ─── PIPELINE (CRM Kanban) ────────────────────────────────────────────────────
 
 // GET /api/agent/pipeline?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD

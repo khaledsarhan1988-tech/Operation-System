@@ -6,6 +6,7 @@ import {
   CheckCircle2, ChevronLeft, ChevronRight, AlertTriangle, Search,
   TrendingUp, Zap, Users, BarChart3,
   BookOpen, PhoneOff, MinusCircle,
+  Bell, ChevronDown,
 } from 'lucide-react';
 import api from '../../api/axios';
 
@@ -200,6 +201,109 @@ function ClientCard({ remark, stageKey, onSelect, onMove, onDragEnd }) {
           </select>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── ReminderPanel ───────────────────────────────────────────────────────────
+function ReminderPanel({ apiPath }) {
+  const [open, setOpen] = useState(false);
+  const [notifiedIds, setNotifiedIds] = useState(() => new Set());
+
+  const { data: reminders = [] } = useQuery({
+    queryKey: ['reminders', apiPath],
+    queryFn:  () => api.get(apiPath).then(r => r.data),
+    refetchInterval: 60_000, // poll every minute
+  });
+
+  const now     = new Date();
+  const overdue = reminders.filter(r => new Date(r.next_followup_at) < now);
+  const total   = reminders.length;
+
+  // Browser notification for new upcoming reminders
+  useEffect(() => {
+    if (!total) return;
+    const req = async () => {
+      let perm = Notification.permission;
+      if (perm === 'default') perm = await Notification.requestPermission();
+      if (perm !== 'granted') return;
+      reminders.forEach(r => {
+        if (notifiedIds.has(r.id)) return;
+        const due = new Date(r.next_followup_at);
+        const minsLeft = Math.round((due - now) / 60000);
+        // Only notify for overdue or due within 30 min
+        if (minsLeft > 30) return;
+        const isLate = minsLeft <= 0;
+        new Notification(
+          isLate ? `⚠️ تذكير متأخر: ${r.client_name}` : `⏰ تذكير قريب: ${r.client_name}`,
+          {
+            body: `موعد المتابعة: ${due.toLocaleString('ar-EG', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })}`,
+            icon: '/favicon.ico',
+            tag:  `reminder-${r.id}`,
+          }
+        );
+        setNotifiedIds(prev => new Set([...prev, r.id]));
+      });
+    };
+    req();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reminders]);
+
+  if (total === 0) return null;
+
+  return (
+    <div className={`rounded-2xl overflow-hidden border transition-all ${overdue.length > 0 ? 'border-red-300 bg-red-50' : 'border-amber-200 bg-amber-50'}`}>
+      {/* header bar */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={`w-full flex items-center justify-between px-4 py-3 transition ${overdue.length > 0 ? 'hover:bg-red-100' : 'hover:bg-amber-100'}`}
+      >
+        <div className="flex items-center gap-2">
+          <Bell size={16} className={overdue.length > 0 ? 'text-red-600' : 'text-amber-600'} />
+          <span className={`font-bold text-sm ${overdue.length > 0 ? 'text-red-800' : 'text-amber-800'}`}>
+            {overdue.length > 0
+              ? `${overdue.length} تذكير متأخر · ${total} إجمالي`
+              : `${total} تذكير متابعة معلّق`}
+          </span>
+          {overdue.length > 0 && (
+            <span className="bg-red-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full animate-pulse">
+              {overdue.length}
+            </span>
+          )}
+        </div>
+        <ChevronDown size={14} className={`transition-transform ${open ? 'rotate-180' : ''} ${overdue.length > 0 ? 'text-red-500' : 'text-amber-500'}`} />
+      </button>
+
+      {/* reminder list */}
+      {open && (
+        <div className={`border-t divide-y max-h-72 overflow-y-auto ${overdue.length > 0 ? 'border-red-200 divide-red-100' : 'border-amber-200 divide-amber-100'}`}>
+          {reminders.map(r => {
+            const due     = new Date(r.next_followup_at);
+            const isLate  = due < now;
+            const minsLeft= Math.round((due - now) / 60000);
+            const timeLabel = isLate
+              ? `متأخر ${Math.abs(minsLeft)} دقيقة`
+              : minsLeft < 60
+              ? `بعد ${minsLeft} دقيقة`
+              : `${due.toLocaleString('ar-EG', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })}`;
+            return (
+              <div key={r.id} className={`px-4 py-3 flex items-center gap-3 ${isLate ? 'bg-red-50' : 'bg-white'}`}>
+                <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isLate ? 'bg-red-500 animate-pulse' : 'bg-amber-400'}`} />
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-gray-900 text-sm truncate">{r.client_name || '—'}</p>
+                  <p className="text-[11px] text-gray-500 flex items-center gap-1 mt-0.5">
+                    <Phone size={9} />{r.client_phone}
+                    {r.assigned_to && <span className="mr-1 text-primary font-medium">· {r.assigned_to}</span>}
+                  </p>
+                </div>
+                <div className={`text-[11px] font-bold px-2.5 py-1 rounded-xl text-center flex-shrink-0 ${isLate ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-800'}`}>
+                  {isLate ? '⚠ ' : '⏰ '}{timeLabel}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -658,6 +762,9 @@ export default function Pipeline() {
           تحديث
         </button>
       </div>
+
+      {/* ── reminders ── */}
+      <ReminderPanel apiPath="/agent/reminders" />
 
       {/* ── stats row ── */}
       {!isLoading && (

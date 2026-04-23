@@ -443,6 +443,25 @@ router.get('/pipeline', (req, res) => {
   }
 });
 
+// GET /api/admin/pipeline/reminders?line=&agent=  — all pending follow-ups
+router.get('/pipeline/reminders', (req, res) => {
+  const line  = effectiveLine(req);
+  const agent = (req.query.agent || '').trim();
+  const conditions = [`category = 'توزيع عملاء'`, `next_followup_at IS NOT NULL`, `next_followup_at != ''`, `status NOT IN ('Retention Done','إنتهت')`];
+  const params = [];
+  if (line)  { conditions.push('line = ?');        params.push(line);  }
+  if (agent) { conditions.push('assigned_to = ?'); params.push(agent); }
+  const rows = db.prepare(`
+    SELECT id, client_name, client_phone, task_type, status, priority,
+           next_followup_at, agent_notes, line, assigned_to
+    FROM remarks
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY next_followup_at ASC
+    LIMIT 200
+  `).all(...params);
+  return res.json(rows);
+});
+
 // GET /api/admin/pipeline/agents?line=  — list agents for filter dropdown
 // Returns active agents from users table (role='agent', is_active=1) only
 router.get('/pipeline/agents', (req, res) => {
