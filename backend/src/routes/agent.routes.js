@@ -145,10 +145,13 @@ router.get('/pipeline', (req, res) => {
 
   try {
     return res.json({
-      'جديدة':         buildCol(`status NOT IN ('إنتهت','قيد المتابعة','في المتابعة','بانتظار الرد')`),
-      'قيد المتابعة':  buildCol(`status IN ('قيد المتابعة','في المتابعة')`),
-      'بانتظار الرد':  buildCol(`status = 'بانتظار الرد'`),
-      'مكتملة':        buildCol(`status = 'إنتهت'`),
+      'جديدة':           buildCol(`status NOT IN ('إنتهت','قيد المتابعة','في المتابعة','بانتظار الرد','Follow Up','Placement Test','Problem Existing','No Answer','No Interesting','Retention Done')`),
+      'Follow Up':       buildCol(`status IN ('قيد المتابعة','في المتابعة','Follow Up')`),
+      'Placement Test':  buildCol(`status = 'Placement Test'`),
+      'Problem Existing':buildCol(`status = 'Problem Existing'`),
+      'No Answer':       buildCol(`status IN ('بانتظار الرد','No Answer')`),
+      'No Interesting':  buildCol(`status = 'No Interesting'`),
+      'Retention Done':  buildCol(`status IN ('إنتهت','Retention Done')`),
     });
   } catch (err) {
     console.error('[agent/pipeline]', err);

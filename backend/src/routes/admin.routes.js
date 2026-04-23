@@ -429,10 +429,13 @@ router.get('/pipeline', (req, res) => {
 
   try {
     return res.json({
-      'جديدة':        buildCol(`r.status NOT IN ('إنتهت','قيد المتابعة','في المتابعة','بانتظار الرد')`),
-      'قيد المتابعة': buildCol(`r.status IN ('قيد المتابعة','في المتابعة')`),
-      'بانتظار الرد': buildCol(`r.status = 'بانتظار الرد'`),
-      'مكتملة':       buildCol(`r.status = 'إنتهت'`),
+      'جديدة':           buildCol(`r.status NOT IN ('إنتهت','قيد المتابعة','في المتابعة','بانتظار الرد','Follow Up','Placement Test','Problem Existing','No Answer','No Interesting','Retention Done')`),
+      'Follow Up':       buildCol(`r.status IN ('قيد المتابعة','في المتابعة','Follow Up')`),
+      'Placement Test':  buildCol(`r.status = 'Placement Test'`),
+      'Problem Existing':buildCol(`r.status = 'Problem Existing'`),
+      'No Answer':       buildCol(`r.status IN ('بانتظار الرد','No Answer')`),
+      'No Interesting':  buildCol(`r.status = 'No Interesting'`),
+      'Retention Done':  buildCol(`r.status IN ('إنتهت','Retention Done')`),
     });
   } catch (err) {
     console.error('[admin/pipeline]', err);

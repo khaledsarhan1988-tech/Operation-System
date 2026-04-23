@@ -5,15 +5,54 @@ import {
   PhoneCall, MessageCircle, StickyNote, MapPin,
   CheckCircle2, ChevronLeft, ChevronRight, AlertTriangle, Search,
   TrendingUp, Zap, Users, Filter,
+  BookOpen, PhoneOff, MinusCircle,
 } from 'lucide-react';
 import api from '../../api/axios';
 
 // ─── config ───────────────────────────────────────────────────────────────────
 const STAGES = [
-  { key: 'جديدة',        label: 'جديدة',        gradient: 'from-blue-500 to-blue-600',     light: 'bg-blue-50',   badge: 'bg-blue-100 text-blue-700',    dot: 'bg-blue-500',   icon: Zap         },
-  { key: 'قيد المتابعة', label: 'قيد المتابعة', gradient: 'from-amber-500 to-orange-500',  light: 'bg-amber-50',  badge: 'bg-amber-100 text-amber-700',  dot: 'bg-amber-500',  icon: TrendingUp  },
-  { key: 'بانتظار الرد', label: 'بانتظار الرد', gradient: 'from-purple-500 to-violet-600', light: 'bg-purple-50', badge: 'bg-purple-100 text-purple-700', dot: 'bg-purple-500', icon: Clock       },
-  { key: 'مكتملة',       label: 'مكتملة',       gradient: 'from-emerald-500 to-green-600', light: 'bg-emerald-50',badge: 'bg-emerald-100 text-emerald-700',dot: 'bg-emerald-500',icon: CheckCircle2},
+  {
+    key: 'جديدة',         label: 'جديدة',          group: null,
+    gradient: 'from-blue-500 to-blue-600',
+    light: 'bg-blue-50',   badge: 'bg-blue-100 text-blue-700',   dot: 'bg-blue-500',
+    icon: Zap,
+  },
+  {
+    key: 'Follow Up',     label: 'Follow Up',       group: 'قيد المتابعة',
+    gradient: 'from-amber-500 to-orange-500',
+    light: 'bg-amber-50',  badge: 'bg-amber-100 text-amber-700', dot: 'bg-amber-500',
+    icon: TrendingUp,
+  },
+  {
+    key: 'Placement Test',label: 'Placement Test',  group: 'قيد المتابعة',
+    gradient: 'from-yellow-500 to-amber-400',
+    light: 'bg-yellow-50', badge: 'bg-yellow-100 text-yellow-800',dot: 'bg-yellow-500',
+    icon: BookOpen,
+  },
+  {
+    key: 'Problem Existing',label:'Problem Existing',group: 'قيد المتابعة',
+    gradient: 'from-red-500 to-orange-600',
+    light: 'bg-red-50',    badge: 'bg-red-100 text-red-700',     dot: 'bg-red-500',
+    icon: AlertTriangle,
+  },
+  {
+    key: 'No Answer',     label: 'No Answer',       group: null,
+    gradient: 'from-purple-500 to-violet-600',
+    light: 'bg-purple-50', badge: 'bg-purple-100 text-purple-700',dot: 'bg-purple-500',
+    icon: PhoneOff,
+  },
+  {
+    key: 'No Interesting',label: 'No Interesting',  group: null,
+    gradient: 'from-slate-500 to-gray-600',
+    light: 'bg-slate-50',  badge: 'bg-slate-100 text-slate-700', dot: 'bg-slate-500',
+    icon: MinusCircle,
+  },
+  {
+    key: 'Retention Done',label: 'Retention Done',  group: 'مكتملة',
+    gradient: 'from-emerald-500 to-green-600',
+    light: 'bg-emerald-50',badge: 'bg-emerald-100 text-emerald-700',dot:'bg-emerald-500',
+    icon: CheckCircle2,
+  },
 ];
 
 const PRIORITY_STYLE = {
@@ -151,11 +190,16 @@ function KanbanColumn({ stage, cards, onSelect, onMove }) {
       {/* ── header: shows total count ── */}
       <div className={`bg-gradient-to-l ${stage.gradient} px-4 py-3`}>
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <StageIcon size={16} className="text-white/90" />
-            <span className="font-bold text-white text-sm">{stage.label}</span>
+          <div className="flex items-center gap-2 min-w-0">
+            <StageIcon size={16} className="text-white/90 flex-shrink-0" />
+            <div className="min-w-0">
+              <span className="font-bold text-white text-sm leading-tight block">{stage.label}</span>
+              {stage.group && (
+                <span className="text-white/60 text-[10px] leading-none">{stage.group}</span>
+              )}
+            </div>
           </div>
-          <span className="bg-white/25 text-white text-xs font-bold px-2.5 py-0.5 rounded-full">
+          <span className="bg-white/25 text-white text-xs font-bold px-2.5 py-0.5 rounded-full flex-shrink-0">
             {cards.length}
           </span>
         </div>
@@ -479,9 +523,9 @@ export default function AdminPipeline() {
     return Object.fromEntries(Object.entries(pipeline).map(([k,v])=>[k,f(v)]));
   }, [pipeline, search]);
 
-  const totalOpen = STAGES.filter(s=>s.key!=='مكتملة').reduce((s,st)=>s+(pipeline?.[st.key]?.length||0),0);
+  const totalOpen = STAGES.filter(s=>s.key!=='Retention Done').reduce((s,st)=>s+(pipeline?.[st.key]?.length||0),0);
   const totalAll  = STAGES.reduce((s,st)=>s+(pipeline?.[st.key]?.length||0),0);
-  const doneRate  = totalAll>0 ? Math.round(((pipeline?.['مكتملة']?.length||0)/totalAll)*100) : 0;
+  const doneRate  = totalAll>0 ? Math.round(((pipeline?.['Retention Done']?.length||0)/totalAll)*100) : 0;
 
   return (
     <div className="space-y-5" dir="rtl">
@@ -563,18 +607,19 @@ export default function AdminPipeline() {
 
       {/* stats */}
       {!isLoading && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="flex gap-3 overflow-x-auto pb-1">
           {STAGES.map(s=>{
             const count = pipeline?.[s.key]?.length??0;
             const SI = s.icon;
             return (
-              <div key={s.key} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${s.gradient} flex items-center justify-center shadow-sm flex-shrink-0`}>
-                  <SI size={18} className="text-white"/>
+              <div key={s.key} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3 flex items-center gap-2.5 flex-shrink-0 min-w-[130px]">
+                <div className={`w-9 h-9 rounded-xl bg-gradient-to-br ${s.gradient} flex items-center justify-center shadow-sm flex-shrink-0`}>
+                  <SI size={16} className="text-white"/>
                 </div>
-                <div>
-                  <p className="text-2xl font-black text-gray-900">{count}</p>
-                  <p className="text-xs text-gray-400">{s.label}</p>
+                <div className="min-w-0">
+                  <p className="text-xl font-black text-gray-900">{count}</p>
+                  <p className="text-[11px] text-gray-400 leading-tight truncate">{s.label}</p>
+                  {s.group && <p className="text-[10px] text-gray-300 leading-tight truncate">{s.group}</p>}
                 </div>
               </div>
             );
@@ -589,10 +634,12 @@ export default function AdminPipeline() {
           <p className="text-sm text-gray-400">جاري تحميل البايبلاين...</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pb-6">
+        <div className="flex gap-4 pb-6 overflow-x-auto">
           {STAGES.map(stage=>(
-            <KanbanColumn key={stage.key} stage={stage} cards={filtered?.[stage.key]||[]}
-              onSelect={setSelected} onMove={handleMove}/>
+            <div key={stage.key} className="flex-shrink-0 w-72">
+              <KanbanColumn stage={stage} cards={filtered?.[stage.key]||[]}
+                onSelect={setSelected} onMove={handleMove}/>
+            </div>
           ))}
         </div>
       )}
