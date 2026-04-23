@@ -161,21 +161,9 @@ function KanbanColumn({ stage, cards, onSelect, onMove }) {
         </div>
       </div>
 
-      {/* ── card list (current page only) ── */}
-      <div className="flex-1 overflow-y-auto p-2.5 space-y-2.5" style={{ maxHeight: 'calc(100vh - 340px)' }}>
-        {cards.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-gray-300 select-none">
-            <StageIcon size={32} className="mb-2 opacity-30" />
-            <p className="text-xs">لا توجد مهام</p>
-          </div>
-        ) : pageCards.map(c => (
-          <ClientCard key={c.id} remark={c} stageKey={stage.key} onSelect={onSelect} onMove={onMove} />
-        ))}
-      </div>
-
-      {/* ── pagination bar (shown only when more than one page) ── */}
+      {/* ── pagination bar (below header, above cards) ── */}
       {totalPages > 1 && (
-        <div className="px-2 py-2 border-t border-gray-200 bg-white">
+        <div className="px-2 py-2 border-b border-gray-200 bg-white">
           <div className="flex items-center justify-center gap-1 flex-wrap" dir="ltr">
             <button
               onClick={() => setPage(p => Math.max(1, p - 1))}
@@ -211,6 +199,18 @@ function KanbanColumn({ stage, cards, onSelect, onMove }) {
           </div>
         </div>
       )}
+
+      {/* ── card list (current page only) ── */}
+      <div className="flex-1 overflow-y-auto p-2.5 space-y-2.5" style={{ maxHeight: 'calc(100vh - 340px)' }}>
+        {cards.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12 text-gray-300 select-none">
+            <StageIcon size={32} className="mb-2 opacity-30" />
+            <p className="text-xs">لا توجد مهام</p>
+          </div>
+        ) : pageCards.map(c => (
+          <ClientCard key={c.id} remark={c} stageKey={stage.key} onSelect={onSelect} onMove={onMove} />
+        ))}
+      </div>
     </div>
   );
 }
