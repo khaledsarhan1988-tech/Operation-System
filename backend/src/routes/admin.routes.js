@@ -507,7 +507,19 @@ router.put('/pipeline/tasks/:id', (req, res) => {
   return res.json({ ...updated, sla_status: getSlaStatus(updated.sla_deadline, updated.priority) });
 });
 
-// PUT /api/admin/pipeline/bulk-reassign  — reassign a list of remarks to another agent
+// GET /api/admin/pipeline/transfer-targets — full list for admin (agents + leaders)
+router.get('/pipeline/transfer-targets', (req, res) => {
+  const line = effectiveLine(req);
+  const lf   = line ? ` AND line = '${line.replace(/'/g,"''")}'` : '';
+  const rows = db.prepare(
+    `SELECT full_name, role, department, line FROM users
+     WHERE is_active = 1 AND role IN ('agent','leader')${lf}
+     ORDER BY role DESC, full_name COLLATE NOCASE`
+  ).all();
+  return res.json(rows);
+});
+
+// PUT /api/admin/pipeline/bulk-reassign  — reassign a list of remarks (admin) + log to client_transfers
 router.put('/pipeline/bulk-reassign', (req, res) => {
   const { ids, assigned_to } = req.body;
   if (!Array.isArray(ids) || ids.length === 0 || !assigned_to) {
@@ -516,14 +528,57 @@ router.put('/pipeline/bulk-reassign', (req, res) => {
   const line = effectiveLine(req);
   const lf   = line ? ` AND line = '${line.replace(/'/g,"''")}'` : '';
   const ph   = ids.map(() => '?').join(',');
-  const info = db.prepare(`
-    UPDATE remarks
-    SET assigned_to  = ?,
-        last_updated = datetime('now','+2 hours')
-    WHERE id IN (${ph})${lf}
-      AND category = 'توزيع عملاء'
-  `).run(assigned_to, ...ids);
-  return res.json({ updated: info.changes });
+
+  // Fetch original assignments for audit log
+  const originals = db.prepare(
+    `SELECT id, client_name, client_phone, assigned_to, line FROM remarks
+     WHERE id IN (${ph})${lf} AND category = 'توزيع عملاء'`
+  ).all(...ids);
+
+  const updateStmt = db.prepare(
+    `UPDATE remarks SET assigned_to = ?, last_updated = datetime('now','+2 hours') WHERE id = ?`
+  );
+  const logStmt = db.prepare(`
+    INSERT INTO client_transfers
+      (remark_id, client_name, client_phone, from_user, to_user, transferred_by, transfer_type, line)
+    VALUES (?, ?, ?, ?, ?, ?, 'bulk', ?)
+  `);
+
+  db.transaction(() => {
+    for (const r of originals) {
+      updateStmt.run(assigned_to, r.id);
+      logStmt.run(r.id, r.client_name, r.client_phone, r.assigned_to, assigned_to, req.user.full_name, r.line || '');
+    }
+  })();
+
+  return res.json({ updated: originals.length });
+});
+
+// GET /api/admin/pipeline/transfer-history — full audit log for admins
+router.get('/pipeline/transfer-history', (req, res) => {
+  const { page = 1, limit = 50, from_user, to_user, by_user, date_from, date_to } = req.query;
+  const conditions = [];
+  const params     = [];
+
+  if (from_user) { conditions.push('ct.from_user = ?');        params.push(from_user); }
+  if (to_user)   { conditions.push('ct.to_user = ?');          params.push(to_user);   }
+  if (by_user)   { conditions.push('ct.transferred_by = ?');   params.push(by_user);   }
+  if (date_from) { conditions.push('ct.transferred_at >= ?');  params.push(date_from); }
+  if (date_to)   { conditions.push('ct.transferred_at <= ?');  params.push(date_to + ' 23:59:59'); }
+
+  const where  = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+  const offset = (parseInt(page) - 1) * parseInt(limit);
+  const total  = db.prepare(`SELECT COUNT(*) as cnt FROM client_transfers ct ${where}`).get(...params).cnt;
+  const data   = db.prepare(`
+    SELECT ct.*, r.status AS current_status, r.category
+    FROM client_transfers ct
+    LEFT JOIN remarks r ON r.id = ct.remark_id
+    ${where}
+    ORDER BY ct.transferred_at DESC
+    LIMIT ? OFFSET ?
+  `).all(...params, parseInt(limit), offset);
+
+  return res.json({ total, page: parseInt(page), data });
 });
 
 // GET /api/admin/pipeline/tasks/:id/logs  — admin: view any task's interaction logs

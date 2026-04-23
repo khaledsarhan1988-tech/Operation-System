@@ -6,7 +6,7 @@ import {
   CheckCircle2, ChevronLeft, ChevronRight, AlertTriangle, Search,
   TrendingUp, Zap, Users, Filter,
   BookOpen, PhoneOff, MinusCircle,
-  Bell, ChevronDown, CheckSquare, Square, ArrowRightLeft,
+  Bell, ChevronDown, CheckSquare, Square, ArrowRightLeft, History,
 } from 'lucide-react';
 import api from '../../api/axios';
 
@@ -212,6 +212,115 @@ function ReminderPanel({ apiPath, agent }) {
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── TransferHistoryModal (Admin) ────────────────────────────────────────────
+function TransferHistoryModal({ onClose }) {
+  const [fromUser, setFromUser] = useState('');
+  const [toUser,   setToUser]   = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo,   setDateTo]   = useState('');
+
+  const { data: hist, isLoading, refetch } = useQuery({
+    queryKey: ['admin-transfer-history', fromUser, toUser, dateFrom, dateTo],
+    queryFn: () => api.get('/admin/pipeline/transfer-history', {
+      params: {
+        limit: 200,
+        ...(fromUser ? { from_user: fromUser } : {}),
+        ...(toUser   ? { to_user:   toUser   } : {}),
+        ...(dateFrom ? { date_from: dateFrom  } : {}),
+        ...(dateTo   ? { date_to:   dateTo    } : {}),
+      },
+    }).then(r => r.data),
+  });
+
+  const fmtDate = s => s ? new Date(s).toLocaleString('ar-EG', {
+    year:'numeric', day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit',
+  }) : '—';
+
+  return (
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col" dir="rtl" onClick={e => e.stopPropagation()}>
+
+        {/* header */}
+        <div className="bg-gradient-to-l from-slate-700 to-gray-800 px-5 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <History size={18} className="text-white" />
+            <h2 className="font-bold text-white text-base">سجل حركات العملاء</h2>
+            {hist?.total != null && (
+              <span className="bg-white/20 text-white text-xs px-2.5 py-0.5 rounded-full font-bold">{hist.total} حركة</span>
+            )}
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-white/20 rounded-xl transition">
+            <X size={18} className="text-white" />
+          </button>
+        </div>
+
+        {/* filters */}
+        <div className="px-5 py-3 border-b border-gray-100 bg-gray-50 flex flex-wrap gap-2">
+          <input value={fromUser} onChange={e=>setFromUser(e.target.value)} placeholder="من (موظف/قائد)..."
+            className="border border-gray-200 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 flex-1 min-w-[140px]"/>
+          <input value={toUser} onChange={e=>setToUser(e.target.value)} placeholder="إلى..."
+            className="border border-gray-200 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 flex-1 min-w-[140px]"/>
+          <input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)}
+            className="border border-gray-200 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"/>
+          <input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)}
+            className="border border-gray-200 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"/>
+          {(fromUser||toUser||dateFrom||dateTo) && (
+            <button onClick={()=>{setFromUser('');setToUser('');setDateFrom('');setDateTo('');}}
+              className="px-3 py-1.5 text-xs text-red-500 hover:bg-red-50 rounded-xl border border-red-200 transition flex items-center gap-1">
+              <X size={11}/> مسح
+            </button>
+          )}
+        </div>
+
+        {/* list */}
+        <div className="flex-1 overflow-y-auto p-4">
+          {isLoading ? (
+            <div className="flex justify-center py-16"><RefreshCw className="animate-spin text-gray-300" size={28} /></div>
+          ) : !hist?.data?.length ? (
+            <div className="text-center py-16 text-gray-300">
+              <History size={44} className="mx-auto mb-3 opacity-30" />
+              <p className="text-sm">لا توجد حركات مسجلة</p>
+              <p className="text-xs mt-1 text-gray-400">سيبدأ التسجيل من الآن تلقائياً</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {hist.data.map(t => (
+                <div key={t.id} className="bg-gray-50 rounded-2xl p-3.5 border border-gray-100 flex items-center gap-3">
+                  <div className="flex-shrink-0 w-9 h-9 rounded-xl bg-gradient-to-br from-slate-600 to-gray-700 flex items-center justify-center">
+                    <ArrowRightLeft size={14} className="text-white" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                      <p className="font-bold text-sm text-gray-900">{t.client_name || '—'}</p>
+                      {t.client_phone && (
+                        <span className="text-[11px] text-gray-400 font-mono flex items-center gap-1">
+                          <Phone size={9}/>{t.client_phone}
+                        </span>
+                      )}
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">{t.transfer_type}</span>
+                    </div>
+                    <div className="flex items-center gap-1 text-[12px]">
+                      <span className="font-semibold text-red-500">{t.from_user}</span>
+                      <ArrowRightLeft size={11} className="text-gray-400 mx-0.5" />
+                      <span className="font-semibold text-emerald-600">{t.to_user}</span>
+                      {t.transferred_by !== t.from_user && (
+                        <span className="text-gray-400 text-[11px]"> · نفّذه: {t.transferred_by}</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-gray-400 text-left flex-shrink-0">
+                    {fmtDate(t.transferred_at)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -733,9 +842,10 @@ export default function AdminPipeline() {
   const [dateFrom,     setDateFrom]     = useState('');
   const [dateTo,       setDateTo]       = useState('');
   const [dragOverStage,setDragOverStage]= useState(null);
-  const [selectionMode,setSelectionMode]= useState(false);
-  const [selectedIds,  setSelectedIds]  = useState(new Set());
-  const [showReassign, setShowReassign] = useState(false);
+  const [selectionMode,  setSelectionMode]  = useState(false);
+  const [selectedIds,    setSelectedIds]    = useState(new Set());
+  const [showReassign,   setShowReassign]   = useState(false);
+  const [showHistory,    setShowHistory]    = useState(false);
   const qc = useQueryClient();
 
   const { data: agentList = [] } = useQuery({
@@ -844,6 +954,12 @@ export default function AdminPipeline() {
           >
             <CheckSquare size={14} />
             {selectionMode ? 'إلغاء التحديد' : 'تحديد'}
+          </button>
+          <button
+            onClick={() => setShowHistory(true)}
+            className="flex items-center gap-2 px-3 py-2.5 text-sm bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition shadow-sm text-gray-600"
+          >
+            <History size={14} /> سجل الحركات
           </button>
           <button onClick={()=>refetch()} disabled={isFetching}
             className="flex items-center gap-2 px-4 py-2.5 text-sm bg-white border border-gray-200 rounded-xl hover:bg-gray-50 disabled:opacity-50 transition shadow-sm">
@@ -1013,6 +1129,9 @@ export default function AdminPipeline() {
           onConfirm={(assigned_to) => reassignMut.mutate({ ids: selectedIds, assigned_to })}
         />
       )}
+
+      {/* ── transfer history modal ── */}
+      {showHistory && <TransferHistoryModal onClose={() => setShowHistory(false)} />}
     </div>
   );
 }

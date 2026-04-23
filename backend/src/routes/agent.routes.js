@@ -501,4 +501,129 @@ router.put('/side-session-check/:id', (req, res) => {
   return res.json(db.prepare('SELECT * FROM side_session_checks WHERE id = ?').get(id));
 });
 
+// ─── CLIENT TRANSFER SYSTEM ───────────────────────────────────────────────────
+
+// GET /api/agent/transfer-targets — role-based list of allowed transfer recipients
+router.get('/transfer-targets', (req, res) => {
+  const user = req.user;
+  let rows;
+  if (user.role === 'leader') {
+    // Leader: own agents + all other leaders (not themselves)
+    rows = db.prepare(`
+      SELECT full_name, role, department, line FROM users
+      WHERE is_active = 1
+        AND full_name != ?
+        AND (
+          (role = 'agent'  AND department = ?)
+          OR role = 'leader'
+        )
+      ORDER BY role DESC, full_name COLLATE NOCASE
+    `).all(user.full_name, user.department);
+  } else {
+    // Agent: only their department's leader(s)
+    rows = db.prepare(`
+      SELECT full_name, role, department FROM users
+      WHERE is_active = 1 AND role = 'leader' AND department = ?
+      ORDER BY full_name COLLATE NOCASE
+    `).all(user.department || '');
+  }
+  return res.json(rows);
+});
+
+// PUT /api/agent/bulk-transfer — transfer selected clients (with permission check + logging)
+router.put('/bulk-transfer', (req, res) => {
+  const user = req.user;
+  const { ids, assigned_to } = req.body;
+
+  if (!Array.isArray(ids) || !ids.length || !assigned_to)
+    return res.status(400).json({ error: 'ids و assigned_to مطلوبان' });
+
+  // Verify target exists
+  const target = db.prepare(`SELECT * FROM users WHERE full_name = ? AND is_active = 1`).get(assigned_to);
+  if (!target) return res.status(400).json({ error: 'المستخدم المستهدف غير موجود' });
+
+  // ── Permission check ──────────────────────────────────────────────────────
+  if (user.role === 'agent') {
+    // Agent → only to their department's leader
+    if (target.role !== 'leader' || target.department !== user.department) {
+      return res.status(403).json({ error: 'يمكنك إحالة العملاء لقائد فريقك فقط' });
+    }
+  } else if (user.role === 'leader') {
+    // Leader → their agents OR any leader
+    const ok = (target.role === 'agent' && target.department === user.department)
+              || target.role === 'leader';
+    if (!ok) return res.status(403).json({ error: 'يمكنك النقل لموظفي قسمك أو قادة الفرق فقط' });
+  }
+  // admin role unreachable here (admin uses /api/admin/* routes)
+
+  const lf = lineClause(req);
+  const safeIds = ids.map(Number).filter(n => n > 0);
+  const ph = safeIds.map(() => '?').join(',');
+
+  // Fetch remarks to move — must be currently assigned to the requesting user
+  const remarksToMove = db.prepare(`
+    SELECT id, client_name, client_phone, assigned_to, line
+    FROM remarks
+    WHERE id IN (${ph}) AND assigned_to = ?${lf.clause}
+  `).all(...safeIds, user.full_name, ...lf.params);
+
+  if (!remarksToMove.length)
+    return res.status(404).json({ error: 'لا توجد مهام مؤهلة للنقل' });
+
+  const updateStmt = db.prepare(
+    `UPDATE remarks SET assigned_to = ?, last_updated = datetime('now','+2 hours') WHERE id = ?`
+  );
+  const logStmt = db.prepare(`
+    INSERT INTO client_transfers
+      (remark_id, client_name, client_phone, from_user, to_user, transferred_by, transfer_type, line)
+    VALUES (?, ?, ?, ?, ?, ?, 'bulk', ?)
+  `);
+
+  db.transaction(() => {
+    for (const r of remarksToMove) {
+      updateStmt.run(assigned_to, r.id);
+      logStmt.run(r.id, r.client_name, r.client_phone, r.assigned_to, assigned_to, user.full_name, r.line || user.line || '');
+    }
+  })();
+
+  return res.json({ moved: remarksToMove.length });
+});
+
+// GET /api/agent/transfer-history — audit history scoped to the requesting user/leader
+router.get('/transfer-history', (req, res) => {
+  const user = req.user;
+  const { page = 1, limit = 50, date_from, date_to } = req.query;
+  const conditions = [];
+  const params     = [];
+
+  if (user.role === 'leader') {
+    // Leader sees transfers in their department
+    conditions.push(`(
+      ct.transferred_by = ?
+      OR ct.to_user = ?
+      OR EXISTS (SELECT 1 FROM users u WHERE u.full_name = ct.from_user AND u.department = ?)
+    )`);
+    params.push(user.full_name, user.full_name, user.department || '');
+  } else {
+    // Agent sees only transfers they initiated or received
+    conditions.push(`(ct.from_user = ? OR ct.to_user = ?)`);
+    params.push(user.full_name, user.full_name);
+  }
+
+  if (date_from) { conditions.push(`ct.transferred_at >= ?`); params.push(date_from); }
+  if (date_to)   { conditions.push(`ct.transferred_at <= ?`); params.push(date_to + ' 23:59:59'); }
+
+  const where  = 'WHERE ' + conditions.join(' AND ');
+  const offset = (parseInt(page) - 1) * parseInt(limit);
+  const total  = db.prepare(`SELECT COUNT(*) as cnt FROM client_transfers ct ${where}`).get(...params).cnt;
+  const data   = db.prepare(`
+    SELECT ct.* FROM client_transfers ct
+    ${where}
+    ORDER BY ct.transferred_at DESC
+    LIMIT ? OFFSET ?
+  `).all(...params, parseInt(limit), offset);
+
+  return res.json({ total, page: parseInt(page), data });
+});
+
 module.exports = router;

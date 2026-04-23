@@ -7,8 +7,10 @@ import {
   TrendingUp, Zap, Users, BarChart3,
   BookOpen, PhoneOff, MinusCircle,
   Bell, ChevronDown,
+  CheckSquare, Square, ArrowRightLeft, History,
 } from 'lucide-react';
 import api from '../../api/axios';
+import { useAuth } from '../../auth/AuthContext';
 
 // ─── config ───────────────────────────────────────────────────────────────────
 const STAGES = [
@@ -114,21 +116,36 @@ function fmtDateTime(s) {
 }
 
 // ─── ClientCard ───────────────────────────────────────────────────────────────
-function ClientCard({ remark, stageKey, onSelect, onMove, onDragEnd }) {
+function ClientCard({ remark, stageKey, onSelect, onMove, onDragEnd, selectionMode, selected, onToggle }) {
   const pri  = PRIORITY_STYLE[remark.priority] || PRIORITY_STYLE['عادية'];
   const sla  = SLA_STYLE[remark.sla_status]    || SLA_STYLE.on_time;
+  const handleClick = () => selectionMode ? onToggle(remark.id) : onSelect(remark);
 
   return (
     <div
-      draggable
-      onDragStart={e => {
+      draggable={!selectionMode}
+      onDragStart={!selectionMode ? e => {
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('application/json', JSON.stringify({ id: remark.id, from: stageKey }));
-      }}
-      onDragEnd={onDragEnd}
-      onClick={() => onSelect(remark)}
-      className="group relative bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 cursor-grab active:cursor-grabbing overflow-hidden"
+      } : undefined}
+      onDragEnd={!selectionMode ? onDragEnd : undefined}
+      onClick={handleClick}
+      className={`group relative bg-white rounded-2xl border shadow-sm transition-all duration-200 overflow-hidden ${
+        selectionMode
+          ? selected
+            ? 'border-amber-400 ring-2 ring-amber-300/40 bg-amber-50 cursor-pointer'
+            : 'border-gray-200 cursor-pointer hover:border-amber-300/60'
+          : 'border-gray-100 hover:shadow-lg hover:-translate-y-0.5 cursor-grab active:cursor-grabbing'
+      }`}
     >
+      {/* selection checkbox */}
+      {selectionMode && (
+        <div className="absolute top-2 left-2 z-10" onClick={e => { e.stopPropagation(); onToggle(remark.id); }}>
+          {selected
+            ? <CheckSquare size={18} className="text-amber-500 fill-amber-500" />
+            : <Square size={18} className="text-gray-300" />}
+        </div>
+      )}
       {/* priority stripe */}
       <div className={`absolute top-0 right-0 w-1 h-full ${pri.bar} rounded-r-2xl`} />
 
@@ -332,18 +349,146 @@ function ReminderPanel({ apiPath }) {
   );
 }
 
+// ─── TransferModal ────────────────────────────────────────────────────────────
+function TransferModal({ count, targets, onConfirm, onClose, isPending, userRole }) {
+  const [target, setTarget] = useState('');
+  const agents  = targets.filter(t => t.role === 'agent');
+  const leaders = targets.filter(t => t.role === 'leader');
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6" dir="rtl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-11 h-11 rounded-2xl bg-amber-100 flex items-center justify-center flex-shrink-0">
+            <ArrowRightLeft size={20} className="text-amber-600" />
+          </div>
+          <div>
+            <h3 className="font-bold text-gray-900 text-base">إحالة عملاء</h3>
+            <p className="text-sm text-gray-400">{count} عميل محدد</p>
+          </div>
+        </div>
+
+        {userRole === 'agent' && (
+          <div className="mb-4 p-3 bg-amber-50 rounded-2xl border border-amber-200 text-xs text-amber-700">
+            ⚠ يمكنك إحالة العملاء لقائد فريقك فقط
+          </div>
+        )}
+        {userRole === 'leader' && (
+          <div className="mb-4 p-3 bg-blue-50 rounded-2xl border border-blue-200 text-xs text-blue-700">
+            يمكنك النقل لموظفي قسمك أو قادة الفرق الأخرى
+          </div>
+        )}
+
+        <label className="text-xs font-semibold text-gray-600 block mb-1.5">اختر المستهدف</label>
+        <select
+          value={target}
+          onChange={e => setTarget(e.target.value)}
+          className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/30 mb-5"
+        >
+          <option value="">— اختر —</option>
+          {leaders.length > 0 && (
+            <optgroup label="قادة الفريق">
+              {leaders.map(t => <option key={t.full_name} value={t.full_name}>👑 {t.full_name} ({t.department})</option>)}
+            </optgroup>
+          )}
+          {agents.length > 0 && (
+            <optgroup label="الموظفون">
+              {agents.map(t => <option key={t.full_name} value={t.full_name}>👤 {t.full_name}</option>)}
+            </optgroup>
+          )}
+        </select>
+
+        <div className="flex gap-2">
+          <button onClick={onClose}
+            className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-500 hover:bg-gray-50 transition">
+            إلغاء
+          </button>
+          <button
+            disabled={!target || isPending}
+            onClick={() => onConfirm(target)}
+            className="flex-1 py-2.5 bg-gradient-to-l from-amber-500 to-orange-500 text-white rounded-xl text-sm font-bold disabled:opacity-40 flex items-center justify-center gap-2 shadow-md transition"
+          >
+            {isPending ? <RefreshCw size={14} className="animate-spin" /> : <ArrowRightLeft size={14} />}
+            تأكيد الإحالة
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── TransferHistoryModal ────────────────────────────────────────────────────
+function TransferHistoryModal({ onClose }) {
+  const { data: hist, isLoading } = useQuery({
+    queryKey: ['transfer-history'],
+    queryFn: () => api.get('/agent/transfer-history', { params: { limit: 100 } }).then(r => r.data),
+  });
+
+  const fmtDate = s => s ? new Date(s).toLocaleString('ar-EG', { year:'numeric', day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }) : '—';
+
+  return (
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col" dir="rtl" onClick={e => e.stopPropagation()}>
+        <div className="bg-gradient-to-l from-slate-700 to-gray-800 px-5 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <History size={18} className="text-white" />
+            <h2 className="font-bold text-white">سجل حركات العملاء</h2>
+            {hist?.total > 0 && <span className="bg-white/20 text-white text-xs px-2 py-0.5 rounded-full">{hist.total}</span>}
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-white/20 rounded-xl transition"><X size={18} className="text-white" /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4">
+          {isLoading ? (
+            <div className="flex justify-center py-12"><RefreshCw className="animate-spin text-gray-300" size={24} /></div>
+          ) : !hist?.data?.length ? (
+            <div className="text-center py-12 text-gray-300">
+              <History size={40} className="mx-auto mb-3 opacity-30" />
+              <p className="text-sm">لا توجد حركات مسجلة بعد</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {hist.data.map(t => (
+                <div key={t.id} className="bg-gray-50 rounded-2xl p-3 border border-gray-100 flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-amber-100 flex items-center justify-center flex-shrink-0">
+                    <ArrowRightLeft size={14} className="text-amber-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-sm text-gray-900 truncate">{t.client_name || '—'}</p>
+                    <p className="text-[11px] text-gray-500 flex items-center gap-1">
+                      <Phone size={9} />{t.client_phone}
+                    </p>
+                    <p className="text-[11px] text-gray-400 mt-0.5">
+                      <span className="text-red-500 font-semibold">{t.from_user}</span>
+                      {' → '}
+                      <span className="text-emerald-600 font-semibold">{t.to_user}</span>
+                      {t.transferred_by !== t.from_user && <span className="text-gray-400"> (بواسطة: {t.transferred_by})</span>}
+                    </p>
+                  </div>
+                  <div className="text-[10px] text-gray-400 text-center flex-shrink-0">
+                    {fmtDate(t.transferred_at)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── KanbanColumn ─────────────────────────────────────────────────────────────
 const PAGE_SIZE = 50;
 
-function KanbanColumn({ stage, cards, onSelect, onMove, isDragOver, onColDragOver, onColDrop, onDragEnd }) {
+function KanbanColumn({ stage, cards, onSelect, onMove, isDragOver, onColDragOver, onColDrop, onDragEnd, selectionMode, selectedIds, onToggle, onSelectAll }) {
   const StageIcon = stage.icon;
   const [page, setPage] = useState(1);
   const totalPages = Math.max(1, Math.ceil(cards.length / PAGE_SIZE));
 
-  // Reset to first page whenever cards list changes (filter applied)
   useEffect(() => { setPage(1); }, [cards.length]);
 
-  const pageCards = cards.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const pageCards    = cards.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const allSelected  = selectionMode && cards.length > 0 && cards.every(c => selectedIds?.has(c.id));
 
   return (
     <div
@@ -371,9 +516,22 @@ function KanbanColumn({ stage, cards, onSelect, onMove, isDragOver, onColDragOve
               )}
             </div>
           </div>
-          <span className="bg-white/25 text-white text-xs font-bold px-2.5 py-0.5 rounded-full backdrop-blur-sm flex-shrink-0">
-            {cards.length}
-          </span>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {selectionMode && cards.length > 0 && (
+              <button
+                onClick={() => onSelectAll?.(cards, allSelected)}
+                className={`flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-lg transition ${
+                  allSelected ? 'bg-white text-amber-600' : 'bg-white/20 text-white hover:bg-white/30'
+                }`}
+              >
+                {allSelected ? <CheckSquare size={12}/> : <Square size={12}/>}
+                {allSelected ? 'إلغاء' : 'الكل'}
+              </button>
+            )}
+            <span className="bg-white/25 text-white text-xs font-bold px-2.5 py-0.5 rounded-full backdrop-blur-sm flex-shrink-0">
+              {cards.length}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -435,6 +593,9 @@ function KanbanColumn({ stage, cards, onSelect, onMove, isDragOver, onColDragOve
               onSelect={onSelect}
               onMove={onMove}
               onDragEnd={onDragEnd}
+              selectionMode={selectionMode}
+              selected={selectedIds?.has(card.id)}
+              onToggle={onToggle}
             />
           ))
         )}
@@ -731,12 +892,17 @@ function currentMonthRange() {
 
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 export default function Pipeline() {
-  const [selected,     setSelected]     = useState(null);
-  const [search,       setSearch]       = useState('');
-  const [filterStage,  setFilterStage]  = useState('');
-  const [dateFrom,     setDateFrom]     = useState('');
-  const [dateTo,       setDateTo]       = useState('');
-  const [dragOverStage,setDragOverStage]= useState(null);
+  const { user }                          = useAuth();
+  const [selected,      setSelected]      = useState(null);
+  const [search,        setSearch]        = useState('');
+  const [filterStage,   setFilterStage]   = useState('');
+  const [dateFrom,      setDateFrom]      = useState('');
+  const [dateTo,        setDateTo]        = useState('');
+  const [dragOverStage, setDragOverStage] = useState(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds,   setSelectedIds]   = useState(new Set());
+  const [showTransfer,  setShowTransfer]  = useState(false);
+  const [showHistory,   setShowHistory]   = useState(false);
   const qc = useQueryClient();
 
   const { data: pipeline, isLoading, refetch, isFetching } = useQuery({
@@ -755,6 +921,24 @@ export default function Pipeline() {
     onSuccess:  () => qc.invalidateQueries(['agent-pipeline']),
   });
 
+  const { data: transferTargets = [] } = useQuery({
+    queryKey: ['transfer-targets', user?.role],
+    queryFn:  () => api.get('/agent/transfer-targets').then(r => r.data),
+    enabled:  !!user,
+  });
+
+  const transferMut = useMutation({
+    mutationFn: ({ ids, assigned_to }) =>
+      api.put('/agent/bulk-transfer', { ids: [...ids], assigned_to }),
+    onSuccess: () => {
+      qc.invalidateQueries(['agent-pipeline']);
+      qc.invalidateQueries(['transfer-history']);
+      setSelectedIds(new Set());
+      setSelectionMode(false);
+      setShowTransfer(false);
+    },
+  });
+
   const handleMove       = useCallback((id, stage) => moveMut.mutate({ id, stage }), [moveMut]);
   const handleColDragOver= useCallback((key) => setDragOverStage(key), []);
   const handleColDrop    = useCallback((id, toStage) => {
@@ -762,6 +946,23 @@ export default function Pipeline() {
     moveMut.mutate({ id, stage: toStage });
   }, [moveMut]);
   const handleDragEnd    = useCallback(() => setDragOverStage(null), []);
+
+  const toggleSelect = useCallback((id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleSelectAll = useCallback((cards, allSelected) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (allSelected) cards.forEach(c => next.delete(c.id));
+      else             cards.forEach(c => next.add(c.id));
+      return next;
+    });
+  }, []);
 
   const visibleStages = filterStage ? STAGES.filter(s => s.key === filterStage) : STAGES;
 
@@ -797,14 +998,28 @@ export default function Pipeline() {
             {isLoading ? '...' : `${totalOpen} مهمة نشطة · نسبة الإنجاز ${doneRate}%`}
           </p>
         </div>
-        <button
-          onClick={() => refetch()}
-          disabled={isFetching}
-          className="flex items-center gap-2 px-4 py-2.5 text-sm bg-white border border-gray-200 rounded-xl hover:bg-gray-50 disabled:opacity-50 transition shadow-sm"
-        >
-          <RefreshCw size={14} className={isFetching ? 'animate-spin' : ''} />
-          تحديث
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowHistory(true)}
+            className="flex items-center gap-2 px-3 py-2.5 text-sm bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition shadow-sm text-gray-600"
+          >
+            <History size={14} /> سجل الحركات
+          </button>
+          <button
+            onClick={() => { setSelectionMode(m => !m); setSelectedIds(new Set()); }}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm rounded-xl border transition shadow-sm font-medium ${
+              selectionMode ? 'bg-amber-500 text-white border-amber-500' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            <CheckSquare size={14} />
+            {selectionMode ? 'إلغاء التحديد' : 'تحديد'}
+          </button>
+          <button onClick={() => refetch()} disabled={isFetching}
+            className="flex items-center gap-2 px-4 py-2.5 text-sm bg-white border border-gray-200 rounded-xl hover:bg-gray-50 disabled:opacity-50 transition shadow-sm">
+            <RefreshCw size={14} className={isFetching ? 'animate-spin' : ''} />
+            تحديث
+          </button>
+        </div>
       </div>
 
       {/* ── reminders ── */}
@@ -893,9 +1108,36 @@ export default function Pipeline() {
                 onColDragOver={handleColDragOver}
                 onColDrop={handleColDrop}
                 onDragEnd={handleDragEnd}
+                selectionMode={selectionMode}
+                selectedIds={selectedIds}
+                onToggle={toggleSelect}
+                onSelectAll={handleSelectAll}
               />
             </div>
           ))}
+        </div>
+      )}
+
+      {/* ── floating transfer bar ── */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 bg-gray-900 text-white rounded-2xl shadow-2xl px-5 py-3" dir="rtl">
+          <div className="flex items-center gap-2">
+            <span className="bg-amber-500 text-white text-xs font-black w-7 h-7 rounded-full flex items-center justify-center">
+              {selectedIds.size}
+            </span>
+            <span className="text-sm font-semibold">عميل محدد</span>
+          </div>
+          <div className="w-px h-5 bg-white/20 mx-1" />
+          <button
+            onClick={() => setShowTransfer(true)}
+            className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 px-4 py-2 rounded-xl text-sm font-bold transition"
+          >
+            <ArrowRightLeft size={14} />
+            {user?.role === 'agent' ? 'إحالة لقائد الفريق' : 'نقل عملاء'}
+          </button>
+          <button onClick={() => { setSelectedIds(new Set()); setSelectionMode(false); }} className="p-1.5 hover:bg-white/10 rounded-lg transition">
+            <X size={15} className="text-gray-400" />
+          </button>
         </div>
       )}
 
@@ -910,6 +1152,19 @@ export default function Pipeline() {
           }}
         />
       )}
+
+      {showTransfer && (
+        <TransferModal
+          count={selectedIds.size}
+          targets={transferTargets}
+          isPending={transferMut.isPending}
+          userRole={user?.role}
+          onClose={() => setShowTransfer(false)}
+          onConfirm={assigned_to => transferMut.mutate({ ids: selectedIds, assigned_to })}
+        />
+      )}
+
+      {showHistory && <TransferHistoryModal onClose={() => setShowHistory(false)} />}
     </div>
   );
 }

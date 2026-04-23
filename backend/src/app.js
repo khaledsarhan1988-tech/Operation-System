@@ -330,6 +330,31 @@ initDb().then(db => {
     console.error('distribution migration error:', e.message);
   }
 
+  // 9. Client transfer audit log
+  try {
+    db._raw.run(`CREATE TABLE IF NOT EXISTS client_transfers (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      remark_id      INTEGER REFERENCES remarks(id) ON DELETE SET NULL,
+      client_name    TEXT,
+      client_phone   TEXT,
+      from_user      TEXT NOT NULL,
+      to_user        TEXT NOT NULL,
+      transferred_by TEXT NOT NULL,
+      transfer_type  TEXT NOT NULL DEFAULT 'manual'
+                     CHECK(transfer_type IN ('auto_distribution','manual','bulk')),
+      line           TEXT,
+      transferred_at TEXT NOT NULL DEFAULT (datetime('now','+2 hours'))
+    )`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_ct_from  ON client_transfers(from_user)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_ct_to    ON client_transfers(to_user)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_ct_by    ON client_transfers(transferred_by)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_ct_at    ON client_transfers(transferred_at)`);
+    saveNow();
+    console.log('✅ Migration: client_transfers audit table ready');
+  } catch (e) {
+    console.error('client_transfers migration error:', e.message);
+  }
+
   const app = express();
 
   app.use(cors({
