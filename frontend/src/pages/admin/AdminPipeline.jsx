@@ -119,14 +119,12 @@ function ReminderPanel({ apiPath, agent }) {
     if (abs < 1440) return `${Math.round(abs / 60)} ساعة`;
     return `${Math.round(abs / 1440)} يوم`;
   };
-  const now        = new Date();
-  const THIRTY_DAYS= 30 * 24 * 60 * 60 * 1000;
-  const visible  = reminders.filter(r => {
-    const d = parseEgypt(r.next_followup_at);
-    return d && Math.abs(now - d) <= THIRTY_DAYS;
-  });
-  const overdue  = visible.filter(r => { const d = parseEgypt(r.next_followup_at); return d && d < now; });
-  const total    = visible.length;
+  const now     = new Date();
+  // Show ALL reminders with a valid date — no arbitrary time window filter.
+  // The backend already excludes closed clients (Retention Done / إنتهت).
+  const visible = reminders.filter(r => parseEgypt(r.next_followup_at) !== null);
+  const overdue = visible.filter(r => { const d = parseEgypt(r.next_followup_at); return d && d < now; });
+  const total   = visible.length;
 
   useEffect(() => {
     if (!total) return;
