@@ -126,6 +126,7 @@ router.get('/reminders', (req, res) => {
     JOIN remarks r ON r.id = ri.remark_id
     WHERE ri.next_followup_at IS NOT NULL
       AND ri.next_followup_at != ''
+      AND ri.next_followup_at >= datetime('now', '+2 hours', '-30 days')
       AND r.category    = 'توزيع عملاء'
       AND r.assigned_to = ?
       AND r.status NOT IN ('Retention Done','إنتهت')
