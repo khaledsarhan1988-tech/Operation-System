@@ -196,6 +196,14 @@ function ClientCard({ remark, stageKey, onSelect, onMove, onDragEnd, selectionMo
           </div>
         )}
 
+        {/* transfer badge */}
+        {remark.transfer_count > 0 && (
+          <div className="mt-2 flex items-center gap-1 text-[11px] text-amber-700 bg-amber-50 rounded-xl px-2 py-1 border border-amber-200">
+            <ArrowRightLeft size={10} />
+            <span>تم النقل {remark.transfer_count > 1 ? `(${remark.transfer_count}×)` : ''}</span>
+          </div>
+        )}
+
         {/* next followup */}
         {remark.next_followup_at && (
           <div className="mt-2 flex items-center gap-1 text-[11px] text-violet-700 bg-violet-50 rounded-xl px-2 py-1 border border-violet-100">
@@ -419,17 +427,34 @@ function TransferModal({ count, targets, onConfirm, onClose, isPending, userRole
 
 // ─── TransferHistoryModal ────────────────────────────────────────────────────
 function TransferHistoryModal({ onClose }) {
+  const [filterPhone,    setFilterPhone]    = useState('');
+  const [filterUser,     setFilterUser]     = useState('');
+  const [filterDateFrom, setFilterDateFrom] = useState('');
+  const [filterDateTo,   setFilterDateTo]   = useState('');
+
+  const params = {
+    limit: 200,
+    ...(filterPhone    ? { phone:      filterPhone    } : {}),
+    ...(filterUser     ? { user_name:  filterUser     } : {}),
+    ...(filterDateFrom ? { date_from:  filterDateFrom } : {}),
+    ...(filterDateTo   ? { date_to:    filterDateTo   } : {}),
+  };
+
   const { data: hist, isLoading } = useQuery({
-    queryKey: ['transfer-history'],
-    queryFn: () => api.get('/agent/transfer-history', { params: { limit: 100 } }).then(r => r.data),
+    queryKey: ['transfer-history', filterPhone, filterUser, filterDateFrom, filterDateTo],
+    queryFn: () => api.get('/agent/transfer-history', { params }).then(r => r.data),
   });
 
   const fmtDate = s => s ? new Date(s).toLocaleString('ar-EG', { year:'numeric', day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }) : '—';
 
+  const hasFilters = filterPhone || filterUser || filterDateFrom || filterDateTo;
+
   return (
     <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col" dir="rtl" onClick={e => e.stopPropagation()}>
-        <div className="bg-gradient-to-l from-slate-700 to-gray-800 px-5 py-4 flex items-center justify-between">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col" dir="rtl" onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div className="bg-gradient-to-l from-slate-700 to-gray-800 px-5 py-4 flex items-center justify-between rounded-t-3xl">
           <div className="flex items-center gap-3">
             <History size={18} className="text-white" />
             <h2 className="font-bold text-white">سجل حركات العملاء</h2>
@@ -437,13 +462,69 @@ function TransferHistoryModal({ onClose }) {
           </div>
           <button onClick={onClose} className="p-1.5 hover:bg-white/20 rounded-xl transition"><X size={18} className="text-white" /></button>
         </div>
+
+        {/* Filters */}
+        <div className="px-4 py-3 border-b border-gray-100 bg-gray-50/80 space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="relative">
+              <Phone size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={filterPhone}
+                onChange={e => setFilterPhone(e.target.value)}
+                placeholder="رقم الموبايل"
+                className="w-full border border-gray-200 rounded-xl pr-7 pl-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30 bg-white"
+              />
+            </div>
+            <div className="relative">
+              <Search size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={filterUser}
+                onChange={e => setFilterUser(e.target.value)}
+                placeholder="اسم المنسق (من / إلى)"
+                className="w-full border border-gray-200 rounded-xl pr-7 pl-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30 bg-white"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="relative">
+              <Calendar size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="date"
+                value={filterDateFrom}
+                onChange={e => setFilterDateFrom(e.target.value)}
+                className="w-full border border-gray-200 rounded-xl pr-7 pl-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30 bg-white"
+              />
+            </div>
+            <div className="relative">
+              <Calendar size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="date"
+                value={filterDateTo}
+                onChange={e => setFilterDateTo(e.target.value)}
+                className="w-full border border-gray-200 rounded-xl pr-7 pl-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30 bg-white"
+              />
+            </div>
+          </div>
+          {hasFilters && (
+            <button
+              onClick={() => { setFilterPhone(''); setFilterUser(''); setFilterDateFrom(''); setFilterDateTo(''); }}
+              className="text-xs text-primary hover:underline flex items-center gap-1"
+            >
+              <X size={11} /> مسح الفلاتر
+            </button>
+          )}
+        </div>
+
+        {/* List */}
         <div className="flex-1 overflow-y-auto p-4">
           {isLoading ? (
             <div className="flex justify-center py-12"><RefreshCw className="animate-spin text-gray-300" size={24} /></div>
           ) : !hist?.data?.length ? (
             <div className="text-center py-12 text-gray-300">
               <History size={40} className="mx-auto mb-3 opacity-30" />
-              <p className="text-sm">لا توجد حركات مسجلة بعد</p>
+              <p className="text-sm">{hasFilters ? 'لا توجد نتائج مطابقة' : 'لا توجد حركات مسجلة بعد'}</p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -454,8 +535,8 @@ function TransferHistoryModal({ onClose }) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-bold text-sm text-gray-900 truncate">{t.client_name || '—'}</p>
-                    <p className="text-[11px] text-gray-500 flex items-center gap-1">
-                      <Phone size={9} />{t.client_phone}
+                    <p className="text-[11px] text-gray-500 flex items-center gap-1 font-mono">
+                      <Phone size={9} />{t.client_phone || '—'}
                     </p>
                     <p className="text-[11px] text-gray-400 mt-0.5">
                       <span className="text-red-500 font-semibold">{t.from_user}</span>

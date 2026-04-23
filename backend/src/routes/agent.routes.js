@@ -154,7 +154,8 @@ router.get('/pipeline', (req, res) => {
     db.prepare(`
       SELECT id, client_name, client_phone, task_type, status, priority,
              sla_deadline, added_at, last_updated, next_followup_at,
-             agent_notes, category, line, details, client_date
+             agent_notes, category, line, details, client_date,
+             (SELECT COUNT(*) FROM client_transfers ct WHERE ct.remark_id = remarks.id) AS transfer_count
       FROM remarks
       WHERE assigned_to = ?
         AND category = 'توزيع عملاء'
@@ -592,7 +593,7 @@ router.put('/bulk-transfer', (req, res) => {
 // GET /api/agent/transfer-history — audit history scoped to the requesting user/leader
 router.get('/transfer-history', (req, res) => {
   const user = req.user;
-  const { page = 1, limit = 50, date_from, date_to } = req.query;
+  const { page = 1, limit = 50, date_from, date_to, phone, user_name } = req.query;
   const conditions = [];
   const params     = [];
 
@@ -610,8 +611,10 @@ router.get('/transfer-history', (req, res) => {
     params.push(user.full_name, user.full_name);
   }
 
-  if (date_from) { conditions.push(`ct.transferred_at >= ?`); params.push(date_from); }
-  if (date_to)   { conditions.push(`ct.transferred_at <= ?`); params.push(date_to + ' 23:59:59'); }
+  if (date_from)  { conditions.push(`ct.transferred_at >= ?`);                          params.push(date_from); }
+  if (date_to)    { conditions.push(`ct.transferred_at <= ?`);                          params.push(date_to + ' 23:59:59'); }
+  if (phone)      { conditions.push(`ct.client_phone LIKE ?`);                          params.push(`%${phone}%`); }
+  if (user_name)  { conditions.push(`(ct.from_user LIKE ? OR ct.to_user LIKE ?)`);      params.push(`%${user_name}%`, `%${user_name}%`); }
 
   const where  = 'WHERE ' + conditions.join(' AND ');
   const offset = (parseInt(page) - 1) * parseInt(limit);
