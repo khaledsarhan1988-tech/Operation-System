@@ -278,6 +278,80 @@ router.get('/schedule', (req, res) => {
   return res.json(lectures);
 });
 
+// GET /api/agent/zoom-sessions — Zoom (side) sessions table with filters, scoped to agent's groups
+router.get('/zoom-sessions', (req, res) => {
+  const name = req.user.full_name;
+  const {
+    page = 1, limit = 25,
+    from_date, to_date, trainer, q,
+  } = req.query;
+  const offset = (parseInt(page) - 1) * parseInt(limit);
+  const line   = lineFilter(req);
+  const bf     = lineClause(req);
+  const lineL  = line ? ` AND l.line = '${line.replace(/'/g,"''")}'` : '';
+  const lineB  = line ? ` AND b.line = l.line` : '';
+
+  // Agent's groups — all batches (no status restriction)
+  const batchRows = db.prepare(
+    `SELECT group_name, dept_type, coordinators FROM batches WHERE coordinators LIKE ?${bf.clause}`
+  ).all(`%${name}%`, ...bf.params);
+
+  if (!batchRows.length)
+    return res.json({ total: 0, page: parseInt(page), data: [] });
+
+  const groupNames = batchRows.map(b => b.group_name);
+  const gph        = groupNames.map(() => '?').join(',');
+
+  const conditions = [
+    `l.session_type = 'side'`,
+    `l.group_name IN (${gph})`,
+  ];
+  const params = [...groupNames];
+
+  if (line)      { conditions.push(`l.line = ?`);      params.push(line); }
+  if (from_date) { conditions.push(`l.date >= ?`);     params.push(from_date); }
+  if (to_date)   { conditions.push(`l.date <= ?`);     params.push(to_date); }
+  if (trainer) {
+    const esc = trainer.replace(/%/g,'\\%').replace(/_/g,'\\_');
+    conditions.push(`l.trainer LIKE ? ESCAPE '\\'`);   params.push(`%${esc}%`);
+  }
+  if (q) {
+    const esc = q.replace(/%/g,'\\%').replace(/_/g,'\\_');
+    conditions.push(`l.group_name LIKE ? ESCAPE '\\'`); params.push(`%${esc}%`);
+  }
+
+  const where = `WHERE ${conditions.join(' AND ')}`;
+
+  const baseQ = `
+    SELECT
+      l.id, l.group_name, l.date, l.time, l.duration,
+      l.trainer, l.status, l.location, l.attendance,
+      l.side_session_category,
+      COALESCE(b.coordinators, ?) AS coordinators,
+      COALESCE(
+        (SELECT u.department FROM users u
+         WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
+           AND u.department != 'All' LIMIT 1),
+        b.dept_type
+      ) AS dept_type
+    FROM lectures l
+    LEFT JOIN batches b ON l.group_name = b.group_name${lineB}
+    ${where}
+  `;
+  const baseParams = [name, ...params];
+
+  try {
+    const total = db.prepare(`SELECT COUNT(*) AS cnt FROM (${baseQ})`).get(...baseParams).cnt;
+    const data  = db.prepare(`${baseQ} ORDER BY l.date DESC, l.time ASC LIMIT ? OFFSET ?`)
+                    .all(...baseParams, parseInt(limit), offset);
+
+    return res.json({ total, page: parseInt(page), data });
+  } catch (err) {
+    console.error('[agent/zoom-sessions]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/agent/absent
 router.get('/absent', (req, res) => {
   const name = req.user.full_name;
