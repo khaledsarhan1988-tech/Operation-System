@@ -155,14 +155,15 @@ export default function AbsentFollowUp() {
     { key: 'follow_up_note',    label: t('absent.followUpNote'),   render: v => <span className="text-xs text-text-secondary line-clamp-1">{v || '—'}</span> },
   ];
 
-  // Columns for Zoom (side session) absences — group-level
+  // Columns for Zoom (side session) absences — individual students (same as admin)
   const zoomColumns = [
-    { key: 'group_name',     label: 'اسم المجموعة',   render: v => <span className="text-xs font-mono break-all leading-relaxed text-gray-700">{v}</span> },
-    { key: 'session_date',   label: 'التاريخ',         render: v => v?.slice(0, 10) },
-    { key: 'trainer',        label: 'المدرب',          render: v => <span className="font-medium">{v || '—'}</span> },
-    { key: 'trainee_count',  label: 'إجمالي المتدربين', render: v => <span className="font-bold">{v}</span> },
-    { key: 'present_count',  label: 'حضر',             render: v => <span className="text-green-600 font-semibold">{v}</span> },
-    { key: 'absent_count',   label: 'غياب',            render: v => <span className="text-red-600 font-bold">{v}</span> },
+    { key: 'student_name', label: 'اسم العميل',  render: v => <span className="font-medium">{v || '—'}</span> },
+    { key: 'phone',        label: 'الموبايل',     render: v => v
+        ? <a href={`tel:${v}`} className="font-mono text-sm text-blue-600 hover:underline">{v}</a>
+        : <span className="text-gray-400">—</span>
+    },
+    { key: 'group_name',   label: 'المجموعة',    render: v => <span className="text-xs font-mono break-all leading-relaxed text-gray-700">{v}</span> },
+    { key: 'date',         label: 'التاريخ',      render: v => v?.slice(0, 10) },
   ];
 
   const columns = isZoom ? zoomColumns : mainColumns;
