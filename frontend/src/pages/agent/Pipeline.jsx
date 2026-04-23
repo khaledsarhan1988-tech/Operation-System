@@ -568,11 +568,10 @@ function currentMonthRange() {
 
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 export default function Pipeline() {
-  const { from: defaultFrom, to: defaultTo } = currentMonthRange();
   const [selected,  setSelected]  = useState(null);
   const [search,    setSearch]    = useState('');
-  const [dateFrom,  setDateFrom]  = useState(defaultFrom);
-  const [dateTo,    setDateTo]    = useState(defaultTo);
+  const [dateFrom,  setDateFrom]  = useState('');
+  const [dateTo,    setDateTo]    = useState('');
   const qc = useQueryClient();
 
   const { data: pipeline, isLoading, refetch, isFetching } = useQuery({
