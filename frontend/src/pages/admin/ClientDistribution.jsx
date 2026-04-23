@@ -33,6 +33,7 @@ const STATUS_BADGE = {
 const MATCH_BADGE = {
   existing_coordinator: { label: 'منسق موجود',   cls: 'bg-blue-100  text-blue-800'   },
   auto_distributed:     { label: 'توزيع تلقائي', cls: 'bg-purple-100 text-purple-800' },
+  manual:               { label: 'يدوي',          cls: 'bg-amber-100  text-amber-800'  },
 };
 
 function Badge({ type, map }) {
@@ -291,15 +292,38 @@ function DuplicatesModal({ duplicates, onClose }) {
 // ─── RESUME MODAL ─────────────────────────────────────────────────────────────
 function ResumeModal({ session, onClose, onDone }) {
   const qc = useQueryClient();
-  const [step,     setStep]     = useState('dates');   // 'dates' | 'preview' | 'done'
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo,   setDateTo]   = useState('');
-  const [forked,   setForked]   = useState(null);
-  const [showDups, setShowDups] = useState(false);
+  const [step,        setStep]        = useState('dates');
+  const [dateFrom,    setDateFrom]    = useState('');
+  const [dateTo,      setDateTo]      = useState('');
+  const [forked,      setForked]      = useState(null);
+  const [showDups,    setShowDups]    = useState(false);
+  const [useManual,   setUseManual]   = useState(false);
+  const [assignments, setAssignments] = useState([{ agent: '', count: '' }]);
+
+  // Fetch active agents for this line
+  const { data: agentList = [] } = useQuery({
+    queryKey: ['resume-agents', session.line],
+    queryFn: () => api.get('/distribution/agents', { params: { line: session.line } }).then(r => r.data),
+  });
+
+  const totalAssigned = assignments.reduce((s, a) => s + (parseInt(a.count) || 0), 0);
+
+  const addAssignment    = () => setAssignments(prev => [...prev, { agent: '', count: '' }]);
+  const removeAssignment = idx => setAssignments(prev => prev.filter((_, i) => i !== idx));
+  const updateAssignment = (idx, field, val) =>
+    setAssignments(prev => prev.map((a, i) => i === idx ? { ...a, [field]: val } : a));
 
   const forkMut = useMutation({
-    mutationFn: ({ sid, date_from, date_to }) =>
-      api.post(`/distribution/sessions/${sid}/fork`, { date_from, date_to }),
+    mutationFn: ({ sid, date_from, date_to }) => {
+      const validAsgns = useManual
+        ? assignments.filter(a => a.agent && parseInt(a.count) > 0)
+                     .map(a => ({ agent: a.agent, count: parseInt(a.count) }))
+        : [];
+      return api.post(`/distribution/sessions/${sid}/fork`, {
+        date_from, date_to,
+        ...(validAsgns.length > 0 ? { assignments: validAsgns } : {}),
+      });
+    },
     onSuccess: ({ data }) => { setForked(data); setStep('preview'); },
   });
 
@@ -370,6 +394,84 @@ function ResumeModal({ session, onClose, onDone }) {
                 </div>
               </div>
 
+              {/* ── Manual distribution (optional) ── */}
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setUseManual(v => !v)}
+                  className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl border text-sm font-semibold transition ${
+                    useManual
+                      ? 'bg-primary/5 border-primary text-primary'
+                      : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <Users size={15} />
+                    توزيع يدوي على منسق محدد
+                  </span>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                    useManual ? 'bg-primary/10 text-primary' : 'bg-gray-200 text-gray-500'
+                  }`}>
+                    {useManual ? 'مفعّل' : 'اختياري'}
+                  </span>
+                </button>
+
+                {useManual && (
+                  <div className="border border-primary/20 rounded-xl p-3 bg-primary/5 space-y-2">
+                    <p className="text-xs text-gray-500">
+                      حدد عدد العملاء لكل منسق — الباقون يحتفظون بتوزيعهم الأصلي
+                    </p>
+                    {assignments.map((asgn, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <select
+                          value={asgn.agent}
+                          onChange={e => updateAssignment(idx, 'agent', e.target.value)}
+                          className="flex-1 border border-gray-300 rounded-lg px-2 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/30"
+                        >
+                          <option value="">اختر منسق</option>
+                          {agentList.map(a => (
+                            <option key={a.full_name} value={a.full_name}>
+                              {a.full_name} ({a.open_tasks} مهمة)
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="number"
+                          min="1"
+                          value={asgn.count}
+                          onChange={e => updateAssignment(idx, 'count', e.target.value)}
+                          placeholder="العدد"
+                          className="w-24 border border-gray-300 rounded-lg px-2 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/30 text-center"
+                        />
+                        {assignments.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removeAssignment(idx)}
+                            className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg transition flex-shrink-0"
+                          >
+                            <X size={14} />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    <div className="flex items-center justify-between pt-1">
+                      <button
+                        type="button"
+                        onClick={addAssignment}
+                        className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-semibold transition"
+                      >
+                        <Plus size={13} /> إضافة منسق آخر
+                      </button>
+                      {totalAssigned > 0 && (
+                        <span className="text-xs text-gray-500">
+                          إجمالي المحدد: <span className="font-bold text-primary">{totalAssigned}</span> عميل
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {forkMut.isError && (
                 <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
                   <AlertCircle size={15} className="text-red-500 flex-shrink-0" />
@@ -395,10 +497,11 @@ function ResumeModal({ session, onClose, onDone }) {
           {step === 'preview' && forked && (
             <div className="space-y-4">
               {/* KPI cards */}
-              <div className="grid grid-cols-3 gap-3">
+              <div className={`grid gap-3 ${forked.manual > 0 ? 'grid-cols-4' : 'grid-cols-3'}`}>
                 {[
                   { label: 'إجمالي العملاء',  value: forked.total,       icon: Users,     color: 'text-blue-600   bg-blue-50'   },
                   { label: 'منسق موجود',       value: forked.matched,     icon: UserCheck, color: 'text-green-600  bg-green-50'  },
+                  ...(forked.manual > 0 ? [{ label: 'يدوي', value: forked.manual, icon: Users, color: 'text-amber-600 bg-amber-50' }] : []),
                   { label: 'توزيع تلقائي',     value: forked.distributed, icon: Shuffle,   color: 'text-purple-600 bg-purple-50' },
                 ].map(({ label, value, icon: Icon, color }) => (
                   <div key={label} className="bg-gray-50 rounded-xl border border-gray-200 p-3 flex items-center gap-3">
@@ -483,9 +586,13 @@ function ResumeModal({ session, onClose, onDone }) {
                             <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
                               item.match_type === 'existing_coordinator'
                                 ? 'bg-blue-100 text-blue-700'
+                                : item.match_type === 'manual'
+                                ? 'bg-amber-100 text-amber-700'
                                 : 'bg-purple-100 text-purple-700'
                             }`}>
-                              {item.match_type === 'existing_coordinator' ? 'منسق موجود' : 'تلقائي'}
+                              {item.match_type === 'existing_coordinator' ? 'منسق موجود'
+                               : item.match_type === 'manual' ? 'يدوي'
+                               : 'تلقائي'}
                             </span>
                           </td>
                         </tr>

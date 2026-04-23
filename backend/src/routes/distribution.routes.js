@@ -546,7 +546,7 @@ router.post('/sessions/:sid/fork', (req, res) => {
   if (source.status !== 'pending')
     return res.status(400).json({ error: 'الاستكمال متاح للجلسات المعلقة فقط' });
 
-  const { date_from, date_to } = req.body; // YYYY-MM-DD
+  const { date_from, date_to, assignments } = req.body; // YYYY-MM-DD; assignments: [{agent,count}]
 
   // Filter items by date using SUBSTR trick (client_date is DD/MM/YYYY)
   const conditions = ['session_id = ?'];
@@ -610,20 +610,36 @@ router.post('/sessions/:sid/fork', (req, res) => {
     });
   }
 
-  const matched     = freshItems.filter(i => i.match_type === 'existing_coordinator').length;
-  const distributed = freshItems.filter(i => i.match_type === 'auto_distributed').length;
+  // ── Apply manual assignments if provided ────────────────────────────────────
+  // assignments = [{agent: 'Name', count: N}, ...] — override assigned_to in order
+  let finalItems = freshItems.map(i => ({ ...i }));
+  if (Array.isArray(assignments) && assignments.length > 0) {
+    let idx = 0;
+    for (const asgn of assignments) {
+      const cnt = Math.min(parseInt(asgn.count) || 0, finalItems.length - idx);
+      for (let i = 0; i < cnt && idx < finalItems.length; i++, idx++) {
+        finalItems[idx].assigned_to = asgn.agent;
+        finalItems[idx].match_type  = 'manual';
+      }
+    }
+    // remaining items (beyond specified counts) keep their original assigned_to
+  }
+
+  const matched     = finalItems.filter(i => i.match_type === 'existing_coordinator').length;
+  const manual      = finalItems.filter(i => i.match_type === 'manual').length;
+  const distributed = finalItems.length - matched - manual;
 
   // Create new session
   const newRow = db.prepare(`
     INSERT INTO distribution_sessions
       (line, total_clients, matched, distributed, status, task_type, priority, created_by)
     VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
-  `).run(source.line, freshItems.length, matched, distributed,
+  `).run(source.line, finalItems.length, matched, distributed + manual,
          source.task_type, source.priority, req.user.id);
 
   const newSid = newRow.lastInsertRowid;
 
-  // Copy filtered fresh items into new session
+  // Copy final items into new session
   const insertItem = db.prepare(`
     INSERT INTO distribution_items
       (session_id, client_name, client_phone, client_line, client_date, match_type, assigned_to)
@@ -631,7 +647,7 @@ router.post('/sessions/:sid/fork', (req, res) => {
   `);
 
   db.transaction(() => {
-    freshItems.forEach(item =>
+    finalItems.forEach(item =>
       insertItem.run(newSid, item.client_name, item.client_phone,
                      item.client_line, item.client_date, item.match_type, item.assigned_to)
     );
@@ -656,8 +672,9 @@ router.post('/sessions/:sid/fork', (req, res) => {
   return res.json({
     session_id:        newSid,
     source_session_id: parseInt(req.params.sid),
-    total:             freshItems.length,
+    total:             finalItems.length,
     matched,
+    manual,
     distributed,
     duplicates_count:  duplicates.length,
     duplicates,
