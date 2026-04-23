@@ -468,6 +468,14 @@ function ClientDetailModal({ remark: init, onClose, onUpdate }) {
     },
   });
 
+  const deleteLogMut = useMutation({
+    mutationFn: (logId) => api.delete(`/agent/interactions/${logId}`),
+    onSuccess: () => {
+      refetchLogs();
+      qc.invalidateQueries(['reminders']);
+    },
+  });
+
   const stageMut = useMutation({
     mutationFn: s => api.put(`/agent/tasks/${local.id}`, { status: s }),
     onSuccess: ({ data }) => {
@@ -665,7 +673,7 @@ function ClientDetailModal({ remark: init, onClose, onUpdate }) {
                   const tObj = LOG_TYPES.find(t => t.value === log.interaction_type);
                   const LogIcon = tObj?.Icon || PhoneCall;
                   return (
-                    <div key={log.id} className="flex gap-3">
+                    <div key={log.id} className="flex gap-3 group/log">
                       <div className="flex-shrink-0 w-9 h-9 rounded-2xl bg-gray-100 flex items-center justify-center">
                         <LogIcon size={15} className="text-gray-500" />
                       </div>
@@ -679,7 +687,19 @@ function ClientDetailModal({ remark: init, onClose, onUpdate }) {
                               </span>
                             )}
                           </div>
-                          <span className="text-[10px] text-gray-400 flex-shrink-0 mt-0.5">{fmtDateTime(log.created_at)}</span>
+                          <div className="flex items-center gap-1.5 flex-shrink-0">
+                            <span className="text-[10px] text-gray-400 mt-0.5">{fmtDateTime(log.created_at)}</span>
+                            <button
+                              onClick={() => {
+                                if (window.confirm('حذف هذا السجل نهائياً؟')) deleteLogMut.mutate(log.id);
+                              }}
+                              disabled={deleteLogMut.isPending}
+                              title="حذف السجل"
+                              className="opacity-0 group-hover/log:opacity-100 p-1 rounded-lg hover:bg-red-100 text-red-400 hover:text-red-600 transition-all"
+                            >
+                              <X size={13} />
+                            </button>
+                          </div>
                         </div>
                         {log.notes && <p className="text-sm text-gray-700 leading-relaxed">{log.notes}</p>}
                         {log.next_followup_at && (

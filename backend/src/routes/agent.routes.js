@@ -236,6 +236,22 @@ router.get('/tasks/:id/logs', (req, res) => {
   return res.json(logs);
 });
 
+// DELETE /api/agent/interactions/:id  — delete a specific interaction log
+router.delete('/interactions/:id', (req, res) => {
+  const { id } = req.params;
+  const name = req.user.full_name;
+  const lf = lineClause(req);
+  // Confirm the interaction belongs to a remark assigned to this agent
+  const interaction = db.prepare(`
+    SELECT ri.* FROM remark_interactions ri
+    JOIN remarks r ON r.id = ri.remark_id
+    WHERE ri.id = ? AND r.assigned_to = ?${lf.clause}
+  `).get(id, name, ...lf.params);
+  if (!interaction) return res.status(404).json({ error: 'Interaction not found' });
+  db.prepare('DELETE FROM remark_interactions WHERE id = ?').run(id);
+  return res.json({ ok: true });
+});
+
 // GET /api/agent/schedule?date=YYYY-MM-DD
 router.get('/schedule', (req, res) => {
   const name = req.user.full_name;

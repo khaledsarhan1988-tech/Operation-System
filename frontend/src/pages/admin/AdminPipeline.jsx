@@ -509,9 +509,17 @@ function ClientDetailModal({ remark: init, onClose, onUpdate }) {
       setLocal(data.remark);
       refetchLogs();
       qc.invalidateQueries(['admin-pipeline']);
-      qc.invalidateQueries(['admin-reminders']);
+      qc.invalidateQueries(['admin-reminders', '/admin/pipeline/reminders']);
       setForm({ interaction_type:'call', outcome:'', notes:'', next_followup_at:'', status:'' });
       setShowForm(false);
+    },
+  });
+
+  const deleteLogMut = useMutation({
+    mutationFn: (logId) => api.delete(`/admin/pipeline/interactions/${logId}`),
+    onSuccess: () => {
+      refetchLogs();
+      qc.invalidateQueries(['admin-reminders']);
     },
   });
 
@@ -661,7 +669,7 @@ function ClientDetailModal({ remark: init, onClose, onUpdate }) {
                   const tObj = LOG_TYPES.find(t=>t.value===log.interaction_type);
                   const LI = tObj?.Icon||PhoneCall;
                   return (
-                    <div key={log.id} className="flex gap-3">
+                    <div key={log.id} className="flex gap-3 group/log">
                       <div className="flex-shrink-0 w-9 h-9 rounded-2xl bg-gray-100 flex items-center justify-center">
                         <LI size={15} className="text-gray-500"/>
                       </div>
@@ -671,7 +679,19 @@ function ClientDetailModal({ remark: init, onClose, onUpdate }) {
                             <span className="text-xs font-bold text-gray-800">{tObj?.label||log.interaction_type}</span>
                             {log.outcome&&<span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${OUTCOME_COLOR(log.outcome)}`}>{log.outcome}</span>}
                           </div>
-                          <span className="text-[10px] text-gray-400 flex-shrink-0">{fmtDT(log.created_at)}</span>
+                          <div className="flex items-center gap-1.5 flex-shrink-0">
+                            <span className="text-[10px] text-gray-400">{fmtDT(log.created_at)}</span>
+                            <button
+                              onClick={() => {
+                                if (window.confirm('حذف هذا السجل نهائياً؟')) deleteLogMut.mutate(log.id);
+                              }}
+                              disabled={deleteLogMut.isPending}
+                              title="حذف السجل"
+                              className="opacity-0 group-hover/log:opacity-100 p-1 rounded-lg hover:bg-red-100 text-red-400 hover:text-red-600 transition-all"
+                            >
+                              <X size={13}/>
+                            </button>
+                          </div>
                         </div>
                         {log.notes&&<p className="text-sm text-gray-700">{log.notes}</p>}
                         {log.next_followup_at&&(

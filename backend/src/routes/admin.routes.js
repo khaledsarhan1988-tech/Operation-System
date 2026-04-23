@@ -577,4 +577,13 @@ router.post('/pipeline/tasks/:id/log', (req, res) => {
   });
 });
 
+// DELETE /api/admin/pipeline/interactions/:id  — admin: delete any interaction log
+router.delete('/pipeline/interactions/:id', (req, res) => {
+  const { id } = req.params;
+  const interaction = db.prepare('SELECT * FROM remark_interactions WHERE id = ?').get(id);
+  if (!interaction) return res.status(404).json({ error: 'Interaction not found' });
+  db.prepare('DELETE FROM remark_interactions WHERE id = ?').run(id);
+  return res.json({ ok: true });
+});
+
 module.exports = router;
