@@ -78,19 +78,40 @@ export default function AbsentFollowUp() {
   const [page, setPage]         = useState(1);
   const [selected, setSelected] = useState(null);
 
-  const params = {
+  const isZoom = sessionType === 'side';
+
+  // Main (regular) absence params
+  const mainParams = {
     page, limit: 25,
-    session_type: sessionType,
+    session_type: 'main',
     ...applied,
   };
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['agent-absent', params],
-    queryFn: () => api.get('/agent/absent', { params }).then(r => r.data),
+  // Zoom absence params
+  const zoomParams = {
+    page, limit: 25,
+    from_date: applied.from_date,
+    to_date:   applied.to_date,
+    q:         applied.q,
+  };
+
+  const { data: mainData, isLoading: mainLoading } = useQuery({
+    queryKey: ['agent-absent-main', mainParams],
+    queryFn:  () => api.get('/agent/absent', { params: mainParams }).then(r => r.data),
     keepPreviousData: true,
+    enabled: !isZoom,
   });
 
-  const filterOpts = data?.filter_opts ?? { departments: [], coordinators: [] };
+  const { data: zoomData, isLoading: zoomLoading } = useQuery({
+    queryKey: ['agent-absent-zoom', zoomParams],
+    queryFn:  () => api.get('/agent/absent-zoom', { params: zoomParams }).then(r => r.data),
+    keepPreviousData: true,
+    enabled: isZoom,
+  });
+
+  const data      = isZoom ? zoomData      : mainData;
+  const isLoading = isZoom ? zoomLoading   : mainLoading;
+  const filterOpts = mainData?.filter_opts ?? { departments: [], coordinators: [] };
 
   const handleSearch = (e) => {
     e.preventDefault();
@@ -120,7 +141,8 @@ export default function AbsentFollowUp() {
   const hasActiveFilters = applied.q || applied.follow_up_status || applied.from_date ||
     applied.to_date || applied.department || applied.coordinator;
 
-  const columns = [
+  // Columns for main (regular) absences
+  const mainColumns = [
     { key: 'student_name',      label: t('absent.student'),        render: v => <span className="font-medium">{v || '—'}</span> },
     { key: 'phone',             label: t('clients.phone'),         render: v => <span className="font-mono text-sm">{v || '—'}</span> },
     { key: 'group_name',        label: t('absent.group'),          render: v => (
@@ -132,6 +154,18 @@ export default function AbsentFollowUp() {
     { key: 'follow_up_status',  label: t('absent.followUpStatus'), render: v => <Badge value={v} ns="absent" /> },
     { key: 'follow_up_note',    label: t('absent.followUpNote'),   render: v => <span className="text-xs text-text-secondary line-clamp-1">{v || '—'}</span> },
   ];
+
+  // Columns for Zoom (side session) absences — group-level
+  const zoomColumns = [
+    { key: 'group_name',     label: 'اسم المجموعة',   render: v => <span className="text-xs font-mono break-all leading-relaxed text-gray-700">{v}</span> },
+    { key: 'session_date',   label: 'التاريخ',         render: v => v?.slice(0, 10) },
+    { key: 'trainer',        label: 'المدرب',          render: v => <span className="font-medium">{v || '—'}</span> },
+    { key: 'trainee_count',  label: 'إجمالي المتدربين', render: v => <span className="font-bold">{v}</span> },
+    { key: 'present_count',  label: 'حضر',             render: v => <span className="text-green-600 font-semibold">{v}</span> },
+    { key: 'absent_count',   label: 'غياب',            render: v => <span className="text-red-600 font-bold">{v}</span> },
+  ];
+
+  const columns = isZoom ? zoomColumns : mainColumns;
 
   return (
     <div className="space-y-4 animate-fadeIn">
@@ -219,42 +253,44 @@ export default function AbsentFollowUp() {
           />
         </div>
 
-        {/* Follow-up status */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs text-gray-500">حالة المتابعة</label>
-          <select
-            value={filters.follow_up_status}
-            onChange={e => setFilters(f => ({ ...f, follow_up_status: e.target.value }))}
-            className="input text-sm w-36"
-          >
-            {Object.entries(FOLLOW_UP_LABELS).map(([val, label]) => (
-              <option key={val} value={val}>{label}</option>
-            ))}
-          </select>
-        </div>
+        {/* Follow-up status — only for main absences */}
+        {!isZoom && (
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-gray-500">حالة المتابعة</label>
+            <select
+              value={filters.follow_up_status}
+              onChange={e => setFilters(f => ({ ...f, follow_up_status: e.target.value }))}
+              className="input text-sm w-36"
+            >
+              {Object.entries(FOLLOW_UP_LABELS).map(([val, label]) => (
+                <option key={val} value={val}>{label}</option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Table */}
       <div className="card p-0 overflow-hidden">
         <DataTable
           columns={columns}
-          data={data?.data}
+          data={isZoom ? data?.data : data?.data}
           total={data?.total || 0}
           page={page}
           limit={25}
           onPageChange={setPage}
           loading={isLoading}
           emptyMsg={t('absent.noAbsent')}
-          onRowClick={row => setSelected(row)}
+          onRowClick={isZoom ? undefined : row => setSelected(row)}
         />
       </div>
 
-      {selected && (
+      {!isZoom && selected && (
         <FollowUpModal
           absent={selected}
           open={!!selected}
           onClose={() => setSelected(null)}
-          onSaved={() => qc.invalidateQueries(['agent-absent'])}
+          onSaved={() => qc.invalidateQueries(['agent-absent-main'])}
         />
       )}
     </div>
