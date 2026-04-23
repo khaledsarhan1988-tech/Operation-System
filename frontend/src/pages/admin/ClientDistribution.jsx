@@ -3,8 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Upload, Users, CheckCircle, XCircle, Clock, RefreshCw,
   ChevronDown, Plus, Trash2, History, ArrowLeft,
-  UserCheck, Shuffle, AlertCircle, FileSpreadsheet, X, Eye,
-  Calendar,
+  UserCheck, Shuffle, AlertCircle, AlertTriangle, FileSpreadsheet, X, Eye,
+  Calendar, PlayCircle,
 } from 'lucide-react';
 import api from '../../api/axios';
 
@@ -202,6 +202,353 @@ function HistoryDetail({ sessionId, onClose }) {
   );
 }
 
+// ─── DUPLICATES MODAL ─────────────────────────────────────────────────────────
+function DuplicatesModal({ duplicates, onClose }) {
+  // Group by coordinator
+  const byCoord = {};
+  duplicates.forEach(d => {
+    const k = d.existing_assigned_to || 'غير محدد';
+    if (!byCoord[k]) byCoord[k] = [];
+    byCoord[k].push(d);
+  });
+  const coordSummary = Object.entries(byCoord).sort(([,a],[,b]) => b.length - a.length);
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div className="px-5 py-4 border-b">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle size={20} className="text-amber-600" />
+              </div>
+              <div>
+                <h3 className="font-bold text-gray-900">
+                  عملاء لديهم مهام نشطة
+                  <span className="ml-2 inline-flex items-center justify-center w-7 h-7 rounded-full bg-amber-100 text-amber-700 font-black text-sm">
+                    {duplicates.length}
+                  </span>
+                </h3>
+                <p className="text-xs text-gray-500 mt-0.5">تم استبعادهم تلقائياً — لديهم مهمة مفتوحة مسبقاً</p>
+              </div>
+            </div>
+            <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg flex-shrink-0">
+              <X size={18} />
+            </button>
+          </div>
+
+          {/* Per-coordinator summary chips */}
+          <div className="mt-3 flex flex-wrap gap-2">
+            {coordSummary.map(([coord, clients]) => (
+              <div key={coord} className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-xl px-3 py-1.5">
+                <span className="text-xs font-semibold text-amber-800">{coord}</span>
+                <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1 bg-amber-200 text-amber-900 rounded-full font-black text-xs">
+                  {clients.length}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Table */}
+        <div className="overflow-y-auto flex-1 p-5">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-3 py-2 text-start font-semibold text-gray-600">العميل</th>
+                  <th className="px-3 py-2 text-start font-semibold text-gray-600">الموبايل</th>
+                  <th className="px-3 py-2 text-start font-semibold text-gray-600">تاريخ الاشتراك</th>
+                  <th className="px-3 py-2 text-start font-semibold text-gray-600">المنسق الحالي</th>
+                  <th className="px-3 py-2 text-start font-semibold text-gray-600">الحالة</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {duplicates.map((d, idx) => (
+                  <tr key={idx} className="hover:bg-amber-50/40 transition-colors">
+                    <td className="px-3 py-2 font-medium text-gray-900">{d.name || '—'}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-gray-500">{d.phone || '—'}</td>
+                    <td className="px-3 py-2 text-xs text-gray-500">{d.date || '—'}</td>
+                    <td className="px-3 py-2 font-semibold text-blue-700">{d.existing_assigned_to || '—'}</td>
+                    <td className="px-3 py-2">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">
+                        {d.existing_status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── RESUME MODAL ─────────────────────────────────────────────────────────────
+function ResumeModal({ session, onClose, onDone }) {
+  const qc = useQueryClient();
+  const [step,     setStep]     = useState('dates');   // 'dates' | 'preview' | 'done'
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo,   setDateTo]   = useState('');
+  const [forked,   setForked]   = useState(null);
+  const [showDups, setShowDups] = useState(false);
+
+  const forkMut = useMutation({
+    mutationFn: ({ sid, date_from, date_to }) =>
+      api.post(`/distribution/sessions/${sid}/fork`, { date_from, date_to }),
+    onSuccess: ({ data }) => { setForked(data); setStep('preview'); },
+  });
+
+  const confirmMut = useMutation({
+    mutationFn: sid => api.post(`/distribution/sessions/${sid}/confirm`, {}),
+    onSuccess: () => {
+      qc.invalidateQueries(['dist-sessions']);
+      setStep('done');
+    },
+  });
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="px-5 py-4 border-b flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+              <PlayCircle size={20} className="text-primary" />
+            </div>
+            <div>
+              <h3 className="font-bold text-gray-900">استكمال جلسة #{session.id}</h3>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {session.total_clients} عميل · {session.line} · {session.task_type}
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg flex-shrink-0">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+
+          {/* ── STEP: DATES ── */}
+          {step === 'dates' && (
+            <div className="space-y-4">
+              <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
+                <p className="text-sm text-blue-800 font-semibold">اختر نطاق التاريخ اللي عاوز توزعه</p>
+                <p className="text-xs text-blue-600 mt-0.5">مثلاً: من 01/02/2025 إلى 28/02/2025 لتوزيع فبراير فقط</p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-gray-600">من تاريخ</label>
+                  <div className="flex items-center gap-2 border border-gray-300 rounded-xl px-3 py-2.5 focus-within:ring-2 focus-within:ring-primary/40">
+                    <Calendar size={14} className="text-gray-400 flex-shrink-0" />
+                    <input
+                      type="date" value={dateFrom}
+                      onChange={e => setDateFrom(e.target.value)}
+                      className="flex-1 text-sm text-gray-800 focus:outline-none bg-transparent"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-gray-600">إلى تاريخ</label>
+                  <div className="flex items-center gap-2 border border-gray-300 rounded-xl px-3 py-2.5 focus-within:ring-2 focus-within:ring-primary/40">
+                    <Calendar size={14} className="text-gray-400 flex-shrink-0" />
+                    <input
+                      type="date" value={dateTo}
+                      onChange={e => setDateTo(e.target.value)}
+                      className="flex-1 text-sm text-gray-800 focus:outline-none bg-transparent"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {forkMut.isError && (
+                <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+                  <AlertCircle size={15} className="text-red-500 flex-shrink-0" />
+                  <p className="text-sm text-red-700">
+                    {forkMut.error?.response?.data?.error || 'حدث خطأ'}
+                  </p>
+                </div>
+              )}
+
+              <button
+                disabled={forkMut.isPending}
+                onClick={() => forkMut.mutate({ sid: session.id, date_from: dateFrom, date_to: dateTo })}
+                className="w-full btn-primary py-3 text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {forkMut.isPending
+                  ? <><RefreshCw size={16} className="animate-spin" /> جاري التحليل...</>
+                  : <><Eye size={16} /> معاينة التوزيع</>}
+              </button>
+            </div>
+          )}
+
+          {/* ── STEP: PREVIEW ── */}
+          {step === 'preview' && forked && (
+            <div className="space-y-4">
+              {/* KPI cards */}
+              <div className="grid grid-cols-3 gap-3">
+                {[
+                  { label: 'إجمالي العملاء',  value: forked.total,       icon: Users,     color: 'text-blue-600   bg-blue-50'   },
+                  { label: 'منسق موجود',       value: forked.matched,     icon: UserCheck, color: 'text-green-600  bg-green-50'  },
+                  { label: 'توزيع تلقائي',     value: forked.distributed, icon: Shuffle,   color: 'text-purple-600 bg-purple-50' },
+                ].map(({ label, value, icon: Icon, color }) => (
+                  <div key={label} className="bg-gray-50 rounded-xl border border-gray-200 p-3 flex items-center gap-3">
+                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${color.split(' ')[1]} flex-shrink-0`}>
+                      <Icon size={18} className={color.split(' ')[0]} />
+                    </div>
+                    <div>
+                      <p className="text-xl font-bold text-gray-900">{value}</p>
+                      <p className="text-[11px] text-gray-500">{label}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Duplicates badge */}
+              {forked.duplicates_count > 0 && (
+                <button
+                  onClick={() => setShowDups(v => !v)}
+                  className="w-full flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 hover:bg-amber-100 transition text-right"
+                >
+                  <AlertTriangle size={16} className="text-amber-600 flex-shrink-0" />
+                  <p className="text-sm font-semibold text-amber-800 flex-1">
+                    {forked.duplicates_count} عميل لديهم مهمة نشطة — تم استبعادهم
+                  </p>
+                  <Eye size={14} className="text-amber-500" />
+                </button>
+              )}
+
+              {/* Duplicates detail */}
+              {showDups && forked.duplicates_count > 0 && (
+                <div className="border border-amber-200 rounded-xl overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead className="bg-amber-50">
+                      <tr>
+                        <th className="px-3 py-2 text-start font-semibold text-gray-600">العميل</th>
+                        <th className="px-3 py-2 text-start font-semibold text-gray-600">الموبايل</th>
+                        <th className="px-3 py-2 text-start font-semibold text-gray-600">المنسق الحالي</th>
+                        <th className="px-3 py-2 text-start font-semibold text-gray-600">الحالة</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-amber-100">
+                      {forked.duplicates.map((d, i) => (
+                        <tr key={i} className="hover:bg-amber-50/50">
+                          <td className="px-3 py-2 font-medium">{d.name}</td>
+                          <td className="px-3 py-2 font-mono">{d.phone}</td>
+                          <td className="px-3 py-2 text-blue-700 font-semibold">{d.existing_assigned_to}</td>
+                          <td className="px-3 py-2">
+                            <span className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full text-[11px] font-semibold">
+                              {d.existing_status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Items table */}
+              <div className="border border-gray-200 rounded-xl overflow-hidden">
+                <div className="px-4 py-2 bg-gray-50 border-b flex items-center justify-between">
+                  <span className="text-sm font-semibold text-gray-700">تفاصيل التوزيع</span>
+                  <span className="text-xs text-gray-400">{forked.total} عميل</span>
+                </div>
+                <div className="max-h-48 overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-gray-50 sticky top-0">
+                      <tr>
+                        <th className="px-3 py-2 text-start font-semibold text-gray-500">الاسم</th>
+                        <th className="px-3 py-2 text-start font-semibold text-gray-500">التاريخ</th>
+                        <th className="px-3 py-2 text-start font-semibold text-gray-500">الموظف</th>
+                        <th className="px-3 py-2 text-start font-semibold text-gray-500">النوع</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {forked.items.map(item => (
+                        <tr key={item.id} className="hover:bg-gray-50">
+                          <td className="px-3 py-1.5 font-medium truncate max-w-[150px]">{item.client_name}</td>
+                          <td className="px-3 py-1.5 text-gray-500">{item.client_date || '—'}</td>
+                          <td className="px-3 py-1.5 font-semibold text-primary">{item.assigned_to}</td>
+                          <td className="px-3 py-1.5">
+                            <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
+                              item.match_type === 'existing_coordinator'
+                                ? 'bg-blue-100 text-blue-700'
+                                : 'bg-purple-100 text-purple-700'
+                            }`}>
+                              {item.match_type === 'existing_coordinator' ? 'منسق موجود' : 'تلقائي'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {confirmMut.isError && (
+                <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+                  <AlertCircle size={15} className="text-red-500" />
+                  <p className="text-sm text-red-700">{confirmMut.error?.response?.data?.error || 'حدث خطأ'}</p>
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => { setStep('dates'); setForked(null); }}
+                  className="flex-1 py-2.5 rounded-xl text-sm text-gray-600 border border-gray-200 hover:bg-gray-50 transition font-semibold"
+                >
+                  تعديل النطاق
+                </button>
+                <button
+                  disabled={confirmMut.isPending || forked.total === 0}
+                  onClick={() => confirmMut.mutate(forked.session_id)}
+                  className="flex-2 btn-primary px-8 py-2.5 text-sm font-semibold flex items-center gap-2 disabled:opacity-50"
+                >
+                  {confirmMut.isPending
+                    ? <><RefreshCw size={16} className="animate-spin" /> جاري التأكيد...</>
+                    : <><CheckCircle size={16} /> تأكيد التوزيع ({forked.total} عميل)</>}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── STEP: DONE ── */}
+          {step === 'done' && (
+            <div className="text-center py-8 space-y-4">
+              <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto">
+                <CheckCircle size={36} className="text-emerald-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">تم التوزيع بنجاح!</h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  تم إنشاء <span className="font-black text-emerald-600">{forked?.total}</span> مهمة جديدة للمنسقين
+                </p>
+              </div>
+              <button
+                onClick={onDone}
+                className="btn-primary px-8 py-2.5 text-sm font-semibold"
+              >
+                إغلاق
+              </button>
+            </div>
+          )}
+
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── COORDINATOR STATS component ──────────────────────────────────────────────
 function CoordinatorStats() {
   const [statsLine, setStatsLine] = useState('');
@@ -325,9 +672,13 @@ export default function ClientDistribution() {
   const [showTTMgr,      setShowTTMgr]     = useState(false);
   const [detailId,       setDetailId]      = useState(null);
   const [histPage,       setHistPage]      = useState(1);
+  const [resumeSession,  setResumeSession] = useState(null);
   // Preview-step date filter
   const [pvDateFrom,     setPvDateFrom]    = useState(''); // YYYY-MM-DD
   const [pvDateTo,       setPvDateTo]      = useState(''); // YYYY-MM-DD
+  // Duplicate detection
+  const [duplicates,     setDuplicates]    = useState([]);
+  const [showDuplicates, setShowDuplicates] = useState(false);
 
   const fileRef = useRef();
 
@@ -351,6 +702,7 @@ export default function ClientDistribution() {
     mutationFn: payload => api.post('/distribution/preview', payload),
     onSuccess: ({ data }) => {
       setPreview(data);
+      setDuplicates(data.duplicates || []);
       setOverrides({});
       setStep('preview');
     },
@@ -392,6 +744,8 @@ export default function ClientDistribution() {
     setDoneResult(null);
     setPvDateFrom('');
     setPvDateTo('');
+    setDuplicates([]);
+    setShowDuplicates(false);
   }, []);
 
   // Start another batch from the SAME file — keep fileBase64 + availableDates
@@ -404,6 +758,8 @@ export default function ClientDistribution() {
     setPvDateTo('');
     setDateRangeFrom('');
     setDateRangeTo('');
+    setDuplicates([]);
+    setShowDuplicates(false);
     // file, fileBase64, availableDates intentionally kept
   }, []);
 
@@ -541,8 +897,18 @@ export default function ClientDistribution() {
   return (
     <div className="space-y-6 max-w-6xl mx-auto" dir="rtl">
       {/* ── Modals ── */}
-      {showTTMgr && <TaskTypeManager onClose={() => setShowTTMgr(false)} />}
-      {detailId  && <HistoryDetail sessionId={detailId} onClose={() => setDetailId(null)} />}
+      {showTTMgr     && <TaskTypeManager onClose={() => setShowTTMgr(false)} />}
+      {detailId      && <HistoryDetail sessionId={detailId} onClose={() => setDetailId(null)} />}
+      {showDuplicates && duplicates.length > 0 && (
+        <DuplicatesModal duplicates={duplicates} onClose={() => setShowDuplicates(false)} />
+      )}
+      {resumeSession && (
+        <ResumeModal
+          session={resumeSession}
+          onClose={() => setResumeSession(null)}
+          onDone={() => { setResumeSession(null); qc.invalidateQueries(['dist-sessions']); }}
+        />
+      )}
 
       {/* ── Header ── */}
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -852,6 +1218,48 @@ export default function ClientDistribution() {
                 )}
               </div>
 
+              {/* Duplicates warning badge */}
+              {duplicates.length > 0 && (
+                <button
+                  onClick={() => setShowDuplicates(true)}
+                  className="w-full flex items-center gap-4 bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3.5 hover:bg-amber-100 transition text-right group"
+                >
+                  <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition">
+                    <AlertTriangle size={20} className="text-amber-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-amber-800">
+                      تم استبعاد{' '}
+                      <span className="text-lg font-black">{duplicates.length}</span>
+                      {' '}عميل — لديهم مهمة نشطة بالفعل
+                    </p>
+                    <p className="text-xs text-amber-600 mt-0.5">
+                      اضغط لعرض القائمة مع تفاصيل المنسق والحالة الحالية
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {/* Per-coordinator mini badges */}
+                    {(() => {
+                      const byCoord = {};
+                      duplicates.forEach(d => {
+                        const k = d.existing_assigned_to || 'غير محدد';
+                        byCoord[k] = (byCoord[k] || 0) + 1;
+                      });
+                      return Object.entries(byCoord)
+                        .sort(([,a],[,b]) => b - a)
+                        .slice(0, 3)
+                        .map(([coord, cnt]) => (
+                          <div key={coord} className="hidden sm:flex items-center gap-1 bg-white border border-amber-200 rounded-lg px-2 py-1 text-xs">
+                            <span className="font-semibold text-gray-700 max-w-[80px] truncate">{coord}</span>
+                            <span className="font-black text-amber-700">{cnt}</span>
+                          </div>
+                        ));
+                    })()}
+                    <Eye size={16} className="text-amber-500" />
+                  </div>
+                </button>
+              )}
+
               {/* Summary KPI cards */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                 {[
@@ -1101,12 +1509,23 @@ export default function ClientDistribution() {
                           {s.created_at ? new Date(s.created_at).toLocaleDateString('ar-EG') : '—'}
                         </td>
                         <td className="px-4 py-3">
-                          <button
-                            onClick={() => setDetailId(s.id)}
-                            className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-500"
-                          >
-                            <Eye size={15} />
-                          </button>
+                          <div className="flex items-center gap-1">
+                            {s.status === 'pending' && (
+                              <button
+                                onClick={() => setResumeSession(s)}
+                                title="استكمال التوزيع"
+                                className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold bg-primary/10 text-primary hover:bg-primary/20 rounded-lg transition"
+                              >
+                                <PlayCircle size={13} /> استكمال
+                              </button>
+                            )}
+                            <button
+                              onClick={() => setDetailId(s.id)}
+                              className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-500"
+                            >
+                              <Eye size={15} />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}

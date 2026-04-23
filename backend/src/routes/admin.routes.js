@@ -440,13 +440,14 @@ router.get('/pipeline', (req, res) => {
 });
 
 // GET /api/admin/pipeline/agents?line=  — list agents for filter dropdown
+// Returns active agents from users table (role='agent', is_active=1) only
 router.get('/pipeline/agents', (req, res) => {
   const line = effectiveLine(req);
   const lf   = line ? ` AND line = '${line.replace(/'/g,"''")}'` : '';
   const rows = db.prepare(
-    `SELECT DISTINCT assigned_to FROM remarks WHERE assigned_to IS NOT NULL${lf} ORDER BY assigned_to COLLATE NOCASE`
+    `SELECT full_name FROM users WHERE role = 'agent' AND is_active = 1${lf} ORDER BY full_name COLLATE NOCASE`
   ).all();
-  return res.json(rows.map(r => r.assigned_to));
+  return res.json(rows.map(r => r.full_name));
 });
 
 // PUT /api/admin/pipeline/tasks/:id  — admin can move any card

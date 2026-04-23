@@ -228,6 +228,51 @@ router.post('/preview', (req, res) => {
     };
     clients.sort((a, b) => parseDMYSort(a.date) - parseDMYSort(b.date));
 
+    // ── Detect duplicates: clients with an existing ACTIVE remark ─────────────
+    const phoneList = [...new Set(clients.map(c => c.phone).filter(Boolean))];
+    const existingActiveMap = {};
+    if (phoneList.length > 0) {
+      const ph = phoneList.map(() => '?').join(',');
+      db.prepare(`
+        SELECT client_phone, client_name, assigned_to, status, id
+        FROM remarks
+        WHERE client_phone IN (${ph})
+          AND client_phone != ''
+          AND LOWER(status) NOT IN ('إنتهت','closed','resolved')
+        ORDER BY added_at DESC
+      `).all(...phoneList).forEach(r => {
+        if (!existingActiveMap[r.client_phone])
+          existingActiveMap[r.client_phone] = r;
+      });
+    }
+
+    // Split: fresh (will be distributed) vs duplicates (skipped)
+    const duplicates  = [];
+    const freshClients = [];
+    for (const c of clients) {
+      const ex = c.phone && existingActiveMap[c.phone];
+      if (ex) {
+        duplicates.push({
+          name:                c.name,
+          phone:               c.phone,
+          date:                c.date,
+          existing_assigned_to: ex.assigned_to,
+          existing_status:      ex.status,
+          existing_remark_id:   ex.id,
+        });
+      } else {
+        freshClients.push(c);
+      }
+    }
+    // Only distribute fresh clients
+    const clients_to_distribute = freshClients;
+    if (!clients_to_distribute.length && duplicates.length > 0) {
+      return res.status(400).json({
+        error: `جميع العملاء (${duplicates.length}) لديهم مهام نشطة بالفعل`,
+        duplicates,
+      });
+    }
+
     // ── Build phone→coordinator map in ONE bulk query ─────────────────────────
     const allCoords = db.prepare(`
       SELECT
@@ -257,7 +302,7 @@ router.post('/preview', (req, res) => {
     const matched   = [];
     const unmatched = [];
 
-    for (const client of clients) {
+    for (const client of clients_to_distribute) {
       let assignedTo = null;
       if (client.phone) {
         const coordinator = coordMap[client.phone];
@@ -363,12 +408,14 @@ router.post('/preview', (req, res) => {
     });
 
     return res.json({
-      session_id:    sessionId,
-      total:         allItems.length,
-      matched:       matched.length,
-      distributed:   distributed.length,
-      agent_summary: Object.values(summaryMap).filter(a => a.new_clients > 0),
-      items:         savedItems,
+      session_id:       sessionId,
+      total:            allItems.length,
+      matched:          matched.length,
+      distributed:      distributed.length,
+      duplicates_count: duplicates.length,
+      duplicates:       duplicates,
+      agent_summary:    Object.values(summaryMap).filter(a => a.new_clients > 0),
+      items:            savedItems,
     });
 
   } catch (err) {
@@ -486,6 +533,137 @@ router.post('/sessions/:sid/confirm', (req, res) => {
   })();
 
   return res.json({ message: 'تم تأكيد التوزيع', remarks_created: items.length });
+});
+
+// ─── FORK (resume pending session with date filter) ──────────────────────────
+
+// POST /api/distribution/sessions/:sid/fork
+// Body: { date_from?: 'YYYY-MM-DD', date_to?: 'YYYY-MM-DD' }
+// Creates a new pending session from a subset of an existing pending session's items.
+router.post('/sessions/:sid/fork', (req, res) => {
+  const source = db.prepare(`SELECT * FROM distribution_sessions WHERE id = ?`).get(req.params.sid);
+  if (!source)                  return res.status(404).json({ error: 'الجلسة غير موجودة' });
+  if (source.status !== 'pending')
+    return res.status(400).json({ error: 'الاستكمال متاح للجلسات المعلقة فقط' });
+
+  const { date_from, date_to } = req.body; // YYYY-MM-DD
+
+  // Filter items by date using SUBSTR trick (client_date is DD/MM/YYYY)
+  const conditions = ['session_id = ?'];
+  const params     = [req.params.sid];
+  if (date_from) {
+    conditions.push(`SUBSTR(client_date,7,4)||'-'||SUBSTR(client_date,4,2)||'-'||SUBSTR(client_date,1,2) >= ?`);
+    params.push(date_from);
+  }
+  if (date_to) {
+    conditions.push(`SUBSTR(client_date,7,4)||'-'||SUBSTR(client_date,4,2)||'-'||SUBSTR(client_date,1,2) <= ?`);
+    params.push(date_to);
+  }
+
+  const sourceItems = db.prepare(`
+    SELECT * FROM distribution_items
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY
+      CASE WHEN client_date IS NULL OR client_date = '' THEN '99999999' ELSE
+        SUBSTR(client_date,7,4) || SUBSTR(client_date,4,2) || SUBSTR(client_date,1,2)
+      END ASC, id ASC
+  `).all(...params);
+
+  if (!sourceItems.length)
+    return res.status(400).json({ error: 'لا يوجد عملاء في هذا النطاق الزمني' });
+
+  // Duplicate detection — skip clients with active remarks
+  const phoneList = [...new Set(sourceItems.map(i => i.client_phone).filter(Boolean))];
+  const existingActiveMap = {};
+  if (phoneList.length > 0) {
+    const ph = phoneList.map(() => '?').join(',');
+    db.prepare(`
+      SELECT client_phone, client_name, assigned_to, status, id
+      FROM remarks
+      WHERE client_phone IN (${ph})
+        AND client_phone != ''
+        AND LOWER(status) NOT IN ('إنتهت','closed','resolved')
+      ORDER BY added_at DESC
+    `).all(...phoneList).forEach(r => {
+      if (!existingActiveMap[r.client_phone]) existingActiveMap[r.client_phone] = r;
+    });
+  }
+
+  const duplicates  = [];
+  const freshItems  = [];
+  for (const item of sourceItems) {
+    const ex = item.client_phone && existingActiveMap[item.client_phone];
+    if (ex) {
+      duplicates.push({
+        name: item.client_name, phone: item.client_phone, date: item.client_date,
+        existing_assigned_to: ex.assigned_to, existing_status: ex.status, existing_remark_id: ex.id,
+      });
+    } else {
+      freshItems.push(item);
+    }
+  }
+
+  if (!freshItems.length && duplicates.length > 0) {
+    return res.status(400).json({
+      error: `جميع العملاء (${duplicates.length}) لديهم مهام نشطة بالفعل`,
+      duplicates,
+    });
+  }
+
+  const matched     = freshItems.filter(i => i.match_type === 'existing_coordinator').length;
+  const distributed = freshItems.filter(i => i.match_type === 'auto_distributed').length;
+
+  // Create new session
+  const newRow = db.prepare(`
+    INSERT INTO distribution_sessions
+      (line, total_clients, matched, distributed, status, task_type, priority, created_by)
+    VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
+  `).run(source.line, freshItems.length, matched, distributed,
+         source.task_type, source.priority, req.user.id);
+
+  const newSid = newRow.lastInsertRowid;
+
+  // Copy filtered fresh items into new session
+  const insertItem = db.prepare(`
+    INSERT INTO distribution_items
+      (session_id, client_name, client_phone, client_line, client_date, match_type, assigned_to)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  db.transaction(() => {
+    freshItems.forEach(item =>
+      insertItem.run(newSid, item.client_name, item.client_phone,
+                     item.client_line, item.client_date, item.match_type, item.assigned_to)
+    );
+  })();
+
+  const savedItems = db.prepare(`
+    SELECT * FROM distribution_items WHERE session_id = ?
+    ORDER BY
+      CASE WHEN client_date IS NULL OR client_date = '' THEN '99999999' ELSE
+        SUBSTR(client_date,7,4) || SUBSTR(client_date,4,2) || SUBSTR(client_date,1,2)
+      END ASC, id ASC
+  `).all(newSid);
+
+  // Agent summary
+  const summaryMap = {};
+  savedItems.forEach(item => {
+    if (!summaryMap[item.assigned_to])
+      summaryMap[item.assigned_to] = { full_name: item.assigned_to, new_clients: 0 };
+    summaryMap[item.assigned_to].new_clients++;
+  });
+
+  return res.json({
+    session_id:        newSid,
+    source_session_id: parseInt(req.params.sid),
+    total:             freshItems.length,
+    matched,
+    distributed,
+    duplicates_count:  duplicates.length,
+    duplicates,
+    agent_summary:     Object.values(summaryMap),
+    items:             savedItems,
+  });
 });
 
 // ─── HISTORY LIST ─────────────────────────────────────────────────────────────
