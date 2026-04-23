@@ -288,7 +288,7 @@ router.get('/absent', (req, res) => {
 
   const bf = lineClause(req);
   const batchRows = db.prepare(
-    `SELECT group_name, dept_type, coordinators FROM batches WHERE coordinators LIKE ? AND status = 'نشطة'${bf.clause}`
+    `SELECT group_name, dept_type, coordinators FROM batches WHERE coordinators LIKE ?${bf.clause}`
   ).all(`%${name}%`, ...bf.params);
 
   if (!batchRows.length) return res.json({ total: 0, page: parseInt(page), data: [], filter_opts: { departments: [], coordinators: [] } });
