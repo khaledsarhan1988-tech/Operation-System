@@ -673,6 +673,7 @@ export default function ClientDistribution() {
   const [detailId,       setDetailId]      = useState(null);
   const [histPage,       setHistPage]      = useState(1);
   const [resumeSession,  setResumeSession] = useState(null);
+  const [showCancelled,  setShowCancelled] = useState(false);
   // Preview-step date filter
   const [pvDateFrom,     setPvDateFrom]    = useState(''); // YYYY-MM-DD
   const [pvDateTo,       setPvDateTo]      = useState(''); // YYYY-MM-DD
@@ -1468,8 +1469,19 @@ export default function ClientDistribution() {
       {/* ═══════════════════ TAB: HISTORY ════════════════════════════════════ */}
       {tab === 'history' && (
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="px-5 py-3 border-b bg-gray-50">
+          <div className="px-5 py-3 border-b bg-gray-50 flex items-center justify-between">
             <h3 className="font-bold text-gray-800">سجل عمليات التوزيع</h3>
+            <button
+              onClick={() => setShowCancelled(v => !v)}
+              className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl border transition ${
+                showCancelled
+                  ? 'bg-red-50 border-red-200 text-red-600'
+                  : 'bg-gray-100 border-gray-200 text-gray-500 hover:bg-gray-200'
+              }`}
+            >
+              <XCircle size={13} />
+              {showCancelled ? 'إخفاء الملغاة' : 'إظهار الملغاة'}
+            </button>
           </div>
           {histLoading ? (
             <div className="flex justify-center py-12">
@@ -1493,7 +1505,7 @@ export default function ClientDistribution() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {(histData?.sessions || []).map(s => (
+                    {(histData?.sessions || []).filter(s => showCancelled || s.status !== 'cancelled').map(s => (
                       <tr key={s.id} className="hover:bg-gray-50 transition-colors">
                         <td className="px-4 py-3 text-xs text-gray-400">{s.id}</td>
                         <td className="px-4 py-3 font-medium">{s.line}</td>
