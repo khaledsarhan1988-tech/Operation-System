@@ -98,7 +98,14 @@ function ZoomDetailModal({ row, open, onClose }) {
             <RefreshCw className="animate-spin text-primary" size={22} />
           </div>
         ) : students.length === 0 ? (
-          <div className="text-center py-8 text-gray-400 text-sm">لا تتوفر تفاصيل فردية لهذه الجلسة</div>
+          <div className="text-center py-8 space-y-2">
+            <p className="text-3xl">📋</p>
+            <p className="text-gray-500 text-sm font-medium">لا تتوفر بيانات فردية لهذه الجلسة</p>
+            <p className="text-gray-400 text-xs">
+              عدد الغائبين: <span className="font-bold text-red-500">{row?.absent_count}</span> طالب
+              — لم يتم رفع كشف الحضور الفردي
+            </p>
+          </div>
         ) : (
           <div className="border border-gray-200 rounded-xl overflow-hidden">
             <div className="bg-gray-50 px-4 py-2 border-b text-xs font-semibold text-gray-600 flex justify-between">

@@ -535,10 +535,11 @@ router.get('/absent-zoom-detail', (req, res) => {
   if (!group_name || !session_date)
     return res.status(400).json({ error: 'group_name and session_date required' });
 
-  const line = lineFilter(req);
-  const bf   = lineClause(req);
+  const line  = lineFilter(req);
+  const bf    = lineClause(req);
   const lineA = line ? ` AND a.line = '${line.replace(/'/g, "''")}'` : '';
   const lineC = line ? ` AND c.line = '${line.replace(/'/g, "''")}'` : '';
+  const lineR = line ? ` AND r.line = '${line.replace(/'/g, "''")}'` : '';
 
   // Verify group belongs to this agent
   const batch = db.prepare(
@@ -546,7 +547,7 @@ router.get('/absent-zoom-detail', (req, res) => {
   ).get(group_name, `%${name}%`, ...bf.params);
   if (!batch) return res.status(403).json({ error: 'Access denied' });
 
-  // Source 1: absent_students
+  // ── Source 1: absent_students table ──────────────────────────────────────
   const fromAbsent = db.prepare(`
     SELECT DISTINCT
       COALESCE(c.name, NULLIF(TRIM(a.student_name), '')) AS student_name,
@@ -562,17 +563,24 @@ router.get('/absent-zoom-detail', (req, res) => {
   if (fromAbsent.length > 0)
     return res.json({ source: 'absent_students', data: fromAbsent });
 
-  // Source 2 (fallback): all clients in this group (for fully-absent sessions)
-  const fromClients = db.prepare(`
-    SELECT name AS student_name, phone
-    FROM clients c
-    WHERE c.group_name = ?${lineC}
-      AND c.name  IS NOT NULL AND TRIM(c.name)  != ''
-      AND c.phone IS NOT NULL AND TRIM(c.phone) != ''
-    ORDER BY c.name
-  `).all(group_name);
+  // ── Source 2: remarks with task_type = 'Attendance Zoom Call' ────────────
+  const fromRemarks = db.prepare(`
+    SELECT DISTINCT
+      r.client_name  AS student_name,
+      r.client_phone AS phone
+    FROM remarks r
+    WHERE r.group_name = ?
+      AND r.task_type  = 'Attendance Zoom Call'
+      AND DATE(r.added_at) = ?${lineR}
+      AND r.client_name IS NOT NULL AND TRIM(r.client_name) != ''
+    ORDER BY r.client_name
+  `).all(group_name, session_date);
 
-  return res.json({ source: 'clients', data: fromClients });
+  if (fromRemarks.length > 0)
+    return res.json({ source: 'remarks', data: fromRemarks });
+
+  // ── No individual data available ─────────────────────────────────────────
+  return res.json({ source: 'none', data: [] });
 });
 
 // PUT /api/agent/absent/:id
