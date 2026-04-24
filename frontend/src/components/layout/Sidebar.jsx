@@ -19,14 +19,14 @@ const AGENT_LINKS = [
 ];
 
 const LEADER_LINKS = [
-  { to: '/leader',              label: 'nav.dashboard',        icon: LayoutDashboard, end: true },
-  { to: '/leader/pipeline',     label: 'بايبلاين العملاء',    icon: Kanban },
-  { to: '/leader/team',         label: 'nav.team',             icon: Users },
-  { to: '/leader/absent',       label: 'nav.absentReport',     icon: UserX },
-  { to: '/leader/groups',       label: 'nav.groupCoverage',    icon: Globe },
-  { to: '/leader/tasks',         label: 'nav.taskDistribution', icon: ClipboardList },
-  { to: '/leader/code-problems',        label: 'أكواد بها مشكلة', icon: AlertTriangle },
-  { to: '/leader/performance',          label: 'nav.performance',  icon: BarChart2 },
+  { to: '/leader',                              label: 'nav.dashboard',        icon: LayoutDashboard, end: true },
+  { to: '/leader/team',                         label: 'nav.team',             icon: Users },
+  { to: '/leader/groups',                       label: 'nav.groupCoverage',    icon: Globe },
+  { to: '/leader/absent',                       label: 'nav.absentReport',     icon: UserX },
+  { to: '/leader/performance',                  label: 'nav.performance',      icon: BarChart2 },
+  { to: '/leader/tasks',                        label: 'nav.taskDistribution', icon: ClipboardList },
+  { to: '/leader/code-problems',                label: 'أكواد بها مشكلة',     icon: AlertTriangle },
+  { to: '/leader/pipeline',                     label: 'بايبلاين العملاء',    icon: Kanban },
   { type: 'section', label: 'التقارير' },
   { to: '/leader/reports/fix-report',           label: 'تقارير الإصلاح',          icon: FileText },
   { to: '/leader/reports/attendance-absence',   label: 'تقارير الحضور والغياب',  icon: Activity },
