@@ -517,14 +517,62 @@ router.get('/absent-zoom', (req, res) => {
   `;
 
   try {
-    const total = db.prepare(`SELECT COUNT(*) AS cnt FROM (${groupedQuery})`).get(...groupNames).cnt;
-    const data  = db.prepare(`${groupedQuery} ORDER BY session_date DESC LIMIT ? OFFSET ?`)
-                    .all(...groupNames, parseInt(limit), offset);
-    return res.json({ total, page: parseInt(page), data });
+    const total        = db.prepare(`SELECT COUNT(*) AS cnt FROM (${groupedQuery})`).get(...groupNames).cnt;
+    const totalAbsent  = db.prepare(`SELECT COALESCE(SUM(absent_count),0) AS cnt FROM (${groupedQuery})`).get(...groupNames).cnt;
+    const data         = db.prepare(`${groupedQuery} ORDER BY session_date DESC LIMIT ? OFFSET ?`)
+                           .all(...groupNames, parseInt(limit), offset);
+    return res.json({ total, total_absent: totalAbsent, page: parseInt(page), data });
   } catch (err) {
     console.error('[agent/absent-zoom]', err);
     return res.status(500).json({ error: err.message });
   }
+});
+
+// GET /api/agent/absent-zoom-detail — individual absent students for a specific group+date
+router.get('/absent-zoom-detail', (req, res) => {
+  const name = req.user.full_name;
+  const { group_name, session_date } = req.query;
+  if (!group_name || !session_date)
+    return res.status(400).json({ error: 'group_name and session_date required' });
+
+  const line = lineFilter(req);
+  const bf   = lineClause(req);
+  const lineA = line ? ` AND a.line = '${line.replace(/'/g, "''")}'` : '';
+  const lineC = line ? ` AND c.line = '${line.replace(/'/g, "''")}'` : '';
+
+  // Verify group belongs to this agent
+  const batch = db.prepare(
+    `SELECT group_name FROM batches WHERE group_name = ? AND coordinators LIKE ?${bf.clause}`
+  ).get(group_name, `%${name}%`, ...bf.params);
+  if (!batch) return res.status(403).json({ error: 'Access denied' });
+
+  // Source 1: absent_students
+  const fromAbsent = db.prepare(`
+    SELECT DISTINCT
+      COALESCE(c.name, NULLIF(TRIM(a.student_name), '')) AS student_name,
+      COALESCE(NULLIF(TRIM(a.phone), ''), c.phone)        AS phone
+    FROM absent_students a
+    LEFT JOIN clients c ON c.phone = a.phone${lineC}
+    WHERE a.group_name = ? AND a.date = ?${lineA}
+      AND ((a.student_name IS NOT NULL AND TRIM(a.student_name) != '')
+           OR  (a.phone IS NOT NULL AND TRIM(a.phone) != ''))
+    ORDER BY student_name
+  `).all(group_name, session_date);
+
+  if (fromAbsent.length > 0)
+    return res.json({ source: 'absent_students', data: fromAbsent });
+
+  // Source 2 (fallback): all clients in this group (for fully-absent sessions)
+  const fromClients = db.prepare(`
+    SELECT name AS student_name, phone
+    FROM clients c
+    WHERE c.group_name = ?${lineC}
+      AND c.name  IS NOT NULL AND TRIM(c.name)  != ''
+      AND c.phone IS NOT NULL AND TRIM(c.phone) != ''
+    ORDER BY c.name
+  `).all(group_name);
+
+  return res.json({ source: 'clients', data: fromClients });
 });
 
 // PUT /api/agent/absent/:id
