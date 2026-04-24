@@ -563,17 +563,22 @@ router.get('/absent-zoom-detail', (req, res) => {
   if (fromAbsent.length > 0)
     return res.json({ source: 'absent_students', data: fromAbsent });
 
-  // ── Source 2: remarks with task_type = 'Attendance Zoom Call' ────────────
+  // ── Source 2: remarks with category = 'Attendance Zoom Call' ─────────────
+  // • remarks table has NO group_name column → join via clients to resolve it
+  // • Remark is created the day AFTER the absence, so:
+  //     session_date = date(added_at [DD/MM/YYYY], '-1 day')
+  const rdSQL = `date(substr(r.added_at,7,4)||'-'||substr(r.added_at,4,2)||'-'||substr(r.added_at,1,2), '-1 day')`;
   const fromRemarks = db.prepare(`
     SELECT DISTINCT
-      r.client_name  AS student_name,
-      r.client_phone AS phone
+      COALESCE(c.name, r.client_name) AS student_name,
+      r.client_phone                  AS phone
     FROM remarks r
-    WHERE r.group_name = ?
-      AND r.task_type  = 'Attendance Zoom Call'
-      AND DATE(r.added_at) = ?${lineR}
-      AND r.client_name IS NOT NULL AND TRIM(r.client_name) != ''
-    ORDER BY r.client_name
+    LEFT JOIN clients c ON c.phone = r.client_phone${lineC}
+    WHERE r.category = 'Attendance Zoom Call'
+      AND c.group_name = ?
+      AND ${rdSQL} = ?${lineR}
+      AND r.client_phone IS NOT NULL AND TRIM(r.client_phone) != ''
+    ORDER BY student_name
   `).all(group_name, session_date);
 
   if (fromRemarks.length > 0)
