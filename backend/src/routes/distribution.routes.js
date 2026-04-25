@@ -366,12 +366,19 @@ router.post('/preview', (req, res) => {
     const manualCount = allItems.filter(i => i.match_type === 'manual').length;
 
     // ── Persist pending session ───────────────────────────────────────────────
+    // Compute date range from client dates (DD/MM/YYYY → sort as YYYYMMDD)
+    const clientDates = allItems.map(i => i.date).filter(Boolean);
+    const toSortable  = d => { const [dd,mm,yy] = (d||'').split('/'); return yy ? `${yy}${mm}${dd}` : ''; };
+    const sorted      = clientDates.map(toSortable).filter(Boolean).sort();
+    const sessionDateFrom = sorted.length ? clientDates.find(d => toSortable(d) === sorted[0])             : null;
+    const sessionDateTo   = sorted.length ? clientDates.find(d => toSortable(d) === sorted[sorted.length-1]) : null;
+
     const sessionRow = db.prepare(`
       INSERT INTO distribution_sessions
-        (line, total_clients, matched, distributed, status, task_type, priority, created_by)
-      VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
+        (line, total_clients, matched, distributed, status, task_type, priority, created_by, date_from, date_to)
+      VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
     `).run(line, allItems.length, matched.length, finalDistributed.length,
-           task_type, priority, req.user.id);
+           task_type, priority, req.user.id, sessionDateFrom, sessionDateTo);
 
     const sessionId = sessionRow.lastInsertRowid;
 

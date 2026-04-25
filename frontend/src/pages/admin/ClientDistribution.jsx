@@ -1717,6 +1717,7 @@ export default function ClientDistribution() {
                       <th className="px-4 py-2.5 text-start font-semibold text-gray-600">الخط</th>
                       <th className="px-4 py-2.5 text-start font-semibold text-gray-600">نوع المهمة</th>
                       <th className="px-4 py-2.5 text-start font-semibold text-gray-600">العملاء</th>
+                      <th className="px-4 py-2.5 text-start font-semibold text-gray-600">نطاق التاريخ</th>
                       <th className="px-4 py-2.5 text-start font-semibold text-gray-600">تأكيد / تلقائي</th>
                       <th className="px-4 py-2.5 text-start font-semibold text-gray-600">الحالة</th>
                       <th className="px-4 py-2.5 text-start font-semibold text-gray-600">بواسطة</th>
@@ -1733,6 +1734,13 @@ export default function ClientDistribution() {
                         <td className="px-4 py-3">
                           <span className="font-bold text-gray-900">{s.total_clients}</span>
                           <span className="text-xs text-gray-400 mr-1">عميل</span>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-gray-600">
+                          {s.date_from && s.date_to
+                            ? <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded-lg font-mono">
+                                {s.date_from} → {s.date_to}
+                              </span>
+                            : <span className="text-gray-300">—</span>}
                         </td>
                         <td className="px-4 py-3 text-xs text-gray-500">
                           <span className="text-blue-600">{s.matched}</span>

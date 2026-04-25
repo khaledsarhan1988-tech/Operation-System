@@ -356,6 +356,13 @@ initDb().then(db => {
     console.error('client_transfers migration error:', e.message);
   }
 
+  // ── Add date_from / date_to columns to distribution_sessions ─────────────
+  try {
+    const dsCols = db._raw.exec(`PRAGMA table_info(distribution_sessions)`)[0]?.values.map(r => r[1]) || [];
+    if (!dsCols.includes('date_from')) db._raw.run(`ALTER TABLE distribution_sessions ADD COLUMN date_from TEXT`);
+    if (!dsCols.includes('date_to'))   db._raw.run(`ALTER TABLE distribution_sessions ADD COLUMN date_to   TEXT`);
+  } catch (e) { console.error('distribution_sessions date range migration:', e.message); }
+
   // ── Covering index for canonical-line lookup in batchSubQ queries ────────
   try {
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_lectures_type_group_line ON lectures(session_type, group_name, line)`);
