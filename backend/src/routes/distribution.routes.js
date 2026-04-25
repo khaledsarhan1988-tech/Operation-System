@@ -2,6 +2,7 @@
 const express  = require('express');
 const XLSX     = require('xlsx');
 const db       = require('../config/database');
+const { saveNow } = require('../config/database');
 const { authenticate }  = require('../middleware/auth');
 const { requireRole }   = require('../middleware/roles');
 
@@ -589,6 +590,7 @@ router.post('/sessions/:sid/confirm', (req, res) => {
       WHERE id = ?
     `).run(req.user.id, req.params.sid);
   })();
+  saveNow();
 
   return res.json({ message: 'تم تأكيد التوزيع', remarks_created: items.length });
 });
