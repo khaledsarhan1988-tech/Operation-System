@@ -21,8 +21,15 @@
  */
 
 function lineFilter(req) {
-  const line = req.user?.line || 'Ahmed Hassan';
-  return line === 'All' ? null : line;
+  const userLine = req.user?.line || 'Ahmed Hassan';
+  if (userLine === 'All') {
+    // Admin: allow optional ?line= query param to scope results to a specific line.
+    // If not provided (or 'All'), admin sees everything (no filter).
+    const queryLine = req.query?.line;
+    if (queryLine && queryLine !== 'All') return queryLine;
+    return null;
+  }
+  return userLine;
 }
 
 /**

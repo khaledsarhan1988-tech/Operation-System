@@ -2256,7 +2256,7 @@ function TeamSummarySection({ data, loading, applied = {} }) {
 export default function SystemReports() {
   const today = new Date().toISOString().slice(0, 10);
 
-  const [filters, setFilters] = useState({ from_date: '', to_date: '', department: 'All', employee: '' });
+  const [filters, setFilters] = useState({ from_date: '', to_date: '', department: 'All', employee: '', line: 'All' });
   const [applied, setApplied] = useState({});
   const [errorsTab,    setErrorsTab]    = useState('remarks');
   const [remarksOpen,  setRemarksOpen]  = useState(true);
@@ -2325,10 +2325,11 @@ export default function SystemReports() {
     if (filters.to_date)   clean.to_date   = filters.to_date;
     if (filters.department && filters.department !== 'All') clean.department = filters.department;
     if (filters.employee)  clean.employee  = filters.employee;
+    if (filters.line && filters.line !== 'All') clean.line = filters.line;
     setApplied(clean);
   };
   const handleReset = () => {
-    setFilters({ from_date: '', to_date: '', department: 'All', employee: '' });
+    setFilters({ from_date: '', to_date: '', department: 'All', employee: '', line: 'All' });
     setApplied({});
   };
 
@@ -2374,7 +2375,7 @@ export default function SystemReports() {
           )}
         </div>
         <div className="p-5">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
             <div>
               <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 mb-1.5">
                 <Calendar size={12} /> من تاريخ
@@ -2417,6 +2418,19 @@ export default function SystemReports() {
               >
                 <option value="">الكل</option>
                 {agents.map(u => <option key={u.id} value={u.full_name}>{u.full_name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 mb-1.5">
+                <BarChart2 size={12} /> الـ Line
+              </label>
+              <select value={filters.line}
+                onChange={e => setFilters(f => ({ ...f, line: e.target.value }))}
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f] transition-all"
+              >
+                <option value="All">الكل</option>
+                <option value="Ahmed Hassan">Ahmed Hassan</option>
+                <option value="Dardasha">Dardasha</option>
               </select>
             </div>
           </div>
