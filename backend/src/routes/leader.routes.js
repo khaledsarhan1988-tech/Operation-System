@@ -281,10 +281,10 @@ router.get('/pipeline', (req, res) => {
   const line       = lineFilter(req);
   const { agent_name, date_from, date_to } = req.query;
 
-  // ── 1. Resolve agents in this leader's team ────────────────────────────────
+  // ── 1. Resolve agents in this leader's line ───────────────────────────────
+  // Distribution is organised by line, not department — filter by line only
   const agentConds  = ["u.role = 'agent'", "u.is_active = 1"];
   const agentParams = [];
-  if (dept && dept !== 'All') { agentConds.push('u.department = ?'); agentParams.push(dept); }
   if (line)       { agentConds.push('u.line = ?');       agentParams.push(line); }
   if (agent_name) { agentConds.push('u.full_name = ?');  agentParams.push(agent_name); }
 
