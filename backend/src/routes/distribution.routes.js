@@ -189,7 +189,7 @@ router.get('/coordinator-stats', (req, res) => {
 // Body: { file_base64, filename, line, task_type, priority, dates? }
 // If `dates` is a non-empty array, only clients whose date (col A) is in the array are included.
 router.post('/preview', (req, res) => {
-  const { file_base64, line, task_type = 'متابعة مشترك جديد', priority = 'عادية', dates } = req.body;
+  const { file_base64, line, task_type = 'متابعة مشترك جديد', priority = 'عادية', dates, assignments } = req.body;
 
   if (!file_base64) return res.status(400).json({ error: 'لم يتم رفع ملف' });
   if (!line)        return res.status(400).json({ error: 'line مطلوب' });
@@ -350,14 +350,27 @@ router.post('/preview', (req, res) => {
       return { ...client, assigned_to: minAgent, match_type: 'auto_distributed' };
     });
 
-    const allItems = [...matched, ...distributed];
+    // ── Apply manual assignments to unmatched clients ────────────────────────
+    let finalDistributed = [...distributed];
+    if (Array.isArray(assignments) && assignments.length > 0) {
+      let idx = 0;
+      for (const asgn of assignments) {
+        const cnt = Math.min(parseInt(asgn.count) || 0, finalDistributed.length - idx);
+        for (let i = 0; i < cnt && idx < finalDistributed.length; i++, idx++) {
+          finalDistributed[idx].assigned_to = asgn.agent;
+          finalDistributed[idx].match_type  = 'manual';
+        }
+      }
+    }
+    const allItems = [...matched, ...finalDistributed];
+    const manualCount = allItems.filter(i => i.match_type === 'manual').length;
 
     // ── Persist pending session ───────────────────────────────────────────────
     const sessionRow = db.prepare(`
       INSERT INTO distribution_sessions
         (line, total_clients, matched, distributed, status, task_type, priority, created_by)
       VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
-    `).run(line, allItems.length, matched.length, distributed.length,
+    `).run(line, allItems.length, matched.length, finalDistributed.length,
            task_type, priority, req.user.id);
 
     const sessionId = sessionRow.lastInsertRowid;

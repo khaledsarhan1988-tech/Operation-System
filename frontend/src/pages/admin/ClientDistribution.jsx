@@ -820,6 +820,9 @@ export default function ClientDistribution() {
   // Duplicate detection
   const [duplicates,     setDuplicates]    = useState([]);
   const [showDuplicates, setShowDuplicates] = useState(false);
+  // Manual distribution
+  const [useManual,      setUseManual]     = useState(false);
+  const [manualAsgns,    setManualAsgns]   = useState([{ agent: '', count: '' }]);
 
   const fileRef = useRef();
 
@@ -981,6 +984,11 @@ export default function ClientDistribution() {
     };
     if (selectedDates.size > 0 && selectedDates.size < availableDates.length) {
       payload.dates = [...selectedDates];
+    }
+    if (useManual) {
+      const validAsgns = manualAsgns.filter(a => a.agent && parseInt(a.count) > 0)
+                                    .map(a => ({ agent: a.agent, count: parseInt(a.count) }));
+      if (validAsgns.length > 0) payload.assignments = validAsgns;
     }
     previewMut.mutate(payload);
   };
@@ -1280,6 +1288,72 @@ export default function ClientDistribution() {
                   </div>
                 </div>
               )}
+
+              {/* ── توزيع يدوي (اختياري) ── */}
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setUseManual(v => !v)}
+                  className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl border text-sm font-semibold transition ${
+                    useManual
+                      ? 'bg-primary/5 border-primary text-primary'
+                      : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <Users size={15} />
+                    توزيع يدوي على منسق محدد
+                  </span>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                    useManual ? 'bg-primary/10 text-primary' : 'bg-gray-200 text-gray-500'
+                  }`}>
+                    {useManual ? 'مفعّل' : 'اختياري'}
+                  </span>
+                </button>
+
+                {useManual && (
+                  <div className="border border-primary/20 rounded-xl p-3 bg-primary/5 space-y-2">
+                    <p className="text-xs text-gray-500">
+                      حدد عدد العملاء لكل منسق — الباقون يُوزَّعون تلقائياً
+                    </p>
+                    {manualAsgns.map((asgn, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <select
+                          value={asgn.agent}
+                          onChange={e => setManualAsgns(prev => prev.map((a, i) => i === idx ? { ...a, agent: e.target.value } : a))}
+                          className="flex-1 border border-gray-300 rounded-lg px-2 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/30"
+                        >
+                          <option value="">اختر منسق</option>
+                          {agentsData.map(a => (
+                            <option key={a.full_name} value={a.full_name}>
+                              {a.full_name} ({a.open_tasks} مهمة)
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="number" min="1"
+                          value={asgn.count}
+                          onChange={e => setManualAsgns(prev => prev.map((a, i) => i === idx ? { ...a, count: e.target.value } : a))}
+                          placeholder="العدد"
+                          className="w-20 border border-gray-300 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                        />
+                        {manualAsgns.length > 1 && (
+                          <button onClick={() => setManualAsgns(prev => prev.filter((_, i) => i !== idx))}
+                            className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition">
+                            <X size={14} />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    <button
+                      onClick={() => setManualAsgns(prev => [...prev, { agent: '', count: '' }])}
+                      className="text-xs text-primary hover:underline flex items-center gap-1"
+                    >
+                      + إضافة منسق آخر
+                    </button>
+                  </div>
+                )}
+              </div>
 
               {previewMut.isError && (
                 <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
