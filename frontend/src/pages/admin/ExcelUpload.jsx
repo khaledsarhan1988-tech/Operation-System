@@ -269,6 +269,8 @@ function FilesStatusPanel({ onClearSuccess, selectedLine }) {
   const { i18n } = useTranslation();
   const isAr = i18n.language === 'ar';
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const canClearData = user?.role === 'admin' || user?.username === 'Menna';
 
   const [confirmClearAll, setConfirmClearAll] = useState(false);
   const [clearingAll, setClearingAll] = useState(false);
@@ -434,7 +436,7 @@ function FilesStatusPanel({ onClearSuccess, selectedLine }) {
       </div>
 
       <div className="px-4 py-3 border-t border-gray-100 space-y-2">
-        {clearMsg && (
+        {canClearData && clearMsg && (
           <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg
             ${clearMsg.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
             {clearMsg.ok ? <CheckCircle size={12} /> : <AlertCircle size={12} />}
@@ -445,7 +447,7 @@ function FilesStatusPanel({ onClearSuccess, selectedLine }) {
           </div>
         )}
 
-        {!confirmClearAll ? (
+        {canClearData && (!confirmClearAll ? (
           <button onClick={() => setConfirmClearAll(true)}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl
               bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold transition-colors border border-red-200">
@@ -470,10 +472,10 @@ function FilesStatusPanel({ onClearSuccess, selectedLine }) {
               </button>
             </div>
           </div>
-        )}
+        ))}
 
         {/* ── سجل الحركات — منفصل تماماً عن بيانات الإكسيل ── */}
-        <div className="border-t border-gray-100 pt-2 mt-1">
+        {canClearData && <div className="border-t border-gray-100 pt-2 mt-1">
           {clearTransfersMsg && (
             <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg mb-2
               ${clearTransfersMsg.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
@@ -510,7 +512,7 @@ function FilesStatusPanel({ onClearSuccess, selectedLine }) {
               </div>
             </div>
           )}
-        </div>
+        </div>}
       </div>
     </div>
   );
