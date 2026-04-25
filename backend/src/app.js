@@ -7,6 +7,7 @@ const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
 const path = require('path');
 const fs = require('fs');
+const bcrypt = require('bcryptjs');
 const { initDb, saveNow } = require('./config/database');
 
 const PORT = process.env.PORT || 3001;
@@ -353,6 +354,30 @@ initDb().then(db => {
     console.log('✅ Migration: client_transfers audit table ready');
   } catch (e) {
     console.error('client_transfers migration error:', e.message);
+  }
+
+  // ── Auto-upsert admin user on every startup ───────────────────────────────
+  // Ensures admin always exists even after DB reset (e.g. Railway redeploy).
+  try {
+    const adminUsername = process.env.ADMIN_USERNAME || 'admin';
+    const adminPassword = process.env.ADMIN_PASSWORD || 'Admin@2024';
+    const adminName     = process.env.ADMIN_FULLNAME || 'System Admin';
+    const adminHash     = bcrypt.hashSync(adminPassword, 12);
+    const existingAdmin = db._raw.prepare('SELECT id FROM users WHERE username = ?').get(adminUsername);
+    if (!existingAdmin) {
+      db._raw.prepare(`
+        INSERT INTO users (username, password_hash, full_name, role, department, language, management, line)
+        VALUES (?, ?, ?, 'admin', 'All', 'ar', 'All', 'All')
+      `).run(adminUsername, adminHash, adminName);
+      console.log(`✅ Admin user created on startup: ${adminUsername}`);
+    } else {
+      db._raw.prepare(`UPDATE users SET password_hash = ? WHERE username = ?`)
+        .run(adminHash, adminUsername);
+      console.log(`✅ Admin password synced on startup: ${adminUsername}`);
+    }
+    saveNow();
+  } catch (e) {
+    console.error('Admin upsert error:', e.message);
   }
 
   const app = express();
