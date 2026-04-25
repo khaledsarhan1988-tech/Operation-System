@@ -275,6 +275,10 @@ function FilesStatusPanel({ onClearSuccess, selectedLine }) {
   const [fileAction, setFileAction] = useState({});
   const [clearMsg, setClearMsg] = useState(null);
 
+  const [confirmClearTransfers, setConfirmClearTransfers] = useState(false);
+  const [clearingTransfers, setClearingTransfers] = useState(false);
+  const [clearTransfersMsg, setClearTransfersMsg] = useState(null);
+
   const lineParams = selectedLine ? { line: selectedLine } : {};
 
   const { data: statusData, isLoading, refetch } = useQuery({
@@ -322,6 +326,20 @@ function FilesStatusPanel({ onClearSuccess, selectedLine }) {
     } catch (err) {
       setClearMsg({ ok: false, text: err.response?.data?.error || 'فشل المسح' });
       setFileAction(prev => ({ ...prev, [key]: null }));
+    }
+  };
+
+  const handleClearTransfers = async () => {
+    setClearingTransfers(true);
+    setClearTransfersMsg(null);
+    try {
+      await api.delete('/admin/clear-transfers', { params: lineParams });
+      setClearTransfersMsg({ ok: true, text: 'تم مسح سجل الحركات بنجاح ✅' });
+      setConfirmClearTransfers(false);
+    } catch (err) {
+      setClearTransfersMsg({ ok: false, text: err.response?.data?.error || 'فشل المسح' });
+    } finally {
+      setClearingTransfers(false);
     }
   };
 
@@ -453,6 +471,46 @@ function FilesStatusPanel({ onClearSuccess, selectedLine }) {
             </div>
           </div>
         )}
+
+        {/* ── سجل الحركات — منفصل تماماً عن بيانات الإكسيل ── */}
+        <div className="border-t border-gray-100 pt-2 mt-1">
+          {clearTransfersMsg && (
+            <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg mb-2
+              ${clearTransfersMsg.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
+              {clearTransfersMsg.ok ? <CheckCircle size={12} /> : <AlertCircle size={12} />}
+              {clearTransfersMsg.text}
+              <button onClick={() => setClearTransfersMsg(null)} className="mr-auto">
+                <X size={11} />
+              </button>
+            </div>
+          )}
+          {!confirmClearTransfers ? (
+            <button onClick={() => setConfirmClearTransfers(true)}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl
+                bg-amber-50 hover:bg-amber-100 text-amber-700 text-xs font-bold transition-colors border border-amber-200">
+              <Trash2 size={13} />
+              مسح سجل الحركات
+            </button>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs text-center text-amber-700 font-semibold">
+                ⚠️ هيتم مسح سجل حركات العملاء نهائياً!
+              </p>
+              <div className="flex gap-2">
+                <button onClick={handleClearTransfers} disabled={clearingTransfers}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg
+                    bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition-colors disabled:opacity-60">
+                  {clearingTransfers ? <RefreshCw size={11} className="animate-spin" /> : <Trash2 size={11} />}
+                  {clearingTransfers ? 'جاري المسح...' : 'تأكيد المسح'}
+                </button>
+                <button onClick={() => setConfirmClearTransfers(false)}
+                  className="flex-1 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-bold transition-colors">
+                  إلغاء
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

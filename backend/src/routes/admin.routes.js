@@ -234,6 +234,20 @@ function safeRun(db, sql, params = []) {
   try { db.prepare(sql).run(...params); } catch {}
 }
 
+// ─── CLEAR CLIENT TRANSFERS LOG (completely separate from Excel data) ────────
+router.delete('/clear-transfers', (req, res) => {
+  try {
+    const line = effectiveLine(req);
+    const lineW = lineWhere(line);
+    const lp = line ? [line] : [];
+    safeRun(db, `DELETE FROM client_transfers${lineW}`, lp);
+    return res.json({ message: 'Movement log cleared' + (line ? ` (${line})` : '') });
+  } catch (err) {
+    console.error('[admin] clear-transfers error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── CLEAR ALL EXCEL DATA (line-scoped with ?line= override for 'All') ──────
 router.delete('/clear-excel-data', (req, res) => {
   try {
