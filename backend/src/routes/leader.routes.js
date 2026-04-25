@@ -307,9 +307,8 @@ router.get('/pipeline', (req, res) => {
   if (date_from) { dateClause += ' AND client_date >= ?'; dateParams.push(date_from); }
   if (date_to)   { dateClause += ' AND client_date <= ?'; dateParams.push(date_to);   }
 
-  const lineC = line ? ` AND line = '${line.replace(/'/g, "''")}'` : '';
-
   // ── 3. Build one Kanban column ─────────────────────────────────────────────
+  // No line filter on remarks — agents are already scoped to the right line
   const buildCol = (where) =>
     db.prepare(`
       SELECT id, client_name, client_phone, task_type, status, priority,
@@ -319,7 +318,7 @@ router.get('/pipeline', (req, res) => {
       FROM remarks
       WHERE assigned_to IN (${agentPH})
         AND category = 'توزيع عملاء'
-        AND ${where}${lineC}${dateClause}
+        AND ${where}${dateClause}
       ORDER BY
         assigned_to COLLATE NOCASE ASC,
         CASE priority WHEN 'عاجلة' THEN 1 WHEN 'هامة' THEN 2 ELSE 3 END ASC,
