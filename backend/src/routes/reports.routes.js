@@ -2373,12 +2373,20 @@ router.get('/attendance-absence', (req, res) => {
     // student's scheduled slot. So expected slots per (group,date) = COUNT(*)
     // of lecture rows, NOT batch.trainee_count (which is the whole group size
     // spanning many dates). Must match /absent-side-list and dashboard KPI.
+    //
+    // ⚠ When admin (line=All) joins batches without a line filter, the same
+    // group_name may appear in multiple lines → cartesian product doubles COUNT(*).
+    // Fix: always use a deduplicated batches subquery (one row per group_name).
+    const zoomBatchSubQ = line
+      ? `(SELECT group_name, MAX(coordinators) AS coordinators, MAX(dept_type) AS dept_type FROM batches WHERE line = '${line.replace(/'/g, "''")}' GROUP BY group_name)`
+      : `(SELECT group_name, MAX(coordinators) AS coordinators, MAX(dept_type) AS dept_type FROM batches GROUP BY group_name)`;
+
     const zoomExpectedRows = db.prepare(`
       SELECT coordinator, COALESCE(SUM(expected_slots), 0) AS cnt FROM (
         SELECT COALESCE(b.coordinators, '--') AS coordinator,
           COUNT(*) AS expected_slots
         FROM lectures l
-        INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
+        INNER JOIN ${zoomBatchSubQ} b ON l.group_name = b.group_name
         WHERE l.session_type = 'side'
           AND l.status = 'مؤكدة'
           AND (l.duration IS NULL OR l.duration <= '00:15')
@@ -2398,7 +2406,7 @@ router.get('/attendance-absence', (req, res) => {
                      AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END)
             AS absent_count
         FROM lectures l
-        INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
+        INNER JOIN ${zoomBatchSubQ} b ON l.group_name = b.group_name
         WHERE l.session_type = 'side'
           AND l.status = 'مؤكدة'
           AND (l.duration IS NULL OR l.duration <= '00:15')
