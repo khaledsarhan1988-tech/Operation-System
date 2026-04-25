@@ -140,11 +140,16 @@ router.get('/agents', (req, res) => {
 
   const agents = db.prepare(`
     SELECT u.id, u.full_name, u.department, u.line,
-           COUNT(r.id) AS open_tasks
+           COUNT(active_di.id) AS open_tasks
     FROM users u
-    LEFT JOIN remarks r
-      ON r.assigned_to = u.full_name
-      AND LOWER(r.status) NOT IN ('إنتهت','closed','resolved')${rl}
+    LEFT JOIN (
+      SELECT di.id, di.assigned_to
+      FROM distribution_items di
+      INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
+      LEFT JOIN remarks r ON r.id = di.remark_id
+      WHERE di.remark_id IS NULL
+         OR LOWER(r.status) NOT IN ('إنتهت','closed','resolved','مغلق')
+    ) active_di ON active_di.assigned_to = u.full_name
     WHERE u.role = 'agent' AND u.is_active = 1${lf}
     GROUP BY u.id
     ORDER BY open_tasks ASC, u.full_name COLLATE NOCASE
@@ -328,11 +333,16 @@ router.post('/preview', (req, res) => {
 
     const agents = db.prepare(`
       SELECT u.full_name, u.department, u.line,
-             COUNT(r.id) AS open_tasks
+             COUNT(active_di.id) AS open_tasks
       FROM users u
-      LEFT JOIN remarks r
-        ON r.assigned_to = u.full_name
-        AND LOWER(r.status) NOT IN ('إنتهت','closed','resolved')${ql}
+      LEFT JOIN (
+        SELECT di.id, di.assigned_to
+        FROM distribution_items di
+        INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
+        LEFT JOIN remarks r ON r.id = di.remark_id
+        WHERE di.remark_id IS NULL
+           OR LOWER(r.status) NOT IN ('إنتهت','closed','resolved','مغلق')
+      ) active_di ON active_di.assigned_to = u.full_name
       WHERE u.role = 'agent' AND u.is_active = 1${ul}
       GROUP BY u.full_name
       ORDER BY open_tasks ASC, u.full_name COLLATE NOCASE
