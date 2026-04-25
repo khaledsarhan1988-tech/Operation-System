@@ -626,21 +626,22 @@ router.get('/dashboard', (req, res) => {
     // batch.trainee_count which covers the whole group across all dates).
     // Must match the formula in /absent-side-list exactly to avoid
     // KPI-vs-modal mismatches.
-    // ⚠ Root cause of doubling: the same group_name can exist in lectures for
-    // MULTIPLE lines (e.g. Ahmed Hassan AND Dardasha). Admin (line=All) sees all
-    // rows → 2× count. Fix: join lectures to a deduplicated batches subquery that
-    // also exposes a canonical line, then filter lectures to that canonical line
-    // via l.line = b.line. This ensures each group is counted for ONE line only.
+    // ⚠ Doubling fix: batches can have the same group_name in multiple lines
+    // (Ahmed Hassan AND Dardasha). Deduplicate batches to ONE row per group via
+    // GROUP BY group_name. Do NOT constrain l.line = b.line — lectures may be
+    // stored under a different line than the batch (e.g. uploaded for Ahmed Hassan
+    // but batch also exists in Dardasha). Line scoping is done through batchSubQ
+    // (groups belonging to the selected line) not via lecture line field.
     const absentSideBatchSubQ = line
-      ? `(SELECT group_name, line, MAX(coordinators) AS coordinators, MAX(dept_type) AS dept_type FROM batches WHERE line = '${line.replace(/'/g, "''")}' GROUP BY group_name, line)`
-      : `(SELECT group_name, MIN(line) AS line, MAX(coordinators) AS coordinators, MAX(dept_type) AS dept_type FROM batches GROUP BY group_name)`;
+      ? `(SELECT group_name, MAX(coordinators) AS coordinators, MAX(dept_type) AS dept_type FROM batches WHERE line = '${line.replace(/'/g, "''")}' GROUP BY group_name)`
+      : `(SELECT group_name, MAX(coordinators) AS coordinators, MAX(dept_type) AS dept_type FROM batches GROUP BY group_name)`;
     const absentSideRow = db.prepare(
       `SELECT COALESCE(SUM(absent_count), 0) as cnt FROM (
          SELECT
            COUNT(*) -
            SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != '' AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END) AS absent_count
          FROM lectures l
-         INNER JOIN ${absentSideBatchSubQ} b ON l.group_name = b.group_name AND l.line = b.line
+         INNER JOIN ${absentSideBatchSubQ} b ON l.group_name = b.group_name
          WHERE l.session_type = 'side'
            AND l.status = 'مؤكدة'
            AND (l.duration IS NULL OR l.duration <= '00:15')
@@ -980,11 +981,14 @@ router.get('/absent-side-list', (req, res) => {
     : activeFrom ? ` AND l.date >= '${activeFrom}'`
     : activeTo   ? ` AND l.date <= '${activeTo}'` : '';
 
+  // Note: line scoping is handled by batchSubQ (groups belonging to the selected line),
+  // NOT by filtering l.line directly. This allows Dardasha-line groups to find their
+  // lectures even if those lectures are stored under a different line value.
   const baseWhere = `
     WHERE l.session_type = 'side'
       AND l.status = 'مؤكدة'
       AND (l.duration IS NULL OR l.duration <= '00:15')
-    ${dateFilter}${deptFilter}${empFilter}${trainerFilter}${coordFilter}${searchFilter}${lineL}`;
+    ${dateFilter}${deptFilter}${empFilter}${trainerFilter}${coordFilter}${searchFilter}`;
 
   // NOTE: Side sessions are per-student 15-min slots — each row in `lectures`
   // represents one student's scheduled session on that date, NOT the whole group.
@@ -993,17 +997,15 @@ router.get('/absent-side-list', (req, res) => {
   // Example: group with 2 trainees → one slot on Apr 19, another on Apr 20 →
   //   COUNT(*) per date = 1, not 2.
   //
-  // ⚠ When admin (line=All) joins batches without a line filter, the same
-  // group_name may appear in multiple lines → cartesian product doubles COUNT(*).
-  // Fix: always use a deduplicated batches subquery (one row per group_name).
-  // ⚠ Root cause of doubling: same group_name exists in lectures for MULTIPLE lines.
-  // Admin (no line filter) sees all rows → doubled count.
-  // Fix: join lectures to deduplicated batches subquery that includes a canonical line
-  // (MIN(line) for admin, the upload line for agents), then filter l.line = b.line
-  // so only ONE line's lecture rows are counted per group.
+  // ⚠ Doubling fix: batches can have the same group_name in multiple lines.
+  // Deduplicate to ONE row per group via GROUP BY group_name.
+  // Do NOT constrain l.line = b.line — lectures may be stored under a different
+  // line than the batch (uploaded for one line, batch exists in another).
+  // Line scoping comes from batchSubQ (which groups belong to the selected line),
+  // NOT from the lecture line field.
   const batchSubQ = line
-    ? `(SELECT group_name, line, MAX(coordinators) AS coordinators, MAX(dept_type) AS dept_type FROM batches WHERE line = '${line.replace(/'/g, "''")}' GROUP BY group_name, line)`
-    : `(SELECT group_name, MIN(line) AS line, MAX(coordinators) AS coordinators, MAX(dept_type) AS dept_type FROM batches GROUP BY group_name)`;
+    ? `(SELECT group_name, MAX(coordinators) AS coordinators, MAX(dept_type) AS dept_type FROM batches WHERE line = '${line.replace(/'/g, "''")}' GROUP BY group_name)`
+    : `(SELECT group_name, MAX(coordinators) AS coordinators, MAX(dept_type) AS dept_type FROM batches GROUP BY group_name)`;
 
   const groupedQuery = `
     SELECT
@@ -1023,7 +1025,7 @@ router.get('/absent-side-list', (req, res) => {
                AND CAST(l.attendance AS INTEGER) > 0
                THEN 1 ELSE 0 END)                                               AS absent_count
     FROM lectures l
-    INNER JOIN ${batchSubQ} b ON l.group_name = b.group_name AND l.line = b.line
+    INNER JOIN ${batchSubQ} b ON l.group_name = b.group_name
     ${baseWhere}
     GROUP BY l.group_name, l.date
     HAVING absent_count > 0`;
@@ -2384,21 +2386,21 @@ router.get('/attendance-absence', (req, res) => {
     // of lecture rows, NOT batch.trainee_count (which is the whole group size
     // spanning many dates). Must match /absent-side-list and dashboard KPI.
     //
-    // ⚠ Root cause of doubling: same group_name exists in lectures for MULTIPLE lines.
-    // Admin (no line filter) sees all rows → doubled COUNT(*).
-    // Fix: join lectures to batches deduplicated to ONE canonical line per group
-    // (MIN(line) for admin, the upload line for agents), then match l.line = b.line
-    // so only ONE line's lecture rows are counted per group+date.
+    // ⚠ Doubling fix: batches can have the same group_name in multiple lines.
+    // Deduplicate batches to ONE row per group. Do NOT constrain l.line = b.line —
+    // lectures may be stored under a different line than the batch (e.g. uploaded
+    // for Ahmed Hassan but batch also exists in Dardasha).
+    // Line scoping comes from batchSubQ (which groups belong to the selected line).
     const zoomBatchSubQ = line
-      ? `(SELECT group_name, line, MAX(coordinators) AS coordinators, MAX(dept_type) AS dept_type FROM batches WHERE line = '${line.replace(/'/g, "''")}' GROUP BY group_name, line)`
-      : `(SELECT group_name, MIN(line) AS line, MAX(coordinators) AS coordinators, MAX(dept_type) AS dept_type FROM batches GROUP BY group_name)`;
+      ? `(SELECT group_name, MAX(coordinators) AS coordinators, MAX(dept_type) AS dept_type FROM batches WHERE line = '${line.replace(/'/g, "''")}' GROUP BY group_name)`
+      : `(SELECT group_name, MAX(coordinators) AS coordinators, MAX(dept_type) AS dept_type FROM batches GROUP BY group_name)`;
 
     const zoomExpectedRows = db.prepare(`
       SELECT coordinator, COALESCE(SUM(expected_slots), 0) AS cnt FROM (
         SELECT COALESCE(b.coordinators, '--') AS coordinator,
           COUNT(*) AS expected_slots
         FROM lectures l
-        INNER JOIN ${zoomBatchSubQ} b ON l.group_name = b.group_name AND l.line = b.line
+        INNER JOIN ${zoomBatchSubQ} b ON l.group_name = b.group_name
         WHERE l.session_type = 'side'
           AND l.status = 'مؤكدة'
           AND (l.duration IS NULL OR l.duration <= '00:15')
@@ -2418,7 +2420,7 @@ router.get('/attendance-absence', (req, res) => {
                      AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END)
             AS absent_count
         FROM lectures l
-        INNER JOIN ${zoomBatchSubQ} b ON l.group_name = b.group_name AND l.line = b.line
+        INNER JOIN ${zoomBatchSubQ} b ON l.group_name = b.group_name
         WHERE l.session_type = 'side'
           AND l.status = 'مؤكدة'
           AND (l.duration IS NULL OR l.duration <= '00:15')
