@@ -448,7 +448,7 @@ router.post('/preview', (req, res) => {
       session_id:       sessionId,
       total:            allItems.length,
       matched:          matched.length,
-      distributed:      distributed.length,
+      distributed:      finalDistributed.length,
       duplicates_count: duplicates.length,
       duplicates:       duplicates,
       agent_summary:    Object.values(summaryMap).filter(a => a.new_clients > 0),
