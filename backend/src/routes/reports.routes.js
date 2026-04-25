@@ -626,13 +626,16 @@ router.get('/dashboard', (req, res) => {
     // batch.trainee_count which covers the whole group across all dates).
     // Must match the formula in /absent-side-list exactly to avoid
     // KPI-vs-modal mismatches.
+    const absentSideBatchSubQ = line
+      ? `(SELECT group_name, MAX(coordinators) AS coordinators, MAX(dept_type) AS dept_type FROM batches WHERE line = '${line.replace(/'/g, "''")}' GROUP BY group_name)`
+      : `(SELECT group_name, MAX(coordinators) AS coordinators, MAX(dept_type) AS dept_type FROM batches GROUP BY group_name)`;
     const absentSideRow = db.prepare(
       `SELECT COALESCE(SUM(absent_count), 0) as cnt FROM (
          SELECT
            COUNT(*) -
            SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != '' AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END) AS absent_count
          FROM lectures l
-         INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
+         LEFT JOIN ${absentSideBatchSubQ} b ON l.group_name = b.group_name
          WHERE l.session_type = 'side'
            AND l.status = 'مؤكدة'
            AND (l.duration IS NULL OR l.duration <= '00:15')
@@ -984,6 +987,14 @@ router.get('/absent-side-list', (req, res) => {
   // date, NOT batch.trainee_count (which covers the entire group).
   // Example: group with 2 trainees → one slot on Apr 19, another on Apr 20 →
   //   COUNT(*) per date = 1, not 2.
+  //
+  // ⚠ When admin (line=All) joins batches without a line filter, the same
+  // group_name may appear in multiple lines → cartesian product doubles COUNT(*).
+  // Fix: always use a deduplicated batches subquery (one row per group_name).
+  const batchSubQ = line
+    ? `(SELECT group_name, MAX(coordinators) AS coordinators, MAX(dept_type) AS dept_type FROM batches WHERE line = '${line.replace(/'/g, "''")}' GROUP BY group_name)`
+    : `(SELECT group_name, MAX(coordinators) AS coordinators, MAX(dept_type) AS dept_type FROM batches GROUP BY group_name)`;
+
   const groupedQuery = `
     SELECT
       l.group_name,
@@ -1002,7 +1013,7 @@ router.get('/absent-side-list', (req, res) => {
                AND CAST(l.attendance AS INTEGER) > 0
                THEN 1 ELSE 0 END)                                               AS absent_count
     FROM lectures l
-    LEFT JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
+    LEFT JOIN ${batchSubQ} b ON l.group_name = b.group_name
     ${baseWhere}
     GROUP BY l.group_name, l.date
     HAVING absent_count > 0`;
