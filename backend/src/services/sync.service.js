@@ -6,6 +6,28 @@ const FILE_TYPES = ['data', 'trainees', 'batches', 'remarks', 'lectures', 'side_
 const VALID_LINES = ['Ahmed Hassan', 'Dardasha'];
 
 /**
+ * Exclusive group ownership — when a group is uploaded for a line,
+ * remove it from ALL other lines to prevent cross-line duplication.
+ * Each group_name belongs to exactly ONE line at a time.
+ *
+ * @param {string} table       - table name
+ * @param {string} line        - the current (new owner) line
+ * @param {string[]} groupNames - unique group_names being uploaded
+ * @param {string} extraWhere  - optional extra WHERE clause (e.g. " AND session_type='side'")
+ */
+function evictFromOtherLines(table, line, groupNames, extraWhere = '') {
+  if (!groupNames.length) return;
+  const CHUNK = 500;
+  for (let i = 0; i < groupNames.length; i += CHUNK) {
+    const chunk = groupNames.slice(i, i + CHUNK);
+    const ph = chunk.map(() => '?').join(',');
+    db.prepare(
+      `DELETE FROM ${table} WHERE line != ? AND group_name IN (${ph})${extraWhere}`
+    ).run(line, ...chunk);
+  }
+}
+
+/**
  * Main sync entry point — MULTI-LINE aware
  *
  * fileType: one of FILE_TYPES
@@ -66,8 +88,11 @@ function syncEmployees(buffer, line) {
 
 function syncTrainees(buffer, line) {
   const rows = excel.parseTrainees(buffer);
+  const uniqueGroups = [...new Set(rows.map(r => r.group_name).filter(Boolean))];
   const run = db.transaction(() => {
     db.prepare('DELETE FROM clients WHERE line = ?').run(line);
+    // Claim exclusive ownership of these groups' trainees
+    evictFromOtherLines('clients', line, uniqueGroups);
     const insert = db.prepare(`
       INSERT INTO clients (name, phone, email, group_name, via_company, registration_time, line, synced_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', '+2 hours'))
@@ -80,8 +105,16 @@ function syncTrainees(buffer, line) {
 
 function syncBatches(buffer, line) {
   const rows = excel.parseBatches(buffer);
+  const uniqueGroups = [...new Set(rows.map(r => r.group_name))];
   const run = db.transaction(() => {
+    // Remove this line's old batches
     db.prepare('DELETE FROM batches WHERE line = ?').run(line);
+    // Claim exclusive ownership — remove same groups from other lines
+    evictFromOtherLines('batches', line, uniqueGroups);
+    evictFromOtherLines('lectures', line, uniqueGroups, " AND session_type = 'main'");
+    evictFromOtherLines('lectures', line, uniqueGroups, " AND session_type = 'side'");
+    evictFromOtherLines('clients', line, uniqueGroups);
+    evictFromOtherLines('absent_students', line, uniqueGroups);
     const insert = db.prepare(`
       INSERT INTO batches (
         external_id, group_name, course, status, trainers,
@@ -171,8 +204,11 @@ function syncRemarks(buffer, line, warnings) {
 
 function syncLectures(buffer, line) {
   const rows = excel.parseLectures(buffer);
+  const uniqueGroups = [...new Set(rows.map(r => r.group_name))];
   const run = db.transaction(() => {
     db.prepare("DELETE FROM lectures WHERE session_type = 'main' AND line = ?").run(line);
+    // Claim exclusive ownership of these groups' main lectures
+    evictFromOtherLines('lectures', line, uniqueGroups, " AND session_type = 'main'");
     const insert = db.prepare(`
       INSERT INTO lectures (group_name, date, time, duration, trainer, status, location, attendance, session_type, side_session_category, line, synced_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'main', NULL, ?, datetime('now', '+2 hours'))
@@ -205,8 +241,11 @@ function syncLectures(buffer, line) {
 
 function syncSideSessions(buffer, line) {
   const rows = excel.parseSideSessions(buffer);
+  const uniqueGroups = [...new Set(rows.map(r => r.group_name))];
   const run = db.transaction(() => {
     db.prepare("DELETE FROM lectures WHERE session_type = 'side' AND line = ?").run(line);
+    // Claim exclusive ownership of these groups' side sessions
+    evictFromOtherLines('lectures', line, uniqueGroups, " AND session_type = 'side'");
     const insert = db.prepare(`
       INSERT INTO lectures (group_name, date, time, duration, trainer, status, location, attendance, session_type, side_session_category, line, synced_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'side', ?, ?, datetime('now', '+2 hours'))
@@ -229,8 +268,11 @@ function syncAbsent(buffer, line) {
       preserved[key] = { follow_up_status: r.follow_up_status, follow_up_note: r.follow_up_note, follow_up_by: r.follow_up_by, follow_up_at: r.follow_up_at };
     });
 
+  const uniqueAbsentGroups = [...new Set(rows.map(r => r.group_name).filter(Boolean))];
   const run = db.transaction(() => {
     db.prepare('DELETE FROM absent_students WHERE line = ?').run(line);
+    // Claim exclusive ownership of these groups' absent records
+    evictFromOtherLines('absent_students', line, uniqueAbsentGroups);
     const insert = db.prepare(`
       INSERT INTO absent_students (group_name, student_name, phone, date, time, lecture_no, follow_up_status, follow_up_note, follow_up_by, follow_up_at, line, synced_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+2 hours'))
