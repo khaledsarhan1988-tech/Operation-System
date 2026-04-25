@@ -281,12 +281,18 @@ router.get('/pipeline', (req, res) => {
   const line       = lineFilter(req);
   const { agent_name, date_from, date_to } = req.query;
 
-  // ── 1. Resolve agents in this leader's team ────────────────────────────────
+  // ── 1. Resolve agents ────────────────────────────────────────────────────
+  // When a specific agent is selected, skip dept/line filter (already validated by dropdown).
+  // When showing all team, filter by dept + line.
   const agentConds  = ["u.role = 'agent'", "u.is_active = 1"];
   const agentParams = [];
-  if (dept && dept !== 'All') { agentConds.push('u.department = ?'); agentParams.push(dept); }
-  if (line)       { agentConds.push('u.line = ?');       agentParams.push(line); }
-  if (agent_name) { agentConds.push('u.full_name = ?');  agentParams.push(agent_name); }
+  if (agent_name) {
+    agentConds.push('u.full_name = ?');
+    agentParams.push(agent_name);
+  } else {
+    if (dept && dept !== 'All') { agentConds.push('u.department = ?'); agentParams.push(dept); }
+    if (line) { agentConds.push('u.line = ?'); agentParams.push(line); }
+  }
 
   const agents = db.prepare(
     `SELECT full_name FROM users WHERE ${agentConds.join(' AND ')} ORDER BY full_name`
