@@ -354,24 +354,31 @@ router.post('/preview', (req, res) => {
     const workload = {};
     agents.forEach(a => { workload[a.full_name] = a.open_tasks; });
 
-    const distributed = unmatched.map(client => {
-      const minAgent = Object.entries(workload).sort(([,a],[,b]) => a - b)[0][0];
-      workload[minAgent]++;
-      return { ...client, assigned_to: minAgent, match_type: 'auto_distributed' };
-    });
+    // ── Apply manual assignments OR auto-distribute ───────────────────────────
+    // If manual assignments provided: assign ONLY specified counts, leave rest unassigned.
+    // If no manual assignments: auto-distribute all unmatched clients by workload.
+    let finalDistributed = [];
+    const hasManual = Array.isArray(assignments) && assignments.length > 0;
 
-    // ── Apply manual assignments to unmatched clients ────────────────────────
-    let finalDistributed = [...distributed];
-    if (Array.isArray(assignments) && assignments.length > 0) {
+    if (hasManual) {
+      // Manual mode: assign exact counts per coordinator, skip the rest
       let idx = 0;
       for (const asgn of assignments) {
-        const cnt = Math.min(parseInt(asgn.count) || 0, finalDistributed.length - idx);
-        for (let i = 0; i < cnt && idx < finalDistributed.length; i++, idx++) {
-          finalDistributed[idx].assigned_to = asgn.agent;
-          finalDistributed[idx].match_type  = 'manual';
+        const cnt = Math.min(parseInt(asgn.count) || 0, unmatched.length - idx);
+        for (let i = 0; i < cnt && idx < unmatched.length; i++, idx++) {
+          finalDistributed.push({ ...unmatched[idx], assigned_to: asgn.agent, match_type: 'manual' });
         }
       }
+      // Remaining unmatched clients are NOT distributed — left out of this session
+    } else {
+      // Auto mode: distribute all unmatched by workload balance
+      finalDistributed = unmatched.map(client => {
+        const minAgent = Object.entries(workload).sort(([,a],[,b]) => a - b)[0][0];
+        workload[minAgent]++;
+        return { ...client, assigned_to: minAgent, match_type: 'auto_distributed' };
+      });
     }
+
     const allItems = [...matched, ...finalDistributed];
     const manualCount = allItems.filter(i => i.match_type === 'manual').length;
 
