@@ -277,61 +277,45 @@ function getSlaStatus(slaDeadline, priority) {
 
 // GET /api/leader/pipeline?agent_name=&date_from=&date_to=
 router.get('/pipeline', (req, res) => {
-  const dept       = req.user?.department;
-  const line       = lineFilter(req);
+  const dept = req.user?.department;
+  const line = lineFilter(req);
   const { agent_name, date_from, date_to } = req.query;
 
-  // ── 1. Resolve agents ────────────────────────────────────────────────────
-  // When a specific agent is selected, skip dept/line filter (already validated by dropdown).
-  // When showing all team, filter by dept + line.
-  const agentConds  = ["u.role = 'agent'", "u.is_active = 1"];
-  const agentParams = [];
+  const conditions = [`category = 'توزيع عملاء'`];
+  const params = [];
+
   if (agent_name) {
-    agentConds.push('u.full_name = ?');
-    agentParams.push(agent_name);
+    conditions.push('assigned_to = ?');
+    params.push(agent_name);
   } else {
-    if (dept && dept !== 'All') { agentConds.push('u.department = ?'); agentParams.push(dept); }
-    if (line) { agentConds.push('u.line = ?'); agentParams.push(line); }
+    const agentConds = ["role = 'agent'", "is_active = 1"];
+    const subParams  = [];
+    if (dept && dept !== 'All') { agentConds.push('department = ?'); subParams.push(dept); }
+    if (line)                   { agentConds.push('line = ?');       subParams.push(line); }
+    conditions.push(`assigned_to IN (SELECT full_name FROM users WHERE ${agentConds.join(' AND ')})`);
+    params.push(...subParams);
   }
 
-  const agents = db.prepare(
-    `SELECT full_name FROM users WHERE ${agentConds.join(' AND ')} ORDER BY full_name`
-  ).all(...agentParams);
+  if (date_from) { conditions.push('client_date >= ?'); params.push(date_from); }
+  if (date_to)   { conditions.push('client_date <= ?'); params.push(date_to);   }
 
-  const empty = {
-    'جديدة': [], 'Follow Up': [], 'Placement Test': [],
-    'Problem Existing': [], 'No Answer': [], 'No Interesting': [], 'Retention Done': [],
-  };
-  if (!agents.length) return res.json(empty);
+  const where = conditions.join(' AND ');
 
-  const agentNames = agents.map(a => a.full_name);
-  const agentPH    = agentNames.map(() => '?').join(',');
-
-  // ── 2. Optional date filter ────────────────────────────────────────────────
-  const dateParams = [];
-  let dateClause   = '';
-  if (date_from) { dateClause += ' AND client_date >= ?'; dateParams.push(date_from); }
-  if (date_to)   { dateClause += ' AND client_date <= ?'; dateParams.push(date_to);   }
-
-  // ── 3. Build one Kanban column ─────────────────────────────────────────────
-  // No line filter on remarks — agents already scoped to leader's line in step 1
-  const buildCol = (where) =>
+  const buildCol = (stageWhere) =>
     db.prepare(`
       SELECT id, client_name, client_phone, task_type, status, priority,
              sla_deadline, added_at, last_updated, next_followup_at,
              agent_notes, category, line, details, client_date, assigned_to,
              (SELECT COUNT(*) FROM client_transfers ct WHERE ct.remark_id = remarks.id) AS transfer_count
       FROM remarks
-      WHERE assigned_to IN (${agentPH})
-        AND category = 'توزيع عملاء'
-        AND ${where}${dateClause}
+      WHERE ${where} AND ${stageWhere}
       ORDER BY
         assigned_to COLLATE NOCASE ASC,
         CASE priority WHEN 'عاجلة' THEN 1 WHEN 'هامة' THEN 2 ELSE 3 END ASC,
         CASE WHEN sla_deadline < datetime('now','+2 hours') THEN 0 ELSE 1 END ASC,
         added_at ASC
       LIMIT 2000
-    `).all(...agentNames, ...dateParams)
+    `).all(...params)
       .map(r => ({ ...r, sla_status: getSlaStatus(r.sla_deadline, r.priority) }));
 
   try {
