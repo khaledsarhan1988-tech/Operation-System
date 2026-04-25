@@ -179,6 +179,17 @@ function syncRemarks(buffer, line, warnings) {
 
   const run = db.transaction(() => {
     db.prepare('DELETE FROM remarks WHERE line = ?').run(line);
+
+    // Evict same external_ids from OTHER lines — each external_id belongs to ONE line only
+    if (incomingIds.length) {
+      const CHUNK = 500;
+      for (let i = 0; i < incomingIds.length; i += CHUNK) {
+        const chunk = incomingIds.slice(i, i + CHUNK);
+        const ph = chunk.map(() => '?').join(',');
+        db.prepare(`DELETE FROM remarks WHERE line != ? AND external_id IN (${ph})`).run(line, ...chunk);
+      }
+    }
+
     const insert = db.prepare(`
       INSERT INTO remarks (
         external_id, task_type, assigned_to, details, category, status,

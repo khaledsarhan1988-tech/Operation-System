@@ -503,22 +503,26 @@ function RemarksNotesModal({ params, onClose }) {
   const LIMIT = 100;
   const [tab, setTab] = useState('main');
 
-  // main tab state
+  // ── SHARED filters (dates + dept) — apply to ALL sections ─────────────────
+  const [sharedF, setSharedF] = useState({ modal_from: '', modal_to: '', modal_dept: '' });
+  const [afShared, setAfShared] = useState({});
+
+  // main tab state (coordinator + has_remark only)
   const [pageM, setPageM]   = useState(1);
   const [searchM, setSearchM] = useState('');
-  const [fM, setFM]   = useState({ modal_from:'', modal_to:'', modal_dept:'', coordinator:'', has_remark:'' });
+  const [fM, setFM]   = useState({ coordinator:'', has_remark:'' });
   const [afM, setAfM] = useState({});
 
-  // zoom tab state
+  // zoom tab state (coordinator + has_remark only)
   const [pageZ, setPageZ]   = useState(1);
   const [searchZ, setSearchZ] = useState('');
-  const [fZ, setFZ]   = useState({ modal_from:'', modal_to:'', modal_dept:'', coordinator:'', has_remark:'' });
+  const [fZ, setFZ]   = useState({ coordinator:'', has_remark:'' });
   const [afZ, setAfZ] = useState({});
 
-  // categories state
+  // categories state (category + assigned_to only)
   const [pageC, setPageC]   = useState(1);
   const [searchC, setSearchC] = useState('');
-  const [fC, setFC]   = useState({ modal_from:'', modal_to:'', modal_dept:'', assigned_to:'', category_filter:'' });
+  const [fC, setFC]   = useState({ assigned_to:'', category_filter:'' });
   const [afC, setAfC] = useState({});
 
   const { data: opts } = useQuery({
@@ -530,26 +534,35 @@ function RemarksNotesModal({ params, onClose }) {
   const categories   = opts?.categories   ?? [];
   const assignedTo   = opts?.assignedTo   ?? [];
 
+  const applyShared = () => {
+    const c = {}; Object.entries(sharedF).forEach(([k,v])=>{if(v&&v!=='All')c[k]=v;});
+    setAfShared(c); setPageM(1); setPageZ(1); setPageC(1);
+  };
+  const clearShared = () => {
+    setSharedF({ modal_from:'', modal_to:'', modal_dept:'' });
+    setAfShared({}); setPageM(1); setPageZ(1); setPageC(1);
+  };
+
   const applyM = () => { const c={}; Object.entries(fM).forEach(([k,v])=>{if(v&&v!=='All')c[k]=v;}); setAfM(c); setPageM(1); };
-  const clearM = () => { setFM({modal_from:'',modal_to:'',modal_dept:'',coordinator:'',has_remark:''}); setAfM({}); setPageM(1); };
+  const clearM = () => { setFM({ coordinator:'', has_remark:'' }); setAfM({}); setPageM(1); };
   const applyZ = () => { const c={}; Object.entries(fZ).forEach(([k,v])=>{if(v&&v!=='All')c[k]=v;}); setAfZ(c); setPageZ(1); };
-  const clearZ = () => { setFZ({modal_from:'',modal_to:'',modal_dept:'',coordinator:'',has_remark:''}); setAfZ({}); setPageZ(1); };
+  const clearZ = () => { setFZ({ coordinator:'', has_remark:'' }); setAfZ({}); setPageZ(1); };
   const applyC = () => { const c={}; Object.entries(fC).forEach(([k,v])=>{if(v&&v!=='All')c[k]=v;}); setAfC(c); setPageC(1); };
-  const clearC = () => { setFC({modal_from:'',modal_to:'',modal_dept:'',assigned_to:'',category_filter:''}); setAfC({}); setPageC(1); };
+  const clearC = () => { setFC({ assigned_to:'', category_filter:'' }); setAfC({}); setPageC(1); };
 
   const { data: mData, isLoading: mLoad } = useQuery({
-    queryKey: ['rnm', params, pageM, searchM, afM],
-    queryFn: () => api.get('/reports/remarks-notes-main', { params: { ...params, page: pageM, limit: LIMIT, search: searchM, ...afM } }).then(r => r.data),
+    queryKey: ['rnm', params, afShared, pageM, searchM, afM],
+    queryFn: () => api.get('/reports/remarks-notes-main', { params: { ...params, ...afShared, page: pageM, limit: LIMIT, search: searchM, ...afM } }).then(r => r.data),
     staleTime: 2 * 60 * 1000,
   });
   const { data: zData, isLoading: zLoad } = useQuery({
-    queryKey: ['rnz', params, pageZ, searchZ, afZ],
-    queryFn: () => api.get('/reports/remarks-notes-zoom', { params: { ...params, page: pageZ, limit: LIMIT, search: searchZ, ...afZ } }).then(r => r.data),
+    queryKey: ['rnz', params, afShared, pageZ, searchZ, afZ],
+    queryFn: () => api.get('/reports/remarks-notes-zoom', { params: { ...params, ...afShared, page: pageZ, limit: LIMIT, search: searchZ, ...afZ } }).then(r => r.data),
     staleTime: 2 * 60 * 1000,
   });
   const { data: cData, isLoading: cLoad } = useQuery({
-    queryKey: ['rnc', params, pageC, searchC, afC],
-    queryFn: () => api.get('/reports/remarks-categories', { params: { ...params, page: pageC, limit: LIMIT, search: searchC, ...afC } }).then(r => r.data),
+    queryKey: ['rnc', params, afShared, pageC, searchC, afC],
+    queryFn: () => api.get('/reports/remarks-categories', { params: { ...params, ...afShared, page: pageC, limit: LIMIT, search: searchC, ...afC } }).then(r => r.data),
     staleTime: 2 * 60 * 1000,
   });
 
@@ -595,6 +608,46 @@ function RemarksNotesModal({ params, onClose }) {
         </div>
       </div>
 
+      {/* ── SHARED FILTER — applies to ALL sections ────────────────────────── */}
+      <div className="bg-white border-b border-gray-200 px-6 py-3 flex flex-wrap gap-3 items-end flex-shrink-0">
+        <div>
+          <label className="block text-xs text-gray-400 mb-1 font-semibold">من تاريخ</label>
+          <input type="date" value={sharedF.modal_from}
+            onChange={e=>setSharedF(f=>({...f,modal_from:e.target.value}))}
+            className="border border-gray-200 rounded-lg px-3 py-2 text-xs bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-200"/>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-400 mb-1 font-semibold">إلى تاريخ</label>
+          <input type="date" value={sharedF.modal_to}
+            onChange={e=>setSharedF(f=>({...f,modal_to:e.target.value}))}
+            className="border border-gray-200 rounded-lg px-3 py-2 text-xs bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-200"/>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-400 mb-1 font-semibold">القسم</label>
+          <select value={sharedF.modal_dept}
+            onChange={e=>setSharedF(f=>({...f,modal_dept:e.target.value}))}
+            className="border border-gray-200 rounded-lg px-3 py-2 text-xs bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-200">
+            <option value="">الكل</option>
+            <option value="General">عام</option>
+            <option value="Private">خاص</option>
+            <option value="Semi">شبه خاص</option>
+          </select>
+        </div>
+        <button onClick={applyShared}
+          className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 transition-colors">
+          تطبيق على الكل
+        </button>
+        <button onClick={clearShared}
+          className="px-4 py-2 bg-gray-200 text-gray-600 rounded-lg text-xs font-bold hover:bg-gray-300 transition-colors">
+          مسح الكل
+        </button>
+        {Object.keys(afShared).length > 0 && (
+          <span className="text-xs text-indigo-600 font-semibold flex items-center gap-1">
+            <Filter size={11}/> فلاتر مشتركة مفعّلة
+          </span>
+        )}
+      </div>
+
       <div className="flex-1 overflow-auto p-4 space-y-5">
 
         {/* ── SECTION 1: COMPARISON ── */}
@@ -618,25 +671,8 @@ function RemarksNotesModal({ params, onClose }) {
           {tab === 'main' && (
             <>
               <SearchBar val={searchM} setVal={setSearchM} onApply={applyM} total={mData?.total} placeholder="بحث باسم الطالب، المجموعة، أو الموبايل..." />
-              {/* Filters */}
-              <div className="px-5 py-3 bg-gray-50/50 border-b border-gray-100 grid grid-cols-2 md:grid-cols-5 gap-3">
-                <div>
-                  <label className={labelCls}>من تاريخ</label>
-                  <input type="date" value={fM.modal_from} onChange={e=>setFM(f=>({...f,modal_from:e.target.value}))} className={inputCls}/>
-                </div>
-                <div>
-                  <label className={labelCls}>إلى تاريخ</label>
-                  <input type="date" value={fM.modal_to} onChange={e=>setFM(f=>({...f,modal_to:e.target.value}))} className={inputCls}/>
-                </div>
-                <div>
-                  <label className={labelCls}>القسم</label>
-                  <select value={fM.modal_dept} onChange={e=>setFM(f=>({...f,modal_dept:e.target.value}))} className={inputCls}>
-                    <option value="">الكل</option>
-                    <option value="General">عام</option>
-                    <option value="Private">خاص</option>
-                    <option value="Semi">شبه خاص</option>
-                  </select>
-                </div>
+              {/* Filters — coordinator + has_remark (dates/dept from shared filter above) */}
+              <div className="px-5 py-3 bg-gray-50/50 border-b border-gray-100 flex flex-wrap gap-3 items-end">
                 <div>
                   <label className={labelCls}>المنسق</label>
                   <select value={fM.coordinator} onChange={e=>setFM(f=>({...f,coordinator:e.target.value}))} className={inputCls}>
@@ -652,10 +688,8 @@ function RemarksNotesModal({ params, onClose }) {
                     <option value="0">❌ غير موجود</option>
                   </select>
                 </div>
-                <div className="col-span-2 md:col-span-5 flex gap-2 justify-end">
-                  <button onClick={applyM} className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">تطبيق</button>
-                  <button onClick={clearM} className="px-4 py-1.5 bg-gray-200 text-gray-600 rounded-lg text-xs font-bold hover:bg-gray-300">مسح</button>
-                </div>
+                <button onClick={applyM} className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">تطبيق</button>
+                <button onClick={clearM} className="px-4 py-1.5 bg-gray-200 text-gray-600 rounded-lg text-xs font-bold hover:bg-gray-300">مسح</button>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm text-right" style={{minWidth:'1000px'}}>
@@ -698,25 +732,8 @@ function RemarksNotesModal({ params, onClose }) {
           {tab === 'zoom' && (
             <>
               <SearchBar val={searchZ} setVal={setSearchZ} onApply={applyZ} total={zData?.total} placeholder="بحث باسم العميل، المجموعة، أو الموبايل..." />
-              {/* Filters */}
-              <div className="px-5 py-3 bg-gray-50/50 border-b border-gray-100 grid grid-cols-2 md:grid-cols-5 gap-3">
-                <div>
-                  <label className={labelCls}>من تاريخ</label>
-                  <input type="date" value={fZ.modal_from} onChange={e=>setFZ(f=>({...f,modal_from:e.target.value}))} className={inputCls}/>
-                </div>
-                <div>
-                  <label className={labelCls}>إلى تاريخ</label>
-                  <input type="date" value={fZ.modal_to} onChange={e=>setFZ(f=>({...f,modal_to:e.target.value}))} className={inputCls}/>
-                </div>
-                <div>
-                  <label className={labelCls}>القسم</label>
-                  <select value={fZ.modal_dept} onChange={e=>setFZ(f=>({...f,modal_dept:e.target.value}))} className={inputCls}>
-                    <option value="">الكل</option>
-                    <option value="General">عام</option>
-                    <option value="Private">خاص</option>
-                    <option value="Semi">شبه خاص</option>
-                  </select>
-                </div>
+              {/* Filters — coordinator + has_remark (dates/dept from shared filter above) */}
+              <div className="px-5 py-3 bg-gray-50/50 border-b border-gray-100 flex flex-wrap gap-3 items-end">
                 <div>
                   <label className={labelCls}>المنسق</label>
                   <select value={fZ.coordinator} onChange={e=>setFZ(f=>({...f,coordinator:e.target.value}))} className={inputCls}>
@@ -732,10 +749,8 @@ function RemarksNotesModal({ params, onClose }) {
                     <option value="0">⚠️ غير موجود</option>
                   </select>
                 </div>
-                <div className="col-span-2 md:col-span-5 flex gap-2 justify-end">
-                  <button onClick={applyZ} className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">تطبيق</button>
-                  <button onClick={clearZ} className="px-4 py-1.5 bg-gray-200 text-gray-600 rounded-lg text-xs font-bold hover:bg-gray-300">مسح</button>
-                </div>
+                <button onClick={applyZ} className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">تطبيق</button>
+                <button onClick={clearZ} className="px-4 py-1.5 bg-gray-200 text-gray-600 rounded-lg text-xs font-bold hover:bg-gray-300">مسح</button>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm text-right" style={{minWidth:'1000px'}}>
@@ -792,25 +807,8 @@ function RemarksNotesModal({ params, onClose }) {
             <span className="text-xs text-gray-400">إجمالي: <b className="text-gray-700">{cData?.total ?? '—'}</b> سجل</span>
           </div>
           <SearchBar val={searchC} setVal={setSearchC} onApply={applyC} total={cData?.total} placeholder="بحث بالتصنيف، اسم العميل، أو الموبايل..." />
-          {/* Filters */}
-          <div className="px-5 py-3 bg-gray-50/50 border-b border-gray-100 grid grid-cols-2 md:grid-cols-5 gap-3">
-            <div>
-              <label className={labelCls}>من تاريخ</label>
-              <input type="date" value={fC.modal_from} onChange={e=>setFC(f=>({...f,modal_from:e.target.value}))} className={inputCls}/>
-            </div>
-            <div>
-              <label className={labelCls}>إلى تاريخ</label>
-              <input type="date" value={fC.modal_to} onChange={e=>setFC(f=>({...f,modal_to:e.target.value}))} className={inputCls}/>
-            </div>
-            <div>
-              <label className={labelCls}>القسم</label>
-              <select value={fC.modal_dept} onChange={e=>setFC(f=>({...f,modal_dept:e.target.value}))} className={inputCls}>
-                <option value="">الكل</option>
-                <option value="General">عام</option>
-                <option value="Private">خاص</option>
-                <option value="Semi">شبه خاص</option>
-              </select>
-            </div>
+          {/* Filters — category + assigned_to (dates/dept from shared filter above) */}
+          <div className="px-5 py-3 bg-gray-50/50 border-b border-gray-100 flex flex-wrap gap-3 items-end">
             <div>
               <label className={labelCls}>التصنيف</label>
               <select value={fC.category_filter} onChange={e=>setFC(f=>({...f,category_filter:e.target.value}))} className={inputCls}>
@@ -825,10 +823,8 @@ function RemarksNotesModal({ params, onClose }) {
                 {assignedTo.map(a=><option key={a} value={a}>{a}</option>)}
               </select>
             </div>
-            <div className="col-span-2 md:col-span-5 flex gap-2 justify-end">
-              <button onClick={applyC} className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">تطبيق</button>
-              <button onClick={clearC} className="px-4 py-1.5 bg-gray-200 text-gray-600 rounded-lg text-xs font-bold hover:bg-gray-300">مسح</button>
-            </div>
+            <button onClick={applyC} className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">تطبيق</button>
+            <button onClick={clearC} className="px-4 py-1.5 bg-gray-200 text-gray-600 rounded-lg text-xs font-bold hover:bg-gray-300">مسح</button>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-right" style={{minWidth:'900px'}}>
@@ -2413,7 +2409,12 @@ export default function SystemReports() {
                 <UserCheck size={12} /> الموظف / المنسق
               </label>
               <select value={filters.employee}
-                onChange={e => setFilters(f => ({ ...f, employee: e.target.value }))}
+                onChange={e => {
+                  const val = e.target.value;
+                  const user = (usersData ?? []).find(u => u.full_name === val);
+                  const autoLine = (val && user?.line && user.line !== 'All') ? user.line : 'All';
+                  setFilters(f => ({ ...f, employee: val, line: autoLine }));
+                }}
                 className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f] transition-all"
               >
                 <option value="">الكل</option>
