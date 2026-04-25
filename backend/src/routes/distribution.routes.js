@@ -361,10 +361,18 @@ router.post('/preview', (req, res) => {
     const hasManual = Array.isArray(assignments) && assignments.length > 0;
 
     if (hasManual) {
-      // Manual mode: assign exact counts per coordinator, skip the rest
+      // Manual mode: each coordinator gets (requested - already_matched) new clients
+      // so their total never exceeds the requested count
+      const matchedPerAgent = {};
+      matched.forEach(m => {
+        matchedPerAgent[m.assigned_to] = (matchedPerAgent[m.assigned_to] || 0) + 1;
+      });
+
       let idx = 0;
       for (const asgn of assignments) {
-        const cnt = Math.min(parseInt(asgn.count) || 0, unmatched.length - idx);
+        const alreadyMatched = matchedPerAgent[asgn.agent] || 0;
+        const needed = Math.max(0, (parseInt(asgn.count) || 0) - alreadyMatched);
+        const cnt = Math.min(needed, unmatched.length - idx);
         for (let i = 0; i < cnt && idx < unmatched.length; i++, idx++) {
           finalDistributed.push({ ...unmatched[idx], assigned_to: asgn.agent, match_type: 'manual' });
         }
