@@ -173,6 +173,7 @@ CREATE INDEX IF NOT EXISTS idx_lectures_status     ON lectures(status);
 -- Composite indexes for common multi-column queries
 CREATE INDEX IF NOT EXISTS idx_lectures_type_date  ON lectures(session_type, date);
 CREATE INDEX IF NOT EXISTS idx_lectures_type_group ON lectures(session_type, group_name);
+CREATE INDEX IF NOT EXISTS idx_lectures_type_group_line ON lectures(session_type, group_name, line);
 CREATE INDEX IF NOT EXISTS idx_lectures_group_cat  ON lectures(group_name, session_type, side_session_category);
 
 -- =============================================

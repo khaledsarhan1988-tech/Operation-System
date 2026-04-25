@@ -356,6 +356,11 @@ initDb().then(db => {
     console.error('client_transfers migration error:', e.message);
   }
 
+  // ── Covering index for canonical-line lookup in batchSubQ queries ────────
+  try {
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_lectures_type_group_line ON lectures(session_type, group_name, line)`);
+  } catch (e) { /* index already exists or schema mismatch — safe to ignore */ }
+
   // ── Auto-upsert admin user on every startup ───────────────────────────────
   // Ensures admin always exists even after DB reset (e.g. Railway redeploy).
   try {

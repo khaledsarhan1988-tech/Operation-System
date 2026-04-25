@@ -637,13 +637,18 @@ router.get('/dashboard', (req, res) => {
     // • admin "Dardasha"       : canonical line = 'Ahmed Hassan' (where lectures are) → finds data ✓
     const absentSideBatchSubQ = line
       ? `(SELECT b.group_name,
-           COALESCE((SELECT l2.line FROM lectures l2 WHERE l2.group_name = b.group_name AND l2.session_type = 'side' LIMIT 1), MIN(b.line)) AS line,
+           COALESCE(lc.canonical_line, MIN(b.line)) AS line,
            MAX(b.coordinators) AS coordinators, MAX(b.dept_type) AS dept_type
-         FROM batches b WHERE b.line = '${line.replace(/'/g, "''")}' GROUP BY b.group_name)`
+         FROM batches b
+         LEFT JOIN (SELECT group_name, MIN(line) AS canonical_line FROM lectures WHERE session_type = 'side' GROUP BY group_name) lc ON lc.group_name = b.group_name
+         WHERE b.line = '${line.replace(/'/g, "''")}'
+         GROUP BY b.group_name)`
       : `(SELECT b.group_name,
-           COALESCE((SELECT l2.line FROM lectures l2 WHERE l2.group_name = b.group_name AND l2.session_type = 'side' LIMIT 1), MIN(b.line)) AS line,
+           COALESCE(lc.canonical_line, MIN(b.line)) AS line,
            MAX(b.coordinators) AS coordinators, MAX(b.dept_type) AS dept_type
-         FROM batches b GROUP BY b.group_name)`;
+         FROM batches b
+         LEFT JOIN (SELECT group_name, MIN(line) AS canonical_line FROM lectures WHERE session_type = 'side' GROUP BY group_name) lc ON lc.group_name = b.group_name
+         GROUP BY b.group_name)`;
     const absentSideRow = db.prepare(
       `SELECT COALESCE(SUM(absent_count), 0) as cnt FROM (
          SELECT
@@ -1014,13 +1019,18 @@ router.get('/absent-side-list', (req, res) => {
   // • admin "Dardasha"       : canonical = 'Ahmed Hassan' (lectures stored there) → finds data ✓
   const batchSubQ = line
     ? `(SELECT b.group_name,
-         COALESCE((SELECT l2.line FROM lectures l2 WHERE l2.group_name = b.group_name AND l2.session_type = 'side' LIMIT 1), MIN(b.line)) AS line,
+         COALESCE(lc.canonical_line, MIN(b.line)) AS line,
          MAX(b.coordinators) AS coordinators, MAX(b.dept_type) AS dept_type
-       FROM batches b WHERE b.line = '${line.replace(/'/g, "''")}' GROUP BY b.group_name)`
+       FROM batches b
+       LEFT JOIN (SELECT group_name, MIN(line) AS canonical_line FROM lectures WHERE session_type = 'side' GROUP BY group_name) lc ON lc.group_name = b.group_name
+       WHERE b.line = '${line.replace(/'/g, "''")}'
+       GROUP BY b.group_name)`
     : `(SELECT b.group_name,
-         COALESCE((SELECT l2.line FROM lectures l2 WHERE l2.group_name = b.group_name AND l2.session_type = 'side' LIMIT 1), MIN(b.line)) AS line,
+         COALESCE(lc.canonical_line, MIN(b.line)) AS line,
          MAX(b.coordinators) AS coordinators, MAX(b.dept_type) AS dept_type
-       FROM batches b GROUP BY b.group_name)`;
+       FROM batches b
+       LEFT JOIN (SELECT group_name, MIN(line) AS canonical_line FROM lectures WHERE session_type = 'side' GROUP BY group_name) lc ON lc.group_name = b.group_name
+       GROUP BY b.group_name)`;
 
   const groupedQuery = `
     SELECT
@@ -2409,13 +2419,18 @@ router.get('/attendance-absence', (req, res) => {
     // • admin "Dardasha"       : canonical = 'Ahmed Hassan' (lectures stored there) → finds data ✓
     const zoomBatchSubQ = line
       ? `(SELECT b.group_name,
-           COALESCE((SELECT l2.line FROM lectures l2 WHERE l2.group_name = b.group_name AND l2.session_type = 'side' LIMIT 1), MIN(b.line)) AS line,
+           COALESCE(lc.canonical_line, MIN(b.line)) AS line,
            MAX(b.coordinators) AS coordinators, MAX(b.dept_type) AS dept_type
-         FROM batches b WHERE b.line = '${line.replace(/'/g, "''")}' GROUP BY b.group_name)`
+         FROM batches b
+         LEFT JOIN (SELECT group_name, MIN(line) AS canonical_line FROM lectures WHERE session_type = 'side' GROUP BY group_name) lc ON lc.group_name = b.group_name
+         WHERE b.line = '${line.replace(/'/g, "''")}'
+         GROUP BY b.group_name)`
       : `(SELECT b.group_name,
-           COALESCE((SELECT l2.line FROM lectures l2 WHERE l2.group_name = b.group_name AND l2.session_type = 'side' LIMIT 1), MIN(b.line)) AS line,
+           COALESCE(lc.canonical_line, MIN(b.line)) AS line,
            MAX(b.coordinators) AS coordinators, MAX(b.dept_type) AS dept_type
-         FROM batches b GROUP BY b.group_name)`;
+         FROM batches b
+         LEFT JOIN (SELECT group_name, MIN(line) AS canonical_line FROM lectures WHERE session_type = 'side' GROUP BY group_name) lc ON lc.group_name = b.group_name
+         GROUP BY b.group_name)`;
 
     const zoomExpectedRows = db.prepare(`
       SELECT coordinator, COALESCE(SUM(expected_slots), 0) AS cnt FROM (
