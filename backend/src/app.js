@@ -356,6 +356,30 @@ initDb().then(db => {
     console.error('client_transfers migration error:', e.message);
   }
 
+  // ── Fix distribution_items CHECK constraint to allow 'manual' match_type ──
+  try {
+    const diSql = db._raw.exec(`SELECT sql FROM sqlite_master WHERE type='table' AND name='distribution_items'`)[0]?.values[0][0] || '';
+    if (diSql && !diSql.includes("'manual'")) {
+      db._raw.run(`CREATE TABLE IF NOT EXISTS distribution_items_new (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id   INTEGER NOT NULL REFERENCES distribution_sessions(id) ON DELETE CASCADE,
+        client_name  TEXT    NOT NULL,
+        client_phone TEXT,
+        client_line  TEXT,
+        client_date  TEXT,
+        match_type   TEXT    NOT NULL CHECK(match_type IN ('existing_coordinator','auto_distributed','manual')),
+        assigned_to  TEXT    NOT NULL,
+        remark_id    INTEGER REFERENCES remarks(id) ON DELETE SET NULL,
+        created_at   TEXT    NOT NULL DEFAULT (datetime('now','+2 hours'))
+      )`);
+      db._raw.run(`INSERT INTO distribution_items_new SELECT * FROM distribution_items`);
+      db._raw.run(`DROP TABLE distribution_items`);
+      db._raw.run(`ALTER TABLE distribution_items_new RENAME TO distribution_items`);
+      db._raw.run(`CREATE INDEX IF NOT EXISTS idx_dist_items_session ON distribution_items(session_id)`);
+      console.log("✅ Migration: distribution_items CHECK constraint updated to allow 'manual'");
+    }
+  } catch (e) { console.error('distribution_items manual migration:', e.message); }
+
   // ── Add date_from / date_to columns to distribution_sessions ─────────────
   try {
     const dsCols = db._raw.exec(`PRAGMA table_info(distribution_sessions)`)[0]?.values.map(r => r[1]) || [];
