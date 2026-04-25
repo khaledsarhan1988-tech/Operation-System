@@ -406,7 +406,7 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
       COALESCE(c2.name, r2.client_name)       AS client_name,
       r2.client_phone,
       c2.group_name,
-      date(${rdSQL}, '-1 day')                AS session_date,
+      CASE WHEN strftime('%w', ${rdSQL}) = '6' THEN date(${rdSQL}, '-2 days') ELSE date(${rdSQL}, '-1 day') END AS session_date,
       COALESCE(r2.assigned_to, b2.coordinators) AS coordinators,
       COALESCE(
         (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(r2.assigned_to)) AND u.department != 'All' LIMIT 1),
