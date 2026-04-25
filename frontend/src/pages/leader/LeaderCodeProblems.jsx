@@ -86,13 +86,13 @@ export default function LeaderCodeProblems() {
   const [saving,    setSaving]    = useState(false);
   const [saveError, setSaveError] = useState(null);
 
-  // ── users list for employee dropdown (all agents from users table)
+  // ── users list for employee dropdown (leader's team only)
   const { data: usersData } = useQuery({
-    queryKey: ['users-agents'],
-    queryFn: () => api.get('/admin/users').then(r => r.data),
+    queryKey: ['leader-team-agents'],
+    queryFn: () => api.get('/leader/team').then(r => r.data),
     staleTime: 10 * 60 * 1000,
   });
-  const team = (usersData ?? []).filter(u => u.role === 'agent' && u.is_active);
+  const team = (usersData ?? []).map(u => ({ ...u, full_name: u.name, is_active: true }));
 
   // ── data — always show_resolved:true so counts match inside/outside
   const { data, isLoading } = useQuery({

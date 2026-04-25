@@ -281,10 +281,10 @@ router.get('/pipeline', (req, res) => {
   const line       = lineFilter(req);
   const { agent_name, date_from, date_to } = req.query;
 
-  // ── 1. Resolve agents in this leader's line ───────────────────────────────
-  // Distribution is organised by line, not department — filter by line only
+  // ── 1. Resolve agents in this leader's team ────────────────────────────────
   const agentConds  = ["u.role = 'agent'", "u.is_active = 1"];
   const agentParams = [];
+  if (dept && dept !== 'All') { agentConds.push('u.department = ?'); agentParams.push(dept); }
   if (line)       { agentConds.push('u.line = ?');       agentParams.push(line); }
   if (agent_name) { agentConds.push('u.full_name = ?');  agentParams.push(agent_name); }
 
@@ -307,8 +307,9 @@ router.get('/pipeline', (req, res) => {
   if (date_from) { dateClause += ' AND client_date >= ?'; dateParams.push(date_from); }
   if (date_to)   { dateClause += ' AND client_date <= ?'; dateParams.push(date_to);   }
 
+  const lineC = line ? ` AND line = '${line.replace(/'/g, "''")}'` : '';
+
   // ── 3. Build one Kanban column ─────────────────────────────────────────────
-  // No line filter on remarks — agents are already scoped to the right line
   const buildCol = (where) =>
     db.prepare(`
       SELECT id, client_name, client_phone, task_type, status, priority,
@@ -318,7 +319,7 @@ router.get('/pipeline', (req, res) => {
       FROM remarks
       WHERE assigned_to IN (${agentPH})
         AND category = 'توزيع عملاء'
-        AND ${where}${dateClause}
+        AND ${where}${lineC}${dateClause}
       ORDER BY
         assigned_to COLLATE NOCASE ASC,
         CASE priority WHEN 'عاجلة' THEN 1 WHEN 'هامة' THEN 2 ELSE 3 END ASC,
