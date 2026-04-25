@@ -519,10 +519,10 @@ function RemarksNotesModal({ params, onClose }) {
   const [fZ, setFZ]   = useState({ coordinator:'', has_remark:'' });
   const [afZ, setAfZ] = useState({});
 
-  // categories state (category + assigned_to only)
+  // categories state — own dates + category + assigned_to
   const [pageC, setPageC]   = useState(1);
   const [searchC, setSearchC] = useState('');
-  const [fC, setFC]   = useState({ assigned_to:'', category_filter:'' });
+  const [fC, setFC]   = useState({ modal_from:'', modal_to:'', assigned_to:'', category_filter:'' });
   const [afC, setAfC] = useState({});
 
   const { data: opts } = useQuery({
@@ -548,7 +548,7 @@ function RemarksNotesModal({ params, onClose }) {
   const applyZ = () => { const c={}; Object.entries(fZ).forEach(([k,v])=>{if(v&&v!=='All')c[k]=v;}); setAfZ(c); setPageZ(1); };
   const clearZ = () => { setFZ({ coordinator:'', has_remark:'' }); setAfZ({}); setPageZ(1); };
   const applyC = () => { const c={}; Object.entries(fC).forEach(([k,v])=>{if(v&&v!=='All')c[k]=v;}); setAfC(c); setPageC(1); };
-  const clearC = () => { setFC({ assigned_to:'', category_filter:'' }); setAfC({}); setPageC(1); };
+  const clearC = () => { setFC({ modal_from:'', modal_to:'', assigned_to:'', category_filter:'' }); setAfC({}); setPageC(1); };
 
   const { data: mData, isLoading: mLoad } = useQuery({
     queryKey: ['rnm', params, afShared, pageM, searchM, afM],
@@ -561,8 +561,10 @@ function RemarksNotesModal({ params, onClose }) {
     staleTime: 2 * 60 * 1000,
   });
   const { data: cData, isLoading: cLoad } = useQuery({
-    queryKey: ['rnc', params, afShared, pageC, searchC, afC],
-    queryFn: () => api.get('/reports/remarks-categories', { params: { ...params, ...afShared, page: pageC, limit: LIMIT, search: searchC, ...afC } }).then(r => r.data),
+    queryKey: ['rnc', params, afShared.modal_dept, pageC, searchC, afC],
+    // Section 2 has its OWN date filter (remark creation date ≠ absence date)
+    // Only inherit dept from shared filter — dates are independent
+    queryFn: () => api.get('/reports/remarks-categories', { params: { ...params, modal_dept: afShared.modal_dept, page: pageC, limit: LIMIT, search: searchC, ...afC } }).then(r => r.data),
     staleTime: 2 * 60 * 1000,
   });
 
@@ -807,8 +809,16 @@ function RemarksNotesModal({ params, onClose }) {
             <span className="text-xs text-gray-400">إجمالي: <b className="text-gray-700">{cData?.total ?? '—'}</b> سجل</span>
           </div>
           <SearchBar val={searchC} setVal={setSearchC} onApply={applyC} total={cData?.total} placeholder="بحث بالتصنيف، اسم العميل، أو الموبايل..." />
-          {/* Filters — category + assigned_to (dates/dept from shared filter above) */}
+          {/* Filters — Section 2 has its OWN date range (remark creation date) */}
           <div className="px-5 py-3 bg-gray-50/50 border-b border-gray-100 flex flex-wrap gap-3 items-end">
+            <div>
+              <label className={labelCls}>من تاريخ الريمارك</label>
+              <input type="date" value={fC.modal_from} onChange={e=>setFC(f=>({...f,modal_from:e.target.value}))} className={inputCls}/>
+            </div>
+            <div>
+              <label className={labelCls}>إلى تاريخ الريمارك</label>
+              <input type="date" value={fC.modal_to} onChange={e=>setFC(f=>({...f,modal_to:e.target.value}))} className={inputCls}/>
+            </div>
             <div>
               <label className={labelCls}>التصنيف</label>
               <select value={fC.category_filter} onChange={e=>setFC(f=>({...f,category_filter:e.target.value}))} className={inputCls}>
