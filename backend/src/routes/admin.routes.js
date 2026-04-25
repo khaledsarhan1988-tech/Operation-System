@@ -1,7 +1,10 @@
 'use strict';
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const path = require('path');
+const fs = require('fs');
 const db = require('../config/database');
+const { saveNow } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { lineFilter } = require('../utils/lineFilter');
@@ -653,6 +656,27 @@ router.delete('/pipeline/interactions/:id', (req, res) => {
   if (!interaction) return res.status(404).json({ error: 'Interaction not found' });
   db.prepare('DELETE FROM remark_interactions WHERE id = ?').run(id);
   return res.json({ ok: true });
+});
+
+// GET /api/admin/backup/download  — admin only, downloads full SQLite DB file
+router.get('/backup/download', (req, res) => {
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin only' });
+  }
+  const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../../data/academy.db');
+  try {
+    saveNow();
+    if (!fs.existsSync(DB_PATH)) {
+      return res.status(404).json({ error: 'Database file not found' });
+    }
+    const date = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Disposition', `attachment; filename="academy-backup-${date}.db"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    fs.createReadStream(DB_PATH).pipe(res);
+  } catch (err) {
+    console.error('[backup/download]', err);
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;
