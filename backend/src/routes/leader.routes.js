@@ -262,4 +262,87 @@ router.get('/side-sessions-summary', (req, res) => {
   return res.json(data);
 });
 
+// ─── PIPELINE (team-wide Kanban) ─────────────────────────────────────────────
+
+function getSlaStatus(slaDeadline, priority) {
+  if (!slaDeadline) return 'on_time';
+  const deadline = new Date(slaDeadline);
+  const now = new Date();
+  const WARN_HOURS = { 'عاجلة': 3, 'هامة': 24, 'عادية': 48 };
+  const warnMs = (WARN_HOURS[priority] || 48) * 3600000;
+  if (now > deadline) return 'breached';
+  if (deadline - now <= warnMs) return 'at_risk';
+  return 'on_time';
+}
+
+// GET /api/leader/pipeline?agent_name=&date_from=&date_to=
+router.get('/pipeline', (req, res) => {
+  const dept       = req.user?.department;
+  const line       = lineFilter(req);
+  const { agent_name, date_from, date_to } = req.query;
+
+  // ── 1. Resolve agents in this leader's team ────────────────────────────────
+  const agentConds  = ["u.role = 'agent'", "u.is_active = 1"];
+  const agentParams = [];
+  if (dept && dept !== 'All') { agentConds.push('u.department = ?'); agentParams.push(dept); }
+  if (line)       { agentConds.push('u.line = ?');       agentParams.push(line); }
+  if (agent_name) { agentConds.push('u.full_name = ?');  agentParams.push(agent_name); }
+
+  const agents = db.prepare(
+    `SELECT full_name FROM users WHERE ${agentConds.join(' AND ')} ORDER BY full_name`
+  ).all(...agentParams);
+
+  const empty = {
+    'جديدة': [], 'Follow Up': [], 'Placement Test': [],
+    'Problem Existing': [], 'No Answer': [], 'No Interesting': [], 'Retention Done': [],
+  };
+  if (!agents.length) return res.json(empty);
+
+  const agentNames = agents.map(a => a.full_name);
+  const agentPH    = agentNames.map(() => '?').join(',');
+
+  // ── 2. Optional date filter ────────────────────────────────────────────────
+  const dateParams = [];
+  let dateClause   = '';
+  if (date_from) { dateClause += ' AND client_date >= ?'; dateParams.push(date_from); }
+  if (date_to)   { dateClause += ' AND client_date <= ?'; dateParams.push(date_to);   }
+
+  const lineC = line ? ` AND line = '${line.replace(/'/g, "''")}'` : '';
+
+  // ── 3. Build one Kanban column ─────────────────────────────────────────────
+  const buildCol = (where) =>
+    db.prepare(`
+      SELECT id, client_name, client_phone, task_type, status, priority,
+             sla_deadline, added_at, last_updated, next_followup_at,
+             agent_notes, category, line, details, client_date, assigned_to,
+             (SELECT COUNT(*) FROM client_transfers ct WHERE ct.remark_id = remarks.id) AS transfer_count
+      FROM remarks
+      WHERE assigned_to IN (${agentPH})
+        AND category = 'توزيع عملاء'
+        AND ${where}${lineC}${dateClause}
+      ORDER BY
+        assigned_to COLLATE NOCASE ASC,
+        CASE priority WHEN 'عاجلة' THEN 1 WHEN 'هامة' THEN 2 ELSE 3 END ASC,
+        CASE WHEN sla_deadline < datetime('now','+2 hours') THEN 0 ELSE 1 END ASC,
+        added_at ASC
+      LIMIT 2000
+    `).all(...agentNames, ...dateParams)
+      .map(r => ({ ...r, sla_status: getSlaStatus(r.sla_deadline, r.priority) }));
+
+  try {
+    return res.json({
+      'جديدة':            buildCol(`status NOT IN ('إنتهت','قيد المتابعة','في المتابعة','بانتظار الرد','Follow Up','Placement Test','Problem Existing','No Answer','No Interesting','Retention Done')`),
+      'Follow Up':        buildCol(`status IN ('قيد المتابعة','في المتابعة','Follow Up')`),
+      'Placement Test':   buildCol(`status = 'Placement Test'`),
+      'Problem Existing': buildCol(`status = 'Problem Existing'`),
+      'No Answer':        buildCol(`status IN ('بانتظار الرد','No Answer')`),
+      'No Interesting':   buildCol(`status = 'No Interesting'`),
+      'Retention Done':   buildCol(`status IN ('إنتهت','Retention Done')`),
+    });
+  } catch (err) {
+    console.error('[leader/pipeline]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

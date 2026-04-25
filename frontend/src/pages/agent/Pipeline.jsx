@@ -116,7 +116,7 @@ function fmtDateTime(s) {
 }
 
 // ─── ClientCard ───────────────────────────────────────────────────────────────
-function ClientCard({ remark, stageKey, onSelect, onMove, onDragEnd, selectionMode, selected, onToggle }) {
+function ClientCard({ remark, stageKey, onSelect, onMove, onDragEnd, selectionMode, selected, onToggle, showAgent }) {
   const pri  = PRIORITY_STYLE[remark.priority] || PRIORITY_STYLE['عادية'];
   const sla  = SLA_STYLE[remark.sla_status]    || SLA_STYLE.on_time;
   const handleClick = () => selectionMode ? onToggle(remark.id) : onSelect(remark);
@@ -166,6 +166,14 @@ function ClientCard({ remark, stageKey, onSelect, onMove, onDragEnd, selectionMo
             )}
           </div>
         </div>
+
+        {/* agent badge — leader view only */}
+        {showAgent && remark.assigned_to && (
+          <div className="flex items-center gap-1 mb-2">
+            <Users size={10} className="text-indigo-400 flex-shrink-0" />
+            <span className="text-[11px] text-indigo-600 font-semibold truncate">{remark.assigned_to}</span>
+          </div>
+        )}
 
         {/* row 2: task type */}
         <div className="flex items-center gap-1.5 mb-2.5">
@@ -567,7 +575,7 @@ function TransferHistoryModal({ onClose }) {
 // ─── KanbanColumn ─────────────────────────────────────────────────────────────
 const PAGE_SIZE = 50;
 
-function KanbanColumn({ stage, cards, onSelect, onMove, isDragOver, onColDragOver, onColDrop, onDragEnd, selectionMode, selectedIds, onToggle, onSelectAll }) {
+function KanbanColumn({ stage, cards, onSelect, onMove, isDragOver, onColDragOver, onColDrop, onDragEnd, selectionMode, selectedIds, onToggle, onSelectAll, showAgent }) {
   const StageIcon = stage.icon;
   const [page, setPage] = useState(1);
   const totalPages = Math.max(1, Math.ceil(cards.length / PAGE_SIZE));
@@ -683,6 +691,7 @@ function KanbanColumn({ stage, cards, onSelect, onMove, isDragOver, onColDragOve
               selectionMode={selectionMode}
               selected={selectedIds?.has(card.id)}
               onToggle={onToggle}
+              showAgent={showAgent}
             />
           ))
         )}
@@ -980,11 +989,14 @@ function currentMonthRange() {
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 export default function Pipeline() {
   const { user }                          = useAuth();
+  const isLeader = user?.role === 'leader';
+
   const [selected,      setSelected]      = useState(null);
   const [search,        setSearch]        = useState('');
   const [filterStage,   setFilterStage]   = useState('');
   const [dateFrom,      setDateFrom]      = useState('');
   const [dateTo,        setDateTo]        = useState('');
+  const [agentFilter,   setAgentFilter]   = useState('');   // leader only
   const [dragOverStage, setDragOverStage] = useState(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds,   setSelectedIds]   = useState(new Set());
@@ -992,12 +1004,20 @@ export default function Pipeline() {
   const [showHistory,   setShowHistory]   = useState(false);
   const qc = useQueryClient();
 
+  // Team agents list — only fetched for leaders (for the filter dropdown)
+  const { data: teamAgents = [] } = useQuery({
+    queryKey: ['leader-team-agents'],
+    queryFn:  () => api.get('/leader/team').then(r => r.data),
+    enabled:  isLeader,
+  });
+
   const { data: pipeline, isLoading, refetch, isFetching } = useQuery({
-    queryKey: ['agent-pipeline', dateFrom, dateTo],
-    queryFn: () => api.get('/agent/pipeline', {
+    queryKey: [isLeader ? 'leader-pipeline' : 'agent-pipeline', dateFrom, dateTo, agentFilter],
+    queryFn: () => api.get(isLeader ? '/leader/pipeline' : '/agent/pipeline', {
       params: {
-        ...(dateFrom ? { date_from: dateFrom } : {}),
-        ...(dateTo   ? { date_to:   dateTo   } : {}),
+        ...(dateFrom    ? { date_from:   dateFrom    } : {}),
+        ...(dateTo      ? { date_to:     dateTo      } : {}),
+        ...(isLeader && agentFilter ? { agent_name: agentFilter } : {}),
       },
     }).then(r => r.data),
     refetchInterval: 120_000,
@@ -1150,6 +1170,21 @@ export default function Pipeline() {
             </button>
           )}
         </div>
+
+        {/* Agent filter — leader only */}
+        {isLeader && (
+          <select
+            value={agentFilter}
+            onChange={e => setAgentFilter(e.target.value)}
+            className="border border-indigo-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300/40 bg-white text-indigo-700 font-medium"
+          >
+            <option value="">كل الموظفين</option>
+            {teamAgents.map(a => (
+              <option key={a.name} value={a.name}>{a.name}</option>
+            ))}
+          </select>
+        )}
+
         <select value={filterStage} onChange={e=>setFilterStage(e.target.value)}
           className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 bg-white">
           <option value="">كل المراحل</option>
@@ -1199,6 +1234,7 @@ export default function Pipeline() {
                 selectedIds={selectedIds}
                 onToggle={toggleSelect}
                 onSelectAll={handleSelectAll}
+                showAgent={isLeader}
               />
             </div>
           ))}
