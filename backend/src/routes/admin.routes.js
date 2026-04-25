@@ -655,4 +655,30 @@ router.delete('/pipeline/interactions/:id', (req, res) => {
   return res.json({ ok: true });
 });
 
+// ─── DATABASE BACKUP ──────────────────────────────────────────────────────────
+
+// GET /api/admin/backup/download  — download current SQLite database file
+router.get('/backup/download', (req, res) => {
+  const { saveNow } = require('../config/database');
+  const path = require('path');
+  const fs   = require('fs');
+  const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../../data/academy.db');
+
+  try {
+    saveNow();
+    if (!fs.existsSync(DB_PATH)) {
+      return res.status(404).json({ error: 'Database file not found' });
+    }
+    const date = new Date().toISOString().slice(0, 10);
+    const filename = `academy-backup-${date}.db`;
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    const stream = fs.createReadStream(DB_PATH);
+    stream.pipe(res);
+  } catch (err) {
+    console.error('[backup/download]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

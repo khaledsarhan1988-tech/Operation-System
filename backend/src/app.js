@@ -462,6 +462,13 @@ initDb().then(db => {
     });
   });
 
+  // ── Startup data integrity log ────────────────────────────────────────────
+  try {
+    const distCount = db._raw.exec(`SELECT COUNT(*) FROM remarks WHERE category = 'توزيع عملاء'`)[0]?.values[0][0] ?? 0;
+    const pendingCount = db._raw.exec(`SELECT COUNT(*) FROM remarks WHERE category = 'توزيع عملاء' AND status != 'إنتهت'`)[0]?.values[0][0] ?? 0;
+    console.log(`📊 Pipeline clients in DB: ${distCount} total, ${pendingCount} pending`);
+  } catch (e) { /* remarks table may not exist yet on first run */ }
+
   app.listen(PORT, () => {
     console.log(`🚀 Academy System backend running on port ${PORT}`);
     console.log(`   Environment: ${process.env.NODE_ENV || 'development'}`);
