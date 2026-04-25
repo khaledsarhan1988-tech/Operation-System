@@ -220,7 +220,7 @@ function buildRemarksNotesMainInnerQ({ from_date, to_date, department, employee,
       COALESCE(c3.name, r3.client_name) AS student_name,
       r3.client_phone                   AS student_phone,
       COALESCE(c3.group_name, '--')     AS group_name,
-      date(${rdSQLMain}, '-1 day')      AS absence_date,
+      ${prevLectureDay(rdSQLMain)}      AS absence_date,
       COALESCE(b3.coordinators, r3.assigned_to) AS coordinators,
       COALESCE(
         (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(COALESCE(b3.coordinators, r3.assigned_to))) AND u.department != 'All' LIMIT 1),
@@ -244,14 +244,14 @@ function buildRemarksNotesMainInnerQ({ from_date, to_date, department, employee,
       AND NOT EXISTS (
         SELECT 1 FROM absent_students a3
         WHERE TRIM(a3.phone) = TRIM(r3.client_phone)
-          AND a3.date = date(${rdSQLMain}, '-1 day')${line ? ' AND a3.line = r3.line' : ''}
+          AND a3.date = (${prevLectureDay(rdSQLMain)})${line ? ' AND a3.line = r3.line' : ''}
       )
       AND EXISTS (
         SELECT 1 FROM lectures lx
         WHERE lx.group_name = c3.group_name
           AND lx.session_type = 'main'
           AND lx.status != 'غير مؤكدة'
-          AND lx.date = date(${rdSQLMain}, '-1 day')${line ? ' AND lx.line = r3.line' : ''}
+          AND lx.date = (${prevLectureDay(rdSQLMain)})${line ? ' AND lx.line = r3.line' : ''}
       )
     ${deptFilter3}${empFilter3}${coord3}${search3}${lineR3}`;
 
@@ -259,7 +259,7 @@ function buildRemarksNotesMainInnerQ({ from_date, to_date, department, employee,
     SELECT
       abs_base.student_name, abs_base.student_phone, abs_base.group_name,
       abs_base.absence_date, abs_base.coordinators, abs_base.dept_type,
-      date(abs_base.absence_date, '+1 day') AS expected_remark_date,
+      ${nextRemarkDay('abs_base.absence_date')} AS expected_remark_date,
       r.id AS remark_id, r.details AS remark_details, r.added_at AS remark_date,
       r.assigned_to, r.status AS remark_status,
       CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END AS has_remark
@@ -289,7 +289,7 @@ function buildRemarksNotesMainInnerQ({ from_date, to_date, department, employee,
     ) abs_base
     LEFT JOIN (${remarksSubQ}) r
       ON r.client_phone = abs_base.student_phone
-      AND r.rdate = date(abs_base.absence_date, '+1 day')
+      AND r.rdate = (${nextRemarkDay('abs_base.absence_date')})
     WHERE abs_base.absence_date IS NOT NULL ${dateFilter}${outerCoordFilter}`;
 }
 
@@ -445,7 +445,7 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
     SELECT
       abs_union.client_name, abs_union.client_phone, abs_union.group_name,
       abs_union.session_date, abs_union.coordinators, abs_union.dept_type,
-      date(abs_union.session_date, '+1 day') AS expected_remark_date,
+      ${nextRemarkDay('abs_union.session_date')} AS expected_remark_date,
       r.id AS remark_id, r.details AS remark_details, r.added_at AS remark_date,
       r.assigned_to, r.status AS remark_status,
       CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END AS has_remark
@@ -475,7 +475,7 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
     ) abs_union
     LEFT JOIN (${remarksSubQ}) r
       ON r.client_phone = abs_union.client_phone
-      AND r.rdate = date(abs_union.session_date, '+1 day')
+      AND r.rdate = (${nextRemarkDay('abs_union.session_date')})
     WHERE abs_union.session_date IS NOT NULL ${dateFilter}${outerCoordFilter}`;
 }
 
@@ -488,6 +488,23 @@ function buildLineFilter(alias, line) {
   const safe = line.replace(/'/g, "''");
   return ` AND ${col} = '${safe}'`;
 }
+
+// Friday-skip helpers — Friday is the weekly day off.
+//
+// nextRemarkDay(col): given a lecture/absence date column or expression,
+//   returns the expected remark date:
+//   - Thursday (strftime %w = '4') → Saturday (+2 days, skip Friday)
+//   - Any other day               → next day (+1 day)
+//
+// prevLectureDay(rdSQL): given a remark date expression (used in part3 to
+//   work backwards from the remark to the lecture date):
+//   - Saturday remark (strftime %w = '6') → Thursday (-2 days, skip Friday)
+//   - Any other remark day               → previous day (-1 day)
+const nextRemarkDay = (col) =>
+  `CASE WHEN strftime('%w', ${col}) = '4' THEN date(${col}, '+2 days') ELSE date(${col}, '+1 day') END`;
+
+const prevLectureDay = (rdSQL) =>
+  `CASE WHEN strftime('%w', ${rdSQL}) = '6' THEN date(${rdSQL}, '-2 days') ELSE date(${rdSQL}, '-1 day') END`;
 
 // ─── GET /api/reports/dashboard ───────────────────────────────────────────────
 router.get('/dashboard', (req, res) => {
