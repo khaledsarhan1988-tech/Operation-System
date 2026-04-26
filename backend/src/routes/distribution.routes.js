@@ -572,6 +572,28 @@ router.post('/sessions/:sid/confirm', (req, res) => {
   const slaDeadline = deadline(SLA_HOURS[session.priority] ?? 48);
   const byName      = req.user.full_name;
 
+  // ── Duplicate guard at confirm time ──────────────────────────────────────────
+  // The preview duplicate check only looks at existing remarks, but if two pending
+  // sessions were created from the same file before either was confirmed, the second
+  // confirmation would create duplicate remarks for the same clients.
+  // Fix: build a fresh active-remark map for all phones in this batch, then skip
+  // (or link to existing) any client who already has an active remark.
+  const itemPhones = [...new Set(items.map(i => i.client_phone).filter(Boolean))];
+  const confirmDupeMap = {};
+  if (itemPhones.length > 0) {
+    const ph = itemPhones.map(() => '?').join(',');
+    db.prepare(`
+      SELECT id, client_phone, assigned_to
+      FROM remarks
+      WHERE client_phone IN (${ph})
+        AND client_phone != ''
+        AND LOWER(status) NOT IN ('إنتهت','closed','resolved')
+      ORDER BY added_at DESC
+    `).all(...itemPhones).forEach(r => {
+      if (!confirmDupeMap[r.client_phone]) confirmDupeMap[r.client_phone] = r;
+    });
+  }
+
   const insertRemark = db.prepare(`
     INSERT INTO remarks
       (task_type, assigned_to, details, category, status,
@@ -583,8 +605,20 @@ router.post('/sessions/:sid/confirm', (req, res) => {
     `UPDATE distribution_items SET remark_id = ? WHERE id = ?`
   );
 
+  let remarksCreated = 0;
+  let remarksDuped   = 0;
+
   db.transaction(() => {
     for (const item of items) {
+      // Skip if an active remark already exists for this phone (cross-session duplicate)
+      const existing = item.client_phone && confirmDupeMap[item.client_phone];
+      if (existing) {
+        // Link the item to the existing remark so history is traceable
+        updateItem.run(existing.id, item.id);
+        remarksDuped++;
+        continue;
+      }
+
       const details = item.match_type === 'existing_coordinator'
         ? `توزيع عملاء — منسق موجود (${item.assigned_to})`
         : `توزيع عملاء — توزيع تلقائي`;
@@ -605,6 +639,12 @@ router.post('/sessions/:sid/confirm', (req, res) => {
         dmyToISO(item.client_date)   // YYYY-MM-DD from DD/MM/YYYY
       );
       updateItem.run(r.lastInsertRowid, item.id);
+      remarksCreated++;
+
+      // Register in dupe map so later items in the SAME session don't duplicate
+      if (item.client_phone) {
+        confirmDupeMap[item.client_phone] = { id: r.lastInsertRowid };
+      }
     }
     db.prepare(`
       UPDATE distribution_sessions
@@ -614,7 +654,14 @@ router.post('/sessions/:sid/confirm', (req, res) => {
   })();
   saveNow();
 
-  return res.json({ message: 'تم تأكيد التوزيع', remarks_created: items.length });
+  return res.json({
+    message:          'تم تأكيد التوزيع',
+    remarks_created:  remarksCreated,
+    duplicates_skipped: remarksDuped,
+    ...(remarksDuped > 0 && {
+      warning: `تم تخطي ${remarksDuped} عميل لديهم ريمارك نشط بالفعل من جلسة سابقة`,
+    }),
+  });
 });
 
 // ─── FORK (resume pending session with date filter) ──────────────────────────
