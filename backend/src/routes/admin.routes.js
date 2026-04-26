@@ -286,7 +286,7 @@ router.get('/kpis', (req, res) => {
     total_remarks:   db.prepare(`SELECT COUNT(*) AS c FROM remarks${lineW}`).get(...lp).c,
     pending_remarks: db.prepare(`SELECT COUNT(*) AS c FROM remarks WHERE status != 'إنتهت'${lineA}`).get(...lp).c,
     overdue_remarks: db.prepare(`SELECT COUNT(*) AS c FROM remarks WHERE status != 'إنتهت' AND sla_deadline < datetime('now', '+2 hours')${lineA}`).get(...lp).c,
-    total_agents:    db.prepare(`SELECT COUNT(*) AS c FROM users WHERE role = 'agent' AND is_active = 1${lineA}`).get(...lp).c,
+    total_agents:    db.prepare(`SELECT COUNT(*) AS c FROM users WHERE role IN ('agent','enrollment') AND is_active = 1${lineA}`).get(...lp).c,
     absent_pending:  db.prepare(`SELECT COUNT(*) AS c FROM absent_students WHERE follow_up_status = 'pending'${lineA}`).get(...lp).c,
     last_sync:       db.prepare("SELECT created_at FROM excel_syncs WHERE status = 'success' ORDER BY created_at DESC LIMIT 1").get()?.created_at || null,
     session_checks_today: db.prepare(`SELECT COUNT(*) AS c FROM side_session_checks WHERE date(checked_at) = date('now')${lineA}`).get(...lp).c,
@@ -357,7 +357,7 @@ router.get('/kpis/details/:metric', (req, res) => {
         rows = db.prepare(`
           SELECT id, username, full_name, role, department, management, line, language, is_active, created_at
           FROM users
-          WHERE role = 'agent' AND is_active = 1${lineA}
+          WHERE role IN ('agent','enrollment') AND is_active = 1${lineA}
           ORDER BY full_name COLLATE NOCASE
         `).all(...lp);
         break;
@@ -487,12 +487,11 @@ router.get('/pipeline/reminders', (req, res) => {
 });
 
 // GET /api/admin/pipeline/agents?line=  — list agents for filter dropdown
-// Returns active agents from users table (role='agent', is_active=1) only
 router.get('/pipeline/agents', (req, res) => {
   const line = effectiveLine(req);
   const lf   = line ? ` AND line = '${line.replace(/'/g,"''")}'` : '';
   const rows = db.prepare(
-    `SELECT full_name FROM users WHERE role = 'agent' AND is_active = 1${lf} ORDER BY full_name COLLATE NOCASE`
+    `SELECT full_name FROM users WHERE role IN ('agent','enrollment') AND is_active = 1${lf} ORDER BY full_name COLLATE NOCASE`
   ).all();
   return res.json(rows.map(r => r.full_name));
 });
@@ -524,14 +523,16 @@ router.put('/pipeline/tasks/:id', (req, res) => {
   return res.json({ ...updated, sla_status: getSlaStatus(updated.sla_deadline, updated.priority) });
 });
 
-// GET /api/admin/pipeline/transfer-targets — full list for admin (agents + leaders)
+// GET /api/admin/pipeline/transfer-targets — full list for admin (agents + leaders + enrollment)
 router.get('/pipeline/transfer-targets', (req, res) => {
   const line = effectiveLine(req);
   const lf   = line ? ` AND line = '${line.replace(/'/g,"''")}'` : '';
   const rows = db.prepare(
     `SELECT full_name, role, department, line FROM users
-     WHERE is_active = 1 AND role IN ('agent','leader')${lf}
-     ORDER BY role DESC, full_name COLLATE NOCASE`
+     WHERE is_active = 1 AND role IN ('agent','leader','enrollment','enrollment_leader')${lf}
+     ORDER BY
+       CASE role WHEN 'leader' THEN 1 WHEN 'enrollment_leader' THEN 2 WHEN 'enrollment' THEN 3 ELSE 4 END,
+       full_name COLLATE NOCASE`
   ).all();
   return res.json(rows);
 });

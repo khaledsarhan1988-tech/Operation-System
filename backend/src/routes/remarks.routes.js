@@ -40,9 +40,9 @@ router.put('/:id', (req, res) => {
   const remark = db.prepare(`SELECT * FROM remarks WHERE id = ?${lf.clause}`).get(id, ...lf.params);
   if (!remark) return res.status(404).json({ error: 'Remark not found' });
 
-  // Agents can only edit their own; leaders/admins can edit all
+  // Agents/enrollment can only edit their own; leaders/admins can edit all
   const role = req.user.role;
-  if (role === 'agent' && remark.assigned_to !== req.user.full_name) {
+  if ((role === 'agent' || role === 'enrollment') && remark.assigned_to !== req.user.full_name) {
     return res.status(403).json({ error: 'Cannot edit another agent\'s remark' });
   }
 

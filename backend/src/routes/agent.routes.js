@@ -715,18 +715,19 @@ router.get('/transfer-targets', (req, res) => {
   const user = req.user;
   let rows;
   if (user.role === 'leader') {
-    // Leader: own agents + all other leaders + admins (not themselves)
+    // Leader: own agents + own enrollment users + all other leaders + admins (not themselves)
     rows = db.prepare(`
       SELECT full_name, role, department, line FROM users
       WHERE is_active = 1
         AND full_name != ?
         AND (
-          (role = 'agent'  AND department = ?)
+          (role IN ('agent','enrollment') AND department = ?)
           OR role = 'leader'
+          OR role = 'enrollment_leader'
           OR role = 'admin'
         )
       ORDER BY
-        CASE role WHEN 'admin' THEN 1 WHEN 'leader' THEN 2 ELSE 3 END ASC,
+        CASE role WHEN 'admin' THEN 1 WHEN 'leader' THEN 2 WHEN 'enrollment_leader' THEN 3 WHEN 'enrollment' THEN 4 ELSE 5 END ASC,
         full_name COLLATE NOCASE
     `).all(user.full_name, user.department);
   } else {
@@ -768,10 +769,12 @@ router.put('/bulk-transfer', (req, res) => {
              || (target.role === 'enrollment' && target.department === user.department);
     if (!ok) return res.status(403).json({ error: 'يمكنك إحالة العملاء لقائد فريقك أو المسؤول فقط' });
   } else if (user.role === 'leader') {
-    // Leader → their agents OR any leader OR any admin
+    // Leader → their agents/enrollment OR any leader/enrollment_leader OR any admin
     const ok = target.role === 'admin'
              || target.role === 'leader'
-             || (target.role === 'agent' && target.department === user.department);
+             || target.role === 'enrollment_leader'
+             || (target.role === 'agent'      && target.department === user.department)
+             || (target.role === 'enrollment' && target.department === user.department);
     if (!ok) return res.status(403).json({ error: 'يمكنك النقل لموظفي قسمك أو قادة الفرق أو المسؤولين فقط' });
   }
   // admin role unreachable here (admin uses /api/admin/* routes)

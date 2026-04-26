@@ -1367,9 +1367,9 @@ router.get('/code-problems', (req, res) => {
   // - leader: strict dept_type-only filter (no OR EXISTS) to prevent cross-dept leakage
   // - admin:  full buildDeptFilter (includes coordinator-based fallback)
   let deptFilter;
-  if (req.user.role === 'agent') {
+  if (req.user.role === 'agent' || req.user.role === 'enrollment') {
     deptFilter = '';
-  } else if (req.user.role === 'leader') {
+  } else if (req.user.role === 'leader' || req.user.role === 'enrollment_leader') {
     // Leader: coordinator's registered dept is source of truth.
     // Include group if: coordinator registered in leader's dept, OR (coordinator NOT registered AND batch.dept_type matches).
     const dept = (!department || department === 'All') ? req.user.department : department;
@@ -1401,7 +1401,7 @@ router.get('/code-problems', (req, res) => {
   // If agent: force filter to their own groups using FULL name as one unit (not split by word)
   // Splitting by word causes cross-agent leakage: "Shrouk Ali" → LIKE '%Ali%' also matches "Ali Moaatz"
   let empFilter;
-  if (req.user.role === 'agent') {
+  if (req.user.role === 'agent' || req.user.role === 'enrollment') {
     const userRow = db.prepare('SELECT full_name FROM users WHERE id = ?').get(req.user.id);
     const fullName = (userRow?.full_name || '').trim();
     if (fullName) {
