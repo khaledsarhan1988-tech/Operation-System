@@ -1462,19 +1462,20 @@ router.get('/code-problems', (req, res) => {
        FROM batches b WHERE status='نشطة'${deptFilter}${empFilter}${lineB}`
     ).all();
 
-    // fetch all CONFIRMED main sessions with time + duration
+    // fetch ALL main sessions (including unconfirmed) for count/date validation
+    // Unconfirmed lectures are real lectures — excluding them causes false "missing lectures" errors
     const mainRaw = db.prepare(
       `SELECT l.group_name, l.date, l.time, l.duration FROM lectures l
        INNER JOIN batches b ON l.group_name=b.group_name${line ? ' AND b.line = l.line' : ''}
-       WHERE b.status='نشطة' AND l.session_type='main' AND l.status != 'غير مؤكدة'
+       WHERE b.status='نشطة' AND l.session_type='main'
        ${deptFilter}${empFilter}${lineL} ORDER BY l.group_name, l.date ASC`
     ).all();
 
-    // fetch only CONFIRMED zoom call sessions (regular 15-min) for zoom-call problem checks
+    // fetch ALL zoom call sessions (regular 15-min) including unconfirmed for zoom-call problem checks
     const sideRaw = db.prepare(
       `SELECT l.group_name, l.date, l.time, l.duration FROM lectures l
        INNER JOIN batches b ON l.group_name=b.group_name${line ? ' AND b.line = l.line' : ''}
-       WHERE b.status='نشطة' AND l.session_type='side' AND l.status != 'غير مؤكدة'
+       WHERE b.status='نشطة' AND l.session_type='side'
          AND LOWER(COALESCE(l.side_session_category,'regular')) = 'regular'
        ${deptFilter}${empFilter}${lineL} ORDER BY l.group_name, l.date ASC`
     ).all();
