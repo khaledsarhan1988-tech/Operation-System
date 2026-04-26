@@ -211,47 +211,39 @@ router.post('/preview', (req, res) => {
     // Build optional date filter set
     const filterDates = Array.isArray(dates) && dates.length > 0 ? new Set(dates) : null;
 
-    // Skip header (row 0) — columns: A=date, B=pages/line, C=name, D=phone
-    const clients = [];
+    // ── Parse ALL rows from Excel (keep Excel row order; tag each with inFilter) ──
+    // We parse everything so we can fill gaps from overflow rows later.
+    const allClients = [];
     for (let i = 1; i < rows.length; i++) {
-      const row   = rows[i];
-      const date  = parseExcelDate(row[0]);
-      const pages = String(row[1] || '').trim();
-      const name  = String(row[2] || '').trim();
-      const phone = normalisePhone(row[3]);
+      const row      = rows[i];
+      const date     = parseExcelDate(row[0]);
+      const pages    = String(row[1] || '').trim();
+      const name     = String(row[2] || '').trim();
+      const phone    = normalisePhone(row[3]);
       if (!name && !phone) continue;
-      if (filterDates && !filterDates.has(date)) continue;
-      clients.push({ date, pages, name, phone });
+      const inFilter = !filterDates || filterDates.has(date);
+      allClients.push({ date, pages, name, phone, inFilter });
     }
 
-    if (!clients.length) return res.status(400).json({ error: 'لم يتم العثور على عملاء في الملف' });
+    if (!allClients.length) return res.status(400).json({ error: 'لم يتم العثور على عملاء في الملف' });
 
-    // ── Keep clients in EXCEL SHEET ORDER (row by row, no date sort) ─────────
-    // The user distributes sequentially through the file; sorting by date would
-    // break the intended row order and skip clients from earlier rows.
-
-    // ── Detect INTRA-FILE duplicates (same phone appearing more than once in Excel) ─
-    // We deduplicate here so every row in the session maps to exactly one remark.
-    // The caller is shown intra_file_duplicates so they can fix their Excel if needed.
-    const filePhoneSeen = new Set();
+    // ── Intra-file dedup (global — one pass over ALL rows in Excel order) ────────
+    // Keep the first occurrence of each phone across the entire file.
+    // Report duplicates that fell inside the selected filter (visible to user).
+    const filePhoneSeen    = new Set();
     const intraFileDuplicates = [];
-    const deduplicatedClients = [];
-    for (const c of clients) {
+    const uniqueAll        = []; // all unique clients (in-filter + overflow), Excel order
+    for (const c of allClients) {
       if (c.phone && filePhoneSeen.has(c.phone)) {
-        intraFileDuplicates.push({ name: c.name, phone: c.phone, date: c.date });
+        if (c.inFilter) intraFileDuplicates.push({ name: c.name, phone: c.phone, date: c.date });
       } else {
         if (c.phone) filePhoneSeen.add(c.phone);
-        deduplicatedClients.push(c);
+        uniqueAll.push(c);
       }
     }
-    // Work with the deduplicated list from here on
-    const uniqueClients = deduplicatedClients;
 
-    // ── Detect duplicates: clients already in an ACTIVE CONFIRMED distribution session ──
-    // Only block re-distribution if the client has an active remark that was created
-    // by a confirmed distribution session. External remarks (from Remarks.xlsx or
-    // manual creation) are intentionally ignored so they don't silently swallow clients.
-    const phoneList = [...new Set(uniqueClients.map(c => c.phone).filter(Boolean))];
+    // ── Cross-session dedup: skip phones already in a CONFIRMED distribution ─────
+    const phoneList = [...new Set(uniqueAll.map(c => c.phone).filter(Boolean))];
     const existingActiveMap = {};
     if (phoneList.length > 0) {
       const ph = phoneList.map(() => '?').join(',');
@@ -269,36 +261,64 @@ router.post('/preview', (req, res) => {
           )
         ORDER BY r.added_at DESC
       `).all(...phoneList).forEach(r => {
-        if (!existingActiveMap[r.client_phone])
-          existingActiveMap[r.client_phone] = r;
+        if (!existingActiveMap[r.client_phone]) existingActiveMap[r.client_phone] = r;
       });
     }
 
-    // Split: fresh (will be distributed) vs duplicates (skipped)
-    const duplicates  = [];
-    const freshClients = [];
-    for (const c of uniqueClients) {
+    // Split unique clients into: cross-session duplicates / fresh-in-filter / fresh-overflow
+    const duplicates      = [];   // cross-session, were inside filter → shown to user
+    const freshInFilter   = [];   // fresh, inside date filter
+    const freshOverflow   = [];   // fresh, outside date filter (fill-up pool)
+    for (const c of uniqueAll) {
       const ex = c.phone && existingActiveMap[c.phone];
       if (ex) {
-        duplicates.push({
-          name:                c.name,
-          phone:               c.phone,
-          date:                c.date,
-          existing_assigned_to: ex.assigned_to,
-          existing_status:      ex.status,
-          existing_remark_id:   ex.id,
-        });
+        if (c.inFilter) {
+          duplicates.push({
+            name:                 c.name,
+            phone:                c.phone,
+            date:                 c.date,
+            existing_assigned_to: ex.assigned_to,
+            existing_status:      ex.status,
+            existing_remark_id:   ex.id,
+          });
+        }
+        // overflow cross-session duplicates are silently skipped
       } else {
-        freshClients.push(c);
+        if (c.inFilter) freshInFilter.push(c);
+        else             freshOverflow.push(c);
       }
     }
-    // Only distribute fresh clients
-    const clients_to_distribute = freshClients;
-    if (!clients_to_distribute.length && duplicates.length > 0) {
-      return res.status(400).json({
-        error: `جميع العملاء (${duplicates.length}) لديهم مهام نشطة بالفعل`,
-        duplicates,
-      });
+
+    // ── Fill-up: if selected clients are fewer than the manual target, pull extras ──
+    // When manual assignments are provided, we know the intended total count.
+    // If filter + dedup gave fewer than that count, take the next fresh rows from the
+    // overflow pool (the rows that came after the selected dates in the Excel file).
+    const hasManual    = Array.isArray(assignments) && assignments.length > 0;
+    const manualTarget = hasManual
+      ? assignments.reduce((sum, a) => sum + (Math.max(0, parseInt(a.count) || 0)), 0)
+      : 0;
+
+    let clients_to_distribute;
+    if (hasManual && freshInFilter.length < manualTarget && freshOverflow.length > 0) {
+      const needed  = manualTarget - freshInFilter.length;
+      const filler  = freshOverflow.slice(0, needed);
+      clients_to_distribute = [...freshInFilter, ...filler];
+      console.log(`[distribution/preview] fill-up: inFilter=${freshInFilter.length} target=${manualTarget} filling=${filler.length}`);
+    } else if (filterDates) {
+      clients_to_distribute = freshInFilter;   // respect filter, no fill-up
+    } else {
+      clients_to_distribute = [...freshInFilter, ...freshOverflow]; // no filter → all fresh
+    }
+
+    if (!clients_to_distribute.length) {
+      if (duplicates.length > 0 || intraFileDuplicates.length > 0) {
+        return res.status(400).json({
+          error: `جميع العملاء (${duplicates.length + intraFileDuplicates.length}) مكررون أو لديهم مهام نشطة`,
+          duplicates,
+          intra_file_duplicates: intraFileDuplicates,
+        });
+      }
+      return res.status(400).json({ error: 'لم يتم العثور على عملاء جدد للتوزيع' });
     }
 
     // ── Build phone→coordinator map in ONE bulk query ─────────────────────────
@@ -381,7 +401,7 @@ router.post('/preview', (req, res) => {
     // If manual assignments provided: assign ONLY specified counts, leave rest unassigned.
     // If no manual assignments: auto-distribute all unmatched clients by workload.
     let finalDistributed = [];
-    const hasManual = Array.isArray(assignments) && assignments.length > 0;
+    // hasManual is already defined above (used for fill-up logic)
 
     // When the user explicitly chose a set of agents (manual mode), restrict
     // "existing_coordinator" matches to ONLY those agents. Clients whose existing
