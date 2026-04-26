@@ -369,8 +369,8 @@ function ReminderPanel({ apiPath }) {
 function TransferModal({ count, targets, onConfirm, onClose, isPending, userRole }) {
   const [target, setTarget] = useState('');
   const admins  = targets.filter(t => t.role === 'admin');
-  const leaders = targets.filter(t => t.role === 'leader');
-  const agents  = targets.filter(t => t.role === 'agent');
+  const leaders = targets.filter(t => t.role === 'leader' || t.role === 'enrollment_leader');
+  const agents  = targets.filter(t => t.role === 'agent'  || t.role === 'enrollment');
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
