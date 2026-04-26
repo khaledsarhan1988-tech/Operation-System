@@ -18,6 +18,14 @@ const AGENT_LINKS = [
   { to: '/agent/tasks',              label: 'nav.myTasks',          icon: ClipboardList },
 ];
 
+const ENROLLMENT_LINKS = [
+  { to: '/enrollment/pipeline', label: 'بايبلاين العملاء', icon: Kanban },
+];
+
+const ENROLLMENT_LEADER_LINKS = [
+  { to: '/enrollment-leader/pipeline', label: 'بايبلاين العملاء', icon: Kanban },
+];
+
 const LEADER_LINKS = [
   { to: '/leader',                              label: 'nav.dashboard',        icon: LayoutDashboard, end: true },
   { to: '/leader/team',                         label: 'nav.team',             icon: Users },
@@ -72,7 +80,9 @@ export default function Sidebar({ mobile, onClose }) {
   const navigate = useNavigate();
   const links = user?.role === 'admin'
     ? getAdminLinks(user)
-    : user?.role === 'leader' ? LEADER_LINKS
+    : user?.role === 'leader'            ? LEADER_LINKS
+    : user?.role === 'enrollment_leader' ? ENROLLMENT_LEADER_LINKS
+    : user?.role === 'enrollment'        ? ENROLLMENT_LINKS
     : AGENT_LINKS;
 
   const handleLogout = async () => {

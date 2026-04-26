@@ -36,6 +36,9 @@ import DashboardDetail from './pages/admin/DashboardDetail';
 import ClientDistribution from './pages/admin/ClientDistribution';
 import AdminPipeline from './pages/admin/AdminPipeline';
 
+// Enrollment pages
+import EnrollmentPipeline from './pages/enrollment/Pipeline';
+
 // Shared pages
 import FixReport from './pages/shared/FixReport';
 import AttendanceAbsenceReport from './pages/shared/AttendanceAbsenceReport';
@@ -104,6 +107,26 @@ const router = createBrowserRouter([
       { path: 'reports/attendance-absence',   element: <AttendanceAbsenceReport /> },
       { path: 'distribution',                  element: <ClientDistribution /> },
       { path: 'pipeline',                      element: <AdminPipeline /> },
+    ],
+  },
+
+  // ── Enrollment agent routes ───────────────────────────────────────
+  {
+    path: '/enrollment',
+    element: <PrivateRoute allowedRoles={['enrollment', 'enrollment_leader', 'admin']}><AppShell /></PrivateRoute>,
+    children: [
+      { index: true, element: <Navigate to="pipeline" replace /> },
+      { path: 'pipeline', element: <EnrollmentPipeline /> },
+    ],
+  },
+
+  // ── Enrollment leader routes ──────────────────────────────────────
+  {
+    path: '/enrollment-leader',
+    element: <PrivateRoute allowedRoles={['enrollment_leader', 'admin']}><AppShell /></PrivateRoute>,
+    children: [
+      { index: true, element: <Navigate to="pipeline" replace /> },
+      { path: 'pipeline', element: <EnrollmentPipeline /> },
     ],
   },
 

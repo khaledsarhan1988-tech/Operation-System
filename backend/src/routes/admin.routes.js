@@ -46,7 +46,7 @@ router.post('/users', (req, res) => {
   if (!username || !password || !full_name || !role) {
     return res.status(400).json({ error: 'username, password, full_name, role are required' });
   }
-  if (!['agent', 'leader', 'admin'].includes(role)) {
+  if (!['agent', 'leader', 'admin', 'enrollment', 'enrollment_leader'].includes(role)) {
     return res.status(400).json({ error: 'Invalid role' });
   }
   const existing = db.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE').get(username);

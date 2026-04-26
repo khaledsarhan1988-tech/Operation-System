@@ -1,6 +1,7 @@
 'use strict';
 
 // Role hierarchy: admin > leader > agent
+// enrollment_leader and enrollment are parallel tracks — not in main hierarchy
 const HIERARCHY = { admin: 3, leader: 2, agent: 1 };
 
 /**
@@ -20,4 +21,18 @@ function requireRole(minRole) {
   };
 }
 
-module.exports = { requireRole };
+/**
+ * requireAnyRole(['enrollment', 'enrollment_leader', 'admin'])
+ * Allows any of the listed roles exactly.
+ */
+function requireAnyRole(roles) {
+  return (req, res, next) => {
+    if (!req.user) return res.status(401).json({ error: 'Unauthenticated' });
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Forbidden: insufficient role' });
+    }
+    next();
+  };
+}
+
+module.exports = { requireRole, requireAnyRole };

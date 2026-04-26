@@ -151,7 +151,7 @@ router.get('/agents', (req, res) => {
       WHERE di.remark_id IS NULL
          OR LOWER(r.status) NOT IN ('إنتهت','closed','resolved','مغلق')
     ) active_di ON active_di.assigned_to = u.full_name
-    WHERE u.role = 'agent' AND u.is_active = 1${lf}
+    WHERE u.role IN ('agent','enrollment') AND u.is_active = 1${lf}
     GROUP BY u.id
     ORDER BY open_tasks ASC, u.full_name COLLATE NOCASE
   `).all();
@@ -300,7 +300,7 @@ router.post('/preview', (req, res) => {
 
     // Build active-agent set for fast O(1) validation
     const activeAgents = db.prepare(
-      `SELECT full_name FROM users WHERE role = 'agent' AND is_active = 1`
+      `SELECT full_name FROM users WHERE role IN ('agent','enrollment') AND is_active = 1`
     ).all();
     const agentSet = new Set(activeAgents.map(a => a.full_name.trim().toLowerCase()));
 
@@ -344,7 +344,7 @@ router.post('/preview', (req, res) => {
         WHERE di.remark_id IS NULL
            OR LOWER(r.status) NOT IN ('إنتهت','closed','resolved','مغلق')
       ) active_di ON active_di.assigned_to = u.full_name
-      WHERE u.role = 'agent' AND u.is_active = 1${ul}
+      WHERE u.role IN ('agent','enrollment') AND u.is_active = 1${ul}
       GROUP BY u.full_name
       ORDER BY open_tasks ASC, u.full_name COLLATE NOCASE
     `).all();
@@ -484,7 +484,7 @@ router.put('/sessions/:sid/items/:iid', (req, res) => {
     return res.status(400).json({ error: 'الجلسة مؤكدة أو ملغاة — لا يمكن التعديل' });
 
   const agent = db.prepare(
-    `SELECT full_name FROM users WHERE full_name = ? AND role = 'agent' AND is_active = 1`
+    `SELECT full_name FROM users WHERE full_name = ? AND role IN ('agent','enrollment') AND is_active = 1`
   ).get(assigned_to);
   if (!agent) return res.status(400).json({ error: 'الموظف غير موجود أو غير نشط' });
 

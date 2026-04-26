@@ -4,9 +4,15 @@ import { useAuth } from './AuthContext';
 const ROLE_HIERARCHY = { admin: 3, leader: 2, agent: 1 };
 
 // Role home pages
-const ROLE_HOME = { admin: '/admin', leader: '/leader', agent: '/agent' };
+const ROLE_HOME = {
+  admin:             '/admin',
+  leader:            '/leader',
+  agent:             '/agent',
+  enrollment:        '/enrollment',
+  enrollment_leader: '/enrollment-leader',
+};
 
-export default function PrivateRoute({ children, minRole }) {
+export default function PrivateRoute({ children, minRole, allowedRoles }) {
   const { user, loading } = useAuth();
   const location = useLocation();
 
@@ -22,6 +28,12 @@ export default function PrivateRoute({ children, minRole }) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
+  // Explicit allowed-roles list (for parallel roles like enrollment)
+  if (allowedRoles && !allowedRoles.includes(user.role)) {
+    return <Navigate to={ROLE_HOME[user.role] || '/login'} replace />;
+  }
+
+  // Hierarchy check (for existing agent/leader/admin routes)
   if (minRole && ROLE_HIERARCHY[user.role] < ROLE_HIERARCHY[minRole]) {
     return <Navigate to={ROLE_HOME[user.role] || '/login'} replace />;
   }
