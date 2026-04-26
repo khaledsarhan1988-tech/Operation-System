@@ -800,6 +800,8 @@ export default function ClientDistribution() {
   const [file,           setFile]          = useState(null);
   const [fileBase64,     setFileBase64]    = useState(null);
   const [availableDates, setAvailableDates] = useState([]);
+  const [dateStats,      setDateStats]      = useState([]);   // per-date { date, total, distributed, remaining }
+  const [dateTotals,     setDateTotals]     = useState(null); // { total, distributed, remaining }
   const [selectedDates,  setSelectedDates] = useState(new Set());
   const [dateRangeFrom,  setDateRangeFrom] = useState(''); // YYYY-MM-DD
   const [dateRangeTo,    setDateRangeTo]   = useState(''); // YYYY-MM-DD
@@ -961,10 +963,12 @@ export default function ClientDistribution() {
     reader.onload = (e) => {
       const b64 = e.target.result.split(',')[1];
       setFileBase64(b64);
-      api.post('/distribution/scan-dates', { file_base64: b64 })
+      api.post('/distribution/scan-dates', { file_base64: b64, line })
         .then(r => {
-          setAvailableDates(r.data.dates);
-          setSelectedDates(new Set(r.data.dates));
+          setAvailableDates(r.data.dates   || []);
+          setDateStats(r.data.stats        || []);
+          setDateTotals(r.data.totals      || null);
+          setSelectedDates(new Set(r.data.dates || []));
         })
         .catch(() => {}); // silent fail — user can still analyze without date filter
     };
@@ -1224,6 +1228,65 @@ export default function ClientDistribution() {
                       من إجمالي {availableDates.length} يوم في الملف
                     </span>
                   </div>
+
+                  {/* ── Per-date stats table ─────────────────────────────────── */}
+                  {dateStats.length > 0 && (
+                    <div className="rounded-2xl border border-gray-200 overflow-hidden">
+                      {/* Summary bar */}
+                      {dateTotals && (
+                        <div className="grid grid-cols-3 divide-x divide-x-reverse divide-gray-200 bg-gray-50 border-b border-gray-200">
+                          {[
+                            { label: 'إجمالي الملف',   value: dateTotals.total,       color: 'text-gray-700' },
+                            { label: 'تم توزيعهم',      value: dateTotals.distributed, color: 'text-emerald-600' },
+                            { label: 'متبقي',           value: dateTotals.remaining,   color: dateTotals.remaining === 0 ? 'text-gray-400' : 'text-blue-600' },
+                          ].map(({ label, value, color }) => (
+                            <div key={label} className="flex flex-col items-center py-2 px-3">
+                              <span className={`text-lg font-black ${color}`}>{value}</span>
+                              <span className="text-xs text-gray-500">{label}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Per-date rows */}
+                      <div className="max-h-56 overflow-y-auto divide-y divide-gray-100">
+                        {dateStats.map(s => {
+                          const pct     = s.total > 0 ? Math.round((s.distributed / s.total) * 100) : 0;
+                          const allDone = s.remaining === 0;
+                          return (
+                            <div key={s.date} className={`flex items-center gap-3 px-4 py-2 text-sm ${allDone ? 'opacity-50' : ''}`}>
+                              {/* Date */}
+                              <span className="w-24 flex-shrink-0 font-mono text-xs text-gray-600">{s.date}</span>
+
+                              {/* Progress bar */}
+                              <div className="flex-1 bg-gray-100 rounded-full h-2 overflow-hidden">
+                                <div
+                                  className={`h-2 rounded-full transition-all ${allDone ? 'bg-gray-300' : 'bg-emerald-400'}`}
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
+
+                              {/* Counts */}
+                              <div className="flex items-center gap-2 flex-shrink-0 text-xs">
+                                <span className="text-emerald-600 font-semibold w-6 text-center">{s.distributed}</span>
+                                <span className="text-gray-300">/</span>
+                                <span className="text-gray-600 font-semibold w-6 text-center">{s.total}</span>
+                                <span className={`w-14 text-center font-bold rounded-lg px-1.5 py-0.5 ${
+                                  allDone
+                                    ? 'bg-gray-100 text-gray-400'
+                                    : s.remaining === s.total
+                                      ? 'bg-blue-50 text-blue-600'
+                                      : 'bg-amber-50 text-amber-600'
+                                }`}>
+                                  {allDone ? '✓ مكتمل' : `${s.remaining} باقي`}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

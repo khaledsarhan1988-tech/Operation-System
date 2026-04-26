@@ -97,10 +97,13 @@ router.delete('/task-types/:id', (req, res) => {
 // ─── SCAN DATES (new) ─────────────────────────────────────────────────────────
 
 // POST /api/distribution/scan-dates
-// Body: { file_base64 }
-// Returns: { dates: ["date1", "date2", ...] } sorted unique list from column A
+// Body: { file_base64, line? }
+// Returns: { dates, stats } where stats is an array of per-date objects:
+//   { date, total, distributed, remaining }
+// "distributed" = clients whose phone has an active remark from a confirmed
+//                 distribution session (same logic as the preview duplicate check).
 router.post('/scan-dates', (req, res) => {
-  const { file_base64 } = req.body;
+  const { file_base64, line } = req.body;
   if (!file_base64) return res.status(400).json({ error: 'file_base64 مطلوب' });
 
   try {
@@ -109,22 +112,75 @@ router.post('/scan-dates', (req, res) => {
     const ws   = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
 
-    const dateSet = new Set();
-    for (let i = 1; i < rows.length; i++) {
-      const date = parseExcelDate(rows[i][0]);
-      if (date) dateSet.add(date);
-    }
-
-    // Sort DD/MM/YYYY ascending; fall back to locale compare
+    // Build per-date buckets (phone → first occurrence wins for dedup)
     const parseDMY = s => {
-      const [d, m, y] = s.split('/');
+      const [d, m, y] = (s || '').split('/');
       return new Date(+y, +m - 1, +d);
     };
-    const dates = [...dateSet].sort((a, b) => {
+
+    const dateMap  = {};   // date → Set of unique phones
+    const phoneSeen = new Set();
+
+    for (let i = 1; i < rows.length; i++) {
+      const date  = parseExcelDate(rows[i][0]);
+      const phone = normalisePhone(rows[i][3]);
+      const name  = String(rows[i][2] || '').trim();
+      if (!date) continue;
+      if (!name && !phone) continue;
+
+      if (!dateMap[date]) dateMap[date] = new Set();
+
+      // Only count each phone once (first occurrence in sheet)
+      if (phone && phoneSeen.has(phone)) continue;
+      if (phone) phoneSeen.add(phone);
+      dateMap[date].add(phone || `__noPhone_${i}`);
+    }
+
+    // Sort dates ascending
+    const sortedDates = Object.keys(dateMap).sort((a, b) => {
       try { return parseDMY(a) - parseDMY(b); } catch { return a.localeCompare(b, 'ar'); }
     });
 
-    return res.json({ dates });
+    // Collect ALL unique phones from the file for a single bulk DB query
+    const allPhones = [...phoneSeen].filter(Boolean);
+
+    // Check which phones already have an active remark from a confirmed session
+    const distributedPhones = new Set();
+    if (allPhones.length > 0) {
+      const ph  = allPhones.map(() => '?').join(',');
+      const lf  = line && line !== 'All' ? ` AND r.line = ?` : '';
+      const params = line && line !== 'All' ? [...allPhones, line] : allPhones;
+      db.prepare(`
+        SELECT r.client_phone
+        FROM remarks r
+        WHERE r.client_phone IN (${ph})
+          AND r.client_phone != ''
+          AND r.category = 'توزيع عملاء'
+          AND LOWER(r.status) NOT IN ('إنتهت','closed','resolved')
+          AND EXISTS (
+            SELECT 1 FROM distribution_items di
+            INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
+            WHERE di.remark_id = r.id AND di.remark_id IS NOT NULL
+          )${lf}
+      `).all(...params).forEach(r => distributedPhones.add(r.client_phone));
+    }
+
+    // Build per-date stats
+    const stats = sortedDates.map(date => {
+      const phones = [...dateMap[date]];
+      const total       = phones.length;
+      const distributed = phones.filter(p => distributedPhones.has(p)).length;
+      const remaining   = total - distributed;
+      return { date, total, distributed, remaining };
+    });
+
+    // Summary totals
+    const totals = stats.reduce(
+      (acc, s) => ({ total: acc.total + s.total, distributed: acc.distributed + s.distributed, remaining: acc.remaining + s.remaining }),
+      { total: 0, distributed: 0, remaining: 0 }
+    );
+
+    return res.json({ dates: sortedDates, stats, totals });
   } catch (err) {
     console.error('[distribution/scan-dates]', err);
     return res.status(500).json({ error: err.message });
