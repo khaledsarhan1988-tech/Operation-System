@@ -396,6 +396,8 @@ initDb().then(db => {
   try {
     const usersSql = db._raw.exec(`SELECT sql FROM sqlite_master WHERE type='table' AND name='users'`)[0]?.values[0][0] || '';
     if (usersSql && !usersSql.includes("'enrollment'")) {
+      // Disable foreign keys temporarily to allow DROP TABLE users
+      db._raw.run('PRAGMA foreign_keys = OFF');
       db._raw.run(`CREATE TABLE IF NOT EXISTS users_new (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
         username      TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -413,10 +415,12 @@ initDb().then(db => {
       db._raw.run(`INSERT INTO users_new SELECT * FROM users`);
       db._raw.run(`DROP TABLE users`);
       db._raw.run(`ALTER TABLE users_new RENAME TO users`);
+      db._raw.run('PRAGMA foreign_keys = ON');
       saveNow();
       console.log('✅ Migration: users.role CHECK extended to include enrollment roles');
     }
   } catch (e) {
+    db._raw.run('PRAGMA foreign_keys = ON');
     console.error('users enrollment migration error:', e.message);
   }
 
