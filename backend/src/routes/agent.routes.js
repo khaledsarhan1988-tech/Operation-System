@@ -732,12 +732,13 @@ router.get('/transfer-targets', (req, res) => {
     `).all(user.full_name, user.department);
   } else if (user.role === 'enrollment') {
     // Enrollment → their enrollment_leader(s) + admins only (NOT regular leaders)
+    // enrollment_leader with department='All' is a global leader for all enrollment users
     rows = db.prepare(`
       SELECT full_name, role, department FROM users
       WHERE is_active = 1
         AND full_name != ?
         AND (
-          (role = 'enrollment_leader' AND department = ?)
+          (role = 'enrollment_leader' AND (department = ? OR department = 'All'))
           OR role = 'admin'
         )
       ORDER BY
@@ -776,9 +777,10 @@ router.put('/bulk-transfer', (req, res) => {
 
   // ── Permission check ──────────────────────────────────────────────────────
   if (user.role === 'enrollment') {
-    // Enrollment → their enrollment_leader OR any admin (NOT regular leaders)
+    // Enrollment → their enrollment_leader (same dept OR 'All') OR any admin
     const ok = target.role === 'admin'
-             || (target.role === 'enrollment_leader' && target.department === user.department);
+             || (target.role === 'enrollment_leader' &&
+                 (target.department === user.department || target.department === 'All'));
     if (!ok) return res.status(403).json({ error: 'يمكنك إحالة العملاء لمسؤول فريق Enrollment أو المسؤول فقط' });
   } else if (user.role === 'agent') {
     // Agent → their department's leader OR any admin (NOT enrollment team)
