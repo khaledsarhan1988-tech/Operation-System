@@ -148,9 +148,9 @@ function buildRemarksNotesMainInnerQ({ from_date, to_date, department, employee,
   const search3     = search ? ` AND (COALESCE(c3.name, r3.client_name) LIKE '%${escapeLike(search)}%' OR c3.group_name LIKE '%${escapeLike(search)}%' OR r3.client_phone LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
 
   const dateFilter = from_date && to_date
-    ? ` AND absence_date BETWEEN '${from_date}' AND '${to_date}'`
-    : from_date ? ` AND absence_date >= '${from_date}'`
-    : to_date   ? ` AND absence_date <= '${to_date}'` : '';
+    ? ` AND (${nextRemarkDay('abs_base.absence_date')}) BETWEEN '${from_date}' AND '${to_date}'`
+    : from_date ? ` AND (${nextRemarkDay('abs_base.absence_date')}) >= '${from_date}'`
+    : to_date   ? ` AND (${nextRemarkDay('abs_base.absence_date')}) <= '${to_date}'` : '';
 
   const outerCoordFilter = coordinator
     ? ` AND TRIM(LOWER(abs_base.coordinators)) LIKE LOWER('%${coordinator.replace(/'/g,"''")}%')`
@@ -324,9 +324,9 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
   const srch2  = search ? ` AND (r2.client_name LIKE '%${escapeLike(search)}%' OR r2.client_phone LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
 
   const dateFilter = from_date && to_date
-    ? ` AND abs_union.session_date BETWEEN '${from_date}' AND '${to_date}'`
-    : from_date ? ` AND abs_union.session_date >= '${from_date}'`
-    : to_date   ? ` AND abs_union.session_date <= '${to_date}'` : '';
+    ? ` AND (${nextRemarkDay('abs_union.session_date')}) BETWEEN '${from_date}' AND '${to_date}'`
+    : from_date ? ` AND (${nextRemarkDay('abs_union.session_date')}) >= '${from_date}'`
+    : to_date   ? ` AND (${nextRemarkDay('abs_union.session_date')}) <= '${to_date}'` : '';
 
   const partA = `
     SELECT DISTINCT
