@@ -816,6 +816,8 @@ export default function ClientDistribution() {
   const [histPage,       setHistPage]      = useState(1);
   const [resumeSession,  setResumeSession] = useState(null);
   const [showCancelled,  setShowCancelled] = useState(false);
+  const [debugState,     setDebugState]    = useState(null);
+  const [debugLoading,   setDebugLoading]  = useState(false);
   // Preview-step date filter
   const [pvDateFrom,     setPvDateFrom]    = useState(''); // YYYY-MM-DD
   const [pvDateTo,       setPvDateTo]      = useState(''); // YYYY-MM-DD
@@ -1796,18 +1798,81 @@ export default function ClientDistribution() {
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="px-5 py-3 border-b bg-gray-50 flex items-center justify-between">
             <h3 className="font-bold text-gray-800">سجل عمليات التوزيع</h3>
-            <button
-              onClick={() => setShowCancelled(v => !v)}
-              className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl border transition ${
-                showCancelled
-                  ? 'bg-red-50 border-red-200 text-red-600'
-                  : 'bg-gray-100 border-gray-200 text-gray-500 hover:bg-gray-200'
-              }`}
-            >
-              <XCircle size={13} />
-              {showCancelled ? 'إخفاء الملغاة' : 'إظهار الملغاة'}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={async () => {
+                  setDebugLoading(true);
+                  try {
+                    const r = await api.get('/distribution/debug/state');
+                    setDebugState(r.data);
+                  } catch (e) {
+                    alert('فشل التشخيص: ' + (e?.response?.data?.error || e.message));
+                  } finally {
+                    setDebugLoading(false);
+                  }
+                }}
+                className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl border bg-blue-50 border-blue-200 text-blue-600 hover:bg-blue-100 transition"
+              >
+                {debugLoading ? <RefreshCw size={13} className="animate-spin" /> : <AlertCircle size={13} />}
+                تشخيص الداتا
+              </button>
+              <button
+                onClick={() => setShowCancelled(v => !v)}
+                className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl border transition ${
+                  showCancelled
+                    ? 'bg-red-50 border-red-200 text-red-600'
+                    : 'bg-gray-100 border-gray-200 text-gray-500 hover:bg-gray-200'
+                }`}
+              >
+                <XCircle size={13} />
+                {showCancelled ? 'إخفاء الملغاة' : 'إظهار الملغاة'}
+              </button>
+            </div>
           </div>
+
+          {/* Debug panel */}
+          {debugState && (
+            <div className="px-5 py-4 bg-blue-50 border-b border-blue-200 text-xs font-mono space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-blue-800 text-sm">🔍 حالة الداتابيز الحقيقية</span>
+                <button onClick={() => setDebugState(null)} className="text-blue-400 hover:text-blue-700"><X size={14} /></button>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-white rounded-lg p-3 border border-blue-200">
+                  <div className="font-semibold text-gray-700 mb-1">الجلسات</div>
+                  {debugState.sessions_by_status.length === 0
+                    ? <div className="text-gray-400">لا توجد جلسات</div>
+                    : debugState.sessions_by_status.map(s => (
+                        <div key={s.status} className="flex justify-between">
+                          <span className={s.status === 'confirmed' ? 'text-green-700 font-bold' : s.status === 'pending' ? 'text-amber-600' : 'text-red-500'}>{s.status}</span>
+                          <span className="font-bold">{s.cnt}</span>
+                        </div>
+                      ))
+                  }
+                </div>
+                <div className="bg-white rounded-lg p-3 border border-blue-200">
+                  <div className="font-semibold text-gray-700 mb-1">العناصر والـ Remarks</div>
+                  <div className="flex justify-between"><span className="text-gray-600">distribution_items</span><span className="font-bold">{debugState.distribution_items_count}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-600">orphaned_items</span><span className={`font-bold ${debugState.orphaned_items_count > 0 ? 'text-red-600' : 'text-green-600'}`}>{debugState.orphaned_items_count}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-600">active_dist_remarks</span><span className="font-bold">{debugState.active_dist_remarks}</span></div>
+                  <div className="flex justify-between"><span className="text-amber-700 font-bold">linked_to_confirmed</span><span className={`font-bold ${debugState.remarks_linked_to_confirmed > 0 ? 'text-amber-700' : 'text-green-600'}`}>{debugState.remarks_linked_to_confirmed}</span></div>
+                </div>
+              </div>
+              {debugState.sample_distributed_phones.length > 0 && (
+                <div className="bg-white rounded-lg p-3 border border-amber-200">
+                  <div className="font-semibold text-amber-700 mb-1">أمثلة الأرقام المحسوبة كـ "موزعة"</div>
+                  {debugState.sample_distributed_phones.map((p, i) => (
+                    <div key={i} className="flex gap-3 text-gray-600">
+                      <span>{p.client_name}</span>
+                      <span className="text-blue-600">{p.client_phone}</span>
+                      <span className="text-gray-400">status: {p.status}</span>
+                      <span className="text-gray-400">session: #{p.session_id}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           {histLoading ? (
             <div className="flex justify-center py-12">
               <RefreshCw className="animate-spin text-primary" size={28} />
@@ -1902,10 +1967,17 @@ export default function ClientDistribution() {
                         </td>
                       </tr>
                     ))}
-                    {!histData?.sessions?.length && (
+                    {/* Empty state: show when no rows visible (either no sessions at all, or all filtered out) */}
+                    {(histData?.sessions || []).filter(s => showCancelled || s.status !== 'cancelled').length === 0 && (
                       <tr>
-                        <td colSpan={9} className="text-center text-gray-400 py-10 text-sm">
-                          لا توجد عمليات توزيع بعد
+                        <td colSpan={9} className="text-center py-10 text-sm">
+                          {!histData?.sessions?.length
+                            ? <span className="text-gray-400">لا توجد عمليات توزيع بعد</span>
+                            : <span className="text-amber-600">
+                                كل الجلسات ملغاة — اضغط "إظهار الملغاة" لرؤيتها
+                                <span className="block text-gray-400 text-xs mt-1">({histData.sessions.length} جلسة ملغاة)</span>
+                              </span>
+                          }
                         </td>
                       </tr>
                     )}

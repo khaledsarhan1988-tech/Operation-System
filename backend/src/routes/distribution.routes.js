@@ -60,6 +60,62 @@ function dmyToISO(dmy) {
   return null;
 }
 
+// ─── DEBUG / DIAGNOSTIC ───────────────────────────────────────────────────────
+
+// GET /api/distribution/debug/state
+// Returns raw counts so admin can see the true DB state even if UI filters hide things.
+router.get('/debug/state', (_req, res) => {
+  const sessionsByStatus = db.prepare(
+    `SELECT status, COUNT(*) AS cnt FROM distribution_sessions GROUP BY status`
+  ).all();
+
+  const itemsCount = db.prepare(
+    `SELECT COUNT(*) AS cnt FROM distribution_items`
+  ).get()?.cnt ?? 0;
+
+  const orphanedItems = db.prepare(`
+    SELECT COUNT(*) AS cnt FROM distribution_items di
+    WHERE NOT EXISTS (SELECT 1 FROM distribution_sessions ds WHERE ds.id = di.session_id)
+  `).get()?.cnt ?? 0;
+
+  const activeDistRemarks = db.prepare(`
+    SELECT COUNT(*) AS cnt FROM remarks r
+    WHERE r.category = 'توزيع عملاء'
+      AND LOWER(r.status) NOT IN ('إنتهت','closed','resolved')
+  `).get()?.cnt ?? 0;
+
+  const remarksLinkedToConfirmed = db.prepare(`
+    SELECT COUNT(*) AS cnt FROM remarks r
+    WHERE r.category = 'توزيع عملاء'
+      AND LOWER(r.status) NOT IN ('إنتهت','closed','resolved')
+      AND EXISTS (
+        SELECT 1 FROM distribution_items di
+        INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
+        WHERE di.remark_id = r.id AND di.remark_id IS NOT NULL
+      )
+  `).get()?.cnt ?? 0;
+
+  // Show up to 10 sample phones that are counted as "distributed"
+  const sampleDistributed = db.prepare(`
+    SELECT r.client_phone, r.client_name, r.status, di.session_id
+    FROM remarks r
+    INNER JOIN distribution_items di ON di.remark_id = r.id
+    INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
+    WHERE r.category = 'توزيع عملاء'
+      AND LOWER(r.status) NOT IN ('إنتهت','closed','resolved')
+    LIMIT 10
+  `).all();
+
+  return res.json({
+    sessions_by_status:           sessionsByStatus,
+    distribution_items_count:     itemsCount,
+    orphaned_items_count:         orphanedItems,
+    active_dist_remarks:          activeDistRemarks,
+    remarks_linked_to_confirmed:  remarksLinkedToConfirmed,
+    sample_distributed_phones:    sampleDistributed,
+  });
+});
+
 // ─── TASK TYPES ───────────────────────────────────────────────────────────────
 
 // GET /api/distribution/task-types
