@@ -1,0 +1,6 @@
+# Tell Railway's Nixpacks builder to include C++ build tools.
+# Required to compile better-sqlite3 native module from source
+# (prebuild-install may not find a matching prebuilt binary for the
+#  Railway Linux/Nix environment).
+[phases.setup]
+nixPkgs = ["python3", "gcc", "gnumake", "pkg-config"]
