@@ -151,6 +151,7 @@ async function initDb() {
   }
   _rawDb = data ? new SQL.Database(data) : new SQL.Database();
   _rawDb.run('PRAGMA foreign_keys = ON');
+  _rawDb.run('PRAGMA ignore_check_constraints = 1');
   return db;
 }
 
