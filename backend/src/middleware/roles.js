@@ -1,8 +1,7 @@
 'use strict';
 
-// Role hierarchy: admin > leader > agent
-// enrollment_leader and enrollment are parallel tracks — not in main hierarchy
-const HIERARCHY = { admin: 3, leader: 2, agent: 1 };
+// Role hierarchy: admin > leader > agent = enrollment = enrollment_leader
+const HIERARCHY = { admin: 3, leader: 2, agent: 1, enrollment: 1, enrollment_leader: 1 };
 
 /**
  * requireRole('agent')  — allows agent, leader, admin
