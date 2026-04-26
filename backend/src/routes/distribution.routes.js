@@ -226,13 +226,9 @@ router.post('/preview', (req, res) => {
 
     if (!clients.length) return res.status(400).json({ error: 'لم يتم العثور على عملاء في الملف' });
 
-    // ── Sort clients by subscription date ascending (DD/MM/YYYY) ─────────────
-    const parseDMYSort = dmy => {
-      if (!dmy) return new Date(0);
-      const [d, m, y] = dmy.split('/');
-      return y ? new Date(+y, +m - 1, +d) : new Date(0);
-    };
-    clients.sort((a, b) => parseDMYSort(a.date) - parseDMYSort(b.date));
+    // ── Keep clients in EXCEL SHEET ORDER (row by row, no date sort) ─────────
+    // The user distributes sequentially through the file; sorting by date would
+    // break the intended row order and skip clients from earlier rows.
 
     // ── Detect duplicates: clients already in an ACTIVE CONFIRMED distribution session ──
     // Only block re-distribution if the client has an active remark that was created
@@ -452,14 +448,10 @@ router.post('/preview', (req, res) => {
       );
     })();
 
-    // Order by date ascending: convert DD/MM/YYYY → YYYYMMDD for correct sort
+    // Preserve Excel sheet order: sort by insertion id (= original row order)
     const savedItems = db.prepare(`
       SELECT * FROM distribution_items WHERE session_id = ?
-      ORDER BY
-        CASE WHEN client_date IS NULL OR client_date = '' THEN '99999999' ELSE
-          SUBSTR(client_date,7,4) || SUBSTR(client_date,4,2) || SUBSTR(client_date,1,2)
-        END ASC,
-        id ASC
+      ORDER BY id ASC
     `).all(sessionId);
 
     // ── Build agent summary ───────────────────────────────────────────────────
@@ -751,10 +743,7 @@ router.post('/sessions/:sid/fork', (req, res) => {
   const sourceItems = db.prepare(`
     SELECT * FROM distribution_items
     WHERE ${conditions.join(' AND ')}
-    ORDER BY
-      CASE WHEN client_date IS NULL OR client_date = '' THEN '99999999' ELSE
-        SUBSTR(client_date,7,4) || SUBSTR(client_date,4,2) || SUBSTR(client_date,1,2)
-      END ASC, id ASC
+    ORDER BY id ASC
   `).all(...params);
 
   if (!sourceItems.length)
@@ -869,10 +858,7 @@ router.post('/sessions/:sid/fork', (req, res) => {
 
   const savedItems = db.prepare(`
     SELECT * FROM distribution_items WHERE session_id = ?
-    ORDER BY
-      CASE WHEN client_date IS NULL OR client_date = '' THEN '99999999' ELSE
-        SUBSTR(client_date,7,4) || SUBSTR(client_date,4,2) || SUBSTR(client_date,1,2)
-      END ASC, id ASC
+    ORDER BY id ASC
   `).all(newSid);
 
   // Agent summary
@@ -898,6 +884,37 @@ router.post('/sessions/:sid/fork', (req, res) => {
 });
 
 // ─── HISTORY LIST ─────────────────────────────────────────────────────────────
+
+// GET /api/distribution/last-distributed-date?line=
+// Returns the client_date of the LAST item in the most recent CONFIRMED session.
+// Used by the frontend to suggest a start date for the next distribution.
+router.get('/last-distributed-date', (req, res) => {
+  const { line } = req.query;
+  const lf = line ? ` AND s.line = '${line.replace(/'/g, "''")}'` : '';
+  try {
+    // Get the last item (highest id) from the most recent confirmed session
+    const row = db.prepare(`
+      SELECT di.client_date, di.client_name, s.id AS session_id
+      FROM distribution_items di
+      INNER JOIN distribution_sessions s ON s.id = di.session_id
+      WHERE s.status = 'confirmed'${lf}
+        AND di.client_date IS NOT NULL AND di.client_date != ''
+      ORDER BY s.id DESC, di.id DESC
+      LIMIT 1
+    `).get();
+
+    if (!row) return res.json({ last_date: null, last_client: null, session_id: null });
+
+    return res.json({
+      last_date:   row.client_date,   // DD/MM/YYYY — last client date distributed
+      last_client: row.client_name,
+      session_id:  row.session_id,
+    });
+  } catch (err) {
+    console.error('[distribution/last-distributed-date]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
 
 // GET /api/distribution/sessions?line=&page=&limit=
 router.get('/sessions', (req, res) => {
@@ -935,13 +952,10 @@ router.get('/sessions/:sid', (req, res) => {
   ).get(req.params.sid);
   if (!session) return res.status(404).json({ error: 'Not found' });
 
-  // Sort items chronologically (DD/MM/YYYY → YYYYMMDD)
+  // Preserve Excel sheet order (insertion order = original row order)
   const items = db.prepare(`
     SELECT * FROM distribution_items WHERE session_id = ?
-    ORDER BY
-      CASE WHEN client_date IS NULL OR client_date = '' THEN '99999999' ELSE
-        SUBSTR(client_date,7,4) || SUBSTR(client_date,4,2) || SUBSTR(client_date,1,2)
-      END ASC, id ASC
+    ORDER BY id ASC
   `).all(req.params.sid);
 
   // Compute date range from items' client_date
