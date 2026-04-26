@@ -730,21 +730,34 @@ router.get('/transfer-targets', (req, res) => {
         CASE role WHEN 'admin' THEN 1 WHEN 'leader' THEN 2 WHEN 'enrollment_leader' THEN 3 WHEN 'enrollment' THEN 4 ELSE 5 END ASC,
         full_name COLLATE NOCASE
     `).all(user.full_name, user.department);
-  } else {
-    // Agent: their department's leader(s) + enrollment users + admins
+  } else if (user.role === 'enrollment') {
+    // Enrollment → their enrollment_leader(s) + admins only (NOT regular leaders)
     rows = db.prepare(`
       SELECT full_name, role, department FROM users
       WHERE is_active = 1
         AND full_name != ?
         AND (
-          (role = 'leader'     AND department = ?)
-          OR (role = 'enrollment' AND department = ?)
+          (role = 'enrollment_leader' AND department = ?)
           OR role = 'admin'
         )
       ORDER BY
-        CASE role WHEN 'admin' THEN 1 WHEN 'leader' THEN 2 WHEN 'enrollment' THEN 3 ELSE 4 END ASC,
+        CASE role WHEN 'admin' THEN 1 ELSE 2 END ASC,
         full_name COLLATE NOCASE
-    `).all(user.full_name, user.department || '', user.department || '');
+    `).all(user.full_name, user.department || '');
+  } else {
+    // Agent: their leader(s) + admins only (NOT enrollment team)
+    rows = db.prepare(`
+      SELECT full_name, role, department FROM users
+      WHERE is_active = 1
+        AND full_name != ?
+        AND (
+          (role = 'leader' AND department = ?)
+          OR role = 'admin'
+        )
+      ORDER BY
+        CASE role WHEN 'admin' THEN 1 ELSE 2 END ASC,
+        full_name COLLATE NOCASE
+    `).all(user.full_name, user.department || '');
   }
   return res.json(rows);
 });
@@ -762,11 +775,15 @@ router.put('/bulk-transfer', (req, res) => {
   if (!target) return res.status(400).json({ error: 'المستخدم المستهدف غير موجود' });
 
   // ── Permission check ──────────────────────────────────────────────────────
-  if (user.role === 'agent') {
-    // Agent → their department's leader OR enrollment OR any admin
+  if (user.role === 'enrollment') {
+    // Enrollment → their enrollment_leader OR any admin (NOT regular leaders)
     const ok = target.role === 'admin'
-             || (target.role === 'leader'     && target.department === user.department)
-             || (target.role === 'enrollment' && target.department === user.department);
+             || (target.role === 'enrollment_leader' && target.department === user.department);
+    if (!ok) return res.status(403).json({ error: 'يمكنك إحالة العملاء لمسؤول فريق Enrollment أو المسؤول فقط' });
+  } else if (user.role === 'agent') {
+    // Agent → their department's leader OR any admin (NOT enrollment team)
+    const ok = target.role === 'admin'
+             || (target.role === 'leader' && target.department === user.department);
     if (!ok) return res.status(403).json({ error: 'يمكنك إحالة العملاء لقائد فريقك أو المسؤول فقط' });
   } else if (user.role === 'leader') {
     // Leader → their agents/enrollment OR any leader/enrollment_leader OR any admin
