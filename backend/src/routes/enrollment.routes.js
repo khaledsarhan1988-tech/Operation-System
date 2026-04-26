@@ -93,7 +93,7 @@ router.put('/tasks/:id', (req, res) => {
         resolved_at      = COALESCE(?, resolved_at),
         next_followup_at = CASE WHEN ? IS NOT NULL THEN ? ELSE next_followup_at END,
         sla_deadline     = ?,
-        last_updated     = datetime('now', '+2 hours')
+        last_updated     = datetime('now', 'localtime')
     WHERE id = ?
   `).run(
     agent_notes || null,

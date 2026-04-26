@@ -872,6 +872,10 @@ router.post('/sessions/:sid/confirm', (req, res) => {
     );
   }
 
+  // Force immediate save to disk — prevents data loss on Railway rolling deployments
+  // where the new container might start before the 300ms scheduleSave timer fires.
+  saveNow();
+
   return res.json({
     message:                  'تم تأكيد التوزيع',
     remarks_created:          remarksCreated,

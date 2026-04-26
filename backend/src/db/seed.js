@@ -91,7 +91,7 @@ initDb().then(db => {
         user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
         status      TEXT NOT NULL DEFAULT 'active',
         notes       TEXT,
-        created_at  TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+        created_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
       )
     `);
     // Copy existing data if old table exists
@@ -117,7 +117,7 @@ initDb().then(db => {
         status       TEXT NOT NULL DEFAULT 'new',
         note         TEXT,
         updated_by   INTEGER,
-        updated_at   TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        updated_at   TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
         UNIQUE(group_name, problem_type, session_type)
       )
     `);

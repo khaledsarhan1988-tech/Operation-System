@@ -25,7 +25,7 @@ router.post('/', (req, res) => {
     INSERT INTO remarks
       (task_type, assigned_to, client_name, client_phone, details, category, priority, notes,
        status, assigned_by, added_at, last_updated, sla_deadline, line)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'غير منتهية', ?, datetime('now', '+2 hours'), datetime('now', '+2 hours'), ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'غير منتهية', ?, datetime('now', 'localtime'), datetime('now', 'localtime'), ?, ?)
   `).run(task_type, req.user.full_name, client_name, client_phone || null,
     details || null, category || null, priority || 'عادية', notes || null,
     req.user.full_name, sla, userLine);
@@ -66,7 +66,7 @@ router.put('/:id', (req, res) => {
       details      = COALESCE(?, details),
       sla_deadline = ?,
       resolved_at  = ?,
-      last_updated = datetime('now', '+2 hours')
+      last_updated = datetime('now', 'localtime')
     WHERE id = ?
   `).run(status || null, agent_notes || null, notes || null,
     priority || null, details || null,

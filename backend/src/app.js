@@ -46,7 +46,7 @@ initDb().then(db => {
         note             TEXT,
         actual_at_status INTEGER,
         updated_by       INTEGER,
-        updated_at       TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        updated_at       TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
         UNIQUE(group_name, problem_type, session_type)
       )`);
       db._raw.run(`INSERT OR IGNORE INTO code_problem_status_new (id, group_name, problem_type, session_type, status, note, updated_by, updated_at)
@@ -76,7 +76,7 @@ initDb().then(db => {
         note             TEXT,
         actual_at_status INTEGER,
         updated_by       INTEGER,
-        updated_at       TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        updated_at       TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
         UNIQUE(group_name, problem_type, session_type)
       )`);
       db._raw.run(`INSERT OR IGNORE INTO code_problem_status_new2
@@ -216,7 +216,7 @@ initDb().then(db => {
         actual_at_status INTEGER,
         new_group_code   TEXT,
         updated_by       INTEGER,
-        updated_at       TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        updated_at       TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
         line             TEXT NOT NULL DEFAULT 'Ahmed Hassan',
         UNIQUE(group_name, problem_type, session_type, line)
       )`);

@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from '../auth/AuthContext';
 import { Eye, EyeOff } from 'lucide-react';
 
-const ROLE_HOME = { admin: '/admin', leader: '/leader', agent: '/agent' };
+const ROLE_HOME = { admin: '/admin', leader: '/leader', agent: '/agent', enrollment: '/enrollment', enrollment_leader: '/enrollment-leader' };
 
 export default function Login() {
   const { t } = useTranslation();

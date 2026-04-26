@@ -240,8 +240,8 @@ export default function AgentCodeProblems() {
              return (
                <tr key={i} className={`border-b border-gray-50 hover:bg-gray-50/60 transition-colors ${rowBg}`}>
                  <td className="px-4 py-3 font-semibold text-gray-900 text-xs" style={{ maxWidth: '240px', wordBreak: 'break-word' }}>
-                   <CopyButton text={p.group_name} className="text-right hover:text-blue-600 transition-colors" dir="ltr">
-                     <span className="break-all">{p.group_name}</span>
+                   <CopyButton text={p.group_name ?? ''} className="text-right hover:text-blue-600 transition-colors" dir="ltr">
+                     <span className="break-all">{p.group_name ?? '—'}</span>
                    </CopyButton>
                    {!p._ghost && p._status?.new_group_code && (
                      <CopyButton
@@ -252,7 +252,7 @@ export default function AgentCodeProblems() {
                      >
                        <span className="text-emerald-600">↪</span>
                        <span className="text-emerald-600 font-sans">الكود الجديد:</span>
-                       <span className="break-all">{p._status.new_group_code}</span>
+                       <span className="break-all">{p._status?.new_group_code ?? ''}</span>
                      </CopyButton>
                    )}
                    {p.previous_group_name && (
@@ -263,7 +263,7 @@ export default function AgentCodeProblems() {
                      >
                        <span className="text-indigo-600">↩</span>
                        <span className="text-gray-500 font-sans">الكود السابق:</span>
-                       <span className="break-all">{p.previous_group_name}</span>
+                       <span className="break-all">{p.previous_group_name ?? '—'}</span>
                      </div>
                    )}
                  </td>
@@ -274,7 +274,7 @@ export default function AgentCodeProblems() {
                    {p.repeated_violation && (
                      <div className="mt-1 flex items-start gap-1 text-[10px] font-bold text-orange-700 bg-orange-50 border border-orange-200 rounded px-1.5 py-1">
                        <span>⚠</span>
-                       <span>سبق وضع حالة "{p.previous_status === 'wont_repeat' ? 'لن تتكرر' : 'استثناء'}" عند العدد {p.previous_actual} — الموظف كرر الخطأ وأصبح {p.actual}</span>
+                       <span>سبق وضع حالة "{(p.previous_status ?? '') === 'wont_repeat' ? 'لن تتكرر' : 'استثناء'}" عند العدد {p.previous_actual ?? '؟'} — الموظف كرر الخطأ وأصبح {p.actual ?? '؟'}</span>
                      </div>
                    )}
                  </td>

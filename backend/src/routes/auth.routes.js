@@ -1,11 +1,22 @@
 'use strict';
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const rateLimit = require('express-rate-limit');
 const db = require('../config/database');
 const jwt = require('../config/jwt');
 const { authenticate } = require('../middleware/auth');
 
 const router = express.Router();
+
+// ─── Rate limiter: max 5 login attempts per 15 minutes per IP ─────────────────
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'كثرة المحاولات الفاشلة، يرجى الانتظار 15 دقيقة قبل المحاولة مجدداً' },
+  skip: () => process.env.NODE_ENV !== 'production',
+});
 
 const COOKIE_OPTIONS = {
   httpOnly: true,
@@ -16,7 +27,7 @@ const COOKIE_OPTIONS = {
 };
 
 // POST /api/auth/login
-router.post('/login', (req, res) => {
+router.post('/login', loginLimiter, (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: 'Username and password required' });

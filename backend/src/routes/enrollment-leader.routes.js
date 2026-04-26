@@ -43,7 +43,7 @@ router.get('/team', (req, res) => {
       COALESCE(SUM(CASE WHEN r.status != 'إنتهت' THEN 1 ELSE 0 END), 0) AS pending,
       COALESCE(SUM(CASE WHEN r.status = 'إنتهت' THEN 1 ELSE 0 END), 0) AS done,
       COALESCE(SUM(CASE WHEN r.status = 'إنتهت' AND date(r.last_updated) = date('now') THEN 1 ELSE 0 END), 0) AS completed_today,
-      COALESCE(SUM(CASE WHEN r.status != 'إنتهت' AND r.sla_deadline < datetime('now', '+2 hours') THEN 1 ELSE 0 END), 0) AS overdue
+      COALESCE(SUM(CASE WHEN r.status != 'إنتهت' AND r.sla_deadline < datetime('now', 'localtime') THEN 1 ELSE 0 END), 0) AS overdue
     FROM users u
     LEFT JOIN remarks r ON r.assigned_to = u.full_name${joinLine}
     ${where}
@@ -124,7 +124,7 @@ router.post('/assign', (req, res) => {
   const remark = db.prepare(`SELECT id FROM remarks WHERE id = ?${lineClause}`).get(remark_id, ...lineParams);
   if (!remark) return res.status(404).json({ error: 'Remark not found' });
 
-  db.prepare("UPDATE remarks SET assigned_to = ?, last_updated = datetime('now', '+2 hours') WHERE id = ?")
+  db.prepare("UPDATE remarks SET assigned_to = ?, last_updated = datetime('now', 'localtime') WHERE id = ?")
     .run(agent_name, remark_id);
   return res.json({ message: 'Assigned', remark_id, agent_name });
 });

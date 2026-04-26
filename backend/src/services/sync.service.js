@@ -79,7 +79,7 @@ function syncEmployees(buffer, line) {
   const run = db.transaction(() => {
     db.prepare('DELETE FROM employees WHERE line = ?').run(line);
     const insert = db.prepare(`INSERT INTO employees (name, department, line, synced_at)
-      VALUES (?, ?, ?, datetime('now', '+2 hours'))`);
+      VALUES (?, ?, ?, datetime('now', 'localtime'))`);
     rows.forEach(r => insert.run(r.name, r.department, line));
   });
   run();
@@ -95,7 +95,7 @@ function syncTrainees(buffer, line) {
     evictFromOtherLines('clients', line, uniqueGroups);
     const insert = db.prepare(`
       INSERT INTO clients (name, phone, email, group_name, via_company, registration_time, line, synced_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', '+2 hours'))
+      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
     `);
     rows.forEach(r => insert.run(r.name, r.phone, r.email, r.group_name, r.via_company, r.registration_time, line));
   });
@@ -123,7 +123,7 @@ function syncBatches(buffer, line) {
         added_at, added_by, closed_by,
         dept_type, level_code, main_days, side_days, lecture_duration_min,
         line, synced_at
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now', '+2 hours'))
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now', 'localtime'))
     `);
     rows.forEach(r => insert.run(
       r.external_id, r.group_name, r.course, r.status, r.trainers,
@@ -196,7 +196,7 @@ function syncRemarks(buffer, line, warnings) {
         client_name, client_phone, priority, assigned_by, notes,
         added_at, last_updated, sla_deadline,
         agent_notes, resolved_at, line, synced_at
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now', '+2 hours'))
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now', 'localtime'))
     `);
     rows.forEach(r => {
       const p = preserved[r.external_id] || {};
@@ -222,7 +222,7 @@ function syncLectures(buffer, line) {
     evictFromOtherLines('lectures', line, uniqueGroups, " AND session_type = 'main'");
     const insert = db.prepare(`
       INSERT INTO lectures (group_name, date, time, duration, trainer, status, location, attendance, session_type, side_session_category, line, synced_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'main', NULL, ?, datetime('now', '+2 hours'))
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'main', NULL, ?, datetime('now', 'localtime'))
     `);
     rows.forEach(r => insert.run(r.group_name, r.date, r.time, r.duration, r.trainer, r.status, r.location, r.attendance, line));
 
@@ -259,7 +259,7 @@ function syncSideSessions(buffer, line) {
     evictFromOtherLines('lectures', line, uniqueGroups, " AND session_type = 'side'");
     const insert = db.prepare(`
       INSERT INTO lectures (group_name, date, time, duration, trainer, status, location, attendance, session_type, side_session_category, line, synced_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'side', ?, ?, datetime('now', '+2 hours'))
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'side', ?, ?, datetime('now', 'localtime'))
     `);
     rows.forEach(r => insert.run(r.group_name, r.date, r.time, r.duration, r.trainer, r.status, r.location, r.attendance, r.side_session_category, line));
   });
@@ -286,7 +286,7 @@ function syncAbsent(buffer, line) {
     evictFromOtherLines('absent_students', line, uniqueAbsentGroups);
     const insert = db.prepare(`
       INSERT INTO absent_students (group_name, student_name, phone, date, time, lecture_no, follow_up_status, follow_up_note, follow_up_by, follow_up_at, line, synced_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+2 hours'))
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
     `);
     rows.forEach(r => {
       const key = `${r.group_name}|${r.student_name}|${r.date}|${r.lecture_no}`;

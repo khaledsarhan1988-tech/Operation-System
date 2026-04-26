@@ -91,7 +91,7 @@ export default function MyTasks() {
         open={showForm}
         remark={selected}
         onClose={() => setShowForm(false)}
-        onSaved={() => qc.invalidateQueries(['my-tasks'])}
+        onSaved={() => qc.invalidateQueries({ queryKey: ['my-tasks'], exact: false })}
       />
     </div>
   );

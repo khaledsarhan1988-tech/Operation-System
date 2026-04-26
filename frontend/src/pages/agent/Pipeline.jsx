@@ -1038,7 +1038,8 @@ export default function Pipeline() {
     mutationFn: ({ ids, assigned_to }) =>
       api.put('/agent/bulk-transfer', { ids: [...ids], assigned_to }),
     onSuccess: () => {
-      qc.invalidateQueries(['agent-pipeline']);
+      qc.invalidateQueries({ queryKey: ['agent-pipeline'], exact: false });
+      qc.invalidateQueries({ queryKey: ['leader-pipeline'], exact: false });
       qc.invalidateQueries(['transfer-history']);
       setSelectedIds(new Set());
       setSelectionMode(false);
