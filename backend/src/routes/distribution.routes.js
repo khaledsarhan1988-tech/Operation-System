@@ -234,19 +234,27 @@ router.post('/preview', (req, res) => {
     };
     clients.sort((a, b) => parseDMYSort(a.date) - parseDMYSort(b.date));
 
-    // ── Detect duplicates: clients with an existing ACTIVE remark ─────────────
+    // ── Detect duplicates: clients already in an ACTIVE CONFIRMED distribution session ──
+    // Only block re-distribution if the client has an active remark that was created
+    // by a confirmed distribution session. External remarks (from Remarks.xlsx or
+    // manual creation) are intentionally ignored so they don't silently swallow clients.
     const phoneList = [...new Set(clients.map(c => c.phone).filter(Boolean))];
     const existingActiveMap = {};
     if (phoneList.length > 0) {
       const ph = phoneList.map(() => '?').join(',');
       db.prepare(`
-        SELECT client_phone, client_name, assigned_to, status, id
-        FROM remarks
-        WHERE client_phone IN (${ph})
-          AND client_phone != ''
-          AND category = 'توزيع عملاء'
-          AND LOWER(status) NOT IN ('إنتهت','closed','resolved')
-        ORDER BY added_at DESC
+        SELECT r.client_phone, r.client_name, r.assigned_to, r.status, r.id
+        FROM remarks r
+        WHERE r.client_phone IN (${ph})
+          AND r.client_phone != ''
+          AND r.category = 'توزيع عملاء'
+          AND LOWER(r.status) NOT IN ('إنتهت','closed','resolved')
+          AND EXISTS (
+            SELECT 1 FROM distribution_items di
+            INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
+            WHERE di.remark_id = r.id AND di.remark_id IS NOT NULL
+          )
+        ORDER BY r.added_at DESC
       `).all(...phoneList).forEach(r => {
         if (!existingActiveMap[r.client_phone])
           existingActiveMap[r.client_phone] = r;
@@ -605,20 +613,29 @@ router.post('/sessions/:sid/confirm', (req, res) => {
   // sessions were created from the same file before either was confirmed, the second
   // confirmation would create duplicate remarks for the same clients.
   // Fix: build a fresh active-remark map for all phones in this batch, then skip
-  // (or link to existing) any client who already has an active remark.
+  // (or link to existing) any client who already has an active remark FROM ANOTHER
+  // CONFIRMED DISTRIBUTION SESSION.
+  // Important: we intentionally ignore external remarks (from Remarks.xlsx or manual
+  // creation) so they don't silently reduce the distributed count.
   const itemPhones = [...new Set(items.map(i => i.client_phone).filter(Boolean))];
   const confirmDupeMap = {};
   if (itemPhones.length > 0) {
     const ph = itemPhones.map(() => '?').join(',');
     db.prepare(`
-      SELECT id, client_phone, assigned_to
-      FROM remarks
-      WHERE client_phone IN (${ph})
-        AND client_phone != ''
-        AND category = 'توزيع عملاء'
-        AND LOWER(status) NOT IN ('إنتهت','closed','resolved')
-      ORDER BY added_at DESC
-    `).all(...itemPhones).forEach(r => {
+      SELECT r.id, r.client_phone, r.assigned_to
+      FROM remarks r
+      WHERE r.client_phone IN (${ph})
+        AND r.client_phone != ''
+        AND r.category = 'توزيع عملاء'
+        AND LOWER(r.status) NOT IN ('إنتهت','closed','resolved')
+        AND EXISTS (
+          SELECT 1 FROM distribution_items di
+          INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
+          WHERE di.remark_id = r.id AND di.remark_id IS NOT NULL
+            AND di.session_id != ?
+        )
+      ORDER BY r.added_at DESC
+    `).all(parseInt(req.params.sid), ...itemPhones).forEach(r => {
       if (!confirmDupeMap[r.client_phone]) confirmDupeMap[r.client_phone] = r;
     });
   }
@@ -730,19 +747,25 @@ router.post('/sessions/:sid/fork', (req, res) => {
   if (!sourceItems.length)
     return res.status(400).json({ error: 'لا يوجد عملاء في هذا النطاق الزمني' });
 
-  // Duplicate detection — skip clients with active remarks
+  // Duplicate detection — skip clients already in a CONFIRMED distribution session
+  // (same logic as /preview: external remarks are ignored)
   const phoneList = [...new Set(sourceItems.map(i => i.client_phone).filter(Boolean))];
   const existingActiveMap = {};
   if (phoneList.length > 0) {
     const ph = phoneList.map(() => '?').join(',');
     db.prepare(`
-      SELECT client_phone, client_name, assigned_to, status, id
-      FROM remarks
-      WHERE client_phone IN (${ph})
-        AND client_phone != ''
-        AND category = 'توزيع عملاء'
-        AND LOWER(status) NOT IN ('إنتهت','closed','resolved')
-      ORDER BY added_at DESC
+      SELECT r.client_phone, r.client_name, r.assigned_to, r.status, r.id
+      FROM remarks r
+      WHERE r.client_phone IN (${ph})
+        AND r.client_phone != ''
+        AND r.category = 'توزيع عملاء'
+        AND LOWER(r.status) NOT IN ('إنتهت','closed','resolved')
+        AND EXISTS (
+          SELECT 1 FROM distribution_items di
+          INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
+          WHERE di.remark_id = r.id AND di.remark_id IS NOT NULL
+        )
+      ORDER BY r.added_at DESC
     `).all(...phoneList).forEach(r => {
       if (!existingActiveMap[r.client_phone]) existingActiveMap[r.client_phone] = r;
     });
