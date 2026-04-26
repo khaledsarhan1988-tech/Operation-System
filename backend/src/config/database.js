@@ -1,24 +1,21 @@
 'use strict';
 /**
- * SQLite wrapper using better-sqlite3 (native, synchronous, file-backed).
+ * SQLite wrapper using sql.js (pure WASM — zero native compilation required).
  *
- * WHY we switched from sql.js:
- *   sql.js kept the entire database in WASM memory and only persisted to disk
- *   when saveNow() was called. On Railway's rolling deployments, a new container
- *   could start and read the file just before the old container's final save,
- *   then overwrite the file with stale in-memory data — silently losing all writes
- *   made in the old container (e.g. distribution confirms).
+ * RACE-CONDITION FIX (compared to the original implementation):
+ *   The original sql.js version had a race condition on Railway rolling deployments:
+ *   1. Old container A confirms a distribution → calls saveNow() → file updated on disk
+ *   2. New container B started BEFORE step 1 → read the old file → has stale data in memory
+ *   3. Container B's periodic save fires → OVERWRITES the file with stale data → data lost!
  *
- *   better-sqlite3 writes every transaction directly to the SQLite file.
- *   SQLite's WAL mode + file-level locking handles concurrent access correctly,
- *   so two containers running simultaneously will never corrupt each other's data.
+ *   Fix: Before every save, compare the file's current mtime with the timestamp when
+ *   we last read/wrote it. If the file is newer (written by another process), we RELOAD
+ *   from the file before saving, so we never overwrite newer data with stale data.
  *
- * API compatibility:
- *   - db.prepare / db.exec / db.pragma / db.transaction / db.close — same as before
- *   - db._raw — emulates the sql.js low-level API used by migrations in app.js / seed.js
- *   - saveNow() / scheduleSave() — kept as no-ops for backward compatibility
+ *   Additionally, all writes use an atomic tmp-file + rename approach to prevent
+ *   partial reads during a write.
  */
-const Database = require('better-sqlite3');
+const initSqlJs = require('sql.js');
 const path = require('path');
 const fs = require('fs');
 
@@ -26,114 +23,190 @@ const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../../data/academy.
 const dataDir = path.dirname(DB_PATH);
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
-let _db = null;
+let _SQL    = null;   // sql.js constructor (kept globally for reload)
+let _rawDb  = null;   // active in-memory database
+let _dirty  = false;
+let _saveTimer = null;
+let _fileTs = 0;      // mtime (ms) when we last read from / wrote to DB_PATH
+
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+
+/** Read mtime of DB_PATH, or 0 if it doesn't exist. */
+function _fileMtime() {
+  try { return fs.existsSync(DB_PATH) ? fs.statSync(DB_PATH).mtimeMs : 0; }
+  catch (_) { return 0; }
+}
+
+/**
+ * Atomic write: write to a temp file then rename over the target.
+ * On Linux (Railway's persistent volume), rename() is atomic — readers always
+ * see either the old complete file or the new complete file, never a partial write.
+ */
+function _atomicWrite(data) {
+  const tmp = DB_PATH + '.tmp.' + process.pid;
+  fs.writeFileSync(tmp, data);
+  fs.renameSync(tmp, DB_PATH);
+  _fileTs = _fileMtime();
+}
+
+/**
+ * Reload the in-memory DB from the current file content.
+ * Called when we detect that another process has written a newer version.
+ */
+function _reloadFromDisk() {
+  try {
+    if (!fs.existsSync(DB_PATH)) return;
+    const data = fs.readFileSync(DB_PATH);
+    if (_rawDb) _rawDb.close();
+    _rawDb = new _SQL.Database(data);
+    _rawDb.run('PRAGMA foreign_keys = ON');
+    _rawDb.run('PRAGMA ignore_check_constraints = 1');
+    _fileTs = _fileMtime();
+    console.log('[DB] Reloaded from disk — newer version detected from another process');
+  } catch (e) {
+    console.error('[DB] Reload error:', e.message);
+  }
+}
+
+// ─── PERSISTENCE ──────────────────────────────────────────────────────────────
+
+function saveNow() {
+  if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
+  if (!_rawDb) return;
+
+  try {
+    const diskTs = _fileMtime();
+
+    if (diskTs > _fileTs + 200) {
+      // The file on disk is NEWER than what we last read/wrote.
+      // Another process (e.g. the old Railway container) has saved newer data.
+      // Reload from disk so we don't overwrite their data with our stale in-memory state.
+      _reloadFromDisk();
+      _dirty = false;
+      return;
+    }
+
+    // File is not newer — safe to save our current in-memory state.
+    const exported = Buffer.from(_rawDb.export());
+    _atomicWrite(exported);
+    _dirty = false;
+  } catch (e) {
+    console.error('[DB] saveNow error:', e.message);
+  }
+}
+
+function scheduleSave() {
+  _dirty = true;
+  if (_saveTimer) return;
+  _saveTimer = setTimeout(() => {
+    _saveTimer = null;
+    if (_dirty && _rawDb) saveNow();
+  }, 300);
+}
+
+// ─── STATEMENT WRAPPER ────────────────────────────────────────────────────────
+
+class PreparedStatement {
+  constructor(sql) { this._sql = sql; }
+
+  _getStmt() {
+    if (!_rawDb) throw new Error('DB not ready');
+    return _rawDb.prepare(this._sql);
+  }
+
+  run(...args) {
+    const params = flattenParams(args);
+    const stmt = this._getStmt();
+    try {
+      stmt.run(params);
+      const rowid   = _rawDb.exec('SELECT last_insert_rowid()')[0]?.values[0][0] ?? null;
+      const changes = _rawDb.exec('SELECT changes()')[0]?.values[0][0] ?? 0;
+      scheduleSave();
+      return { lastInsertRowid: rowid, changes };
+    } finally { stmt.free(); }
+  }
+
+  get(...args) {
+    const params = flattenParams(args);
+    const stmt = this._getStmt();
+    try {
+      stmt.bind(params);
+      return stmt.step() ? stmt.getAsObject() : undefined;
+    } finally { stmt.free(); }
+  }
+
+  all(...args) {
+    const params = flattenParams(args);
+    const stmt = this._getStmt();
+    try {
+      stmt.bind(params);
+      const rows = [];
+      while (stmt.step()) rows.push(stmt.getAsObject());
+      return rows;
+    } finally { stmt.free(); }
+  }
+}
+
+function flattenParams(args) {
+  if (args.length === 0) return [];
+  if (args.length === 1 && Array.isArray(args[0])) return args[0];
+  return args;
+}
 
 // ─── DATABASE WRAPPER ─────────────────────────────────────────────────────────
 const db = {
-  prepare(sql) {
-    if (!_db) throw new Error('DB not ready');
-    return _db.prepare(sql);
-  },
+  prepare(sql) { return new PreparedStatement(sql); },
 
-  /** Run raw SQL without parameters (used in auth.routes.js for batch deletes). */
   exec(sql) {
-    if (!_db) throw new Error('DB not ready');
-    _db.exec(sql);
+    if (!_rawDb) throw new Error('DB not ready');
+    _rawDb.run(sql);
+    scheduleSave();
   },
 
   pragma(stmt) {
-    if (!_db) throw new Error('DB not ready');
-    _db.pragma(stmt);
+    if (!_rawDb) throw new Error('DB not ready');
+    _rawDb.run(`PRAGMA ${stmt}`);
   },
 
   transaction(fn) {
     return (...args) => {
-      if (!_db) throw new Error('DB not ready');
-      return _db.transaction(fn)(...args);
+      if (!_rawDb) throw new Error('DB not ready');
+      _rawDb.run('BEGIN');
+      try {
+        const result = fn(...args);
+        _rawDb.run('COMMIT');
+        scheduleSave();
+        return result;
+      } catch (err) {
+        try { _rawDb.run('ROLLBACK'); } catch (_) {}
+        throw err;
+      }
     };
   },
 
   close() {
-    if (_db) { _db.close(); _db = null; }
+    saveNow();
+    if (_rawDb) { _rawDb.close(); _rawDb = null; }
   },
 
-  /**
-   * sql.js-compatible _raw API — used by migrations in app.js and seed.js.
-   *
-   *   _raw.run(sql)     → executes DDL / DML without parameters
-   *                        returns { changes, lastInsertRowid } (like better-sqlite3 .run())
-   *   _raw.exec(sql)    → executes SELECT / PRAGMA and returns sql.js format:
-   *                        [{ columns: string[], values: any[][] }]
-   *   _raw.prepare(sql) → returns a better-sqlite3 PreparedStatement
-   *                        (has .run(), .get(), .all() — compatible calling conventions)
-   */
-  get _raw() {
-    const d = _db;
-    return {
-      /** Runs DDL / DML. Returns { changes, lastInsertRowid }. */
-      run(sql) {
-        try {
-          const stmt = d.prepare(sql);
-          if (stmt.reader) {
-            // A SELECT accidentally called via run() — execute but discard rows.
-            stmt.all();
-            return { changes: 0, lastInsertRowid: null };
-          }
-          return stmt.run(); // { changes, lastInsertRowid }
-        } catch (_) {
-          // Fallback for multi-statement SQL or special syntax that can't be prepared.
-          d.exec(sql);
-          return { changes: 0, lastInsertRowid: null };
-        }
-      },
-
-      /** Runs SELECT / PRAGMA. Returns sql.js-format [{columns, values}]. */
-      exec(sql) {
-        try {
-          const stmt = d.prepare(sql);
-          if (stmt.reader) {
-            const rows = stmt.all();
-            if (!rows.length) return [];
-            const cols = Object.keys(rows[0]);
-            return [{ columns: cols, values: rows.map(r => cols.map(c => r[c])) }];
-          }
-          // DML / DDL called via exec() — run and return empty.
-          stmt.run();
-          return [];
-        } catch (_) {
-          d.exec(sql);
-          return [];
-        }
-      },
-
-      /** Returns a better-sqlite3 PreparedStatement with .run()/.get()/.all(). */
-      prepare(sql) {
-        return d.prepare(sql);
-      },
-    };
-  },
+  get _raw() { return _rawDb; },
 };
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 async function initDb() {
-  _db = new Database(DB_PATH);
-  // WAL mode: allows concurrent reads while a write is in progress.
-  // NORMAL synchronous: safe durability without the overhead of FULL.
-  _db.pragma('journal_mode = WAL');
-  _db.pragma('synchronous = NORMAL');
-  _db.pragma('foreign_keys = ON');
+  _SQL = await initSqlJs();
+  let data;
+  if (fs.existsSync(DB_PATH)) {
+    data = fs.readFileSync(DB_PATH);
+    _fileTs = _fileMtime();
+  } else {
+    _fileTs = 0;
+  }
+  _rawDb = data ? new _SQL.Database(data) : new _SQL.Database();
+  _rawDb.run('PRAGMA foreign_keys = ON');
+  _rawDb.run('PRAGMA ignore_check_constraints = 1');
   return db;
 }
-
-/**
- * No-op — kept for backward compatibility.
- * better-sqlite3 writes every transaction directly to the file;
- * there is no in-memory buffer that needs flushing.
- */
-function saveNow() { /* intentionally empty */ }
-
-/** No-op — same reason as saveNow(). */
-function scheduleSave() { /* intentionally empty */ }
 
 module.exports = db;
 module.exports.initDb = initDb;
