@@ -230,11 +230,28 @@ router.post('/preview', (req, res) => {
     // The user distributes sequentially through the file; sorting by date would
     // break the intended row order and skip clients from earlier rows.
 
+    // ── Detect INTRA-FILE duplicates (same phone appearing more than once in Excel) ─
+    // We deduplicate here so every row in the session maps to exactly one remark.
+    // The caller is shown intra_file_duplicates so they can fix their Excel if needed.
+    const filePhoneSeen = new Set();
+    const intraFileDuplicates = [];
+    const deduplicatedClients = [];
+    for (const c of clients) {
+      if (c.phone && filePhoneSeen.has(c.phone)) {
+        intraFileDuplicates.push({ name: c.name, phone: c.phone, date: c.date });
+      } else {
+        if (c.phone) filePhoneSeen.add(c.phone);
+        deduplicatedClients.push(c);
+      }
+    }
+    // Work with the deduplicated list from here on
+    const uniqueClients = deduplicatedClients;
+
     // ── Detect duplicates: clients already in an ACTIVE CONFIRMED distribution session ──
     // Only block re-distribution if the client has an active remark that was created
     // by a confirmed distribution session. External remarks (from Remarks.xlsx or
     // manual creation) are intentionally ignored so they don't silently swallow clients.
-    const phoneList = [...new Set(clients.map(c => c.phone).filter(Boolean))];
+    const phoneList = [...new Set(uniqueClients.map(c => c.phone).filter(Boolean))];
     const existingActiveMap = {};
     if (phoneList.length > 0) {
       const ph = phoneList.map(() => '?').join(',');
@@ -260,7 +277,7 @@ router.post('/preview', (req, res) => {
     // Split: fresh (will be distributed) vs duplicates (skipped)
     const duplicates  = [];
     const freshClients = [];
-    for (const c of clients) {
+    for (const c of uniqueClients) {
       const ex = c.phone && existingActiveMap[c.phone];
       if (ex) {
         duplicates.push({
@@ -478,13 +495,15 @@ router.post('/preview', (req, res) => {
 
     return res.json({
       session_id:       sessionId,
-      total:            allItems.length,
-      matched:          matched.length,
-      distributed:      finalDistributed.length,
-      duplicates_count: duplicates.length,
-      duplicates:       duplicates,
-      agent_summary:    Object.values(summaryMap).filter(a => a.new_clients > 0),
-      items:            savedItems,
+      total:                        allItems.length,
+      matched:                      matched.length,
+      distributed:                  finalDistributed.length,
+      duplicates_count:             duplicates.length,
+      duplicates:                   duplicates,
+      intra_file_duplicates_count:  intraFileDuplicates.length,
+      intra_file_duplicates:        intraFileDuplicates,
+      agent_summary:                Object.values(summaryMap).filter(a => a.new_clients > 0),
+      items:                        savedItems,
     });
 
   } catch (err) {
@@ -656,8 +675,9 @@ router.post('/sessions/:sid/confirm', (req, res) => {
     `UPDATE distribution_items SET remark_id = ? WHERE id = ?`
   );
 
-  let remarksCreated = 0;
-  let remarksDuped   = 0;
+  let remarksCreated     = 0;
+  let remarksDuped       = 0;   // cross-session (from DB)
+  let intraSessionDuped  = 0;   // intra-session (same phone twice in Excel)
 
   db.transaction(() => {
     for (const item of items) {
@@ -666,7 +686,12 @@ router.post('/sessions/:sid/confirm', (req, res) => {
       if (existing) {
         // Link the item to the existing remark so history is traceable
         updateItem.run(existing.id, item.id);
-        remarksDuped++;
+        // Track whether this was a cross-session or intra-session duplicate
+        if (existing._intra) {
+          intraSessionDuped++;
+        } else {
+          remarksDuped++;
+        }
         continue;
       }
 
@@ -693,8 +718,9 @@ router.post('/sessions/:sid/confirm', (req, res) => {
       remarksCreated++;
 
       // Register in dupe map so later items in the SAME session don't duplicate
+      // Mark as intra-session so the log can distinguish from cross-session dupes
       if (item.client_phone) {
-        confirmDupeMap[item.client_phone] = { id: r.lastInsertRowid };
+        confirmDupeMap[item.client_phone] = { id: r.lastInsertRowid, _intra: true };
       }
     }
     db.prepare(`
@@ -705,12 +731,26 @@ router.post('/sessions/:sid/confirm', (req, res) => {
   })();
   saveNow();
 
+  // Diagnostic log — distinguishes cross-session from intra-session duplicates
+  if (remarksDuped > 0 || intraSessionDuped > 0) {
+    console.warn(
+      `[confirm sid=${req.params.sid}] created=${remarksCreated}`,
+      `cross_session_duped=${remarksDuped}`,
+      `intra_session_duped=${intraSessionDuped}`
+    );
+  }
+
   return res.json({
-    message:          'تم تأكيد التوزيع',
-    remarks_created:  remarksCreated,
-    duplicates_skipped: remarksDuped,
+    message:                  'تم تأكيد التوزيع',
+    remarks_created:          remarksCreated,
+    duplicates_skipped:       remarksDuped + intraSessionDuped,
+    cross_session_duped:      remarksDuped,
+    intra_session_duped:      intraSessionDuped,
     ...(remarksDuped > 0 && {
       warning: `تم تخطي ${remarksDuped} عميل لديهم ريمارك نشط بالفعل من جلسة سابقة`,
+    }),
+    ...(intraSessionDuped > 0 && {
+      intra_warning: `تم تخطي ${intraSessionDuped} عميل بسبب تكرار رقم الهاتف داخل نفس ملف Excel`,
     }),
   });
 });
