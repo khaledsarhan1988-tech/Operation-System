@@ -50,7 +50,7 @@ const router = createBrowserRouter([
   // ── Agent routes ──────────────────────────────────────────────
   {
     path: '/agent',
-    element: <PrivateRoute role="agent"><AppShell /></PrivateRoute>,
+    element: <PrivateRoute allowedRoles={['agent', 'leader', 'admin']}><AppShell /></PrivateRoute>,
     children: [
       { index: true, element: <Navigate to="pipeline" replace /> },
       { path: 'dashboard',          element: <AgentDashboard /> },
@@ -67,7 +67,7 @@ const router = createBrowserRouter([
   // ── Leader routes ─────────────────────────────────────────────
   {
     path: '/leader',
-    element: <PrivateRoute role="leader"><AppShell /></PrivateRoute>,
+    element: <PrivateRoute allowedRoles={['leader', 'admin']}><AppShell /></PrivateRoute>,
     children: [
       { index: true, element: <Navigate to="dashboard" replace /> },
       { path: 'dashboard',                    element: <LeaderDashboard /> },
@@ -91,7 +91,7 @@ const router = createBrowserRouter([
   // ── Admin routes ──────────────────────────────────────────────
   {
     path: '/admin',
-    element: <PrivateRoute role="admin"><AppShell /></PrivateRoute>,
+    element: <PrivateRoute allowedRoles={['admin']}><AppShell /></PrivateRoute>,
     children: [
       { index: true, element: <Navigate to="dashboard" replace /> },
       { path: 'dashboard',                    element: <AdminDashboard /> },
