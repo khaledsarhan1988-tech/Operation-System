@@ -1269,11 +1269,13 @@ export default function ClientDistribution() {
                               </div>
 
                               {/* Counts */}
-                              <div className="flex items-center gap-2 flex-shrink-0 text-xs">
-                                <span className="text-emerald-600 font-semibold w-6 text-center">{s.distributed}</span>
+                              <div className="flex items-center gap-1 flex-shrink-0 text-xs">
+                                <span className="text-gray-400 text-[10px]">وُزِّع</span>
+                                <span className="text-emerald-600 font-bold w-6 text-center">{s.distributed}</span>
                                 <span className="text-gray-300">/</span>
-                                <span className="text-gray-600 font-semibold w-6 text-center">{s.total}</span>
-                                <span className={`w-14 text-center font-bold rounded-lg px-1.5 py-0.5 ${
+                                <span className="text-gray-500 font-semibold w-6 text-center">{s.total}</span>
+                                <span className="text-gray-400 text-[10px]">إجمالي</span>
+                                <span className={`mr-1 w-14 text-center font-bold rounded-lg px-1.5 py-0.5 ${
                                   allDone
                                     ? 'bg-gray-100 text-gray-400'
                                     : s.remaining === s.total
