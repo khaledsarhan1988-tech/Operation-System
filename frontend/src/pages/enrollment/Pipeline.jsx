@@ -101,7 +101,9 @@ function initials(name) {
 
 function daysAgo(dateStr) {
   if (!dateStr) return '';
-  const diff = Math.floor((Date.now() - new Date(dateStr)) / 86_400_000);
+  const normalized = String(dateStr).replace(' ', 'T');
+  const diff = Math.floor((Date.now() - new Date(normalized)) / 86_400_000);
+  if (isNaN(diff) || diff < 0) return '';
   if (diff === 0) return 'اليوم';
   if (diff === 1) return 'أمس';
   return `${diff} يوم`;

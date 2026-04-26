@@ -459,6 +459,11 @@ function FilesStatusPanel({ onClearSuccess, selectedLine }) {
             <p className="text-xs text-center text-red-600 font-semibold">
               ⚠️ هيتم مسح كل البيانات نهائياً!
             </p>
+            {!selectedLine && (
+              <p className="text-xs text-center text-red-800 font-bold bg-red-100 rounded-lg p-2 border border-red-300">
+                🔴 لم تختر Line — سيتم مسح بيانات جميع الـ Lines!
+              </p>
+            )}
             <div className="flex gap-2">
               <button onClick={handleClearAll} disabled={clearingAll}
                 className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg
