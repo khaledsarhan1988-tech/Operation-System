@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Plus, Eye, EyeOff, Pencil, Trash2, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Plus, Eye, EyeOff, Pencil, Trash2, ToggleLeft, ToggleRight, Download } from 'lucide-react';
 import api from '../../api/axios';
 import DataTable from '../../components/ui/DataTable';
 import Modal from '../../components/ui/Modal';
@@ -159,6 +159,26 @@ export default function UserManagement() {
   const [showModal, setShowModal] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
   const [togglingId, setTogglingId] = useState(null);
+  const [downloading, setDownloading] = useState(false);
+
+  const handleBackupDownload = async () => {
+    setDownloading(true);
+    try {
+      const res = await api.get('/admin/backup/download', { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `academy-backup-${new Date().toISOString().slice(0, 10)}.db`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      alert('حدث خطأ أثناء تحميل النسخة الاحتياطية');
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   const { data: users, isLoading } = useQuery({
     queryKey: ['admin-users'],
@@ -242,9 +262,19 @@ export default function UserManagement() {
     <div className="space-y-5 animate-fadeIn">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold text-gray-800">{t('admin.users')}</h1>
-        <button onClick={() => { setSelected(null); setShowModal(true); }} className="btn-primary flex items-center gap-2 text-sm">
-          <Plus size={15} /> {t('admin.addUser')}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleBackupDownload}
+            disabled={downloading}
+            className="btn-outline flex items-center gap-2 text-sm"
+          >
+            <Download size={15} />
+            {downloading ? 'جاري التحميل...' : 'نسخة احتياطية'}
+          </button>
+          <button onClick={() => { setSelected(null); setShowModal(true); }} className="btn-primary flex items-center gap-2 text-sm">
+            <Plus size={15} /> {t('admin.addUser')}
+          </button>
+        </div>
       </div>
 
       <div className="card p-0 overflow-hidden">
