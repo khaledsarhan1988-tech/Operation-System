@@ -635,9 +635,22 @@ router.post('/sessions/:sid/confirm', (req, res) => {
             AND di.session_id != ?
         )
       ORDER BY r.added_at DESC
-    `).all(parseInt(req.params.sid), ...itemPhones).forEach(r => {
+    `).all(...itemPhones, parseInt(req.params.sid)).forEach(r => {
       if (!confirmDupeMap[r.client_phone]) confirmDupeMap[r.client_phone] = r;
     });
+  }
+
+  // ── Diagnostic log (remove after debugging) ─────────────────────────────────
+  const dupeCount = Object.keys(confirmDupeMap).length;
+  if (dupeCount > 0) {
+    console.warn(
+      `[confirm sid=${req.params.sid}] ${dupeCount} phone(s) blocked by cross-session guard:`,
+      Object.entries(confirmDupeMap).map(([ph, r]) =>
+        `phone=${ph} → existing_remark_id=${r.id} assigned_to=${r.assigned_to}`
+      )
+    );
+  } else {
+    console.log(`[confirm sid=${req.params.sid}] confirmDupeMap is empty — all ${items.length} clients will get fresh remarks`);
   }
 
   const insertRemark = db.prepare(`
