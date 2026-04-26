@@ -531,16 +531,30 @@ router.delete('/sessions/:sid', (req, res) => {
 });
 
 // DELETE /api/distribution/sessions/:sid/force  — hard-delete any session (admin)
+// Also deletes all remarks that were created by this session's items.
 router.delete('/sessions/:sid/force', (req, res) => {
   const session = db.prepare(`SELECT * FROM distribution_sessions WHERE id = ?`).get(req.params.sid);
   if (!session) return res.status(404).json({ error: 'الجلسة غير موجودة' });
 
+  // Collect remark IDs linked to this session's items
+  const remarkIds = db.prepare(
+    `SELECT remark_id FROM distribution_items WHERE session_id = ? AND remark_id IS NOT NULL`
+  ).all(req.params.sid).map(r => r.remark_id);
+
+  let remarksDeleted = 0;
   db.transaction(() => {
+    // Delete linked remarks first
+    if (remarkIds.length > 0) {
+      const ph = remarkIds.map(() => '?').join(',');
+      const res = db.prepare(`DELETE FROM remarks WHERE id IN (${ph})`).run(...remarkIds);
+      remarksDeleted = res.changes;
+    }
     db.prepare(`DELETE FROM distribution_items    WHERE session_id = ?`).run(req.params.sid);
     db.prepare(`DELETE FROM distribution_sessions WHERE id = ?`).run(req.params.sid);
   })();
+  saveNow();
 
-  return res.json({ message: 'تم حذف الجلسة نهائياً' });
+  return res.json({ message: 'تم حذف الجلسة نهائياً', remarks_deleted: remarksDeleted });
 });
 
 // ─── CONFIRM session → create remarks ─────────────────────────────────────────
