@@ -392,6 +392,34 @@ initDb().then(db => {
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_lectures_type_group_line ON lectures(session_type, group_name, line)`);
   } catch (e) { /* index already exists or schema mismatch — safe to ignore */ }
 
+  // ── Extend users.role CHECK to include enrollment roles ──────────────────
+  try {
+    const usersSql = db._raw.exec(`SELECT sql FROM sqlite_master WHERE type='table' AND name='users'`)[0]?.values[0][0] || '';
+    if (usersSql && !usersSql.includes("'enrollment'")) {
+      db._raw.run(`CREATE TABLE IF NOT EXISTS users_new (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        username      TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        password_hash TEXT NOT NULL,
+        full_name     TEXT NOT NULL,
+        role          TEXT NOT NULL CHECK(role IN ('agent','leader','admin','enrollment','enrollment_leader')),
+        department    TEXT NOT NULL DEFAULT 'General',
+        management    TEXT NOT NULL DEFAULT 'Customer Services',
+        line          TEXT NOT NULL DEFAULT 'Ahmed Hassan',
+        language      TEXT NOT NULL DEFAULT 'ar' CHECK(language IN ('ar','en')),
+        is_active     INTEGER NOT NULL DEFAULT 1,
+        created_at    TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        updated_at    TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+      )`);
+      db._raw.run(`INSERT INTO users_new SELECT * FROM users`);
+      db._raw.run(`DROP TABLE users`);
+      db._raw.run(`ALTER TABLE users_new RENAME TO users`);
+      saveNow();
+      console.log('✅ Migration: users.role CHECK extended to include enrollment roles');
+    }
+  } catch (e) {
+    console.error('users enrollment migration error:', e.message);
+  }
+
   // ── Auto-upsert admin user on every startup ───────────────────────────────
   // Ensures admin always exists even after DB reset (e.g. Railway redeploy).
   try {
