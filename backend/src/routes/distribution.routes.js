@@ -361,6 +361,28 @@ router.post('/preview', (req, res) => {
     let finalDistributed = [];
     const hasManual = Array.isArray(assignments) && assignments.length > 0;
 
+    // When the user explicitly chose a set of agents (manual mode), restrict
+    // "existing_coordinator" matches to ONLY those agents. Clients whose existing
+    // coordinator is NOT in the chosen list are moved to the unmatched pool so they
+    // can be redistributed among the chosen agents — preventing unwanted employees
+    // from appearing in the distribution result.
+    if (hasManual) {
+      const chosenSet = new Set(
+        assignments.map(a => (a.agent || '').trim().toLowerCase()).filter(Boolean)
+      );
+      const keptMatched = [];
+      for (const m of matched) {
+        if (chosenSet.has(m.assigned_to.trim().toLowerCase())) {
+          keptMatched.push(m);
+        } else {
+          // Redirect to unmatched pool — will be distributed among chosen agents
+          unmatched.push({ ...m, assigned_to: null, match_type: 'auto_distributed' });
+        }
+      }
+      matched.length = 0;
+      keptMatched.forEach(m => matched.push(m));
+    }
+
     if (hasManual) {
       // Manual mode: each coordinator gets (requested - already_matched) new clients
       // so their total never exceeds the requested count
@@ -674,6 +696,25 @@ router.post('/sessions/:sid/fork', (req, res) => {
   // assignments = [{agent: 'Name', count: N}, ...] — override assigned_to in order
   let finalItems = freshItems.map(i => ({ ...i }));
   if (Array.isArray(assignments) && assignments.length > 0) {
+    // Restrict 'existing_coordinator' items to chosen agents only (same rule as /preview)
+    const chosenSet = new Set(
+      assignments.map(a => (a.agent || '').trim().toLowerCase()).filter(Boolean)
+    );
+    const redirected = [];
+    const kept       = [];
+    for (const item of finalItems) {
+      if (
+        item.match_type === 'existing_coordinator' &&
+        !chosenSet.has((item.assigned_to || '').trim().toLowerCase())
+      ) {
+        redirected.push({ ...item, assigned_to: null, match_type: 'auto_distributed' });
+      } else {
+        kept.push(item);
+      }
+    }
+    // Put redirected items at end so manual slots fill from the front first
+    finalItems = [...kept, ...redirected];
+
     let idx = 0;
     for (const asgn of assignments) {
       const cnt = Math.min(parseInt(asgn.count) || 0, finalItems.length - idx);
