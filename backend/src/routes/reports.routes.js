@@ -208,13 +208,13 @@ function buildRemarksNotesMainInnerQ({ from_date, to_date, department, employee,
 
   const remarksSubQ = `
     SELECT client_phone,
-      date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2)) AS rdate,
+      ${normRemarkDate('added_at')} AS rdate,
       MAX(id) AS id, MAX(details) AS details, MAX(added_at) AS added_at,
       MAX(assigned_to) AS assigned_to, MAX(status) AS status
     FROM remarks WHERE category = 'Attendance Main Session'${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
-    GROUP BY client_phone, date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2))`;
+    GROUP BY client_phone, (${normRemarkDate('added_at')})`;
 
-  const rdSQLMain = `date(substr(r3.added_at,7,4)||'-'||substr(r3.added_at,4,2)||'-'||substr(r3.added_at,1,2))`;
+  const rdSQLMain = normRemarkDate('r3.added_at');
   const part3 = `
     SELECT DISTINCT
       COALESCE(c3.name, r3.client_name) AS student_name,
@@ -400,7 +400,7 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
       )
     ${dept1}${emp1}${coord1}${srch1}`;
 
-  const rdSQL = `date(substr(r2.added_at,7,4)||'-'||substr(r2.added_at,4,2)||'-'||substr(r2.added_at,1,2))`;
+  const rdSQL = normRemarkDate('r2.added_at');
   const part2 = `
     SELECT DISTINCT
       COALESCE(c2.name, r2.client_name)       AS client_name,
@@ -431,11 +431,11 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
 
   const remarksSubQ = `
     SELECT client_phone,
-      date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2)) AS rdate,
+      ${normRemarkDate('added_at')} AS rdate,
       MAX(id) AS id, MAX(details) AS details, MAX(added_at) AS added_at,
       MAX(assigned_to) AS assigned_to, MAX(status) AS status
     FROM remarks WHERE category = 'Attendance Zoom Call'${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
-    GROUP BY client_phone, date(substr(added_at,7,4)||'-'||substr(added_at,4,2)||'-'||substr(added_at,1,2))`;
+    GROUP BY client_phone, (${normRemarkDate('added_at')})`;
 
   const outerCoordFilter = safeCoord
     ? ` AND TRIM(LOWER(abs_union.coordinators)) LIKE LOWER('%${safeCoord}%')`
@@ -500,6 +500,19 @@ function buildLineFilter(alias, line) {
 //   work backwards from the remark to the lecture date):
 //   - Saturday remark (strftime %w = '6') → Thursday (-2 days, skip Friday)
 //   - Any other remark day               → previous day (-1 day)
+//
+// normRemarkDate(col): normalise added_at to YYYY-MM-DD regardless of
+//   storage format.  Remarks created via Excel upload are stored as
+//   'DD/MM/YYYY' or 'DD/MM/YYYY HH:MM'; remarks created directly inside the
+//   app are stored as SQLite datetime strings ('YYYY-MM-DD HH:MM:SS').
+//   The original substr(…) approach only handled the Excel format and
+//   returned NULL for ISO-format dates, causing those remarks to be
+//   invisible to the rdate join.
+const normRemarkDate = (col) =>
+  `CASE WHEN ${col} GLOB '??/??/????*' ` +
+  `THEN date(substr(${col},7,4)||'-'||substr(${col},4,2)||'-'||substr(${col},1,2)) ` +
+  `ELSE date(${col}) END`;
+
 const nextRemarkDay = (col) =>
   `CASE WHEN strftime('%w', ${col}) = '4' THEN date(${col}, '+2 days') ELSE date(${col}, '+1 day') END`;
 
