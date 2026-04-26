@@ -543,11 +543,24 @@ router.delete('/sessions/:sid/force', (req, res) => {
 
   let remarksDeleted = 0;
   db.transaction(() => {
-    // Delete linked remarks first
     if (remarkIds.length > 0) {
       const ph = remarkIds.map(() => '?').join(',');
-      const res = db.prepare(`DELETE FROM remarks WHERE id IN (${ph})`).run(...remarkIds);
-      remarksDeleted = res.changes;
+      // Only delete remarks that belong EXCLUSIVELY to this session.
+      // If a remark_id is shared with items from another session (e.g. because the
+      // confirm-time duplicate guard linked an item to an existing remark), skip it
+      // so we don't accidentally destroy the other session's data.
+      const exclusiveIds = db.prepare(`
+        SELECT remark_id AS id
+        FROM distribution_items
+        WHERE remark_id IN (${ph})
+        GROUP BY remark_id
+        HAVING COUNT(DISTINCT session_id) = 1
+      `).all(...remarkIds).map(r => r.id);
+
+      if (exclusiveIds.length > 0) {
+        const ph2 = exclusiveIds.map(() => '?').join(',');
+        remarksDeleted = db.prepare(`DELETE FROM remarks WHERE id IN (${ph2})`).run(...exclusiveIds).changes;
+      }
     }
     db.prepare(`DELETE FROM distribution_items    WHERE session_id = ?`).run(req.params.sid);
     db.prepare(`DELETE FROM distribution_sessions WHERE id = ?`).run(req.params.sid);
