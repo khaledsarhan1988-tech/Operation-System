@@ -429,9 +429,8 @@ initDb().then(db => {
       `).run(adminUsername, adminHash, adminName);
       console.log(`✅ Admin user created on startup: ${adminUsername}`);
     } else {
-      db._raw.prepare(`UPDATE users SET password_hash = ? WHERE username = ?`)
-        .run(adminHash, adminUsername);
-      console.log(`✅ Admin password synced on startup: ${adminUsername}`);
+      // Do NOT reset password — preserves any password changes made via UI
+      console.log(`✅ Admin user exists: ${adminUsername}`);
     }
     saveNow();
   } catch (e) {
