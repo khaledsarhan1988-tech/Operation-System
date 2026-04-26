@@ -818,8 +818,10 @@ export default function ClientDistribution() {
   const [pvDateFrom,     setPvDateFrom]    = useState(''); // YYYY-MM-DD
   const [pvDateTo,       setPvDateTo]      = useState(''); // YYYY-MM-DD
   // Duplicate detection
-  const [duplicates,     setDuplicates]    = useState([]);
-  const [showDuplicates, setShowDuplicates] = useState(false);
+  const [duplicates,           setDuplicates]          = useState([]);
+  const [showDuplicates,       setShowDuplicates]       = useState(false);
+  const [intraFileDuplicates,  setIntraFileDuplicates]  = useState([]);
+  const [showIntraDups,        setShowIntraDups]        = useState(false);
   // Manual distribution
   const [useManual,      setUseManual]     = useState(false);
   const [manualAsgns,    setManualAsgns]   = useState([{ agent: '', count: '' }]);
@@ -847,6 +849,7 @@ export default function ClientDistribution() {
     onSuccess: ({ data }) => {
       setPreview(data);
       setDuplicates(data.duplicates || []);
+      setIntraFileDuplicates(data.intra_file_duplicates || []);
       setOverrides({});
       setStep('preview');
     },
@@ -1445,7 +1448,47 @@ export default function ClientDistribution() {
                 )}
               </div>
 
-              {/* Duplicates warning badge */}
+              {/* Intra-file duplicates warning (same phone appears twice in Excel) */}
+              {intraFileDuplicates.length > 0 && (
+                <button
+                  onClick={() => setShowIntraDups(v => !v)}
+                  className="w-full flex items-center gap-4 bg-red-50 border border-red-200 rounded-2xl px-4 py-3.5 hover:bg-red-100 transition text-right group"
+                >
+                  <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition">
+                    <AlertTriangle size={20} className="text-red-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-red-800">
+                      ⚠️ يوجد{' '}
+                      <span className="text-lg font-black">{intraFileDuplicates.length}</span>
+                      {' '}رقم تليفون مكرر داخل الملف — تم الاحتفاظ بالأول فقط
+                    </p>
+                    <p className="text-xs text-red-600 mt-0.5">
+                      اضغط لعرض القائمة · يُنصح بمراجعة ملف Excel وتصحيح التكرار
+                    </p>
+                  </div>
+                  <Eye size={16} className="text-red-500 flex-shrink-0" />
+                </button>
+              )}
+              {showIntraDups && intraFileDuplicates.length > 0 && (
+                <div className="rounded-2xl border border-red-200 bg-red-50 overflow-hidden">
+                  <div className="px-4 py-2 bg-red-100 border-b border-red-200 flex justify-between items-center">
+                    <span className="text-xs font-bold text-red-700">أرقام مكررة في الملف (تم استبعادها)</span>
+                    <button onClick={() => setShowIntraDups(false)} className="text-red-400 hover:text-red-700 text-xs">إخفاء</button>
+                  </div>
+                  <div className="divide-y divide-red-100 max-h-48 overflow-y-auto">
+                    {intraFileDuplicates.map((d, i) => (
+                      <div key={i} className="flex items-center justify-between px-4 py-2 text-sm">
+                        <span className="font-medium text-gray-800">{d.name || '—'}</span>
+                        <span className="text-gray-500 text-xs font-mono">{d.phone}</span>
+                        <span className="text-gray-400 text-xs">{d.date || '—'}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Cross-session duplicates warning badge */}
               {duplicates.length > 0 && (
                 <button
                   onClick={() => setShowDuplicates(true)}
@@ -1465,7 +1508,6 @@ export default function ClientDistribution() {
                     </p>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
-                    {/* Per-coordinator mini badges */}
                     {(() => {
                       const byCoord = {};
                       duplicates.forEach(d => {
