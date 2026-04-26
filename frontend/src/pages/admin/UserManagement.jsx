@@ -83,6 +83,8 @@ function UserModal({ open, onClose, user, onSaved }) {
               <option value="agent">{t('admin.agent')}</option>
               <option value="leader">{t('admin.leader')}</option>
               <option value="admin">{t('admin.admin')}</option>
+              <option value="enrollment">Enrollment</option>
+              <option value="enrollment_leader">Enrollment Leader</option>
             </select>
           </div>
           <div>
