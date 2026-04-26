@@ -244,6 +244,7 @@ router.post('/preview', (req, res) => {
         FROM remarks
         WHERE client_phone IN (${ph})
           AND client_phone != ''
+          AND category = 'توزيع عملاء'
           AND LOWER(status) NOT IN ('إنتهت','closed','resolved')
         ORDER BY added_at DESC
       `).all(...phoneList).forEach(r => {
@@ -614,6 +615,7 @@ router.post('/sessions/:sid/confirm', (req, res) => {
       FROM remarks
       WHERE client_phone IN (${ph})
         AND client_phone != ''
+        AND category = 'توزيع عملاء'
         AND LOWER(status) NOT IN ('إنتهت','closed','resolved')
       ORDER BY added_at DESC
     `).all(...itemPhones).forEach(r => {
@@ -738,6 +740,7 @@ router.post('/sessions/:sid/fork', (req, res) => {
       FROM remarks
       WHERE client_phone IN (${ph})
         AND client_phone != ''
+        AND category = 'توزيع عملاء'
         AND LOWER(status) NOT IN ('إنتهت','closed','resolved')
       ORDER BY added_at DESC
     `).all(...phoneList).forEach(r => {
