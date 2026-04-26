@@ -145,7 +145,7 @@ function syncRemarks(buffer, line, warnings) {
   // Check: any external_id from incoming rows that already exists in OTHER lines?
   const incomingIds = rows.map(r => r.external_id).filter(id => id != null);
   if (incomingIds.length) {
-    // Build chunked IN-query (sql.js handles up to ~999 params comfortably)
+    // Build chunked IN-query (SQLite handles up to ~999 params; chunk at 500 to be safe)
     const CHUNK = 500;
     const collisions = [];
     for (let i = 0; i < incomingIds.length; i += CHUNK) {
