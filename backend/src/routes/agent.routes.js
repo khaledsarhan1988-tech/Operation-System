@@ -730,19 +730,20 @@ router.get('/transfer-targets', (req, res) => {
         full_name COLLATE NOCASE
     `).all(user.full_name, user.department);
   } else {
-    // Agent: their department's leader(s) + admins
+    // Agent: their department's leader(s) + enrollment users + admins
     rows = db.prepare(`
       SELECT full_name, role, department FROM users
       WHERE is_active = 1
         AND full_name != ?
         AND (
-          (role = 'leader' AND department = ?)
+          (role = 'leader'     AND department = ?)
+          OR (role = 'enrollment' AND department = ?)
           OR role = 'admin'
         )
       ORDER BY
-        CASE role WHEN 'admin' THEN 1 ELSE 2 END ASC,
+        CASE role WHEN 'admin' THEN 1 WHEN 'leader' THEN 2 WHEN 'enrollment' THEN 3 ELSE 4 END ASC,
         full_name COLLATE NOCASE
-    `).all(user.full_name, user.department || '');
+    `).all(user.full_name, user.department || '', user.department || '');
   }
   return res.json(rows);
 });
@@ -761,9 +762,10 @@ router.put('/bulk-transfer', (req, res) => {
 
   // ── Permission check ──────────────────────────────────────────────────────
   if (user.role === 'agent') {
-    // Agent → their department's leader OR any admin
+    // Agent → their department's leader OR enrollment OR any admin
     const ok = target.role === 'admin'
-             || (target.role === 'leader' && target.department === user.department);
+             || (target.role === 'leader'     && target.department === user.department)
+             || (target.role === 'enrollment' && target.department === user.department);
     if (!ok) return res.status(403).json({ error: 'يمكنك إحالة العملاء لقائد فريقك أو المسؤول فقط' });
   } else if (user.role === 'leader') {
     // Leader → their agents OR any leader OR any admin
