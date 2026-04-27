@@ -415,7 +415,7 @@ function TransferModal({ count, targets, onConfirm, onClose, isPending, userRole
               {leaders.map(t => <option key={t.full_name} value={t.full_name}>👑 {t.full_name} ({t.department})</option>)}
             </optgroup>
           )}
-          {agents.length > 0 && (
+          {agents.length > 0 && userRole !== 'enrollment' && userRole !== 'agent' && (
             <optgroup label="الموظفون">
               {agents.map(t => <option key={t.full_name} value={t.full_name}>👤 {t.full_name}</option>)}
             </optgroup>

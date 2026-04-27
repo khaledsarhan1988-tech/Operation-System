@@ -173,13 +173,18 @@ router.delete('/interactions/:id', (req, res) => {
 });
 
 // GET /api/enrollment/transfer-targets
+// Agents (enrollment) can only transfer to leaders/admins — not to other agents
 router.get('/transfer-targets', (req, res) => {
   const user = req.user;
+  const isAgent = user.role === 'enrollment';
+  const allowedRoles = isAgent
+    ? "'enrollment_leader', 'admin'"
+    : "'enrollment', 'enrollment_leader', 'admin'";
   const rows = db.prepare(`
     SELECT full_name, role, department, line FROM users
     WHERE is_active = 1
       AND full_name != ?
-      AND role IN ('enrollment', 'enrollment_leader', 'admin')
+      AND role IN (${allowedRoles})
     ORDER BY
       CASE role WHEN 'admin' THEN 1 WHEN 'enrollment_leader' THEN 2 ELSE 3 END ASC,
       full_name COLLATE NOCASE
