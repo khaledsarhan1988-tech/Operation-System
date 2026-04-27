@@ -1,5 +1,6 @@
 'use strict';
 const db = require('../config/database');
+const { saveNow } = require('../config/database');
 const excel = require('./excel.service');
 
 const FILE_TYPES = ['data', 'trainees', 'batches', 'remarks', 'lectures', 'side_sessions', 'absent'];
@@ -68,6 +69,8 @@ function syncFile(fileType, buffer, userId, filename, line) {
       INSERT INTO excel_syncs (file_type, filename, rows_imported, status, error_msg, uploaded_by, line, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
     `).run(syncEntry.file_type, syncEntry.filename, syncEntry.rows_imported, syncEntry.status, syncEntry.error_msg, syncEntry.uploaded_by, syncEntry.line);
+    // Force immediate disk write — prevents data loss on Railway rolling deployments
+    saveNow();
   }
   return { rows_imported: syncEntry.rows_imported, warnings };
 }
