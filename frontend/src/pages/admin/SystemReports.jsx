@@ -2071,24 +2071,19 @@ function MetricDetailModal({ employee, metric, applied = {}, onClose }) {
               </tbody>
             </table>
           ) : (
-            /* groups_with_errors */
+            /* groups_with_errors — same shape as Code Repair Reports */
             <table className="w-full text-sm text-right">
               <thead><tr className="bg-gray-50 border-b border-gray-100">
-                {['اسم المجموعة','مجدول','مسجل','الفرق'].map(h => (
+                {['اسم المجموعة','نوع المشكلة','التفاصيل'].map(h => (
                   <th key={h} className="px-4 py-2.5 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
                 ))}
               </tr></thead>
               <tbody className="divide-y divide-gray-50">
                 {rows.map((r, i) => (
                   <tr key={i} className="hover:bg-gray-50/70">
-                    <td className="px-4 py-2.5 text-xs font-semibold text-gray-900" style={{ maxWidth: 220, wordBreak: 'break-all' }}>{r.group_name}</td>
-                    <td className="px-4 py-2.5 text-xs text-gray-600 text-center">{r.scheduled_lectures ?? '—'}</td>
-                    <td className="px-4 py-2.5 text-xs text-gray-600 text-center">{r.completed_lectures ?? '—'}</td>
-                    <td className="px-4 py-2.5 text-center">
-                      <span className="text-xs font-black text-red-600 bg-red-50 px-2 py-0.5 rounded-full border border-red-200">
-                        {r.diff > 0 ? `+${r.diff}` : r.diff}
-                      </span>
-                    </td>
+                    <td className="px-4 py-2.5 text-xs font-semibold text-gray-900" style={{ maxWidth: 200, wordBreak: 'break-all' }}>{r.group_name}</td>
+                    <td className="px-4 py-2.5 text-xs text-red-700 font-semibold whitespace-nowrap">{r.problem_type ?? '—'}</td>
+                    <td className="px-4 py-2.5 text-xs text-gray-600">{r.detail ?? '—'}</td>
                   </tr>
                 ))}
               </tbody>

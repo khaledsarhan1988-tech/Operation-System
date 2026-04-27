@@ -1349,12 +1349,13 @@ router.get('/remarks-categories', (req, res) => {
   }
 });
 
-// ─── GET /api/reports/code-problems ──────────────────────────────────────────
-// Validates groups against business rules for main & side sessions
-router.get('/code-problems', (req, res) => {
-  const { department, employee, show_resolved } = req.query;
-  const showResolved = show_resolved === 'true';
-  const line = lineFilter(req);
+// ─── HELPER: compute code problems (extracted) ──────────────────────────────
+// Single source of truth used by /code-problems, /team-summary (groups_with_errors
+// column), and /team-summary-detail. All three agree on the same numbers.
+//
+// opts: { department, employee, line, user, showResolved }
+// Returns: { mainProblems, zoomProblems }
+function computeCodeProblems({ department, employee, line, user, showResolved = false }) {
   const lineB = buildLineFilter('b', line);
   const lineL = buildLineFilter('l', line);
   const lineCps = buildLineFilter('', line);
@@ -1367,12 +1368,12 @@ router.get('/code-problems', (req, res) => {
   // - leader: strict dept_type-only filter (no OR EXISTS) to prevent cross-dept leakage
   // - admin:  full buildDeptFilter (includes coordinator-based fallback)
   let deptFilter;
-  if (req.user.role === 'agent' || req.user.role === 'enrollment') {
+  if (user.role === 'agent' || user.role === 'enrollment') {
     deptFilter = '';
-  } else if (req.user.role === 'leader' || req.user.role === 'enrollment_leader') {
+  } else if (user.role === 'leader' || user.role === 'enrollment_leader') {
     // Leader: coordinator's registered dept is source of truth.
     // Include group if: coordinator registered in leader's dept, OR (coordinator NOT registered AND batch.dept_type matches).
-    const dept = (!department || department === 'All') ? req.user.department : department;
+    const dept = (!department || department === 'All') ? user.department : department;
     if (dept && dept !== 'All') {
       const s = dept.replace(/'/g, "''");
       deptFilter = ` AND (
@@ -1401,8 +1402,8 @@ router.get('/code-problems', (req, res) => {
   // If agent: force filter to their own groups using FULL name as one unit (not split by word)
   // Splitting by word causes cross-agent leakage: "Shrouk Ali" → LIKE '%Ali%' also matches "Ali Moaatz"
   let empFilter;
-  if (req.user.role === 'agent' || req.user.role === 'enrollment') {
-    const userRow = db.prepare('SELECT full_name FROM users WHERE id = ?').get(req.user.id);
+  if (user.role === 'agent' || user.role === 'enrollment') {
+    const userRow = db.prepare('SELECT full_name FROM users WHERE id = ?').get(user.id);
     const fullName = (userRow?.full_name || '').trim();
     if (fullName) {
       const safe = fullName.replace(/'/g, "''");
@@ -1447,20 +1448,19 @@ router.get('/code-problems', (req, res) => {
     return { monthNum, dayNum: parseInt(m[2]), dayStr, dow };
   };
 
-  try {
-    const batches = db.prepare(
-      `SELECT b.group_name, b.trainee_count,
-              COALESCE(
-                (SELECT u.department FROM users u
-                 WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
-                   AND u.department IS NOT NULL
-                   AND u.department != 'All'
-                 LIMIT 1),
-                b.dept_type
-              ) AS dept_type,
-              b.coordinators, b.start_date
-       FROM batches b WHERE status='نشطة'${deptFilter}${empFilter}${lineB}`
-    ).all();
+  const batches = db.prepare(
+    `SELECT b.group_name, b.trainee_count,
+            COALESCE(
+              (SELECT u.department FROM users u
+               WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
+                 AND u.department IS NOT NULL
+                 AND u.department != 'All'
+               LIMIT 1),
+              b.dept_type
+            ) AS dept_type,
+            b.coordinators, b.start_date
+     FROM batches b WHERE status='نشطة'${deptFilter}${empFilter}${lineB}`
+  ).all();
 
     // fetch ALL main sessions (including unconfirmed) for count/date validation
     // Unconfirmed lectures are real lectures — excluding them causes false "missing lectures" errors
@@ -1762,8 +1762,24 @@ router.get('/code-problems', (req, res) => {
       existingKey.add(key);
     });
 
-    return res.json({ main_problems: mainProblems, zoom_problems: zoomProblems,
-      total: mainProblems.length + zoomProblems.length });
+  return { mainProblems, zoomProblems };
+}
+
+// ─── GET /api/reports/code-problems ──────────────────────────────────────────
+// Validates groups against business rules for main & side sessions (thin wrapper).
+router.get('/code-problems', (req, res) => {
+  const { department, employee, show_resolved } = req.query;
+  const line = lineFilter(req);
+  try {
+    const { mainProblems, zoomProblems } = computeCodeProblems({
+      department, employee, line, user: req.user,
+      showResolved: show_resolved === 'true',
+    });
+    return res.json({
+      main_problems: mainProblems,
+      zoom_problems: zoomProblems,
+      total: mainProblems.length + zoomProblems.length,
+    });
   } catch (err) {
     console.error('[reports] code-problems error:', err);
     return res.status(500).json({ error: err.message });
@@ -1909,18 +1925,22 @@ router.get('/team-summary-detail', (req, res) => {
       ).all();
 
     } else if (metric === 'groups_with_errors') {
-      rows = db.prepare(
-        `SELECT group_name, scheduled_lectures, completed_lectures, dept_type,
-           ABS(scheduled_lectures - completed_lectures) as diff
-         FROM batches
-         WHERE status = 'نشطة'
-           ${empFBatches}
-           ${deptF.replace('b.','').replace('AND b.','AND ')}${lineBatches}
-           AND scheduled_lectures IS NOT NULL
-           AND completed_lectures IS NOT NULL
-           AND scheduled_lectures != completed_lectures
-         ORDER BY diff DESC`
-      ).all();
+      // Use the SAME logic as Code Repair Reports — return all problem rows
+      // for this employee (mirrors what the Code Repair page shows them).
+      const cp = computeCodeProblems({
+        department, employee, line, user: req.user, showResolved: false,
+      });
+      const all = [...cp.mainProblems, ...cp.zoomProblems];
+      const needle = (employee || '').toLowerCase();
+      rows = all
+        .filter(p => (p.coordinators || '').toLowerCase().includes(needle))
+        .map(p => ({
+          group_name: p.group_name,
+          dept_type:  p.dept_type,
+          problem_type: p.problem_type,
+          detail:     p.detail,
+          first_date: p.first_date,
+        }));
     }
 
     return res.json({ employee, metric, rows });
@@ -2018,15 +2038,28 @@ router.get('/team-summary', (req, res) => {
        )`
     );
 
-    const stmtErrors = db.prepare(
-      `SELECT COUNT(*) as cnt FROM batches
-       WHERE status = 'نشطة'
-         AND coordinators LIKE ?
-         ${deptFNoB}${lineBatches}
-         AND scheduled_lectures IS NOT NULL
-         AND completed_lectures IS NOT NULL
-         AND scheduled_lectures != completed_lectures`
-    );
+    // groups_with_errors: use the SAME logic as Code Repair Reports (/code-problems)
+    // so the per-employee count matches what's shown there. Computed once per request,
+    // then matched per member via case-insensitive coordinator substring (mirrors the
+    // LIKE '%name%' behavior used by all other metrics in this endpoint).
+    let codeProblemsList = [];
+    try {
+      const cp = computeCodeProblems({
+        department, employee: empFilter, line, user: req.user, showResolved: false,
+      });
+      codeProblemsList = [...cp.mainProblems, ...cp.zoomProblems];
+    } catch (e) {
+      console.error('[team-summary] computeCodeProblems error:', e.message);
+    }
+    const countProblemsForName = (name) => {
+      if (!name) return 0;
+      const needle = name.toLowerCase();
+      let cnt = 0;
+      for (const p of codeProblemsList) {
+        if ((p.coordinators || '').toLowerCase().includes(needle)) cnt++;
+      }
+      return cnt;
+    };
 
     const result = members.map(m => {
       const like = `%${m.name}%`;
@@ -2040,7 +2073,7 @@ router.get('/team-summary', (req, res) => {
         overdue_remarks:       stmtOverdue.get(like)?.cnt    ?? 0,
         main_absence_no_remark:stmtMainAbsence.get(like)?.cnt?? 0,
         side_absence_no_remark:stmtSideAbsence.get(like)?.cnt?? 0,
-        groups_with_errors:    stmtErrors.get(like)?.cnt     ?? 0,
+        groups_with_errors:    countProblemsForName(m.name),
       };
     });
 
