@@ -23,10 +23,11 @@ function nowTs() {
 // Counts sourced from distribution_items — completely separate from remarks
 router.get('/team', (req, res) => {
   const line = lineFilter(req);
-  const conditions = ["u.role = 'enrollment'", 'u.is_active = 1'];
-  const params = [];
+  // Include the enrollment leader themselves so they can manage clients transferred to them
+  const conditions = ["(u.role = 'enrollment' OR u.full_name = ?)", 'u.is_active = 1'];
+  const params = [req.user.full_name];
 
-  if (line) { conditions.push('u.line = ?'); params.push(line); }
+  if (line) { conditions.push('(u.line = ? OR u.full_name = ?)'); params.push(line, req.user.full_name); }
 
   const joinLine = line ? ' AND ds.line = u.line' : '';
   const where = 'WHERE ' + conditions.join(' AND ');
@@ -64,11 +65,12 @@ router.get('/pipeline', (req, res) => {
     conditions.push('di.assigned_to = ?');
     params.push(agent_name);
   } else {
+    // Include items assigned to the enrollment leader themselves + their team
     const agentConds = ["role = 'enrollment'", "is_active = 1"];
     const subParams  = [];
     if (line) { agentConds.push('line = ?'); subParams.push(line); }
-    conditions.push(`di.assigned_to IN (SELECT full_name FROM users WHERE ${agentConds.join(' AND ')})`);
-    params.push(...subParams);
+    conditions.push(`(di.assigned_to = ? OR di.assigned_to IN (SELECT full_name FROM users WHERE ${agentConds.join(' AND ')}))`);
+    params.push(req.user.full_name, ...subParams);
   }
 
   if (line)      { conditions.push('ds.line = ?'); params.push(line); }

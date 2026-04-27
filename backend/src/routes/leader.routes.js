@@ -13,16 +13,17 @@ router.use(authenticate, requireRole('leader'));
 // GET /api/leader/team?coordinator=
 router.get('/team', (req, res) => {
   const { coordinator } = req.query;
-  const userConditions = ["u.role = 'agent'", 'u.is_active = 1'];
-  const userParams = [];
+  // Include the leader themselves so they can manage clients transferred to them
+  const userConditions = ["(u.role = 'agent' OR u.full_name = ?)", 'u.is_active = 1'];
+  const userParams = [req.user.full_name];
   const dept = req.user?.department;
   if (dept && dept !== 'All') {
-    userConditions.push('u.department = ?');
-    userParams.push(dept);
+    userConditions.push('(u.department = ? OR u.full_name = ?)');
+    userParams.push(dept, req.user.full_name);
   }
-  // Line filter on users — agents scoped to same line as leader
+  // Line filter on users — agents scoped to same line as leader (leader always included)
   const line = lineFilter(req);
-  if (line) { userConditions.push('u.line = ?'); userParams.push(line); }
+  if (line) { userConditions.push('(u.line = ? OR u.full_name = ?)'); userParams.push(line, req.user.full_name); }
   if (coordinator) {
     userConditions.push('u.full_name LIKE ?');
     userParams.push(`%${coordinator}%`);
@@ -289,12 +290,13 @@ router.get('/pipeline', (req, res) => {
     conditions.push('di.assigned_to = ?');
     params.push(agent_name);
   } else {
+    // Include items assigned to the leader themselves + their team's agents
     const agentConds = ["role = 'agent'", "is_active = 1"];
     const subParams  = [];
     if (dept && dept !== 'All') { agentConds.push('department = ?'); subParams.push(dept); }
     if (line)                   { agentConds.push('line = ?');       subParams.push(line); }
-    conditions.push(`di.assigned_to IN (SELECT full_name FROM users WHERE ${agentConds.join(' AND ')})`);
-    params.push(...subParams);
+    conditions.push(`(di.assigned_to = ? OR di.assigned_to IN (SELECT full_name FROM users WHERE ${agentConds.join(' AND ')}))`);
+    params.push(req.user.full_name, ...subParams);
   }
 
   if (line)      { conditions.push('ds.line = ?'); params.push(line); }

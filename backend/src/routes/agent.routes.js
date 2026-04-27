@@ -816,6 +816,23 @@ router.get('/transfer-targets', (req, res) => {
         CASE role WHEN 'admin' THEN 1 ELSE 2 END ASC,
         full_name COLLATE NOCASE
     `).all(user.full_name, user.department || '');
+  } else if (user.role === 'enrollment_leader') {
+    // Enrollment leader → their enrollment team + own dept agents + all leaders + admins
+    rows = db.prepare(`
+      SELECT full_name, role, department, line FROM users
+      WHERE is_active = 1
+        AND full_name != ?
+        AND (
+          (role = 'enrollment' AND (? = 'All' OR department = ?))
+          OR (role = 'agent'     AND department = ?)
+          OR role = 'leader'
+          OR role = 'enrollment_leader'
+          OR role = 'admin'
+        )
+      ORDER BY
+        CASE role WHEN 'admin' THEN 1 WHEN 'leader' THEN 2 WHEN 'enrollment_leader' THEN 3 WHEN 'enrollment' THEN 4 ELSE 5 END ASC,
+        full_name COLLATE NOCASE
+    `).all(user.full_name, user.department || '', user.department || '', user.department || '');
   } else {
     // Agent: their leader(s) + admins only (NOT enrollment team)
     rows = db.prepare(`
@@ -866,6 +883,15 @@ router.put('/bulk-transfer', (req, res) => {
              || (target.role === 'agent'      && target.department === user.department)
              || (target.role === 'enrollment' && target.department === user.department);
     if (!ok) return res.status(403).json({ error: 'يمكنك النقل لموظفي قسمك أو قادة الفرق أو المسؤولين فقط' });
+  } else if (user.role === 'enrollment_leader') {
+    // Enrollment leader → their enrollment users OR any leader/enrollment_leader OR any admin
+    const ok = target.role === 'admin'
+             || target.role === 'leader'
+             || target.role === 'enrollment_leader'
+             || (target.role === 'enrollment' &&
+                 (user.department === 'All' || target.department === user.department))
+             || (target.role === 'agent' && target.department === user.department);
+    if (!ok) return res.status(403).json({ error: 'يمكنك النقل لموظفي فريقك أو قادة الفرق أو المسؤولين فقط' });
   }
   // admin role unreachable here (admin uses /api/admin/* routes)
 

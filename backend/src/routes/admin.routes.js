@@ -481,12 +481,13 @@ router.get('/pipeline/reminders', (req, res) => {
   return res.json(rows);
 });
 
-// GET /api/admin/pipeline/agents?line=  — list agents for filter dropdown
+// GET /api/admin/pipeline/agents?line=  — list of all users who can hold pipeline items
+// Includes CS agents/leaders + enrollment + enrollment_leader so admin can filter by anyone.
 router.get('/pipeline/agents', (req, res) => {
   const line = effectiveLine(req);
   const lf   = line ? ` AND line = '${line.replace(/'/g,"''")}'` : '';
   const rows = db.prepare(
-    `SELECT full_name FROM users WHERE role IN ('enrollment','enrollment_leader') AND is_active = 1${lf} ORDER BY full_name COLLATE NOCASE`
+    `SELECT full_name FROM users WHERE role IN ('agent','leader','enrollment','enrollment_leader') AND is_active = 1${lf} ORDER BY full_name COLLATE NOCASE`
   ).all();
   return res.json(rows.map(r => r.full_name));
 });
@@ -533,14 +534,21 @@ router.put('/pipeline/tasks/:id', (req, res) => {
 });
 
 // GET /api/admin/pipeline/transfer-targets — full list for admin
+// Admin can transfer pipeline items to ANY active user (CS agents/leaders + enrollment).
 router.get('/pipeline/transfer-targets', (req, res) => {
   const line = effectiveLine(req);
   const lf   = line ? ` AND line = '${line.replace(/'/g,"''")}'` : '';
   const rows = db.prepare(
     `SELECT full_name, role, department, line FROM users
-     WHERE is_active = 1 AND role IN ('enrollment','enrollment_leader','admin')${lf}
+     WHERE is_active = 1 AND role IN ('agent','leader','enrollment','enrollment_leader','admin')${lf}
      ORDER BY
-       CASE role WHEN 'admin' THEN 1 WHEN 'enrollment_leader' THEN 2 ELSE 3 END,
+       CASE role
+         WHEN 'admin' THEN 1
+         WHEN 'leader' THEN 2
+         WHEN 'enrollment_leader' THEN 3
+         WHEN 'agent' THEN 4
+         ELSE 5
+       END,
        full_name COLLATE NOCASE`
   ).all();
   return res.json(rows);
