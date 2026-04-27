@@ -75,14 +75,42 @@ router.get('/tasks', (req, res) => {
 });
 
 // PUT /api/agent/tasks/:id
+// Handles both pipeline items (distribution_items) and CS remarks
 router.put('/tasks/:id', (req, res) => {
   const { id } = req.params;
   const { agent_notes, status, resolved_at, next_followup_at } = req.body;
+
+  // ── Try distribution_items first (pipeline clients) ──────────────────────
+  const item = db.prepare(`
+    SELECT di.* FROM distribution_items di
+    INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
+    WHERE di.id = ? AND di.assigned_to = ?
+  `).get(id, req.user.full_name);
+
+  if (item) {
+    db.prepare(`
+      UPDATE distribution_items
+      SET status           = COALESCE(?, status),
+          agent_notes      = COALESCE(?, agent_notes),
+          next_followup_at = CASE WHEN ? IS NOT NULL THEN ? ELSE next_followup_at END,
+          last_updated     = datetime('now','localtime')
+      WHERE id = ?
+    `).run(
+      status || null,
+      agent_notes || null,
+      next_followup_at !== undefined ? next_followup_at : null,
+      next_followup_at !== undefined ? next_followup_at : null,
+      id
+    );
+    const updated = db.prepare('SELECT * FROM distribution_items WHERE id = ?').get(id);
+    return res.json({ ...updated, sla_status: 'on_time' });
+  }
+
+  // ── Fallback: CS remarks (from Remarks.xlsx) ──────────────────────────────
   const lf = lineClause(req);
   const remark = db.prepare(`SELECT * FROM remarks WHERE id = ? AND assigned_to = ?${lf.clause}`).get(id, req.user.full_name, ...lf.params);
   if (!remark) return res.status(404).json({ error: 'Task not found' });
 
-  // Reset SLA if adding notes while remark is still open
   let newSlaDeadline = remark.sla_deadline;
   if (agent_notes && remark.status !== 'إنتهت') {
     const excel = require('../services/excel.service');
@@ -99,13 +127,10 @@ router.put('/tasks/:id', (req, res) => {
         last_updated     = datetime('now', 'localtime')
     WHERE id = ?
   `).run(
-    agent_notes || null,
-    status || null,
-    resolved_at || null,
+    agent_notes || null, status || null, resolved_at || null,
     next_followup_at !== undefined ? next_followup_at : null,
     next_followup_at !== undefined ? next_followup_at : null,
-    newSlaDeadline,
-    id
+    newSlaDeadline, id
   );
 
   const updated = db.prepare('SELECT * FROM remarks WHERE id = ?').get(id);
@@ -114,22 +139,24 @@ router.put('/tasks/:id', (req, res) => {
 
 // ─── REMINDERS ───────────────────────────────────────────────────────────────
 
-// GET /api/agent/reminders — all logged follow-ups (from remark_interactions) for open tasks assigned to me
+// GET /api/agent/reminders — follow-up reminders from pipeline items (distribution_items)
 router.get('/reminders', (req, res) => {
   const name = req.user.full_name;
   const lf   = lineClause(req);
+  const lineClauseStr = lf.clause.replace(/\b(line)\b/g, 'ds.line');
   const rows = db.prepare(`
     SELECT ri.id, ri.next_followup_at, ri.agent_name, ri.created_at,
-           r.id        AS remark_id,
-           r.client_name, r.client_phone, r.status, r.assigned_to, r.line
+           di.id         AS item_id,
+           di.client_name, di.client_phone, COALESCE(di.status,'جديدة') AS status,
+           di.assigned_to, ds.line
     FROM remark_interactions ri
-    JOIN remarks r ON r.id = ri.remark_id
+    JOIN distribution_items di ON di.id = ri.item_id
+    JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
     WHERE ri.next_followup_at IS NOT NULL
       AND ri.next_followup_at != ''
-      AND r.category    = 'توزيع عملاء'
-      AND r.assigned_to = ?
-      AND r.status NOT IN ('Retention Done','إنتهت')
-      ${lf.clause}
+      AND di.assigned_to = ?
+      AND COALESCE(di.status,'جديدة') NOT IN ('Retention Done','إنتهت')
+      ${lineClauseStr}
     ORDER BY ri.next_followup_at ASC
     LIMIT 200
   `).all(name, ...lf.params);
@@ -139,44 +166,45 @@ router.get('/reminders', (req, res) => {
 // ─── PIPELINE (CRM Kanban) ────────────────────────────────────────────────────
 
 // GET /api/agent/pipeline?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD
+// Reads exclusively from distribution_items — completely separate from remarks
 router.get('/pipeline', (req, res) => {
   const name     = req.user.full_name;
   const lf       = lineClause(req);
   const dateFrom = (req.query.date_from || '').trim();
   const dateTo   = (req.query.date_to   || '').trim();
 
-  const dateParams  = [];
-  let   dateClause  = '';
-  if (dateFrom) { dateClause += ' AND client_date >= ?'; dateParams.push(dateFrom); }
-  if (dateTo)   { dateClause += ' AND client_date <= ?'; dateParams.push(dateTo);   }
+  const dateParams = [];
+  let   dateClause = '';
+  if (dateFrom) { dateClause += ' AND di.client_date >= ?'; dateParams.push(dateFrom); }
+  if (dateTo)   { dateClause += ' AND di.client_date <= ?'; dateParams.push(dateTo);   }
 
-  const buildCol = (where) =>
+  const lineClauseStr = lf.clause.replace(/\b(line)\b/g, 'ds.line');
+
+  const buildCol = (stageWhere) =>
     db.prepare(`
-      SELECT id, client_name, client_phone, task_type, status, priority,
-             sla_deadline, added_at, last_updated, next_followup_at,
-             agent_notes, category, line, details, client_date,
-             (SELECT COUNT(*) FROM client_transfers ct WHERE ct.remark_id = remarks.id) AS transfer_count
-      FROM remarks
-      WHERE assigned_to = ?
-        AND category = 'توزيع عملاء'
-        AND ${where}${lf.clause}${dateClause}
-      ORDER BY
-        CASE priority WHEN 'عاجلة' THEN 1 WHEN 'هامة' THEN 2 ELSE 3 END ASC,
-        CASE WHEN sla_deadline < datetime('now','+2 hours') THEN 0 ELSE 1 END ASC,
-        added_at ASC
+      SELECT di.id, di.client_name, di.client_phone, di.assigned_to,
+             ds.task_type, COALESCE(di.status,'جديدة') AS status, ds.priority,
+             ds.created_at AS added_at, di.last_updated, di.next_followup_at,
+             di.agent_notes, ds.line, di.client_date, di.match_type,
+             'توزيع عملاء' AS category, NULL AS sla_deadline, 'on_time' AS sla_status,
+             (SELECT COUNT(*) FROM client_transfers ct WHERE ct.item_id = di.id) AS transfer_count
+      FROM distribution_items di
+      INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
+      WHERE di.assigned_to = ?
+        AND ${stageWhere}${lineClauseStr}${dateClause}
+      ORDER BY ds.priority ASC, di.last_updated ASC
       LIMIT 500
-    `).all(name, ...lf.params, ...dateParams)
-      .map(r => ({ ...r, sla_status: getSlaStatus(r.sla_deadline, r.priority) }));
+    `).all(name, ...lf.params, ...dateParams);
 
   try {
     return res.json({
-      'جديدة':           buildCol(`status NOT IN ('إنتهت','قيد المتابعة','في المتابعة','بانتظار الرد','Follow Up','Placement Test','Problem Existing','No Answer','No Interesting','Retention Done')`),
-      'Follow Up':       buildCol(`status IN ('قيد المتابعة','في المتابعة','Follow Up')`),
-      'Placement Test':  buildCol(`status = 'Placement Test'`),
-      'Problem Existing':buildCol(`status = 'Problem Existing'`),
-      'No Answer':       buildCol(`status IN ('بانتظار الرد','No Answer')`),
-      'No Interesting':  buildCol(`status = 'No Interesting'`),
-      'Retention Done':  buildCol(`status IN ('إنتهت','Retention Done')`),
+      'جديدة':            buildCol(`COALESCE(di.status,'جديدة') NOT IN ('إنتهت','Follow Up','Placement Test','Problem Existing','No Answer','No Interesting','Retention Done')`),
+      'Follow Up':        buildCol(`di.status = 'Follow Up'`),
+      'Placement Test':   buildCol(`di.status = 'Placement Test'`),
+      'Problem Existing': buildCol(`di.status = 'Problem Existing'`),
+      'No Answer':        buildCol(`di.status = 'No Answer'`),
+      'No Interesting':   buildCol(`di.status = 'No Interesting'`),
+      'Retention Done':   buildCol(`di.status IN ('إنتهت','Retention Done')`),
     });
   } catch (err) {
     console.error('[agent/pipeline]', err);
@@ -184,11 +212,40 @@ router.get('/pipeline', (req, res) => {
   }
 });
 
-// POST /api/agent/tasks/:id/log  — record an interaction
+// POST /api/agent/tasks/:id/log  — record an interaction (pipeline item or remark)
 router.post('/tasks/:id/log', (req, res) => {
   const { id } = req.params;
   const { interaction_type = 'call', outcome, notes, next_followup_at, status } = req.body;
 
+  // ── Try distribution_items first ─────────────────────────────────────────
+  const item = db.prepare(`
+    SELECT di.* FROM distribution_items di
+    INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
+    WHERE di.id = ? AND di.assigned_to = ?
+  `).get(id, req.user.full_name);
+
+  if (item) {
+    const log = db.prepare(`
+      INSERT INTO remark_interactions (item_id, remark_id, agent_name, interaction_type, outcome, notes, next_followup_at)
+      VALUES (?, NULL, ?, ?, ?, ?, ?)
+    `).run(id, req.user.full_name, interaction_type, outcome || null, notes || null, next_followup_at || null);
+
+    if (status || next_followup_at !== undefined) {
+      db.prepare(`
+        UPDATE distribution_items
+        SET status           = CASE WHEN ? IS NOT NULL THEN ? ELSE status END,
+            next_followup_at = CASE WHEN ? IS NOT NULL THEN ? ELSE next_followup_at END,
+            last_updated     = datetime('now','localtime')
+        WHERE id = ?
+      `).run(status || null, status || null,
+             next_followup_at !== undefined ? next_followup_at : null,
+             next_followup_at !== undefined ? next_followup_at : null, id);
+    }
+    const updated = db.prepare('SELECT * FROM distribution_items WHERE id = ?').get(id);
+    return res.status(201).json({ log_id: log.lastInsertRowid, remark: { ...updated, sla_status: 'on_time' } });
+  }
+
+  // ── Fallback: CS remarks ──────────────────────────────────────────────────
   const lf = lineClause(req);
   const remark = db.prepare(`SELECT * FROM remarks WHERE id = ? AND assigned_to = ?${lf.clause}`)
     .get(id, req.user.full_name, ...lf.params);
@@ -199,7 +256,6 @@ router.post('/tasks/:id/log', (req, res) => {
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(id, req.user.full_name, interaction_type, outcome || null, notes || null, next_followup_at || null);
 
-  // Optionally update remark status + next_followup_at
   if (status || next_followup_at !== undefined) {
     db.prepare(`
       UPDATE remarks
@@ -225,6 +281,22 @@ router.post('/tasks/:id/log', (req, res) => {
 // GET /api/agent/tasks/:id/logs
 router.get('/tasks/:id/logs', (req, res) => {
   const { id } = req.params;
+
+  // Check distribution_items first
+  const item = db.prepare(`
+    SELECT di.id FROM distribution_items di
+    INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
+    WHERE di.id = ? AND di.assigned_to = ?
+  `).get(id, req.user.full_name);
+
+  if (item) {
+    const logs = db.prepare(
+      `SELECT * FROM remark_interactions WHERE item_id = ? ORDER BY created_at DESC`
+    ).all(id);
+    return res.json(logs);
+  }
+
+  // Fallback: remarks
   const lf = lineClause(req);
   const remark = db.prepare(`SELECT id FROM remarks WHERE id = ? AND assigned_to = ?${lf.clause}`)
     .get(id, req.user.full_name, ...lf.params);
@@ -233,7 +305,6 @@ router.get('/tasks/:id/logs', (req, res) => {
   const logs = db.prepare(
     `SELECT * FROM remark_interactions WHERE remark_id = ? ORDER BY created_at DESC`
   ).all(id);
-
   return res.json(logs);
 });
 
@@ -798,37 +869,37 @@ router.put('/bulk-transfer', (req, res) => {
   }
   // admin role unreachable here (admin uses /api/admin/* routes)
 
-  const lf = lineClause(req);
   const safeIds = ids.map(Number).filter(n => n > 0);
   const ph = safeIds.map(() => '?').join(',');
 
-  // Fetch remarks to move — must be currently assigned to the requesting user
-  const remarksToMove = db.prepare(`
-    SELECT id, client_name, client_phone, assigned_to, line
-    FROM remarks
-    WHERE id IN (${ph}) AND assigned_to = ?${lf.clause}
-  `).all(...safeIds, user.full_name, ...lf.params);
+  // Fetch pipeline items to move (distribution_items) — must be assigned to requesting user
+  const itemsToMove = db.prepare(`
+    SELECT di.id, di.client_name, di.client_phone, di.assigned_to, ds.line
+    FROM distribution_items di
+    INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
+    WHERE di.id IN (${ph}) AND di.assigned_to = ?
+  `).all(...safeIds, user.full_name);
 
-  if (!remarksToMove.length)
+  if (!itemsToMove.length)
     return res.status(404).json({ error: 'لا توجد مهام مؤهلة للنقل' });
 
   const updateStmt = db.prepare(
-    `UPDATE remarks SET assigned_to = ?, last_updated = datetime('now','+2 hours') WHERE id = ?`
+    `UPDATE distribution_items SET assigned_to = ?, last_updated = datetime('now','localtime') WHERE id = ?`
   );
   const logStmt = db.prepare(`
     INSERT INTO client_transfers
-      (remark_id, client_name, client_phone, from_user, to_user, transferred_by, transfer_type, line)
+      (item_id, client_name, client_phone, from_user, to_user, transferred_by, transfer_type, line)
     VALUES (?, ?, ?, ?, ?, ?, 'bulk', ?)
   `);
 
   db.transaction(() => {
-    for (const r of remarksToMove) {
+    for (const r of itemsToMove) {
       updateStmt.run(assigned_to, r.id);
       logStmt.run(r.id, r.client_name, r.client_phone, r.assigned_to, assigned_to, user.full_name, r.line || user.line || '');
     }
   })();
 
-  return res.json({ moved: remarksToMove.length });
+  return res.json({ moved: itemsToMove.length });
 });
 
 // GET /api/agent/transfer-history — audit history scoped to the requesting user/leader

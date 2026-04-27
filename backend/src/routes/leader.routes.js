@@ -276,57 +276,57 @@ function getSlaStatus(slaDeadline, priority) {
 }
 
 // GET /api/leader/pipeline?agent_name=&date_from=&date_to=
+// Reads exclusively from distribution_items — completely separate from remarks
 router.get('/pipeline', (req, res) => {
   const dept = req.user?.department;
   const line = lineFilter(req);
   const { agent_name, date_from, date_to } = req.query;
 
-  const conditions = [`category = 'توزيع عملاء'`];
-  const params = [];
+  const conditions = ['ds.status = \'confirmed\''];
+  const params     = [];
 
   if (agent_name) {
-    conditions.push('assigned_to = ?');
+    conditions.push('di.assigned_to = ?');
     params.push(agent_name);
   } else {
     const agentConds = ["role = 'agent'", "is_active = 1"];
     const subParams  = [];
     if (dept && dept !== 'All') { agentConds.push('department = ?'); subParams.push(dept); }
     if (line)                   { agentConds.push('line = ?');       subParams.push(line); }
-    conditions.push(`assigned_to IN (SELECT full_name FROM users WHERE ${agentConds.join(' AND ')})`);
+    conditions.push(`di.assigned_to IN (SELECT full_name FROM users WHERE ${agentConds.join(' AND ')})`);
     params.push(...subParams);
   }
 
-  if (date_from) { conditions.push('client_date >= ?'); params.push(date_from); }
-  if (date_to)   { conditions.push('client_date <= ?'); params.push(date_to);   }
+  if (line)      { conditions.push('ds.line = ?'); params.push(line); }
+  if (date_from) { conditions.push('di.client_date >= ?'); params.push(date_from); }
+  if (date_to)   { conditions.push('di.client_date <= ?'); params.push(date_to);   }
 
   const where = conditions.join(' AND ');
 
   const buildCol = (stageWhere) =>
     db.prepare(`
-      SELECT id, client_name, client_phone, task_type, status, priority,
-             sla_deadline, added_at, last_updated, next_followup_at,
-             agent_notes, category, line, details, client_date, assigned_to,
-             (SELECT COUNT(*) FROM client_transfers ct WHERE ct.remark_id = remarks.id) AS transfer_count
-      FROM remarks
+      SELECT di.id, di.client_name, di.client_phone, di.assigned_to,
+             ds.task_type, COALESCE(di.status,'جديدة') AS status, ds.priority,
+             ds.created_at AS added_at, di.last_updated, di.next_followup_at,
+             di.agent_notes, ds.line, di.client_date, di.match_type,
+             'توزيع عملاء' AS category, NULL AS sla_deadline, 'on_time' AS sla_status,
+             (SELECT COUNT(*) FROM client_transfers ct WHERE ct.item_id = di.id) AS transfer_count
+      FROM distribution_items di
+      INNER JOIN distribution_sessions ds ON ds.id = di.session_id
       WHERE ${where} AND ${stageWhere}
-      ORDER BY
-        assigned_to COLLATE NOCASE ASC,
-        CASE priority WHEN 'عاجلة' THEN 1 WHEN 'هامة' THEN 2 ELSE 3 END ASC,
-        CASE WHEN sla_deadline < datetime('now','+2 hours') THEN 0 ELSE 1 END ASC,
-        added_at ASC
+      ORDER BY di.assigned_to COLLATE NOCASE ASC, di.last_updated ASC
       LIMIT 2000
-    `).all(...params)
-      .map(r => ({ ...r, sla_status: getSlaStatus(r.sla_deadline, r.priority) }));
+    `).all(...params);
 
   try {
     return res.json({
-      'جديدة':            buildCol(`status NOT IN ('إنتهت','قيد المتابعة','في المتابعة','بانتظار الرد','Follow Up','Placement Test','Problem Existing','No Answer','No Interesting','Retention Done')`),
-      'Follow Up':        buildCol(`status IN ('قيد المتابعة','في المتابعة','Follow Up')`),
-      'Placement Test':   buildCol(`status = 'Placement Test'`),
-      'Problem Existing': buildCol(`status = 'Problem Existing'`),
-      'No Answer':        buildCol(`status IN ('بانتظار الرد','No Answer')`),
-      'No Interesting':   buildCol(`status = 'No Interesting'`),
-      'Retention Done':   buildCol(`status IN ('إنتهت','Retention Done')`),
+      'جديدة':            buildCol(`COALESCE(di.status,'جديدة') NOT IN ('إنتهت','Follow Up','Placement Test','Problem Existing','No Answer','No Interesting','Retention Done')`),
+      'Follow Up':        buildCol(`di.status = 'Follow Up'`),
+      'Placement Test':   buildCol(`di.status = 'Placement Test'`),
+      'Problem Existing': buildCol(`di.status = 'Problem Existing'`),
+      'No Answer':        buildCol(`di.status = 'No Answer'`),
+      'No Interesting':   buildCol(`di.status = 'No Interesting'`),
+      'Retention Done':   buildCol(`di.status IN ('إنتهت','Retention Done')`),
     });
   } catch (err) {
     console.error('[leader/pipeline]', err);

@@ -272,6 +272,12 @@ initDb().then(db => {
       db._raw.run(`ALTER TABLE remarks ADD COLUMN next_followup_at TEXT`);
       db._raw.run(`CREATE INDEX IF NOT EXISTS idx_remarks_followup ON remarks(next_followup_at)`);
     }
+    // item_id: links interaction to distribution_items (pipeline items, separate from remarks)
+    const riColsFull = db._raw.exec(`PRAGMA table_info(remark_interactions)`)[0]?.values.map(r => r[1]) || [];
+    if (!riColsFull.includes('item_id')) {
+      db._raw.run(`ALTER TABLE remark_interactions ADD COLUMN item_id INTEGER REFERENCES distribution_items(id) ON DELETE CASCADE`);
+      db._raw.run(`CREATE INDEX IF NOT EXISTS idx_ri_item ON remark_interactions(item_id)`);
+    }
     saveNow();
     console.log('✅ Migration: remark_interactions + next_followup_at ready');
   } catch (e) {
@@ -386,6 +392,27 @@ initDb().then(db => {
     if (!dsCols.includes('date_from')) db._raw.run(`ALTER TABLE distribution_sessions ADD COLUMN date_from TEXT`);
     if (!dsCols.includes('date_to'))   db._raw.run(`ALTER TABLE distribution_sessions ADD COLUMN date_to   TEXT`);
   } catch (e) { console.error('distribution_sessions date range migration:', e.message); }
+
+  // ── Pipeline tracking columns for distribution_items ─────────────────────
+  // Distribution data is completely separate from remarks — pipeline state lives here.
+  try {
+    const diCols = db._raw.exec(`PRAGMA table_info(distribution_items)`)[0]?.values.map(r => r[1]) || [];
+    if (!diCols.includes('status'))           db._raw.run(`ALTER TABLE distribution_items ADD COLUMN status TEXT DEFAULT 'جديدة'`);
+    if (!diCols.includes('agent_notes'))      db._raw.run(`ALTER TABLE distribution_items ADD COLUMN agent_notes TEXT`);
+    if (!diCols.includes('last_updated'))     db._raw.run(`ALTER TABLE distribution_items ADD COLUMN last_updated TEXT`);
+    if (!diCols.includes('next_followup_at')) db._raw.run(`ALTER TABLE distribution_items ADD COLUMN next_followup_at TEXT`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_dist_items_assigned ON distribution_items(assigned_to)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_dist_items_status   ON distribution_items(status)`);
+    saveNow();
+    console.log('✅ Migration: distribution_items pipeline columns ready');
+  } catch (e) { console.error('distribution_items pipeline migration:', e.message); }
+
+  // ── item_id column in client_transfers (for distribution_items transfers) ─
+  try {
+    const ctCols = db._raw.exec(`PRAGMA table_info(client_transfers)`)[0]?.values.map(r => r[1]) || [];
+    if (!ctCols.includes('item_id')) db._raw.run(`ALTER TABLE client_transfers ADD COLUMN item_id INTEGER REFERENCES distribution_items(id) ON DELETE SET NULL`);
+    console.log('✅ Migration: client_transfers.item_id ready');
+  } catch (e) { console.error('client_transfers item_id migration:', e.message); }
 
   // ── Covering index for canonical-line lookup in batchSubQ queries ────────
   try {

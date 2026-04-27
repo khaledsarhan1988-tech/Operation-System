@@ -78,41 +78,41 @@ router.get('/debug/state', (_req, res) => {
     WHERE NOT EXISTS (SELECT 1 FROM distribution_sessions ds WHERE ds.id = di.session_id)
   `).get()?.cnt ?? 0;
 
-  const activeDistRemarks = db.prepare(`
-    SELECT COUNT(*) AS cnt FROM remarks r
-    WHERE r.category = 'توزيع عملاء'
-      AND LOWER(r.status) NOT IN ('إنتهت','closed','resolved')
-  `).get()?.cnt ?? 0;
-
-  const remarksLinkedToConfirmed = db.prepare(`
-    SELECT COUNT(*) AS cnt FROM remarks r
-    WHERE r.category = 'توزيع عملاء'
-      AND LOWER(r.status) NOT IN ('إنتهت','closed','resolved')
-      AND EXISTS (
-        SELECT 1 FROM distribution_items di
-        INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
-        WHERE di.remark_id = r.id AND di.remark_id IS NOT NULL
-      )
-  `).get()?.cnt ?? 0;
-
-  // Show up to 10 sample phones that are counted as "distributed"
-  const sampleDistributed = db.prepare(`
-    SELECT r.client_phone, r.client_name, r.status, di.session_id
-    FROM remarks r
-    INNER JOIN distribution_items di ON di.remark_id = r.id
+  const activeDistItems = db.prepare(`
+    SELECT COUNT(*) AS cnt FROM distribution_items di
     INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
-    WHERE r.category = 'توزيع عملاء'
-      AND LOWER(r.status) NOT IN ('إنتهت','closed','resolved')
+    WHERE LOWER(COALESCE(di.status,'جديدة')) NOT IN ('إنتهت','retention done')
+  `).get()?.cnt ?? 0;
+
+  const confirmedItems = db.prepare(`
+    SELECT COUNT(*) AS cnt FROM distribution_items di
+    INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
+  `).get()?.cnt ?? 0;
+
+  // Show up to 10 sample phones from confirmed active items
+  const sampleDistributed = db.prepare(`
+    SELECT di.client_phone, di.client_name, COALESCE(di.status,'جديدة') AS status, di.session_id, di.assigned_to
+    FROM distribution_items di
+    INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
+    WHERE LOWER(COALESCE(di.status,'جديدة')) NOT IN ('إنتهت','retention done')
     LIMIT 10
   `).all();
 
+  const itemsByStatus = db.prepare(`
+    SELECT COALESCE(di.status,'جديدة') AS status, COUNT(*) AS cnt
+    FROM distribution_items di
+    INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
+    GROUP BY COALESCE(di.status,'جديدة')
+  `).all();
+
   return res.json({
-    sessions_by_status:           sessionsByStatus,
-    distribution_items_count:     itemsCount,
-    orphaned_items_count:         orphanedItems,
-    active_dist_remarks:          activeDistRemarks,
-    remarks_linked_to_confirmed:  remarksLinkedToConfirmed,
-    sample_distributed_phones:    sampleDistributed,
+    sessions_by_status:       sessionsByStatus,
+    distribution_items_count: itemsCount,
+    confirmed_items_count:    confirmedItems,
+    active_dist_items:        activeDistItems,
+    items_by_status:          itemsByStatus,
+    orphaned_items_count:     orphanedItems,
+    sample_active_items:      sampleDistributed,
   });
 });
 
@@ -200,24 +200,19 @@ router.post('/scan-dates', (req, res) => {
     // Collect ALL unique phones from the file for a single bulk DB query
     const allPhones = [...phoneSeen].filter(Boolean);
 
-    // Check which phones already have an active remark from a confirmed session
+    // Check which phones already have an active item in a confirmed distribution session
     const distributedPhones = new Set();
     if (allPhones.length > 0) {
-      const ph  = allPhones.map(() => '?').join(',');
-      const lf  = line && line !== 'All' ? ` AND r.line = ?` : '';
+      const ph     = allPhones.map(() => '?').join(',');
+      const lf     = line && line !== 'All' ? ` AND ds.line = ?` : '';
       const params = line && line !== 'All' ? [...allPhones, line] : allPhones;
       db.prepare(`
-        SELECT r.client_phone
-        FROM remarks r
-        WHERE r.client_phone IN (${ph})
-          AND r.client_phone != ''
-          AND r.category = 'توزيع عملاء'
-          AND LOWER(r.status) NOT IN ('إنتهت','closed','resolved')
-          AND EXISTS (
-            SELECT 1 FROM distribution_items di
-            INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
-            WHERE di.remark_id = r.id AND di.remark_id IS NOT NULL
-          )${lf}
+        SELECT di.client_phone
+        FROM distribution_items di
+        INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
+        WHERE di.client_phone IN (${ph})
+          AND di.client_phone != ''
+          AND LOWER(COALESCE(di.status,'جديدة')) NOT IN ('retention done','إنتهت')${lf}
       `).all(...params).forEach(r => distributedPhones.add(r.client_phone));
     }
 
@@ -259,9 +254,7 @@ router.get('/agents', (req, res) => {
       SELECT di.id, di.assigned_to
       FROM distribution_items di
       INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
-      LEFT JOIN remarks r ON r.id = di.remark_id
-      WHERE di.remark_id IS NULL
-         OR LOWER(r.status) NOT IN ('إنتهت','closed','resolved','مغلق')
+      WHERE LOWER(COALESCE(di.status,'جديدة')) NOT IN ('retention done','إنتهت')
     ) active_di ON active_di.assigned_to = u.full_name
     WHERE u.role IN ('agent','enrollment') AND u.is_active = 1${lf}
     GROUP BY u.id
@@ -274,24 +267,26 @@ router.get('/agents', (req, res) => {
 // ─── COORDINATOR STATS (new) ──────────────────────────────────────────────────
 
 // GET /api/distribution/coordinator-stats?line=
-// Returns per-coordinator breakdown from remarks WHERE category='توزيع عملاء'
+// Returns per-coordinator breakdown from distribution_items (confirmed sessions only)
 router.get('/coordinator-stats', (req, res) => {
   const { line } = req.query;
   const lf = line ? ` AND line = '${line.replace(/'/g, "''")}'` : '';
 
   try {
+    const lf2 = line ? ` AND ds.line = '${line.replace(/'/g, "''")}'` : '';
     const rows = db.prepare(`
       SELECT
-        assigned_to,
+        di.assigned_to,
         COUNT(*) as total,
-        SUM(CASE WHEN LOWER(status) NOT IN ('إنتهت','closed','resolved') THEN 1 ELSE 0 END) as open_count,
-        SUM(CASE WHEN LOWER(status) IN ('إنتهت','closed','resolved') THEN 1 ELSE 0 END) as closed_count,
-        SUM(CASE WHEN status = 'جديدة' THEN 1 ELSE 0 END) as new_count,
-        SUM(CASE WHEN LOWER(status) NOT IN ('إنتهت','closed','resolved','جديدة') THEN 1 ELSE 0 END) as in_progress_count
-      FROM remarks
-      WHERE category = 'توزيع عملاء'${lf}
-      GROUP BY assigned_to
-      ORDER BY open_count DESC, assigned_to COLLATE NOCASE
+        SUM(CASE WHEN LOWER(COALESCE(di.status,'جديدة')) NOT IN ('retention done','إنتهت') THEN 1 ELSE 0 END) as open_count,
+        SUM(CASE WHEN LOWER(COALESCE(di.status,'')) IN ('retention done','إنتهت') THEN 1 ELSE 0 END) as closed_count,
+        SUM(CASE WHEN COALESCE(di.status,'جديدة') = 'جديدة' THEN 1 ELSE 0 END) as new_count,
+        SUM(CASE WHEN LOWER(COALESCE(di.status,'')) NOT IN ('retention done','إنتهت','جديدة','') THEN 1 ELSE 0 END) as in_progress_count
+      FROM distribution_items di
+      INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
+      WHERE 1=1${lf2}
+      GROUP BY di.assigned_to
+      ORDER BY open_count DESC, di.assigned_to COLLATE NOCASE
     `).all();
 
     return res.json(rows);
@@ -360,18 +355,13 @@ router.post('/preview', (req, res) => {
     if (phoneList.length > 0) {
       const ph = phoneList.map(() => '?').join(',');
       db.prepare(`
-        SELECT r.client_phone, r.client_name, r.assigned_to, r.status, r.id
-        FROM remarks r
-        WHERE r.client_phone IN (${ph})
-          AND r.client_phone != ''
-          AND r.category = 'توزيع عملاء'
-          AND LOWER(r.status) NOT IN ('إنتهت','closed','resolved')
-          AND EXISTS (
-            SELECT 1 FROM distribution_items di
-            INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
-            WHERE di.remark_id = r.id AND di.remark_id IS NOT NULL
-          )
-        ORDER BY r.added_at DESC
+        SELECT di.client_phone, di.client_name, di.assigned_to, di.status, di.id
+        FROM distribution_items di
+        INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
+        WHERE di.client_phone IN (${ph})
+          AND di.client_phone != ''
+          AND LOWER(COALESCE(di.status,'جديدة')) NOT IN ('retention done','إنتهت')
+        ORDER BY di.id DESC
       `).all(...phoneList).forEach(r => {
         if (!existingActiveMap[r.client_phone]) existingActiveMap[r.client_phone] = r;
       });
@@ -494,9 +484,7 @@ router.post('/preview', (req, res) => {
         SELECT di.id, di.assigned_to
         FROM distribution_items di
         INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
-        LEFT JOIN remarks r ON r.id = di.remark_id
-        WHERE di.remark_id IS NULL
-           OR LOWER(r.status) NOT IN ('إنتهت','closed','resolved','مغلق')
+        WHERE LOWER(COALESCE(di.status,'جديدة')) NOT IN ('retention done','إنتهت')
       ) active_di ON active_di.assigned_to = u.full_name
       WHERE u.role IN ('agent','enrollment') AND u.is_active = 1${ul}
       GROUP BY u.full_name
@@ -614,9 +602,11 @@ router.post('/preview', (req, res) => {
     savedItems.forEach(item => {
       if (!summaryMap[item.assigned_to]) {
         const ag  = db.prepare(`SELECT department FROM users WHERE full_name = ? LIMIT 1`).get(item.assigned_to);
-        const cnt = db.prepare(
-          `SELECT COUNT(*) as cnt FROM remarks WHERE assigned_to = ? AND LOWER(status) NOT IN ('إنتهت','closed','resolved')${wl}`
-        ).get(item.assigned_to)?.cnt ?? 0;
+        const cnt = db.prepare(`
+          SELECT COUNT(*) as cnt FROM distribution_items di
+          INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
+          WHERE di.assigned_to = ? AND LOWER(COALESCE(di.status,'جديدة')) NOT IN ('إنتهت','retention done')
+        `).get(item.assigned_to)?.cnt ?? 0;
         summaryMap[item.assigned_to] = {
           full_name: item.assigned_to, department: ag?.department ?? '',
           current_tasks: cnt, new_clients: 0,
@@ -683,56 +673,42 @@ router.delete('/sessions/:sid', (req, res) => {
 });
 
 // DELETE /api/distribution/sessions/:sid/force  — hard-delete any session (admin)
-// Also deletes all remarks that were created by this session's items.
+// Deletes all distribution_items and interactions linked to this session.
+// Does NOT touch remarks — the distribution system is completely separate.
 router.delete('/sessions/:sid/force', (req, res) => {
   const session = db.prepare(`SELECT * FROM distribution_sessions WHERE id = ?`).get(req.params.sid);
   if (!session) return res.status(404).json({ error: 'الجلسة غير موجودة' });
 
-  // Collect remark IDs linked to this session's items
-  const remarkIds = db.prepare(
-    `SELECT remark_id FROM distribution_items WHERE session_id = ? AND remark_id IS NOT NULL`
-  ).all(req.params.sid).map(r => r.remark_id);
-
-  let remarksDeleted = 0;
   db.transaction(() => {
-    if (remarkIds.length > 0) {
-      const ph = remarkIds.map(() => '?').join(',');
-      // Only delete remarks that belong EXCLUSIVELY to this session.
-      // If a remark_id is shared with items from another session (e.g. because the
-      // confirm-time duplicate guard linked an item to an existing remark), skip it
-      // so we don't accidentally destroy the other session's data.
-      const exclusiveIds = db.prepare(`
-        SELECT remark_id AS id
-        FROM distribution_items
-        WHERE remark_id IN (${ph})
-        GROUP BY remark_id
-        HAVING COUNT(DISTINCT session_id) = 1
-      `).all(...remarkIds).map(r => r.id);
+    // Delete interaction logs for all items in this session
+    const itemIds = db.prepare(
+      `SELECT id FROM distribution_items WHERE session_id = ?`
+    ).all(req.params.sid).map(r => r.id);
 
-      if (exclusiveIds.length > 0) {
-        const ph2 = exclusiveIds.map(() => '?').join(',');
-        remarksDeleted = db.prepare(`DELETE FROM remarks WHERE id IN (${ph2})`).run(...exclusiveIds).changes;
-      }
+    if (itemIds.length > 0) {
+      const ph = itemIds.map(() => '?').join(',');
+      db.prepare(`DELETE FROM remark_interactions WHERE item_id IN (${ph})`).run(...itemIds);
+      db.prepare(`DELETE FROM client_transfers      WHERE item_id IN (${ph})`).run(...itemIds);
     }
+
     db.prepare(`DELETE FROM distribution_items    WHERE session_id = ?`).run(req.params.sid);
     db.prepare(`DELETE FROM distribution_sessions WHERE id = ?`).run(req.params.sid);
   })();
   saveNow();
 
-  return res.json({ message: 'تم حذف الجلسة نهائياً', remarks_deleted: remarksDeleted });
+  return res.json({ message: 'تم حذف الجلسة نهائياً' });
 });
 
 // ─── CONFIRM session → create remarks ─────────────────────────────────────────
 
 // POST /api/distribution/sessions/:sid/confirm
-// Body (optional): { item_ids: [1,2,3] } — if provided, only distribute those items
+// Body (optional): { item_ids: [1,2,3] } — if provided, only confirm those items
 router.post('/sessions/:sid/confirm', (req, res) => {
   const session = db.prepare(`SELECT * FROM distribution_sessions WHERE id = ?`).get(req.params.sid);
   if (!session) return res.status(404).json({ error: 'الجلسة غير موجودة' });
   if (session.status !== 'pending')
     return res.status(400).json({ error: 'الجلسة مؤكدة أو ملغاة بالفعل' });
 
-  // Support partial confirmation via item_ids filter
   const { item_ids } = req.body;
   let items;
   if (Array.isArray(item_ids) && item_ids.length > 0) {
@@ -741,153 +717,59 @@ router.post('/sessions/:sid/confirm', (req, res) => {
       `SELECT * FROM distribution_items WHERE session_id = ? AND id IN (${ph})`
     ).all(req.params.sid, ...item_ids);
   } else {
-    items = db.prepare(
-      `SELECT * FROM distribution_items WHERE session_id = ?`
-    ).all(req.params.sid);
+    items = db.prepare(`SELECT * FROM distribution_items WHERE session_id = ?`).all(req.params.sid);
   }
   if (!items.length) return res.status(400).json({ error: 'لا يوجد عملاء لتوزيعهم في هذا النطاق' });
 
-  const ts          = nowTs();
-  const slaDeadline = deadline(SLA_HOURS[session.priority] ?? 48);
-  const byName      = req.user.full_name;
-
-  // ── Duplicate guard at confirm time ──────────────────────────────────────────
-  // The preview duplicate check only looks at existing remarks, but if two pending
-  // sessions were created from the same file before either was confirmed, the second
-  // confirmation would create duplicate remarks for the same clients.
-  // Fix: build a fresh active-remark map for all phones in this batch, then skip
-  // (or link to existing) any client who already has an active remark FROM ANOTHER
-  // CONFIRMED DISTRIBUTION SESSION.
-  // Important: we intentionally ignore external remarks (from Remarks.xlsx or manual
-  // creation) so they don't silently reduce the distributed count.
+  // ── Duplicate guard: skip phones already active in another confirmed session ──
   const itemPhones = [...new Set(items.map(i => i.client_phone).filter(Boolean))];
-  const confirmDupeMap = {};
+  const dupePhones = new Set();
   if (itemPhones.length > 0) {
     const ph = itemPhones.map(() => '?').join(',');
     db.prepare(`
-      SELECT r.id, r.client_phone, r.assigned_to
-      FROM remarks r
-      WHERE r.client_phone IN (${ph})
-        AND r.client_phone != ''
-        AND r.category = 'توزيع عملاء'
-        AND LOWER(r.status) NOT IN ('إنتهت','closed','resolved')
-        AND EXISTS (
-          SELECT 1 FROM distribution_items di
-          INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
-          WHERE di.remark_id = r.id AND di.remark_id IS NOT NULL
-            AND di.session_id != ?
-        )
-      ORDER BY r.added_at DESC
-    `).all(...itemPhones, parseInt(req.params.sid)).forEach(r => {
-      if (!confirmDupeMap[r.client_phone]) confirmDupeMap[r.client_phone] = r;
-    });
+      SELECT di.client_phone
+      FROM distribution_items di
+      INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
+      WHERE di.client_phone IN (${ph})
+        AND di.client_phone != ''
+        AND ds.id != ?
+        AND LOWER(COALESCE(di.status,'جديدة')) NOT IN ('retention done','إنتهت')
+    `).all(...itemPhones, parseInt(req.params.sid))
+      .forEach(r => dupePhones.add(r.client_phone));
   }
 
-  // ── Diagnostic log (remove after debugging) ─────────────────────────────────
-  const dupeCount = Object.keys(confirmDupeMap).length;
-  if (dupeCount > 0) {
-    console.warn(
-      `[confirm sid=${req.params.sid}] ${dupeCount} phone(s) blocked by cross-session guard:`,
-      Object.entries(confirmDupeMap).map(([ph, r]) =>
-        `phone=${ph} → existing_remark_id=${r.id} assigned_to=${r.assigned_to}`
-      )
-    );
-  } else {
-    console.log(`[confirm sid=${req.params.sid}] confirmDupeMap is empty — all ${items.length} clients will get fresh remarks`);
-  }
-
-  const insertRemark = db.prepare(`
-    INSERT INTO remarks
-      (task_type, assigned_to, details, category, status,
-       client_name, client_phone, priority, assigned_by,
-       added_at, last_updated, sla_deadline, line, client_date, synced_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now','+2 hours'))
-  `);
-  const updateItem = db.prepare(
-    `UPDATE distribution_items SET remark_id = ? WHERE id = ?`
-  );
-
-  let remarksCreated     = 0;
-  let remarksDuped       = 0;   // cross-session (from DB)
-  let intraSessionDuped  = 0;   // intra-session (same phone twice in Excel)
+  const ts = nowTs();
+  let confirmed = 0;
+  let duped     = 0;
+  const seenPhones = new Set();
 
   db.transaction(() => {
     for (const item of items) {
-      // Skip if an active remark already exists for this phone (cross-session duplicate)
-      const existing = item.client_phone && confirmDupeMap[item.client_phone];
-      if (existing) {
-        // Link the item to the existing remark so history is traceable
-        updateItem.run(existing.id, item.id);
-        // Track whether this was a cross-session or intra-session duplicate
-        if (existing._intra) {
-          intraSessionDuped++;
-        } else {
-          remarksDuped++;
-        }
-        continue;
-      }
+      // Skip cross-session duplicates
+      if (item.client_phone && dupePhones.has(item.client_phone)) { duped++; continue; }
+      // Skip intra-session duplicates (same phone twice in Excel)
+      if (item.client_phone && seenPhones.has(item.client_phone)) { duped++; continue; }
+      if (item.client_phone) seenPhones.add(item.client_phone);
 
-      const details = item.match_type === 'existing_coordinator'
-        ? `توزيع عملاء — منسق موجود (${item.assigned_to})`
-        : `توزيع عملاء — توزيع تلقائي`;
-
-      const r = insertRemark.run(
-        session.task_type,
-        item.assigned_to,
-        details,
-        'توزيع عملاء',
-        'جديدة',
-        item.client_name,
-        item.client_phone,
-        session.priority,
-        byName,
-        ts, ts,
-        slaDeadline,
-        session.line,
-        dmyToISO(item.client_date)   // YYYY-MM-DD from DD/MM/YYYY
-      );
-      updateItem.run(r.lastInsertRowid, item.id);
-      remarksCreated++;
-
-      // Register in dupe map so later items in the SAME session don't duplicate
-      // Mark as intra-session so the log can distinguish from cross-session dupes
-      if (item.client_phone) {
-        confirmDupeMap[item.client_phone] = { id: r.lastInsertRowid, _intra: true };
-      }
+      // Set initial pipeline status on the item
+      db.prepare(
+        `UPDATE distribution_items SET status = 'جديدة', last_updated = ? WHERE id = ?`
+      ).run(ts, item.id);
+      confirmed++;
     }
     db.prepare(`
       UPDATE distribution_sessions
-      SET status = 'confirmed', confirmed_by = ?, confirmed_at = datetime('now','+2 hours')
+      SET status = 'confirmed', confirmed_by = ?, confirmed_at = datetime('now','localtime')
       WHERE id = ?
     `).run(req.user.id, req.params.sid);
   })();
   saveNow();
 
-  // Diagnostic log — distinguishes cross-session from intra-session duplicates
-  if (remarksDuped > 0 || intraSessionDuped > 0) {
-    console.warn(
-      `[confirm sid=${req.params.sid}] created=${remarksCreated}`,
-      `cross_session_duped=${remarksDuped}`,
-      `intra_session_duped=${intraSessionDuped}`
-    );
-  }
-
-  // Force immediate save to disk — prevents data loss on Railway rolling deployments
-  // where the new container might start before the 300ms scheduleSave timer fires.
-  saveNow();
-
   return res.json({
-    message:                  'تم تأكيد التوزيع',
-    remarks_created:          remarksCreated,
-    duplicates_skipped:       remarksDuped + intraSessionDuped,
-    cross_session_duped:      remarksDuped,
-    intra_session_duped:      intraSessionDuped,
-    ...(remarksDuped > 0 && {
-      warning: `تم تخطي ${remarksDuped} عميل لديهم ريمارك نشط بالفعل من جلسة سابقة`,
-    }),
-    ...(intraSessionDuped > 0 && {
-      intra_warning: `تم تخطي ${intraSessionDuped} عميل بسبب تكرار رقم الهاتف داخل نفس ملف Excel`,
-    }),
+    message:            'تم تأكيد التوزيع',
+    items_confirmed:    confirmed,
+    duplicates_skipped: duped,
+    ...(duped > 0 && { warning: `تم تخطي ${duped} عميل موجودون بالفعل في توزيع نشط` }),
   });
 });
 
@@ -932,18 +814,13 @@ router.post('/sessions/:sid/fork', (req, res) => {
   if (phoneList.length > 0) {
     const ph = phoneList.map(() => '?').join(',');
     db.prepare(`
-      SELECT r.client_phone, r.client_name, r.assigned_to, r.status, r.id
-      FROM remarks r
-      WHERE r.client_phone IN (${ph})
-        AND r.client_phone != ''
-        AND r.category = 'توزيع عملاء'
-        AND LOWER(r.status) NOT IN ('إنتهت','closed','resolved')
-        AND EXISTS (
-          SELECT 1 FROM distribution_items di
-          INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
-          WHERE di.remark_id = r.id AND di.remark_id IS NOT NULL
-        )
-      ORDER BY r.added_at DESC
+      SELECT di.client_phone, di.client_name, di.assigned_to, di.status, di.id
+      FROM distribution_items di
+      INNER JOIN distribution_sessions ds ON ds.id = di.session_id AND ds.status = 'confirmed'
+      WHERE di.client_phone IN (${ph})
+        AND di.client_phone != ''
+        AND LOWER(COALESCE(di.status,'جديدة')) NOT IN ('retention done','إنتهت')
+      ORDER BY di.id DESC
     `).all(...phoneList).forEach(r => {
       if (!existingActiveMap[r.client_phone]) existingActiveMap[r.client_phone] = r;
     });
@@ -956,7 +833,7 @@ router.post('/sessions/:sid/fork', (req, res) => {
     if (ex) {
       duplicates.push({
         name: item.client_name, phone: item.client_phone, date: item.client_date,
-        existing_assigned_to: ex.assigned_to, existing_status: ex.status, existing_remark_id: ex.id,
+        existing_assigned_to: ex.assigned_to, existing_status: ex.status, existing_item_id: ex.id,
       });
     } else {
       freshItems.push(item);
