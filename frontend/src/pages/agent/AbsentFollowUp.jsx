@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Download, Search, BookOpen, Monitor, RefreshCw, Phone } from 'lucide-react';
+import { Download, Search, BookOpen, Monitor, RefreshCw, Phone, Copy, Check } from 'lucide-react';
 import api from '../../api/axios';
 import DataTable from '../../components/ui/DataTable';
 import Badge from '../../components/ui/Badge';
@@ -150,10 +150,52 @@ export default function AbsentFollowUp() {
     follow_up_status: '', from_date: '', to_date: '', department: '', coordinator: '',
   });
 
-  const [page, setPage]           = useState(1);
-  const [selected, setSelected]   = useState(null);   // main absence modal
-  const [zoomDetail, setZoomDetail] = useState(null); // zoom detail modal
+  const [page, setPage]             = useState(1);
+  const [selected, setSelected]     = useState(null);   // main absence modal
+  const [zoomDetail, setZoomDetail] = useState(null);   // zoom detail modal
 
+  // ── Inline editing state ──────────────────────────────────────────────────
+  const [inlineEdits, setInlineEdits] = useState({});   // { [id]: { status, note } }
+  const [savingIds,   setSavingIds]   = useState(new Set());
+  const [copiedKey,   setCopiedKey]   = useState(null); // e.g. 'phone-42' | 'group-42'
+
+  const handleCopy = (text, key) => {
+    navigator.clipboard.writeText(String(text)).catch(() => {});
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey(null), 2000);
+  };
+
+  const getEdit = (row) =>
+    inlineEdits[row.id] ?? { status: row.follow_up_status || 'pending', note: row.follow_up_note || '' };
+
+  const setEditField = (id, field, value) =>
+    setInlineEdits(prev => ({ ...prev, [id]: { ...(prev[id] ?? {}), [field]: value } }));
+
+  const isDirty = (row) => {
+    const e = inlineEdits[row.id];
+    if (!e) return false;
+    const origStatus = row.follow_up_status || 'pending';
+    const origNote   = row.follow_up_note   || '';
+    return (e.status !== undefined && e.status !== origStatus) ||
+           (e.note   !== undefined && e.note   !== origNote);
+  };
+
+  const handleInlineSave = async (row) => {
+    const edit = getEdit(row);
+    setSavingIds(prev => new Set(prev).add(row.id));
+    try {
+      await api.put(`/agent/absent/${row.id}`, {
+        follow_up_status: edit.status,
+        follow_up_note:   edit.note,
+      });
+      qc.invalidateQueries({ queryKey: ['agent-absent-main'], exact: false });
+      setInlineEdits(prev => { const n = { ...prev }; delete n[row.id]; return n; });
+    } finally {
+      setSavingIds(prev => { const n = new Set(prev); n.delete(row.id); return n; });
+    }
+  };
+
+  // ── Queries ───────────────────────────────────────────────────────────────
   const isZoom = sessionType === 'side';
 
   const mainParams = { page, limit: 25, session_type: 'main', ...applied };
@@ -173,8 +215,8 @@ export default function AbsentFollowUp() {
     enabled: isZoom,
   });
 
-  const data       = isZoom ? zoomData    : mainData;
-  const isLoading  = isZoom ? zoomLoading : mainLoading;
+  const data      = isZoom ? zoomData    : mainData;
+  const isLoading = isZoom ? zoomLoading : mainLoading;
 
   const handleSearch = (e) => {
     e.preventDefault();
@@ -201,15 +243,116 @@ export default function AbsentFollowUp() {
   const hasActiveFilters = applied.q || applied.follow_up_status || applied.from_date ||
     applied.to_date || applied.department || applied.coordinator;
 
-  // ── Columns ──────────────────────────────────────────────────────────────────
+  // ── Columns ───────────────────────────────────────────────────────────────
   const mainColumns = [
-    { key: 'student_name',      label: t('absent.student'),        render: v => <span className="font-medium">{v || '—'}</span> },
-    { key: 'phone',             label: t('clients.phone'),         render: v => <span className="font-mono text-sm">{v || '—'}</span> },
-    { key: 'group_name',        label: t('absent.group'),          render: v => <span className="text-xs font-mono break-all leading-relaxed text-gray-700">{v}</span> },
-    { key: 'date',              label: t('absent.date'),           render: v => v?.slice(0, 10) },
-    { key: 'lecture_no',        label: t('absent.lectureNo') },
-    { key: 'follow_up_status',  label: t('absent.followUpStatus'), render: v => <Badge value={v} ns="absent" /> },
-    { key: 'follow_up_note',    label: t('absent.followUpNote'),   render: v => <span className="text-xs text-text-secondary line-clamp-1">{v || '—'}</span> },
+    {
+      key: 'student_name',
+      label: t('absent.student'),
+      render: v => <span className="font-medium">{v || '—'}</span>,
+    },
+    {
+      key: 'phone',
+      label: t('clients.phone'),
+      render: (v, row) => (
+        <div className="flex items-center gap-1">
+          <span className="font-mono text-sm">{v || '—'}</span>
+          {v && (
+            <button
+              onClick={e => { e.stopPropagation(); handleCopy(v, `phone-${row.id}`); }}
+              className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-blue-500 transition-colors flex-shrink-0"
+              title="نسخ الرقم"
+            >
+              {copiedKey === `phone-${row.id}`
+                ? <Check size={13} className="text-green-500" />
+                : <Copy size={13} />}
+            </button>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'group_name',
+      label: t('absent.group'),
+      render: (v, row) => (
+        <div className="flex items-start gap-1">
+          <span className="text-xs font-mono break-all leading-relaxed text-gray-700">{v}</span>
+          {v && (
+            <button
+              onClick={e => { e.stopPropagation(); handleCopy(v, `group-${row.id}`); }}
+              className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-blue-500 transition-colors flex-shrink-0 mt-0.5"
+              title="نسخ كود المجموعة"
+            >
+              {copiedKey === `group-${row.id}`
+                ? <Check size={13} className="text-green-500" />
+                : <Copy size={13} />}
+            </button>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'date',
+      label: t('absent.date'),
+      render: v => v?.slice(0, 10),
+    },
+    {
+      key: 'lecture_no',
+      label: t('absent.lectureNo'),
+    },
+    {
+      key: 'follow_up_status',
+      label: t('absent.followUpStatus'),
+      render: (v, row) => {
+        const edit = getEdit(row);
+        return (
+          <select
+            value={edit.status}
+            onClick={e => e.stopPropagation()}
+            onChange={e => { e.stopPropagation(); setEditField(row.id, 'status', e.target.value); }}
+            className={`text-xs border rounded-lg px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-primary/30 cursor-pointer transition-colors ${
+              edit.status === 'resolved'  ? 'border-green-300 text-green-700 bg-green-50' :
+              edit.status === 'contacted' ? 'border-blue-300  text-blue-700  bg-blue-50'  :
+                                            'border-orange-300 text-orange-700 bg-orange-50'
+            }`}
+          >
+            <option value="pending">معلقة</option>
+            <option value="contacted">تم التواصل</option>
+            <option value="resolved">تم الحل</option>
+          </select>
+        );
+      },
+    },
+    {
+      key: 'follow_up_note',
+      label: t('absent.followUpNote'),
+      render: (v, row) => {
+        const edit    = getEdit(row);
+        const dirty   = isDirty(row);
+        const saving  = savingIds.has(row.id);
+        return (
+          <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+            <input
+              value={edit.note}
+              onChange={e => setEditField(row.id, 'note', e.target.value)}
+              placeholder="أضف ملاحظة..."
+              className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-primary/30 w-36 placeholder:text-gray-300"
+            />
+            {dirty && (
+              <button
+                onClick={() => handleInlineSave(row)}
+                disabled={saving}
+                className="p-1.5 rounded-lg bg-green-500 hover:bg-green-600 text-white transition-colors disabled:opacity-50 flex-shrink-0"
+                title="حفظ"
+              >
+                {saving
+                  ? <RefreshCw size={12} className="animate-spin" />
+                  : <Check size={12} />}
+              </button>
+            )}
+          </div>
+        );
+      },
+    },
   ];
 
   const zoomColumns = [
@@ -358,7 +501,7 @@ export default function AbsentFollowUp() {
           absent={selected}
           open={!!selected}
           onClose={() => setSelected(null)}
-          onSaved={() => qc.invalidateQueries(['agent-absent-main'])}
+          onSaved={() => qc.invalidateQueries({ queryKey: ['agent-absent-main'], exact: false })}
         />
       )}
 
