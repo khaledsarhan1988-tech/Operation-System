@@ -122,7 +122,8 @@ class PreparedStatement {
     const params = flattenParams(args);
     const stmt   = _getCached(this._sql);
     try {
-      stmt.run(params);  // internally: bind + step + reset
+      stmt.reset();
+      stmt.run(params);
       const rowid   = _rawDb.exec('SELECT last_insert_rowid()')[0]?.values[0][0] ?? null;
       const changes = _rawDb.exec('SELECT changes()')[0]?.values[0][0] ?? 0;
       scheduleSave();
@@ -136,9 +137,9 @@ class PreparedStatement {
     const params = flattenParams(args);
     const stmt   = _getCached(this._sql);
     try {
-      stmt.bind(params);
-      const row = stmt.step() ? stmt.getAsObject() : undefined;
-      return row;
+      stmt.reset();                                    // must reset BEFORE bind on cached stmt
+      if (params.length > 0) stmt.bind(params);
+      return stmt.step() ? stmt.getAsObject() : undefined;
     } finally {
       try { stmt.reset(); } catch (_) {}
     }
@@ -148,7 +149,8 @@ class PreparedStatement {
     const params = flattenParams(args);
     const stmt   = _getCached(this._sql);
     try {
-      stmt.bind(params);
+      stmt.reset();                                    // must reset BEFORE bind on cached stmt
+      if (params.length > 0) stmt.bind(params);
       const rows = [];
       while (stmt.step()) rows.push(stmt.getAsObject());
       return rows;
