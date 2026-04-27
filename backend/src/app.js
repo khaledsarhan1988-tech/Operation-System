@@ -284,6 +284,30 @@ initDb().then(db => {
     console.error('CRM pipeline migration error:', e.message);
   }
 
+  // 8b. Make remark_interactions.remark_id nullable so pipeline interactions
+  //     (which use item_id and have remark_id=NULL) can be inserted without
+  //     hitting a NOT NULL constraint failure. Pipeline interactions are
+  //     completely independent of remarks.
+  try {
+    const riSql = db._raw.exec(`SELECT sql FROM sqlite_master WHERE type='table' AND name='remark_interactions'`)[0]?.values[0][0] || '';
+    if (riSql && /remark_id\s+INTEGER\s+NOT\s+NULL/i.test(riSql)) {
+      db._raw.run(`PRAGMA writable_schema = ON`);
+      db._raw.run(`
+        UPDATE sqlite_master
+        SET sql = REPLACE(sql,
+          'remark_id        INTEGER NOT NULL REFERENCES remarks(id) ON DELETE CASCADE',
+          'remark_id        INTEGER          REFERENCES remarks(id) ON DELETE CASCADE'
+        )
+        WHERE type = 'table' AND name = 'remark_interactions'
+      `);
+      db._raw.run(`PRAGMA writable_schema = OFF`);
+      saveNow();
+      console.log('✅ Migration: remark_interactions.remark_id made nullable (pipeline fix)');
+    }
+  } catch (e) {
+    console.error('remark_interactions nullable migration error:', e.message);
+  }
+
   // 7. Distribution tables (client distribution feature)
   try {
     db._raw.run(`
