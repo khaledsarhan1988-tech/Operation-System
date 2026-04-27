@@ -65,8 +65,8 @@ function syncFile(fileType, buffer, userId, filename, line) {
     throw err;
   } finally {
     db.prepare(`
-      INSERT INTO excel_syncs (file_type, filename, rows_imported, status, error_msg, uploaded_by, line)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO excel_syncs (file_type, filename, rows_imported, status, error_msg, uploaded_by, line, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
     `).run(syncEntry.file_type, syncEntry.filename, syncEntry.rows_imported, syncEntry.status, syncEntry.error_msg, syncEntry.uploaded_by, syncEntry.line);
   }
   return { rows_imported: syncEntry.rows_imported, warnings };
