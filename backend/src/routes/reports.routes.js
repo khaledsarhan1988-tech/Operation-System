@@ -1864,20 +1864,31 @@ router.get('/team-summary-detail', (req, res) => {
     } else if (metric === 'overdue_remarks') {
       const dateRBase = from_date ? ` AND added_at >= '${from_date}'` : '';
       const dateREnd  = to_date   ? ` AND added_at <= '${to_date}'`   : '';
+      // remark added_at / last_updated are "DD/MM/YYYY, HH:MM AM/PM" — convert inline
+      const RJD = (col) => `julianday(
+        substr(${col},7,4) || '-' || substr(${col},4,2) || '-' || substr(${col},1,2) || ' ' ||
+        printf('%02d', CASE
+          WHEN UPPER(substr(${col},19,2)) = 'PM' AND CAST(substr(${col},13,2) AS INTEGER) < 12
+            THEN CAST(substr(${col},13,2) AS INTEGER) + 12
+          WHEN UPPER(substr(${col},19,2)) = 'AM' AND CAST(substr(${col},13,2) AS INTEGER) = 12
+            THEN 0
+          ELSE CAST(substr(${col},13,2) AS INTEGER)
+        END) || ':' || substr(${col},16,2) || ':00'
+      )`;
       rows = db.prepare(
         `SELECT id, client_name, client_phone, details, priority, status,
            added_at, last_updated,
-           ROUND((julianday('now')-julianday(COALESCE(added_at,'2000-01-01')))*24,1) as hours_open
+           ROUND((julianday('now') - ${RJD('added_at')}) * 24, 1) as hours_open
          FROM remarks
-         WHERE LOWER(status) NOT IN ('closed','مغلق','resolved')
+         WHERE status != 'إنتهت'
            ${empFRemarks}
            ${dateRBase}${dateREnd}${lineRemarks}
-           AND ROUND((julianday('now')-julianday(COALESCE(added_at,'2000-01-01')))*24,1) >=
+           AND ROUND((julianday('now') - ${RJD('added_at')}) * 24, 1) >=
                CASE WHEN priority='عاجلة' THEN 3
                     WHEN priority='هامة'  THEN 24
                     ELSE 48 END
-           AND (last_updated IS NULL
-             OR ROUND((julianday('now')-julianday(last_updated))*24,1) >= 24)
+           AND (last_updated IS NULL OR last_updated = ''
+             OR ROUND((julianday('now') - ${RJD('last_updated')}) * 24, 1) >= 24)
          ORDER BY hours_open DESC`
       ).all();
 
@@ -1986,18 +1997,31 @@ router.get('/team-summary', (req, res) => {
          ${deptFNoB}${lineBatches}`
     );
 
+    // remark added_at / last_updated are stored as "DD/MM/YYYY, HH:MM AM/PM"
+    // (the Arabic Excel format). julianday() needs ISO format — convert inline.
+    const RJD = (col) => `julianday(
+      substr(${col},7,4) || '-' || substr(${col},4,2) || '-' || substr(${col},1,2) || ' ' ||
+      printf('%02d', CASE
+        WHEN UPPER(substr(${col},19,2)) = 'PM' AND CAST(substr(${col},13,2) AS INTEGER) < 12
+          THEN CAST(substr(${col},13,2) AS INTEGER) + 12
+        WHEN UPPER(substr(${col},19,2)) = 'AM' AND CAST(substr(${col},13,2) AS INTEGER) = 12
+          THEN 0
+        ELSE CAST(substr(${col},13,2) AS INTEGER)
+      END) || ':' || substr(${col},16,2) || ':00'
+    )`;
+
     const stmtOverdue = db.prepare(
       `SELECT COUNT(*) as cnt FROM remarks
-       WHERE LOWER(status) NOT IN ('closed','مغلق','resolved')
+       WHERE status != 'إنتهت'
          AND assigned_to LIKE ?
          ${dateRBase}${dateREnd}${lineRemarks}
-         AND ROUND((julianday('now') - julianday(COALESCE(added_at,'2000-01-01'))) * 24, 1) >=
+         AND ROUND((julianday('now') - ${RJD('added_at')}) * 24, 1) >=
              CASE WHEN priority='عاجلة' THEN 3
                   WHEN priority='هامة'  THEN 24
                   ELSE 48
              END
-         AND (last_updated IS NULL
-           OR ROUND((julianday('now') - julianday(last_updated)) * 24, 1) >= 24)`
+         AND (last_updated IS NULL OR last_updated = ''
+           OR ROUND((julianday('now') - ${RJD('last_updated')}) * 24, 1) >= 24)`
     );
 
     const stmtMainAbsence = db.prepare(
