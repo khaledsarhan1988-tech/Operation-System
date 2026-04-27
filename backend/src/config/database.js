@@ -2,10 +2,6 @@
 /**
  * SQLite wrapper using sql.js (pure WASM — zero native compilation required).
  *
- * PERFORMANCE: Statement cache — each unique SQL string is compiled once and
- * reused on subsequent calls via reset(). Eliminates expensive WASM prepare()
- * overhead on every query (previously re-parsed SQL on every run/get/all call).
- *
  * RACE-CONDITION FIX (Railway rolling deployments):
  *   Before every save, compare the file's mtime. If another process wrote a
  *   newer version, reload from disk instead of overwriting with stale data.
@@ -25,26 +21,6 @@ let _dirty     = false;
 let _saveTimer = null;
 let _fileTs    = 0;
 
-// ─── STATEMENT CACHE ──────────────────────────────────────────────────────────
-// Compiled statements are stored here and reset() between uses instead of
-// being freed and re-created, which eliminates expensive WASM parse overhead.
-const _stmtCache = new Map();
-
-function _clearCache() {
-  for (const stmt of _stmtCache.values()) {
-    try { stmt.free(); } catch (_) {}
-  }
-  _stmtCache.clear();
-}
-
-function _getCached(sql) {
-  if (!_rawDb) throw new Error('DB not ready');
-  if (!_stmtCache.has(sql)) {
-    _stmtCache.set(sql, _rawDb.prepare(sql));
-  }
-  return _stmtCache.get(sql);
-}
-
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 
 function _fileMtime() {
@@ -63,7 +39,6 @@ function _reloadFromDisk() {
   try {
     if (!fs.existsSync(DB_PATH)) return;
     const data = fs.readFileSync(DB_PATH);
-    _clearCache();                          // invalidate all cached statements
     if (_rawDb) _rawDb.close();
     _rawDb = new _SQL.Database(data);
     _applyPragmas();
@@ -78,7 +53,7 @@ function _applyPragmas() {
   _rawDb.run('PRAGMA foreign_keys = ON');
   _rawDb.run('PRAGMA ignore_check_constraints = 1');
   _rawDb.run('PRAGMA cache_size = -16000');   // 16 MB page cache
-  _rawDb.run('PRAGMA temp_store = 2');        // use memory for temp tables
+  _rawDb.run('PRAGMA temp_store = 2');        // memory for temp tables
 }
 
 // ─── PERSISTENCE ──────────────────────────────────────────────────────────────
@@ -114,49 +89,42 @@ function scheduleSave() {
 }
 
 // ─── STATEMENT WRAPPER ────────────────────────────────────────────────────────
+// Each prepare() call returns a new wrapper. Every run/get/all creates a fresh
+// sql.js statement, uses it, then frees it — no reuse, no state leakage.
 
 class PreparedStatement {
   constructor(sql) { this._sql = sql; }
 
   run(...args) {
     const params = flattenParams(args);
-    const stmt   = _getCached(this._sql);
+    const stmt = _rawDb.prepare(this._sql);
     try {
-      stmt.reset();
       stmt.run(params);
       const rowid   = _rawDb.exec('SELECT last_insert_rowid()')[0]?.values[0][0] ?? null;
       const changes = _rawDb.exec('SELECT changes()')[0]?.values[0][0] ?? 0;
       scheduleSave();
       return { lastInsertRowid: rowid, changes };
-    } finally {
-      try { stmt.reset(); } catch (_) {}
-    }
+    } finally { stmt.free(); }
   }
 
   get(...args) {
     const params = flattenParams(args);
-    const stmt   = _getCached(this._sql);
+    const stmt = _rawDb.prepare(this._sql);
     try {
-      stmt.reset();                                    // must reset BEFORE bind on cached stmt
-      if (params.length > 0) stmt.bind(params);
+      stmt.bind(params);
       return stmt.step() ? stmt.getAsObject() : undefined;
-    } finally {
-      try { stmt.reset(); } catch (_) {}
-    }
+    } finally { stmt.free(); }
   }
 
   all(...args) {
     const params = flattenParams(args);
-    const stmt   = _getCached(this._sql);
+    const stmt = _rawDb.prepare(this._sql);
     try {
-      stmt.reset();                                    // must reset BEFORE bind on cached stmt
-      if (params.length > 0) stmt.bind(params);
+      stmt.bind(params);
       const rows = [];
       while (stmt.step()) rows.push(stmt.getAsObject());
       return rows;
-    } finally {
-      try { stmt.reset(); } catch (_) {}
-    }
+    } finally { stmt.free(); }
   }
 }
 
@@ -199,7 +167,6 @@ const db = {
 
   close() {
     saveNow();
-    _clearCache();
     if (_rawDb) { _rawDb.close(); _rawDb = null; }
   },
 
