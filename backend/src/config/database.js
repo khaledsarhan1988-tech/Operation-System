@@ -2,18 +2,14 @@
 /**
  * SQLite wrapper using sql.js (pure WASM — zero native compilation required).
  *
- * RACE-CONDITION FIX (compared to the original implementation):
- *   The original sql.js version had a race condition on Railway rolling deployments:
- *   1. Old container A confirms a distribution → calls saveNow() → file updated on disk
- *   2. New container B started BEFORE step 1 → read the old file → has stale data in memory
- *   3. Container B's periodic save fires → OVERWRITES the file with stale data → data lost!
+ * PERFORMANCE: Statement cache — each unique SQL string is compiled once and
+ * reused on subsequent calls via reset(). Eliminates expensive WASM prepare()
+ * overhead on every query (previously re-parsed SQL on every run/get/all call).
  *
- *   Fix: Before every save, compare the file's current mtime with the timestamp when
- *   we last read/wrote it. If the file is newer (written by another process), we RELOAD
- *   from the file before saving, so we never overwrite newer data with stale data.
- *
- *   Additionally, all writes use an atomic tmp-file + rename approach to prevent
- *   partial reads during a write.
+ * RACE-CONDITION FIX (Railway rolling deployments):
+ *   Before every save, compare the file's mtime. If another process wrote a
+ *   newer version, reload from disk instead of overwriting with stale data.
+ *   All writes use atomic tmp-file + rename to prevent partial reads.
  */
 const initSqlJs = require('sql.js');
 const path = require('path');
@@ -23,25 +19,39 @@ const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../../data/academy.
 const dataDir = path.dirname(DB_PATH);
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
-let _SQL    = null;   // sql.js constructor (kept globally for reload)
-let _rawDb  = null;   // active in-memory database
-let _dirty  = false;
+let _SQL       = null;
+let _rawDb     = null;
+let _dirty     = false;
 let _saveTimer = null;
-let _fileTs = 0;      // mtime (ms) when we last read from / wrote to DB_PATH
+let _fileTs    = 0;
+
+// ─── STATEMENT CACHE ──────────────────────────────────────────────────────────
+// Compiled statements are stored here and reset() between uses instead of
+// being freed and re-created, which eliminates expensive WASM parse overhead.
+const _stmtCache = new Map();
+
+function _clearCache() {
+  for (const stmt of _stmtCache.values()) {
+    try { stmt.free(); } catch (_) {}
+  }
+  _stmtCache.clear();
+}
+
+function _getCached(sql) {
+  if (!_rawDb) throw new Error('DB not ready');
+  if (!_stmtCache.has(sql)) {
+    _stmtCache.set(sql, _rawDb.prepare(sql));
+  }
+  return _stmtCache.get(sql);
+}
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 
-/** Read mtime of DB_PATH, or 0 if it doesn't exist. */
 function _fileMtime() {
   try { return fs.existsSync(DB_PATH) ? fs.statSync(DB_PATH).mtimeMs : 0; }
   catch (_) { return 0; }
 }
 
-/**
- * Atomic write: write to a temp file then rename over the target.
- * On Linux (Railway's persistent volume), rename() is atomic — readers always
- * see either the old complete file or the new complete file, never a partial write.
- */
 function _atomicWrite(data) {
   const tmp = DB_PATH + '.tmp.' + process.pid;
   fs.writeFileSync(tmp, data);
@@ -49,23 +59,26 @@ function _atomicWrite(data) {
   _fileTs = _fileMtime();
 }
 
-/**
- * Reload the in-memory DB from the current file content.
- * Called when we detect that another process has written a newer version.
- */
 function _reloadFromDisk() {
   try {
     if (!fs.existsSync(DB_PATH)) return;
     const data = fs.readFileSync(DB_PATH);
+    _clearCache();                          // invalidate all cached statements
     if (_rawDb) _rawDb.close();
     _rawDb = new _SQL.Database(data);
-    _rawDb.run('PRAGMA foreign_keys = ON');
-    _rawDb.run('PRAGMA ignore_check_constraints = 1');
+    _applyPragmas();
     _fileTs = _fileMtime();
     console.log('[DB] Reloaded from disk — newer version detected from another process');
   } catch (e) {
     console.error('[DB] Reload error:', e.message);
   }
+}
+
+function _applyPragmas() {
+  _rawDb.run('PRAGMA foreign_keys = ON');
+  _rawDb.run('PRAGMA ignore_check_constraints = 1');
+  _rawDb.run('PRAGMA cache_size = -16000');   // 16 MB page cache
+  _rawDb.run('PRAGMA temp_store = 2');        // use memory for temp tables
 }
 
 // ─── PERSISTENCE ──────────────────────────────────────────────────────────────
@@ -78,15 +91,11 @@ function saveNow() {
     const diskTs = _fileMtime();
 
     if (diskTs > _fileTs + 200) {
-      // The file on disk is NEWER than what we last read/wrote.
-      // Another process (e.g. the old Railway container) has saved newer data.
-      // Reload from disk so we don't overwrite their data with our stale in-memory state.
       _reloadFromDisk();
       _dirty = false;
       return;
     }
 
-    // File is not newer — safe to save our current in-memory state.
     const exported = Buffer.from(_rawDb.export());
     _atomicWrite(exported);
     _dirty = false;
@@ -109,41 +118,43 @@ function scheduleSave() {
 class PreparedStatement {
   constructor(sql) { this._sql = sql; }
 
-  _getStmt() {
-    if (!_rawDb) throw new Error('DB not ready');
-    return _rawDb.prepare(this._sql);
-  }
-
   run(...args) {
     const params = flattenParams(args);
-    const stmt = this._getStmt();
+    const stmt   = _getCached(this._sql);
     try {
-      stmt.run(params);
+      stmt.run(params);  // internally: bind + step + reset
       const rowid   = _rawDb.exec('SELECT last_insert_rowid()')[0]?.values[0][0] ?? null;
       const changes = _rawDb.exec('SELECT changes()')[0]?.values[0][0] ?? 0;
       scheduleSave();
       return { lastInsertRowid: rowid, changes };
-    } finally { stmt.free(); }
+    } finally {
+      try { stmt.reset(); } catch (_) {}
+    }
   }
 
   get(...args) {
     const params = flattenParams(args);
-    const stmt = this._getStmt();
+    const stmt   = _getCached(this._sql);
     try {
       stmt.bind(params);
-      return stmt.step() ? stmt.getAsObject() : undefined;
-    } finally { stmt.free(); }
+      const row = stmt.step() ? stmt.getAsObject() : undefined;
+      return row;
+    } finally {
+      try { stmt.reset(); } catch (_) {}
+    }
   }
 
   all(...args) {
     const params = flattenParams(args);
-    const stmt = this._getStmt();
+    const stmt   = _getCached(this._sql);
     try {
       stmt.bind(params);
       const rows = [];
       while (stmt.step()) rows.push(stmt.getAsObject());
       return rows;
-    } finally { stmt.free(); }
+    } finally {
+      try { stmt.reset(); } catch (_) {}
+    }
   }
 }
 
@@ -186,6 +197,7 @@ const db = {
 
   close() {
     saveNow();
+    _clearCache();
     if (_rawDb) { _rawDb.close(); _rawDb = null; }
   },
 
@@ -203,8 +215,7 @@ async function initDb() {
     _fileTs = 0;
   }
   _rawDb = data ? new _SQL.Database(data) : new _SQL.Database();
-  _rawDb.run('PRAGMA foreign_keys = ON');
-  _rawDb.run('PRAGMA ignore_check_constraints = 1');
+  _applyPragmas();
   return db;
 }
 
