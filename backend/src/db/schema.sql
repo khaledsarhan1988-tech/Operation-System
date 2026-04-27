@@ -264,6 +264,21 @@ CREATE INDEX IF NOT EXISTS idx_cps_status ON code_problem_status(status);
 CREATE INDEX IF NOT EXISTS idx_cps_line   ON code_problem_status(line);
 
 -- =============================================
+-- PERFORMANCE COMPOSITE INDEXES
+-- Added 2026-04-27 — speeds up reports/dashboard, remarks-notes, code-problems.
+-- All additive, no behavior change.
+-- =============================================
+CREATE INDEX IF NOT EXISTS idx_remarks_category_line   ON remarks(category, line);
+CREATE INDEX IF NOT EXISTS idx_remarks_cat_phone       ON remarks(category, client_phone);
+CREATE INDEX IF NOT EXISTS idx_absent_group_date       ON absent_students(group_name, date);
+CREATE INDEX IF NOT EXISTS idx_absent_phone_date       ON absent_students(phone, date);
+CREATE INDEX IF NOT EXISTS idx_lectures_group_date     ON lectures(group_name, date);
+CREATE INDEX IF NOT EXISTS idx_lectures_status_type    ON lectures(status, session_type);
+CREATE INDEX IF NOT EXISTS idx_clients_phone_line      ON clients(phone, line);
+CREATE INDEX IF NOT EXISTS idx_clients_group_line      ON clients(group_name, line);
+CREATE INDEX IF NOT EXISTS idx_batches_group_line      ON batches(group_name, line);
+
+-- =============================================
 -- JWT REFRESH TOKENS
 -- =============================================
 CREATE TABLE IF NOT EXISTS refresh_tokens (

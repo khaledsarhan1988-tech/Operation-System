@@ -52,7 +52,7 @@ function _reloadFromDisk() {
 function _applyPragmas() {
   _rawDb.run('PRAGMA foreign_keys = ON');
   _rawDb.run('PRAGMA ignore_check_constraints = 1');
-  _rawDb.run('PRAGMA cache_size = -16000');   // 16 MB page cache
+  _rawDb.run('PRAGMA cache_size = -65536');   // 64 MB page cache (was 16 MB)
   _rawDb.run('PRAGMA temp_store = 2');        // memory for temp tables
 }
 
