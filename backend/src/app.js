@@ -443,6 +443,37 @@ initDb().then(db => {
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_lectures_type_group_line ON lectures(session_type, group_name, line)`);
   } catch (e) { /* index already exists or schema mismatch — safe to ignore */ }
 
+  // ── Absent Zoom students table (Zoom Call absences from new Excel) ──────
+  // Mirrors absent_students. Created on demand for existing DBs.
+  try {
+    db._raw.run(`CREATE TABLE IF NOT EXISTS absent_zoom_students (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_name        TEXT,
+      student_name      TEXT,
+      phone             TEXT,
+      date              TEXT,
+      time              TEXT,
+      lecture_no        INTEGER,
+      follow_up_status  TEXT NOT NULL DEFAULT 'pending' CHECK(follow_up_status IN ('pending','contacted','resolved')),
+      follow_up_note    TEXT,
+      follow_up_by      TEXT,
+      follow_up_at      TEXT,
+      line              TEXT NOT NULL DEFAULT 'Ahmed Hassan',
+      synced_at         TEXT
+    )`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_absent_zoom_line       ON absent_zoom_students(line)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_absent_zoom_group      ON absent_zoom_students(group_name)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_absent_zoom_student    ON absent_zoom_students(student_name COLLATE NOCASE)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_absent_zoom_phone      ON absent_zoom_students(phone)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_absent_zoom_status     ON absent_zoom_students(follow_up_status)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_absent_zoom_group_date ON absent_zoom_students(group_name, date)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_absent_zoom_phone_date ON absent_zoom_students(phone, date)`);
+    saveNow();
+    console.log('✅ Migration: absent_zoom_students table ready');
+  } catch (e) {
+    console.error('absent_zoom_students migration error:', e.message);
+  }
+
   // ── Performance composite indexes (additive — no behavior change) ────────
   // Speeds up: /reports/dashboard, remarks-notes (main+zoom), code-problems,
   // team-summary. All CREATE INDEX IF NOT EXISTS — safe to re-run forever.

@@ -671,36 +671,64 @@ router.get('/dashboard', (req, res) => {
     //
     // • admin "الكل" (no line) : canonical line = actual lecture line → no doubling ✓
     // • admin "Dardasha"       : canonical line = 'Ahmed Hassan' (where lectures are) → finds data ✓
-    const absentSideBatchSubQ = line
-      ? `(SELECT b.group_name,
-           COALESCE(lc.canonical_line, MIN(b.line)) AS line,
-           MAX(b.coordinators) AS coordinators, MAX(b.dept_type) AS dept_type
-         FROM batches b
-         LEFT JOIN (SELECT group_name, MIN(line) AS canonical_line FROM lectures WHERE session_type = 'side' GROUP BY group_name) lc ON lc.group_name = b.group_name
-         WHERE b.line = '${line.replace(/'/g, "''")}'
-         GROUP BY b.group_name)`
-      : `(SELECT b.group_name,
-           COALESCE(lc.canonical_line, MIN(b.line)) AS line,
-           MAX(b.coordinators) AS coordinators, MAX(b.dept_type) AS dept_type
-         FROM batches b
-         LEFT JOIN (SELECT group_name, MIN(line) AS canonical_line FROM lectures WHERE session_type = 'side' GROUP BY group_name) lc ON lc.group_name = b.group_name
-         GROUP BY b.group_name)`;
-    const absentSideRow = db.prepare(
-      `SELECT COALESCE(SUM(absent_count), 0) as cnt FROM (
-         SELECT
-           COUNT(*) -
-           SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != '' AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END) AS absent_count
-         FROM lectures l
-         INNER JOIN ${absentSideBatchSubQ} b ON l.group_name = b.group_name AND l.line = b.line
-         WHERE l.session_type = 'side'
-           AND l.status = 'مؤكدة'
-           AND (l.duration IS NULL OR l.duration <= '00:15')
-         ${buildDateFilter('l.date', from_date, to_date)}
-         ${deptB}${empBFilter}
-         GROUP BY l.group_name, l.date
-         HAVING absent_count > 0
-       )`
-    ).get();
+    // ── Absent Zoom KPI — prefer uploaded file, fall back to lectures-based calc ──
+    // If the new absent_zoom_students table has data for the line, use it.
+    // Otherwise, fall back to the original lectures-based calculation so the KPI
+    // never drops to 0 just because the new file hasn't been uploaded yet.
+    const hasZoomAbsentData = db.prepare(
+      `SELECT EXISTS(SELECT 1 FROM absent_zoom_students${line ? ` WHERE line = '${line.replace(/'/g, "''")}'` : ''}) as has_data`
+    ).get()?.has_data;
+
+    let absentSideRow;
+    if (hasZoomAbsentData) {
+      // NEW: count rows from absent_zoom_students (mirrors absent_main approach).
+      // Match rows that have student_name OR a phone that exists in clients (lookup).
+      const lineAZ = buildLineFilter('a', line);
+      const azDateF = buildDateFilter('a.date', from_date, to_date);
+      absentSideRow = db.prepare(
+        `SELECT COUNT(*) as cnt FROM absent_zoom_students a
+         LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
+         LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
+           AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone${line ? ' AND c_lu.line = a.line' : ''}
+         WHERE (
+           (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
+           OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+         )
+         ${deptB}${empBFilter}${lineAZ}${azDateF}`
+      ).get();
+    } else {
+      // FALLBACK: original lectures-based calculation
+      const absentSideBatchSubQ = line
+        ? `(SELECT b.group_name,
+             COALESCE(lc.canonical_line, MIN(b.line)) AS line,
+             MAX(b.coordinators) AS coordinators, MAX(b.dept_type) AS dept_type
+           FROM batches b
+           LEFT JOIN (SELECT group_name, MIN(line) AS canonical_line FROM lectures WHERE session_type = 'side' GROUP BY group_name) lc ON lc.group_name = b.group_name
+           WHERE b.line = '${line.replace(/'/g, "''")}'
+           GROUP BY b.group_name)`
+        : `(SELECT b.group_name,
+             COALESCE(lc.canonical_line, MIN(b.line)) AS line,
+             MAX(b.coordinators) AS coordinators, MAX(b.dept_type) AS dept_type
+           FROM batches b
+           LEFT JOIN (SELECT group_name, MIN(line) AS canonical_line FROM lectures WHERE session_type = 'side' GROUP BY group_name) lc ON lc.group_name = b.group_name
+           GROUP BY b.group_name)`;
+      absentSideRow = db.prepare(
+        `SELECT COALESCE(SUM(absent_count), 0) as cnt FROM (
+           SELECT
+             COUNT(*) -
+             SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != '' AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END) AS absent_count
+           FROM lectures l
+           INNER JOIN ${absentSideBatchSubQ} b ON l.group_name = b.group_name AND l.line = b.line
+           WHERE l.session_type = 'side'
+             AND l.status = 'مؤكدة'
+             AND (l.duration IS NULL OR l.duration <= '00:15')
+           ${buildDateFilter('l.date', from_date, to_date)}
+           ${deptB}${empBFilter}
+           GROUP BY l.group_name, l.date
+           HAVING absent_count > 0
+         )`
+      ).get();
+    }
 
     // added_at is stored as "DD/MM/YYYY, HH:MM AM/PM" — convert to ISO date for comparison
     const remarkDateExpr = `date(substr(remarks.added_at,7,4)||'-'||substr(remarks.added_at,4,2)||'-'||substr(remarks.added_at,1,2))`;
@@ -1911,29 +1939,52 @@ router.get('/team-summary-detail', (req, res) => {
       ).all();
 
     } else if (metric === 'side_absence_no_remark') {
-      rows = db.prepare(
-        `SELECT DISTINCT l.group_name, l.date, b.trainee_count,
-           CAST(l.attendance AS INTEGER) as attendance
-         FROM lectures l
-         INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
-         WHERE 1=1
-           ${empFB}
-           ${deptF}${dateL}${lineL}
-           AND l.session_type = 'side'
-           AND l.side_session_category = 'regular'
-           AND l.status != 'غير مؤكدة'
-           AND l.attendance IS NOT NULL
-           AND CAST(l.attendance AS INTEGER) < b.trainee_count
-           AND b.trainee_count > 0
-           AND NOT EXISTS (
-             SELECT 1 FROM remarks r
-             INNER JOIN clients c ON r.client_phone = c.phone${line ? ' AND c.line = r.line' : ''}
-             WHERE c.group_name = l.group_name
-               AND r.category = 'Attendance Zoom Call'
-               AND LOWER(r.status) NOT IN ('closed','مغلق','resolved')${line ? ' AND r.line = l.line' : ''}
-           )
-         ORDER BY l.group_name, l.date DESC`
-      ).all();
+      // Prefer absent_zoom_students (uploaded file); fallback to lectures-based.
+      const hasZoomData = db.prepare(
+        `SELECT EXISTS(SELECT 1 FROM absent_zoom_students${line ? ` WHERE line = '${line.replace(/'/g, "''")}'` : ''}) as has_data`
+      ).get()?.has_data;
+
+      if (hasZoomData) {
+        rows = db.prepare(
+          `SELECT DISTINCT a.student_name, a.phone, a.group_name, a.date
+           FROM absent_zoom_students a
+           INNER JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
+           WHERE 1=1
+             ${empFB}
+             ${deptF}${dateA}${lineA}
+             AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
+             AND NOT EXISTS (
+               SELECT 1 FROM remarks r
+               WHERE r.client_phone = a.phone
+                 AND r.category = 'Attendance Zoom Call'${line ? ' AND r.line = a.line' : ''}
+             )
+           ORDER BY a.group_name, a.date DESC`
+        ).all();
+      } else {
+        rows = db.prepare(
+          `SELECT DISTINCT l.group_name, l.date, b.trainee_count,
+             CAST(l.attendance AS INTEGER) as attendance
+           FROM lectures l
+           INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
+           WHERE 1=1
+             ${empFB}
+             ${deptF}${dateL}${lineL}
+             AND l.session_type = 'side'
+             AND l.side_session_category = 'regular'
+             AND l.status != 'غير مؤكدة'
+             AND l.attendance IS NOT NULL
+             AND CAST(l.attendance AS INTEGER) < b.trainee_count
+             AND b.trainee_count > 0
+             AND NOT EXISTS (
+               SELECT 1 FROM remarks r
+               INNER JOIN clients c ON r.client_phone = c.phone${line ? ' AND c.line = r.line' : ''}
+               WHERE c.group_name = l.group_name
+                 AND r.category = 'Attendance Zoom Call'
+                 AND LOWER(r.status) NOT IN ('closed','مغلق','resolved')${line ? ' AND r.line = l.line' : ''}
+             )
+           ORDER BY l.group_name, l.date DESC`
+        ).all();
+      }
 
     } else if (metric === 'groups_with_errors') {
       // Use the SAME logic as Code Repair Reports — return all problem rows
@@ -2039,28 +2090,51 @@ router.get('/team-summary', (req, res) => {
          )`
     );
 
-    const stmtSideAbsence = db.prepare(
-      `SELECT COUNT(*) as cnt FROM (
-         SELECT DISTINCT l.group_name, l.date
-         FROM lectures l
-         INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
+    // side_absence_no_remark — prefer absent_zoom_students (the new uploaded
+    // file), fall back to lectures-based calculation if no data uploaded yet.
+    const hasZoomAbsentDataTS = db.prepare(
+      `SELECT EXISTS(SELECT 1 FROM absent_zoom_students${line ? ` WHERE line = '${line.replace(/'/g, "''")}'` : ''}) as has_data`
+    ).get()?.has_data;
+
+    const stmtSideAbsence = hasZoomAbsentDataTS
+      ? db.prepare(
+        // NEW: count rows from absent_zoom_students that have NO matching
+        // 'Attendance Zoom Call' remark — mirrors stmtMainAbsence semantics.
+        `SELECT COUNT(*) as cnt
+         FROM absent_zoom_students a
+         INNER JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
          WHERE b.coordinators LIKE ?
-           ${deptF}${dateL}${lineL}
-           AND l.session_type = 'side'
-           AND l.side_session_category = 'regular'
-           AND l.status != 'غير مؤكدة'
-           AND l.attendance IS NOT NULL
-           AND CAST(l.attendance AS INTEGER) < b.trainee_count
-           AND b.trainee_count > 0
+           ${deptF}${dateA}${lineA}
+           AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
            AND NOT EXISTS (
              SELECT 1 FROM remarks r
-             INNER JOIN clients c ON r.client_phone = c.phone${line ? ' AND c.line = r.line' : ''}
-             WHERE c.group_name = l.group_name
-               AND r.category = 'Attendance Zoom Call'
-               AND LOWER(r.status) NOT IN ('closed','مغلق','resolved')${line ? ' AND r.line = l.line' : ''}
-           )
-       )`
-    );
+             WHERE r.client_phone = a.phone
+               AND r.category = 'Attendance Zoom Call'${line ? ' AND r.line = a.line' : ''}
+           )`
+      )
+      : db.prepare(
+        // FALLBACK: original lectures-based calculation
+        `SELECT COUNT(*) as cnt FROM (
+           SELECT DISTINCT l.group_name, l.date
+           FROM lectures l
+           INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
+           WHERE b.coordinators LIKE ?
+             ${deptF}${dateL}${lineL}
+             AND l.session_type = 'side'
+             AND l.side_session_category = 'regular'
+             AND l.status != 'غير مؤكدة'
+             AND l.attendance IS NOT NULL
+             AND CAST(l.attendance AS INTEGER) < b.trainee_count
+             AND b.trainee_count > 0
+             AND NOT EXISTS (
+               SELECT 1 FROM remarks r
+               INNER JOIN clients c ON r.client_phone = c.phone${line ? ' AND c.line = r.line' : ''}
+               WHERE c.group_name = l.group_name
+                 AND r.category = 'Attendance Zoom Call'
+                 AND LOWER(r.status) NOT IN ('closed','مغلق','resolved')${line ? ' AND r.line = l.line' : ''}
+             )
+         )`
+      );
 
     // groups_with_errors: use the SAME logic as Code Repair Reports (/code-problems)
     // so the per-employee count matches what's shown there. Computed once per request,

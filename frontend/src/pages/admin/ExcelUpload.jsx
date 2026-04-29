@@ -13,6 +13,7 @@ const FILE_TYPES = [
   { key: 'lectures',      labelAr: 'المحاضرات الرئيسية',   labelEn: 'Main Lectures',          file: 'Lectures.xlsx' },
   { key: 'side_sessions', labelAr: 'الجلسات الجانبية',    labelEn: 'Side Sessions',          file: 'Side Sessions.xlsx' },
   { key: 'absent',        labelAr: 'الغيابات',             labelEn: 'Absent Students',        file: 'Absent.xlsx' },
+  { key: 'absent_zoom',   labelAr: 'غيابات الزووم',        labelEn: 'Absent Zoom',            file: 'absent_fixed Side Session.xlsx' },
 ];
 
 const AVAILABLE_LINES = ['Ahmed Hassan', 'Dardasha'];

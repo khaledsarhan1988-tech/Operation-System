@@ -183,9 +183,10 @@ router.get('/upload-status', (req, res) => {
       lectures:      safeCount(db, `SELECT COUNT(*) as c FROM lectures WHERE session_type='main'${lineAnd(line)}`, lp),
       side_sessions: safeCount(db, `SELECT COUNT(*) as c FROM lectures WHERE session_type='side'${lineAnd(line)}`, lp),
       absent:        safeCount(db, `SELECT COUNT(*) as c FROM absent_students${lineWhere(line)}`, lp),
+      absent_zoom:   safeCount(db, `SELECT COUNT(*) as c FROM absent_zoom_students${lineWhere(line)}`, lp),
     };
 
-    const FILE_KEYS = ['data','trainees','batches','remarks','lectures','side_sessions','absent'];
+    const FILE_KEYS = ['data','trainees','batches','remarks','lectures','side_sessions','absent','absent_zoom'];
     return res.json(FILE_KEYS.map(key => ({
       key,
       last_upload:    uploadMap[key]?.last_upload    ?? null,
@@ -214,6 +215,7 @@ router.delete('/clear-excel-data/:fileType', (req, res) => {
     lectures:      () => { safeRun(db, `DELETE FROM lectures WHERE session_type='main'${lineA}`, lp); },
     side_sessions: () => { safeRun(db, `DELETE FROM lectures WHERE session_type='side'${lineA}`, lp); },
     absent:        () => { safeRun(db, `DELETE FROM absent_students${lineW}`, lp); },
+    absent_zoom:   () => { safeRun(db, `DELETE FROM absent_zoom_students${lineW}`, lp); },
   };
   if (!FILE_DELETE[fileType])
     return res.status(400).json({ error: `Unknown fileType: ${fileType}` });
@@ -257,7 +259,7 @@ router.delete('/clear-excel-data', (req, res) => {
     const line = effectiveLine(req);
     const lineW = lineWhere(line);
     const lp = line ? [line] : [];
-    ['lectures','absent_students','clients','batches','remarks','employees'].forEach(t =>
+    ['lectures','absent_students','absent_zoom_students','clients','batches','remarks','employees'].forEach(t =>
       safeRun(db, `DELETE FROM ${t}${lineW}`, lp)
     );
     // Clear sync audit log: scoped if a line is active, full wipe otherwise

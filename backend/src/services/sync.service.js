@@ -3,7 +3,7 @@ const db = require('../config/database');
 const { saveNow } = require('../config/database');
 const excel = require('./excel.service');
 
-const FILE_TYPES = ['data', 'trainees', 'batches', 'remarks', 'lectures', 'side_sessions', 'absent'];
+const FILE_TYPES = ['data', 'trainees', 'batches', 'remarks', 'lectures', 'side_sessions', 'absent', 'absent_zoom'];
 const VALID_LINES = ['Ahmed Hassan', 'Dardasha'];
 
 /**
@@ -57,6 +57,7 @@ function syncFile(fileType, buffer, userId, filename, line) {
       case 'lectures':     rows = syncLectures(buffer, line);            break;
       case 'side_sessions':rows = syncSideSessions(buffer, line);        break;
       case 'absent':       rows = syncAbsent(buffer, line);              break;
+      case 'absent_zoom':  rows = syncAbsentZoom(buffer, line);          break;
       default: throw new Error(`Unknown file type: ${fileType}`);
     }
     syncEntry.rows_imported = rows;
@@ -289,6 +290,40 @@ function syncAbsent(buffer, line) {
     evictFromOtherLines('absent_students', line, uniqueAbsentGroups);
     const insert = db.prepare(`
       INSERT INTO absent_students (group_name, student_name, phone, date, time, lecture_no, follow_up_status, follow_up_note, follow_up_by, follow_up_at, line, synced_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+    `);
+    rows.forEach(r => {
+      const key = `${r.group_name}|${r.student_name}|${r.date}|${r.lecture_no}`;
+      const p = preserved[key] || {};
+      insert.run(r.group_name, r.student_name, r.phone, r.date, r.time, r.lecture_no,
+        p.follow_up_status || 'pending', p.follow_up_note || null, p.follow_up_by || null, p.follow_up_at || null,
+        line);
+    });
+  });
+  run();
+  return rows.length;
+}
+
+function syncAbsentZoom(buffer, line) {
+  // Same parser as the main absent file — columns are identical
+  const rows = excel.parseAbsent(buffer);
+
+  // Snapshot follow-up data BEFORE delete — SCOPED by line
+  const preserved = {};
+  db.prepare('SELECT group_name, student_name, date, lecture_no, follow_up_status, follow_up_note, follow_up_by, follow_up_at FROM absent_zoom_students WHERE line = ?')
+    .all(line)
+    .forEach(r => {
+      const key = `${r.group_name}|${r.student_name}|${r.date}|${r.lecture_no}`;
+      preserved[key] = { follow_up_status: r.follow_up_status, follow_up_note: r.follow_up_note, follow_up_by: r.follow_up_by, follow_up_at: r.follow_up_at };
+    });
+
+  const uniqueAbsentGroups = [...new Set(rows.map(r => r.group_name).filter(Boolean))];
+  const run = db.transaction(() => {
+    db.prepare('DELETE FROM absent_zoom_students WHERE line = ?').run(line);
+    // Claim exclusive ownership of these groups' zoom-absent records
+    evictFromOtherLines('absent_zoom_students', line, uniqueAbsentGroups);
+    const insert = db.prepare(`
+      INSERT INTO absent_zoom_students (group_name, student_name, phone, date, time, lecture_no, follow_up_status, follow_up_note, follow_up_by, follow_up_at, line, synced_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
     `);
     rows.forEach(r => {

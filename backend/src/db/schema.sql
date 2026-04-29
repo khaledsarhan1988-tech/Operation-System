@@ -202,6 +202,34 @@ CREATE INDEX IF NOT EXISTS idx_absent_phone   ON absent_students(phone);
 CREATE INDEX IF NOT EXISTS idx_absent_status  ON absent_students(follow_up_status);
 
 -- =============================================
+-- ABSENT ZOOM STUDENTS (from absent_fixed Side Session.xlsx)
+-- Mirrors absent_students but holds Zoom Call (side session) absences only.
+-- =============================================
+CREATE TABLE IF NOT EXISTS absent_zoom_students (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  group_name        TEXT,
+  student_name      TEXT,
+  phone             TEXT,
+  date              TEXT,
+  time              TEXT,
+  lecture_no        INTEGER,
+  -- Agent follow-up (preserved across re-imports)
+  follow_up_status  TEXT NOT NULL DEFAULT 'pending' CHECK(follow_up_status IN ('pending','contacted','resolved')),
+  follow_up_note    TEXT,
+  follow_up_by      TEXT,
+  follow_up_at      TEXT,
+  line              TEXT NOT NULL DEFAULT 'Ahmed Hassan',
+  synced_at         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_absent_zoom_line       ON absent_zoom_students(line);
+CREATE INDEX IF NOT EXISTS idx_absent_zoom_group      ON absent_zoom_students(group_name);
+CREATE INDEX IF NOT EXISTS idx_absent_zoom_student    ON absent_zoom_students(student_name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_absent_zoom_phone      ON absent_zoom_students(phone);
+CREATE INDEX IF NOT EXISTS idx_absent_zoom_status     ON absent_zoom_students(follow_up_status);
+CREATE INDEX IF NOT EXISTS idx_absent_zoom_group_date ON absent_zoom_students(group_name, date);
+CREATE INDEX IF NOT EXISTS idx_absent_zoom_phone_date ON absent_zoom_students(phone, date);
+
+-- =============================================
 -- SIDE SESSION CHECKS (agent daily task — PERMANENT, never deleted by re-import)
 -- =============================================
 CREATE TABLE IF NOT EXISTS side_session_checks (
