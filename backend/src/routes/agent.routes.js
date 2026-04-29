@@ -574,29 +574,34 @@ router.get('/absent-zoom', (req, res) => {
     const azSearchFilter = q
       ? ` AND (a.group_name LIKE '%${q.replace(/%/g, '\\%').replace(/_/g, '\\_')}%' OR a.student_name LIKE '%${q.replace(/%/g, '\\%').replace(/_/g, '\\_')}%') ESCAPE '\\'`
       : '';
-    const azLine  = line ? ` AND a.line = '${line.replace(/'/g, "''")}'` : '';
-    const azLineB = line ? ' AND b.line = a.line' : '';
+    const azLine = line ? ` AND a.line = '${line.replace(/'/g, "''")}'` : '';
 
+    // Simple aggregate by (group, date). Trainer + trainee_count + coordinators
+    // come from a per-row JOIN to batches (just MAX of any matching row).
     const azGroupedQuery = `
       SELECT
-        a.group_name,
+        a.group_name                                                          AS group_name,
         a.date                                                                AS session_date,
         (SELECT MAX(l.trainer) FROM lectures l
-         WHERE l.group_name = a.group_name AND l.date = a.date
-           AND l.session_type = 'side'${line ? ` AND l.line = '${line.replace(/'/g, "''")}'` : ''}) AS trainer,
-        MAX(b.coordinators)                                                   AS coordinators,
-        COALESCE(
-          (SELECT u.department FROM users u
-           WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(MAX(b.coordinators)))
-             AND u.department != 'All' LIMIT 1),
-          MAX(b.dept_type)
-        )                                                                     AS dept_type,
-        COALESCE(MAX(b.trainee_count), 0)                                     AS trainee_count,
-        CASE WHEN COALESCE(MAX(b.trainee_count),0) - COUNT(*) > 0
-             THEN COALESCE(MAX(b.trainee_count),0) - COUNT(*) ELSE 0 END      AS present_count,
-        COUNT(*)                                                              AS absent_count
+          WHERE l.group_name = a.group_name AND l.date = a.date
+            AND l.session_type = 'side'${line ? ` AND l.line = '${line.replace(/'/g, "''")}'` : ''}) AS trainer,
+        (SELECT MAX(b2.coordinators) FROM batches b2
+          WHERE b2.group_name = a.group_name${line ? ` AND b2.line = '${line.replace(/'/g, "''")}'` : ''}) AS coordinators,
+        (SELECT MAX(b2.dept_type) FROM batches b2
+          WHERE b2.group_name = a.group_name${line ? ` AND b2.line = '${line.replace(/'/g, "''")}'` : ''}) AS dept_type,
+        COALESCE((SELECT MAX(b2.trainee_count) FROM batches b2
+          WHERE b2.group_name = a.group_name${line ? ` AND b2.line = '${line.replace(/'/g, "''")}'` : ''}), 0) AS trainee_count,
+        CASE
+          WHEN COALESCE((SELECT MAX(b2.trainee_count) FROM batches b2
+                          WHERE b2.group_name = a.group_name${line ? ` AND b2.line = '${line.replace(/'/g, "''")}'` : ''}), 0)
+                - COUNT(*) > 0
+          THEN COALESCE((SELECT MAX(b2.trainee_count) FROM batches b2
+                          WHERE b2.group_name = a.group_name${line ? ` AND b2.line = '${line.replace(/'/g, "''")}'` : ''}), 0)
+                - COUNT(*)
+          ELSE 0
+        END                                                                  AS present_count,
+        COUNT(*)                                                             AS absent_count
       FROM absent_zoom_students a
-      LEFT JOIN batches b ON a.group_name = b.group_name${azLineB}
       WHERE a.group_name IN (${gph})${azLine}${azDateFilter}${azSearchFilter}
       GROUP BY a.group_name, a.date
     `;
