@@ -558,7 +558,62 @@ router.get('/absent-zoom', (req, res) => {
     ? ` AND l.group_name LIKE '%${q.replace(/%/g, '\\%').replace(/_/g, '\\_')}%' ESCAPE '\\'`
     : '';
 
-  // Same formula as admin /reports/absent-side-list
+  // ── Prefer absent_zoom_students when uploaded ─────────────────────────────
+  // Aggregate the uploaded rows by (group, date) so the UI keeps the same
+  // group-level shape. Falls back to the legacy lectures-based query below
+  // when the new table is empty.
+  const hasZoomData = db.prepare(
+    `SELECT EXISTS(SELECT 1 FROM absent_zoom_students${line ? ` WHERE line = '${line.replace(/'/g, "''")}'` : ''}) as has_data`
+  ).get()?.has_data;
+
+  if (hasZoomData) {
+    const azDateFilter = from_date && to_date
+      ? ` AND a.date BETWEEN '${from_date}' AND '${to_date}'`
+      : from_date ? ` AND a.date >= '${from_date}'`
+      : to_date   ? ` AND a.date <= '${to_date}'` : '';
+    const azSearchFilter = q
+      ? ` AND (a.group_name LIKE '%${q.replace(/%/g, '\\%').replace(/_/g, '\\_')}%' OR a.student_name LIKE '%${q.replace(/%/g, '\\%').replace(/_/g, '\\_')}%') ESCAPE '\\'`
+      : '';
+    const azLine  = line ? ` AND a.line = '${line.replace(/'/g, "''")}'` : '';
+    const azLineB = line ? ' AND b.line = a.line' : '';
+
+    const azGroupedQuery = `
+      SELECT
+        a.group_name,
+        a.date                                                                AS session_date,
+        (SELECT MAX(l.trainer) FROM lectures l
+         WHERE l.group_name = a.group_name AND l.date = a.date
+           AND l.session_type = 'side'${line ? ` AND l.line = '${line.replace(/'/g, "''")}'` : ''}) AS trainer,
+        MAX(b.coordinators)                                                   AS coordinators,
+        COALESCE(
+          (SELECT u.department FROM users u
+           WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(MAX(b.coordinators)))
+             AND u.department != 'All' LIMIT 1),
+          MAX(b.dept_type)
+        )                                                                     AS dept_type,
+        COALESCE(MAX(b.trainee_count), 0)                                     AS trainee_count,
+        CASE WHEN COALESCE(MAX(b.trainee_count),0) - COUNT(*) > 0
+             THEN COALESCE(MAX(b.trainee_count),0) - COUNT(*) ELSE 0 END      AS present_count,
+        COUNT(*)                                                              AS absent_count
+      FROM absent_zoom_students a
+      LEFT JOIN batches b ON a.group_name = b.group_name${azLineB}
+      WHERE a.group_name IN (${gph})${azLine}${azDateFilter}${azSearchFilter}
+      GROUP BY a.group_name, a.date
+    `;
+
+    try {
+      const total = db.prepare(`SELECT COUNT(*) AS cnt FROM (${azGroupedQuery})`).get(...groupNames).cnt;
+      const totalAbsent = db.prepare(`SELECT COALESCE(SUM(absent_count),0) AS cnt FROM (${azGroupedQuery})`).get(...groupNames).cnt;
+      const data = db.prepare(`${azGroupedQuery} ORDER BY session_date DESC LIMIT ? OFFSET ?`)
+        .all(...groupNames, parseInt(limit), offset);
+      return res.json({ total, total_absent: totalAbsent, page: parseInt(page), data, data_source: 'zoom_table' });
+    } catch (err) {
+      console.error('[agent/absent-zoom] (zoom_table)', err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Same formula as admin /reports/absent-side-list (legacy fallback)
   const groupedQuery = `
     SELECT
       l.group_name,
@@ -617,6 +672,23 @@ router.get('/absent-zoom-detail', (req, res) => {
     `SELECT group_name FROM batches WHERE group_name = ? AND coordinators LIKE ?${bf.clause}`
   ).get(group_name, `%${name}%`, ...bf.params);
   if (!batch) return res.status(403).json({ error: 'Access denied' });
+
+  // ── Source 0: absent_zoom_students table (uploaded Zoom absences file) ──
+  // Highest priority — the new dedicated source for Zoom Call absences.
+  const fromZoomAbsent = db.prepare(`
+    SELECT DISTINCT
+      COALESCE(c.name, NULLIF(TRIM(a.student_name), '')) AS student_name,
+      COALESCE(NULLIF(TRIM(a.phone), ''), c.phone)        AS phone
+    FROM absent_zoom_students a
+    LEFT JOIN clients c ON c.phone = a.phone${lineC}
+    WHERE a.group_name = ? AND a.date = ?${lineA}
+      AND ((a.student_name IS NOT NULL AND TRIM(a.student_name) != '')
+           OR  (a.phone IS NOT NULL AND TRIM(a.phone) != ''))
+    ORDER BY student_name
+  `).all(group_name, session_date);
+
+  if (fromZoomAbsent.length > 0)
+    return res.json({ source: 'absent_zoom_students', data: fromZoomAbsent });
 
   // ── Source 1: absent_students table ──────────────────────────────────────
   const fromAbsent = db.prepare(`
