@@ -2572,7 +2572,19 @@ export default function SystemReports() {
               title: 'غياب الزووم كول',
               endpoint: '/reports/absent-side-list',
               params: { ...applied },
-              columns: [
+              // Columns differ based on data source:
+              // - 'zoom_table'    → student-level (uploaded file)  → mirrors absent-list shape
+              // - 'lectures_calc' → group-level (legacy fallback)
+              columns: kpis.absent_zoom_source === 'zoom_table' ? [
+                { key: 'student_name', label: 'اسم الطالب' },
+                { key: 'phone',        label: 'الموبايل' },
+                { key: 'group_name',   label: 'المجموعة' },
+                { key: 'date',         label: 'التاريخ', type: 'date' },
+                { key: 'time',         label: 'الوقت' },
+                { key: 'lecture_no',   label: 'رقم المحاضرة' },
+                { key: 'dept_type',    label: 'القسم',   type: 'badge' },
+                { key: 'coordinators', label: 'المنسق' },
+              ] : [
                 { key: 'group_name',    label: 'اسم المجموعة',   noWrap: true },
                 { key: 'session_date',  label: 'التاريخ',         type: 'date' },
                 { key: 'trainer',       label: 'المدرب' },
@@ -2582,7 +2594,9 @@ export default function SystemReports() {
                 { key: 'present_count', label: 'عدد الحضور',      type: 'present_count' },
                 { key: 'absent_count',  label: 'عدد الغياب',      type: 'absent_count' },
               ],
-              extraFilters: ['trainer', 'coordinator', 'date', 'dept'],
+              extraFilters: kpis.absent_zoom_source === 'zoom_table'
+                ? ['coordinator', 'date', 'dept']
+                : ['trainer', 'coordinator', 'date', 'dept'],
             })} />
         </div>
       </div>

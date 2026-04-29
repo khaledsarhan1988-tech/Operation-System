@@ -806,6 +806,10 @@ router.get('/dashboard', (req, res) => {
         zoom_calls:            zoomCallsRow?.cnt ?? 0,
         absent_main:           absentMainRow?.cnt ?? 0,
         absent_zoom:           absentSideRow?.cnt ?? 0,
+        // Tells the frontend which shape /absent-side-list will return so
+        // it can pick matching modal columns: 'zoom_table' (student-level)
+        // or 'lectures_calc' (group-level legacy).
+        absent_zoom_source:    hasZoomAbsentData ? 'zoom_table' : 'lectures_calc',
         open_remarks:          openRemarksCount?.cnt ?? 0,
         remarks_notes:         (() => {
           // KPI = sum of the totals returned by /remarks-notes-main and
@@ -1044,6 +1048,7 @@ router.get('/absent-side-list', (req, res) => {
   const offset = (Number(page) - 1) * Number(limit);
   const line = lineFilter(req);
   const lineL = buildLineFilter('l', line);
+  const lineA = buildLineFilter('a', line);
 
   const activeDept = modal_dept && modal_dept !== 'All' ? modal_dept : (department && department !== 'All' ? department : '');
   const activeFrom = modal_from || from_date;
@@ -1058,6 +1063,64 @@ router.get('/absent-side-list', (req, res) => {
     ? ` AND l.date BETWEEN '${activeFrom}' AND '${activeTo}'`
     : activeFrom ? ` AND l.date >= '${activeFrom}'`
     : activeTo   ? ` AND l.date <= '${activeTo}'` : '';
+
+  // ── Prefer absent_zoom_students when uploaded (student-level rows) ────────
+  const hasZoomAbsentData = db.prepare(
+    `SELECT EXISTS(SELECT 1 FROM absent_zoom_students${line ? ` WHERE line = '${line.replace(/'/g, "''")}'` : ''}) as has_data`
+  ).get()?.has_data;
+
+  if (hasZoomAbsentData) {
+    // Student-level shape — same columns as /absent-list so the modal can render uniformly
+    const azDateFilter = activeFrom && activeTo
+      ? ` AND a.date BETWEEN '${activeFrom}' AND '${activeTo}'`
+      : activeFrom ? ` AND a.date >= '${activeFrom}'`
+      : activeTo   ? ` AND a.date <= '${activeTo}'` : '';
+    const azSearchFilter = search ? ` AND (a.group_name LIKE '%${escapeLike(search)}%' OR a.student_name LIKE '%${escapeLike(search)}%' OR a.phone LIKE '%${escapeLike(search)}%') ESCAPE '\\'` : '';
+    const azCoordFilter  = coordinator ? ` AND b.coordinators LIKE '%${coordinator.replace(/'/g, "''")}%'` : '';
+    const azEmpFilter    = employee    ? ` AND b.coordinators LIKE '%${employee.replace(/'/g, "''")}%'`    : '';
+    const azDeptFilter   = buildDeptFilter('b', activeDept);
+
+    const azBaseFrom = `
+      FROM absent_zoom_students a
+      LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
+      LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
+        AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone${line ? ' AND c_lu.line = a.line' : ''}
+      WHERE (
+        (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
+        OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+      )
+      ${azDateFilter}${azDeptFilter}${azEmpFilter}${azCoordFilter}${azSearchFilter}${lineA}`;
+
+    try {
+      const totalRow = db.prepare(`SELECT COUNT(*) as cnt ${azBaseFrom}`).get();
+      const rows = db.prepare(
+        `SELECT
+           COALESCE(c_lu.name, NULLIF(TRIM(a.student_name),'')) AS student_name,
+           a.phone,
+           a.group_name,
+           a.date,
+           a.time,
+           a.lecture_no,
+           COALESCE(
+             (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) AND u.department != 'All' LIMIT 1),
+             b.dept_type
+           ) AS dept_type,
+           b.coordinators
+         ${azBaseFrom}
+         ORDER BY a.date DESC, a.group_name
+         LIMIT ${Number(limit)} OFFSET ${offset}`
+      ).all();
+
+      return res.json({
+        total: totalRow.cnt, page: Number(page), limit: Number(limit), rows,
+        data_source: 'zoom_table',
+      });
+    } catch (err) {
+      console.error('[reports] absent-side-list (zoom_table) error:', err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+  // ── Fallback: legacy lectures-based group-level calculation ─────────────────
 
   // Note: line scoping is handled by batchSubQ (groups belonging to the selected line),
   // NOT by filtering l.line directly. This allows Dardasha-line groups to find their
@@ -1130,7 +1193,10 @@ router.get('/absent-side-list', (req, res) => {
        LIMIT ${Number(limit)} OFFSET ${offset}`
     ).all();
 
-    return res.json({ total: totalRow.cnt, page: Number(page), limit: Number(limit), rows });
+    return res.json({
+      total: totalRow.cnt, page: Number(page), limit: Number(limit), rows,
+      data_source: 'lectures_calc',
+    });
   } catch (err) {
     console.error('[reports] absent-side-list error:', err);
     return res.status(500).json({ error: err.message });
