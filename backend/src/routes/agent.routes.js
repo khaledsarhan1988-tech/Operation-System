@@ -527,132 +527,100 @@ router.get('/absent', (req, res) => {
   return res.json({ total, page: parseInt(page), data, filter_opts: { departments: depts, coordinators: coords } });
 });
 
-// GET /api/agent/absent-zoom — Zoom (side) session absence, grouped per group+date
-// Mirrors admin's /reports/absent-side-list, scoped to agent's groups
+// GET /api/agent/absent-zoom — Zoom (side) session absence, STUDENT-LEVEL rows
+// Mirrors /agent/absent's shape exactly so the frontend can use the same UI.
+// Source: absent_zoom_students (the uploaded Zoom absences file).
 router.get('/absent-zoom', (req, res) => {
   const name = req.user.full_name;
-  const { page = 1, limit = 25, from_date, to_date, q } = req.query;
-  const offset = (parseInt(page) - 1) * parseInt(limit);
-  const line   = lineFilter(req);
-  const bf     = lineClause(req);
-  const lineL  = line ? ` AND l.line = '${line.replace(/'/g, "''")}'` : '';
-  const lineB  = line ? ' AND b.line = l.line' : '';
+  const {
+    follow_up_status, page = 1, limit = 25,
+    q, from_date, to_date, department, coordinator,
+  } = req.query;
 
-  // Agent's group names (all batches, no status restriction)
+  const bf = lineClause(req);
   const batchRows = db.prepare(
-    `SELECT group_name FROM batches WHERE coordinators LIKE ?${bf.clause}`
+    `SELECT group_name, dept_type, coordinators FROM batches WHERE coordinators LIKE ?${bf.clause}`
   ).all(`%${name}%`, ...bf.params);
 
   if (!batchRows.length)
-    return res.json({ total: 0, page: parseInt(page), data: [] });
+    return res.json({ total: 0, page: parseInt(page), data: [], filter_opts: { departments: [], coordinators: [] } });
 
   const groupNames = batchRows.map(b => b.group_name);
-  const gph        = groupNames.map(() => '?').join(',');
+  const placeholders = groupNames.map(() => '?').join(',');
 
-  const dateFilter = from_date && to_date
-    ? ` AND l.date BETWEEN '${from_date}' AND '${to_date}'`
-    : from_date ? ` AND l.date >= '${from_date}'`
-    : to_date   ? ` AND l.date <= '${to_date}'` : '';
+  const conditions = [`a.group_name IN (${placeholders})`];
+  const params = [...groupNames];
 
-  const searchFilter = q
-    ? ` AND l.group_name LIKE '%${q.replace(/%/g, '\\%').replace(/_/g, '\\_')}%' ESCAPE '\\'`
-    : '';
+  const line = lineFilter(req);
+  if (line) { conditions.push('a.line = ?'); params.push(line); }
 
-  // ── Prefer absent_zoom_students when uploaded ─────────────────────────────
-  // Aggregate the uploaded rows by (group, date) so the UI keeps the same
-  // group-level shape. Falls back to the legacy lectures-based query below
-  // when the new table is empty.
-  const hasZoomData = db.prepare(
-    `SELECT EXISTS(SELECT 1 FROM absent_zoom_students${line ? ` WHERE line = '${line.replace(/'/g, "''")}'` : ''}) as has_data`
-  ).get()?.has_data;
-
-  if (hasZoomData) {
-    const azDateFilter = from_date && to_date
-      ? ` AND a.date BETWEEN '${from_date}' AND '${to_date}'`
-      : from_date ? ` AND a.date >= '${from_date}'`
-      : to_date   ? ` AND a.date <= '${to_date}'` : '';
-    const azSearchFilter = q
-      ? ` AND (a.group_name LIKE '%${q.replace(/%/g, '\\%').replace(/_/g, '\\_')}%' OR a.student_name LIKE '%${q.replace(/%/g, '\\%').replace(/_/g, '\\_')}%') ESCAPE '\\'`
-      : '';
-    const azLine = line ? ` AND a.line = '${line.replace(/'/g, "''")}'` : '';
-
-    // Simple aggregate by (group, date). Trainer + trainee_count + coordinators
-    // come from a per-row JOIN to batches (just MAX of any matching row).
-    const azGroupedQuery = `
-      SELECT
-        a.group_name                                                          AS group_name,
-        a.date                                                                AS session_date,
-        (SELECT MAX(l.trainer) FROM lectures l
-          WHERE l.group_name = a.group_name AND l.date = a.date
-            AND l.session_type = 'side'${line ? ` AND l.line = '${line.replace(/'/g, "''")}'` : ''}) AS trainer,
-        (SELECT MAX(b2.coordinators) FROM batches b2
-          WHERE b2.group_name = a.group_name${line ? ` AND b2.line = '${line.replace(/'/g, "''")}'` : ''}) AS coordinators,
-        (SELECT MAX(b2.dept_type) FROM batches b2
-          WHERE b2.group_name = a.group_name${line ? ` AND b2.line = '${line.replace(/'/g, "''")}'` : ''}) AS dept_type,
-        COALESCE((SELECT MAX(b2.trainee_count) FROM batches b2
-          WHERE b2.group_name = a.group_name${line ? ` AND b2.line = '${line.replace(/'/g, "''")}'` : ''}), 0) AS trainee_count,
-        CASE
-          WHEN COALESCE((SELECT MAX(b2.trainee_count) FROM batches b2
-                          WHERE b2.group_name = a.group_name${line ? ` AND b2.line = '${line.replace(/'/g, "''")}'` : ''}), 0)
-                - COUNT(*) > 0
-          THEN COALESCE((SELECT MAX(b2.trainee_count) FROM batches b2
-                          WHERE b2.group_name = a.group_name${line ? ` AND b2.line = '${line.replace(/'/g, "''")}'` : ''}), 0)
-                - COUNT(*)
-          ELSE 0
-        END                                                                  AS present_count,
-        COUNT(*)                                                             AS absent_count
-      FROM absent_zoom_students a
-      WHERE a.group_name IN (${gph})${azLine}${azDateFilter}${azSearchFilter}
-      GROUP BY a.group_name, a.date
-    `;
-
-    try {
-      const total = db.prepare(`SELECT COUNT(*) AS cnt FROM (${azGroupedQuery})`).get(...groupNames).cnt;
-      const totalAbsent = db.prepare(`SELECT COALESCE(SUM(absent_count),0) AS cnt FROM (${azGroupedQuery})`).get(...groupNames).cnt;
-      const data = db.prepare(`${azGroupedQuery} ORDER BY session_date DESC LIMIT ? OFFSET ?`)
-        .all(...groupNames, parseInt(limit), offset);
-      return res.json({ total, total_absent: totalAbsent, page: parseInt(page), data, data_source: 'zoom_table' });
-    } catch (err) {
-      console.error('[agent/absent-zoom] (zoom_table)', err);
-      return res.status(500).json({ error: err.message });
-    }
+  if (follow_up_status) { conditions.push('a.follow_up_status = ?'); params.push(follow_up_status); }
+  if (from_date)        { conditions.push('a.date >= ?'); params.push(from_date); }
+  if (to_date)          { conditions.push('a.date <= ?'); params.push(to_date); }
+  if (q) {
+    conditions.push('(a.student_name LIKE ? OR a.phone LIKE ? OR a.group_name LIKE ?)');
+    const esc = q.replace(/%/g, '\\%').replace(/_/g, '\\_');
+    params.push(`%${esc}%`, `%${esc}%`, `%${esc}%`);
   }
+  if (department && department !== 'All') {
+    conditions.push(`(
+      b.dept_type = ?
+      OR EXISTS (
+        SELECT 1 FROM users u
+        WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
+          AND u.department = ?
+      )
+    )`);
+    params.push(department, department);
+  }
+  if (coordinator) { conditions.push('b.coordinators LIKE ?'); params.push(`%${coordinator}%`); }
 
-  // Same formula as admin /reports/absent-side-list (legacy fallback)
-  const groupedQuery = `
-    SELECT
-      l.group_name,
-      l.date                                                                AS session_date,
-      MAX(l.trainer)                                                        AS trainer,
-      MAX(b.coordinators)                                                   AS coordinators,
-      COALESCE(
-        (SELECT u.department FROM users u
-         WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
-           AND u.department != 'All' LIMIT 1),
-        MAX(b.dept_type)
-      )                                                                     AS dept_type,
-      COUNT(*)                                                              AS trainee_count,
-      SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != ''
-               AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END)   AS present_count,
-      COUNT(*) -
-      SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != ''
-               AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END)   AS absent_count
-    FROM lectures l
-    LEFT JOIN batches b ON l.group_name = b.group_name${lineB}
-    WHERE l.session_type = 'side'
-      AND l.status = 'مؤكدة'
-      AND (l.duration IS NULL OR l.duration <= '00:15')
-      AND l.group_name IN (${gph})${lineL}${dateFilter}${searchFilter}
-    GROUP BY l.group_name, l.date
-    HAVING absent_count > 0
+  const where = conditions.join(' AND ');
+  const batchJoinLine = line ? ' AND b.line = a.line' : '';
+  const baseFrom = `
+    FROM absent_zoom_students a
+    LEFT JOIN batches b ON a.group_name = b.group_name${batchJoinLine}
+    WHERE ${where}
   `;
 
   try {
-    const total        = db.prepare(`SELECT COUNT(*) AS cnt FROM (${groupedQuery})`).get(...groupNames).cnt;
-    const totalAbsent  = db.prepare(`SELECT COALESCE(SUM(absent_count),0) AS cnt FROM (${groupedQuery})`).get(...groupNames).cnt;
-    const data         = db.prepare(`${groupedQuery} ORDER BY session_date DESC LIMIT ? OFFSET ?`)
-                           .all(...groupNames, parseInt(limit), offset);
-    return res.json({ total, total_absent: totalAbsent, page: parseInt(page), data });
+    const total = db.prepare(`SELECT COUNT(DISTINCT a.id) AS cnt ${baseFrom}`).get(...params).cnt;
+    const data  = db.prepare(`
+      SELECT a.id, a.group_name, a.date, a.time, a.lecture_no,
+        a.follow_up_status, a.follow_up_note, a.follow_up_by, a.follow_up_at, a.synced_at,
+        COALESCE(
+          CASE WHEN a.phone IS NOT NULL AND TRIM(a.phone) != '' THEN
+            (SELECT c.name FROM clients c WHERE c.phone = a.phone${line ? ' AND c.line = a.line' : ''} LIMIT 1)
+          END,
+          CASE WHEN a.student_name IS NOT NULL AND TRIM(a.student_name) != '' THEN
+            (SELECT c.name FROM clients c
+             WHERE c.group_name = a.group_name
+               AND LOWER(TRIM(c.name)) = LOWER(TRIM(a.student_name))${line ? ' AND c.line = a.line' : ''} LIMIT 1)
+          END,
+          NULLIF(TRIM(a.student_name), '')
+        ) AS student_name,
+        COALESCE(
+          NULLIF(TRIM(a.phone), ''),
+          CASE WHEN a.student_name IS NOT NULL AND TRIM(a.student_name) != '' THEN
+            (SELECT c.phone FROM clients c
+             WHERE c.group_name = a.group_name
+               AND LOWER(TRIM(c.name)) = LOWER(TRIM(a.student_name))${line ? ' AND c.line = a.line' : ''} LIMIT 1)
+          END
+        ) AS phone,
+        b.dept_type,
+        b.coordinators AS batch_coordinators,
+        'side' AS session_type
+      ${baseFrom}
+      GROUP BY a.id
+      ORDER BY a.date DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, parseInt(limit), (parseInt(page) - 1) * parseInt(limit));
+
+    const depts  = [...new Set(batchRows.map(b => b.dept_type).filter(Boolean))];
+    const coords = [...new Set(
+      batchRows.flatMap(b => (b.coordinators || '').split(/[,،]/).map(c => c.trim())).filter(Boolean)
+    )];
+    return res.json({ total, page: parseInt(page), data, filter_opts: { departments: depts, coordinators: coords } });
   } catch (err) {
     console.error('[agent/absent-zoom]', err);
     return res.status(500).json({ error: err.message });
@@ -753,6 +721,25 @@ router.put('/absent/:id', (req, res) => {
   `).run(follow_up_status, follow_up_note || null, req.user.full_name, id);
 
   return res.json(db.prepare('SELECT * FROM absent_students WHERE id = ?').get(id));
+});
+
+// PUT /api/agent/absent-zoom/:id  — same as /absent/:id but for Zoom absences
+router.put('/absent-zoom/:id', (req, res) => {
+  const { id } = req.params;
+  const { follow_up_status, follow_up_note } = req.body;
+  if (!follow_up_status) return res.status(400).json({ error: 'follow_up_status required' });
+
+  const lf = lineClause(req);
+  const absent = db.prepare(`SELECT id FROM absent_zoom_students WHERE id = ?${lf.clause}`).get(id, ...lf.params);
+  if (!absent) return res.status(404).json({ error: 'Record not found' });
+
+  db.prepare(`
+    UPDATE absent_zoom_students
+    SET follow_up_status = ?, follow_up_note = ?, follow_up_by = ?, follow_up_at = datetime('now', 'localtime')
+    WHERE id = ?
+  `).run(follow_up_status, follow_up_note || null, req.user.full_name, id);
+
+  return res.json(db.prepare('SELECT * FROM absent_zoom_students WHERE id = ?').get(id));
 });
 
 // GET /api/agent/side-session-check?date=YYYY-MM-DD&session_type=side|main
