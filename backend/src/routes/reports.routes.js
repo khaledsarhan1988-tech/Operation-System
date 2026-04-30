@@ -683,10 +683,12 @@ router.get('/dashboard', (req, res) => {
     if (hasZoomAbsentData) {
       // NEW: count rows from absent_zoom_students (mirrors absent_main approach).
       // Match rows that have student_name OR a phone that exists in clients (lookup).
+      // COUNT(DISTINCT a.id) prevents row multiplication when the same phone or
+      // group_name has multiple rows in clients/batches.
       const lineAZ = buildLineFilter('a', line);
       const azDateF = buildDateFilter('a.date', from_date, to_date);
       absentSideRow = db.prepare(
-        `SELECT COUNT(*) as cnt FROM absent_zoom_students a
+        `SELECT COUNT(DISTINCT a.id) as cnt FROM absent_zoom_students a
          LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
          LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
            AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone${line ? ' AND c_lu.line = a.line' : ''}
@@ -1092,21 +1094,22 @@ router.get('/absent-side-list', (req, res) => {
       ${azDateFilter}${azDeptFilter}${azEmpFilter}${azCoordFilter}${azSearchFilter}${lineA}`;
 
     try {
-      const totalRow = db.prepare(`SELECT COUNT(*) as cnt ${azBaseFrom}`).get();
+      // COUNT(DISTINCT a.id) + GROUP BY a.id prevent row duplication when
+      // the same phone matches multiple clients or the same group has
+      // multiple batch rows (LEFT JOIN multiplies otherwise).
+      const totalRow = db.prepare(`SELECT COUNT(DISTINCT a.id) as cnt ${azBaseFrom}`).get();
       const rows = db.prepare(
-        `SELECT
-           COALESCE(c_lu.name, NULLIF(TRIM(a.student_name),'')) AS student_name,
+        `SELECT a.id,
+           COALESCE(MAX(c_lu.name), NULLIF(TRIM(a.student_name),'')) AS student_name,
            a.phone,
            a.group_name,
            a.date,
            a.time,
            a.lecture_no,
-           COALESCE(
-             (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) AND u.department != 'All' LIMIT 1),
-             b.dept_type
-           ) AS dept_type,
-           b.coordinators
+           MAX(b.dept_type)    AS dept_type,
+           MAX(b.coordinators) AS coordinators
          ${azBaseFrom}
+         GROUP BY a.id
          ORDER BY a.date DESC, a.group_name
          LIMIT ${Number(limit)} OFFSET ${offset}`
       ).all();
