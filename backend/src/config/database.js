@@ -15,11 +15,12 @@ const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../../data/academy.
 const dataDir = path.dirname(DB_PATH);
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
-let _SQL       = null;
-let _rawDb     = null;
-let _dirty     = false;
-let _saveTimer = null;
-let _fileTs    = 0;
+let _SQL           = null;
+let _rawDb         = null;
+let _dirty         = false;
+let _saveTimer     = null;
+let _fileTs        = 0;
+let _inTransaction = false;  // when true, saveNow defers — _rawDb.export() during a transaction corrupts the bind state of subsequent .run() calls (SQLITE_MISUSE)
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 
@@ -62,6 +63,18 @@ function saveNow() {
   if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
   if (!_rawDb) return;
 
+  // CRITICAL: do NOT call _rawDb.export() while a transaction is open —
+  // sql.js corrupts the bind state of subsequent .run() calls and the very
+  // next INSERT throws "bad parameter or other API misuse" (SQLITE_MISUSE).
+  // Defer until the transaction commits.
+  if (_inTransaction) {
+    _saveTimer = setTimeout(() => {
+      _saveTimer = null;
+      if (_dirty && _rawDb) saveNow();
+    }, 300);
+    return;
+  }
+
   try {
     const diskTs = _fileMtime();
 
@@ -81,6 +94,7 @@ function saveNow() {
 
 function scheduleSave() {
   _dirty = true;
+  if (_inTransaction) return; // transaction wrapper schedules its own save on commit
   if (_saveTimer) return;
   _saveTimer = setTimeout(() => {
     _saveTimer = null;
@@ -152,13 +166,19 @@ const db = {
   transaction(fn) {
     return (...args) => {
       if (!_rawDb) throw new Error('DB not ready');
+      // Cancel any pending save — it would fire mid-transaction otherwise
+      // and corrupt sql.js's bind state (SQLITE_MISUSE on next INSERT).
+      if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
       _rawDb.run('BEGIN');
+      _inTransaction = true;
       try {
         const result = fn(...args);
         _rawDb.run('COMMIT');
+        _inTransaction = false;
         scheduleSave();
         return result;
       } catch (err) {
+        _inTransaction = false;
         try { _rawDb.run('ROLLBACK'); } catch (_) {}
         throw err;
       }
