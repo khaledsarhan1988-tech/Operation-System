@@ -133,6 +133,24 @@ initDb().then(db => {
     }
   });
 
+  // 4b. AUTO-ABSENT: add `auto_generated` column to absent tables
+  //     Tags rows generated from lectures with empty attendance + confirmed status,
+  //     so they can be deleted/recreated without affecting manually-uploaded rows.
+  ['absent_students', 'absent_zoom_students'].forEach(table => {
+    try {
+      const info = db._raw.exec(`PRAGMA table_info(${table})`);
+      const tableCols = info[0]?.values.map(r => r[1]) || [];
+      if (tableCols.length > 0 && !tableCols.includes('auto_generated')) {
+        db._raw.run(`ALTER TABLE ${table} ADD COLUMN auto_generated INTEGER NOT NULL DEFAULT 0`);
+        db._raw.run(`CREATE INDEX IF NOT EXISTS idx_${table}_auto ON ${table}(auto_generated)`);
+        saveNow();
+        console.log(`✅ Migration: added \`auto_generated\` column to ${table}`);
+      }
+    } catch (e) {
+      console.error(`${table}.auto_generated migration error:`, e.message);
+    }
+  });
+
   // 5. MULTI-LINE: Rebuild `remarks` with UNIQUE(external_id, line)
   //    Previous UNIQUE(external_id) prevents cross-line duplicates.
   //    Must recreate table because SQLite can't ALTER UNIQUE constraints.

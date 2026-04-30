@@ -193,6 +193,8 @@ CREATE TABLE IF NOT EXISTS absent_students (
   follow_up_by      TEXT,
   follow_up_at      TEXT,
   line              TEXT NOT NULL DEFAULT 'Ahmed Hassan',
+  -- 1 if generated automatically from a lecture with empty attendance + confirmed status
+  auto_generated    INTEGER NOT NULL DEFAULT 0,
   synced_at         TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_absent_line    ON absent_students(line);
@@ -219,6 +221,8 @@ CREATE TABLE IF NOT EXISTS absent_zoom_students (
   follow_up_by      TEXT,
   follow_up_at      TEXT,
   line              TEXT NOT NULL DEFAULT 'Ahmed Hassan',
+  -- 1 if generated automatically from a zoom call with empty attendance + confirmed status
+  auto_generated    INTEGER NOT NULL DEFAULT 0,
   synced_at         TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_absent_zoom_line       ON absent_zoom_students(line);

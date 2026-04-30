@@ -16,6 +16,113 @@ const VALID_LINES = ['Ahmed Hassan', 'Dardasha'];
  * @param {string[]} groupNames - unique group_names being uploaded
  * @param {string} extraWhere  - optional extra WHERE clause (e.g. " AND session_type='side'")
  */
+/**
+ * AUTO-ABSENT REGENERATION
+ * ─────────────────────────
+ * Rule (per business spec): when a lecture has status='مؤكدة' AND attendance is empty/0,
+ * EVERY student in that group is considered absent for that lecture — even if the group
+ * code does not appear in the manually-uploaded absent sheet.
+ *
+ * Implementation: deletes auto-generated rows (auto_generated=1) for the line, then
+ * re-inserts them from current `lectures` + `clients` state. Manual rows (auto_generated=0)
+ * are never touched. Idempotent — safe to call multiple times.
+ *
+ * Triggers: must run after any sync that changes lectures, clients, or absent records,
+ * because (a) absent re-imports DELETE all rows including auto, (b) lectures/clients
+ * changes alter the input data.
+ *
+ * Scope: main lectures → absent_students. Zoom calls (side + category='regular') →
+ * absent_zoom_students. Other side sessions (compensatory/offboarding) are excluded.
+ */
+function regenerateAutoAbsents(line) {
+  const EMPTY_ATTENDANCE = `(l.attendance IS NULL OR TRIM(COALESCE(l.attendance,'')) IN ('', '0'))`;
+
+  const run = db.transaction(() => {
+    // 1. clear previously auto-generated rows for this line
+    db.prepare(`DELETE FROM absent_students      WHERE line = ? AND auto_generated = 1`).run(line);
+    db.prepare(`DELETE FROM absent_zoom_students WHERE line = ? AND auto_generated = 1`).run(line);
+
+    // 2. main lectures → absent_students
+    db.prepare(`
+      INSERT INTO absent_students (
+        group_name, student_name, phone, date, time, lecture_no,
+        follow_up_status, line, auto_generated, synced_at
+      )
+      SELECT DISTINCT
+        l.group_name,
+        c.name,
+        c.phone,
+        l.date,
+        l.time,
+        (SELECT COUNT(*) FROM lectures l2
+          WHERE l2.line = l.line
+            AND l2.session_type = 'main'
+            AND l2.group_name = l.group_name
+            AND (l2.date < l.date
+              OR (l2.date = l.date AND COALESCE(l2.time,'') <= COALESCE(l.time,'')))) AS lecture_no,
+        'pending',
+        l.line,
+        1,
+        datetime('now','localtime')
+      FROM lectures l
+      INNER JOIN clients c
+        ON c.line = l.line AND c.group_name = l.group_name
+      WHERE l.line = ?
+        AND l.session_type = 'main'
+        AND l.status = 'مؤكدة'
+        AND ${EMPTY_ATTENDANCE}
+        AND NOT EXISTS (
+          SELECT 1 FROM absent_students a
+           WHERE a.line       = l.line
+             AND a.group_name = l.group_name
+             AND a.date       = l.date
+             AND a.phone      = c.phone
+        )
+    `).run(line);
+
+    // 3. zoom calls (side + regular) → absent_zoom_students
+    db.prepare(`
+      INSERT INTO absent_zoom_students (
+        group_name, student_name, phone, date, time, lecture_no,
+        follow_up_status, line, auto_generated, synced_at
+      )
+      SELECT DISTINCT
+        l.group_name,
+        c.name,
+        c.phone,
+        l.date,
+        l.time,
+        (SELECT COUNT(*) FROM lectures l2
+          WHERE l2.line = l.line
+            AND l2.session_type = 'side'
+            AND l2.side_session_category = 'regular'
+            AND l2.group_name = l.group_name
+            AND (l2.date < l.date
+              OR (l2.date = l.date AND COALESCE(l2.time,'') <= COALESCE(l.time,'')))) AS lecture_no,
+        'pending',
+        l.line,
+        1,
+        datetime('now','localtime')
+      FROM lectures l
+      INNER JOIN clients c
+        ON c.line = l.line AND c.group_name = l.group_name
+      WHERE l.line = ?
+        AND l.session_type = 'side'
+        AND l.side_session_category = 'regular'
+        AND l.status = 'مؤكدة'
+        AND ${EMPTY_ATTENDANCE}
+        AND NOT EXISTS (
+          SELECT 1 FROM absent_zoom_students a
+           WHERE a.line       = l.line
+             AND a.group_name = l.group_name
+             AND a.date       = l.date
+             AND a.phone      = c.phone
+        )
+    `).run(line);
+  });
+  run();
+}
+
 function evictFromOtherLines(table, line, groupNames, extraWhere = '') {
   if (!groupNames.length) return;
   const CHUNK = 500;
@@ -104,6 +211,8 @@ function syncTrainees(buffer, line) {
     rows.forEach(r => insert.run(r.name, r.phone, r.email, r.group_name, r.via_company, r.registration_time, line));
   });
   run();
+  // Roster changed → recompute auto-absences (students added/removed from groups)
+  regenerateAutoAbsents(line);
   return rows.length;
 }
 
@@ -251,6 +360,8 @@ function syncLectures(buffer, line) {
     `).run(line);
   });
   run();
+  // Main lectures changed → recompute auto-absences for confirmed empty-attendance rows
+  regenerateAutoAbsents(line);
   return rows.length;
 }
 
@@ -268,6 +379,8 @@ function syncSideSessions(buffer, line) {
     rows.forEach(r => insert.run(r.group_name, r.date, r.time, r.duration, r.trainer, r.status, r.location, r.attendance, r.side_session_category, line));
   });
   run();
+  // Side sessions changed → recompute auto-absences for zoom calls (regular)
+  regenerateAutoAbsents(line);
   return rows.length;
 }
 
@@ -301,6 +414,8 @@ function syncAbsent(buffer, line) {
     });
   });
   run();
+  // Manual upload wiped the table → re-create auto-generated rows from current lectures+clients
+  regenerateAutoAbsents(line);
   return rows.length;
 }
 
@@ -335,6 +450,8 @@ function syncAbsentZoom(buffer, line) {
     });
   });
   run();
+  // Manual upload wiped the table → re-create auto-generated rows from current lectures+clients
+  regenerateAutoAbsents(line);
   return rows.length;
 }
 
