@@ -37,6 +37,24 @@ const VALID_LINES = ['Ahmed Hassan', 'Dardasha'];
 function regenerateAutoAbsents(line) {
   const EMPTY_ATTENDANCE = `(l.attendance IS NULL OR TRIM(COALESCE(l.attendance,'')) IN ('', '0'))`;
 
+  // SMART RULE — skip auto-marking if any sibling lecture (same group/date/session-kind)
+  // already has a real attendance count. Trainer recorded SOME attendance that day, so the
+  // empty row is not "everyone absent" — just a split session or follow-up unrecorded by
+  // mistake. Manual absent_zoom rows still cover the truly absent students.
+  const HAS_SIBLING_WITH_ATTENDANCE = (sessionType, sideCategory) => `
+    EXISTS (
+      SELECT 1 FROM lectures l_sib
+       WHERE l_sib.line       = l.line
+         AND l_sib.group_name = l.group_name
+         AND l_sib.date       = l.date
+         AND l_sib.session_type = '${sessionType}'
+         ${sideCategory ? `AND l_sib.side_session_category = '${sideCategory}'` : ''}
+         AND l_sib.status = 'مؤكدة'
+         AND l_sib.attendance IS NOT NULL
+         AND TRIM(l_sib.attendance) <> ''
+         AND TRIM(l_sib.attendance) <> '0'
+    )`;
+
   const run = db.transaction(() => {
     // 1. clear previously auto-generated rows for this line
     db.prepare(`DELETE FROM absent_students      WHERE line = ? AND auto_generated = 1`).run(line);
@@ -71,6 +89,7 @@ function regenerateAutoAbsents(line) {
         AND l.session_type = 'main'
         AND l.status = 'مؤكدة'
         AND ${EMPTY_ATTENDANCE}
+        AND NOT ${HAS_SIBLING_WITH_ATTENDANCE('main', null)}
         AND NOT EXISTS (
           SELECT 1 FROM absent_students a
            WHERE a.line       = l.line
@@ -111,6 +130,7 @@ function regenerateAutoAbsents(line) {
         AND l.side_session_category = 'regular'
         AND l.status = 'مؤكدة'
         AND ${EMPTY_ATTENDANCE}
+        AND NOT ${HAS_SIBLING_WITH_ATTENDANCE('side', 'regular')}
         AND NOT EXISTS (
           SELECT 1 FROM absent_zoom_students a
            WHERE a.line       = l.line
@@ -455,4 +475,11 @@ function syncAbsentZoom(buffer, line) {
   return rows.length;
 }
 
-module.exports = { syncFile, FILE_TYPES, VALID_LINES };
+function regenerateAllLines() {
+  VALID_LINES.forEach(ln => {
+    try { regenerateAutoAbsents(ln); }
+    catch (e) { console.error(`[regenerateAutoAbsents:${ln}]`, e.message); }
+  });
+}
+
+module.exports = { syncFile, FILE_TYPES, VALID_LINES, regenerateAutoAbsents, regenerateAllLines };

@@ -564,6 +564,18 @@ initDb().then(db => {
     console.error('Admin upsert error:', e.message);
   }
 
+  // AUTO-ABSENT REFRESH on startup — recompute auto rows so any rule change
+  // (e.g. smarter "skip if sibling has attendance" logic) takes effect immediately
+  // without requiring the user to re-upload an Excel file.
+  try {
+    const { regenerateAllLines } = require('./services/sync.service');
+    regenerateAllLines();
+    saveNow();
+    console.log('✅ Auto-absences refreshed on startup');
+  } catch (e) {
+    console.error('Auto-absent refresh error:', e.message);
+  }
+
   const app = express();
 
   app.use(cors({
