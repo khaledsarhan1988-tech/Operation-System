@@ -34,31 +34,52 @@ function normalizeWorkDays(raw) {
   return valid.length ? valid.join(',') : null;
 }
 
+// Build a normalized shift bundle (start/end/employment_type/work_days) from raw body.
+// Shift fields are only meaningful when the shift itself is set.
+function buildShiftBundle(rawShift, rawStart, rawEnd, rawEmpType, rawDays) {
+  const shift = rawShift || null;
+  if (!shift) {
+    return { shift: null, start: null, end: null, emp_type: null, days: null };
+  }
+  const emp_type = rawEmpType || null;
+  const days = emp_type === 'full_time'
+    ? VALID_DAYS.join(',')
+    : (emp_type === 'part_time' ? normalizeWorkDays(rawDays) : null);
+  return {
+    shift,
+    start: rawStart || null,
+    end: rawEnd || null,
+    emp_type,
+    days,
+  };
+}
+
 // ─── POST /api/team ───────────────────────────────────────────────────────────
 router.post('/', (req, res) => {
   const { name, department, section, status = 'active' } = req.body;
-  const shift       = req.body.shift       || null;
-  // shift_start/shift_end only stored when shift itself is set — keep null otherwise
-  const shift_start = shift ? (req.body.shift_start || null) : null;
-  const shift_end   = shift ? (req.body.shift_end   || null) : null;
-  const employment_type = req.body.employment_type || null;
-  // Full time → all 6 days regardless of what client sent. Part time → take what was sent.
-  // No employment type → no days.
-  const work_days = employment_type === 'full_time'
-    ? VALID_DAYS.join(',')
-    : (employment_type === 'part_time' ? normalizeWorkDays(req.body.work_days) : null);
-  const job_title   = req.body.job_title   || null;
-  const phone       = req.body.phone       || null;
-  const user_id     = req.body.user_id     || null;
-  const notes       = req.body.notes       || null;
+  const s1 = buildShiftBundle(req.body.shift,  req.body.shift_start,  req.body.shift_end,  req.body.employment_type,        req.body.work_days);
+  const s2 = buildShiftBundle(req.body.shift2, req.body.shift2_start, req.body.shift2_end, req.body.shift2_employment_type, req.body.shift2_work_days);
+  const job_title = req.body.job_title || null;
+  const phone     = req.body.phone     || null;
+  const user_id   = req.body.user_id   || null;
+  const notes     = req.body.notes     || null;
   const validSections = ['all','general','private','semi','phone_call'];
   if (!name || !department || !section || !validSections.includes(section))
     return res.status(400).json({ error: 'name, department, section required' });
   try {
     const r = db.prepare(
-      `INSERT INTO team_members (name, department, section, shift, shift_start, shift_end, employment_type, work_days, job_title, phone, user_id, status, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(name, department, section, shift, shift_start, shift_end, employment_type, work_days, job_title, phone, user_id, status, notes);
+      `INSERT INTO team_members (
+         name, department, section,
+         shift, shift_start, shift_end, employment_type, work_days,
+         shift2, shift2_start, shift2_end, shift2_employment_type, shift2_work_days,
+         job_title, phone, user_id, status, notes
+       ) VALUES (?, ?, ?,  ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?)`
+    ).run(
+      name, department, section,
+      s1.shift, s1.start, s1.end, s1.emp_type, s1.days,
+      s2.shift, s2.start, s2.end, s2.emp_type, s2.days,
+      job_title, phone, user_id, status, notes
+    );
     const member = db.prepare('SELECT * FROM team_members WHERE id = ?').get(r.lastInsertRowid);
     return res.status(201).json(member);
   } catch (err) {
@@ -70,22 +91,27 @@ router.post('/', (req, res) => {
 router.put('/:id', (req, res) => {
   const { id } = req.params;
   const { name, department, section, status } = req.body;
-  const shift       = req.body.shift       || null;
-  const shift_start = shift ? (req.body.shift_start || null) : null;
-  const shift_end   = shift ? (req.body.shift_end   || null) : null;
-  const employment_type = req.body.employment_type || null;
-  const work_days = employment_type === 'full_time'
-    ? VALID_DAYS.join(',')
-    : (employment_type === 'part_time' ? normalizeWorkDays(req.body.work_days) : null);
-  const job_title   = req.body.job_title   || null;
-  const phone       = req.body.phone       || null;
-  const user_id     = req.body.user_id     || null;
-  const notes       = req.body.notes       || null;
+  const s1 = buildShiftBundle(req.body.shift,  req.body.shift_start,  req.body.shift_end,  req.body.employment_type,        req.body.work_days);
+  const s2 = buildShiftBundle(req.body.shift2, req.body.shift2_start, req.body.shift2_end, req.body.shift2_employment_type, req.body.shift2_work_days);
+  const job_title = req.body.job_title || null;
+  const phone     = req.body.phone     || null;
+  const user_id   = req.body.user_id   || null;
+  const notes     = req.body.notes     || null;
   if (!name || !department || !section) return res.status(400).json({ error: 'name, department, section required' });
   try {
     db.prepare(
-      `UPDATE team_members SET name=?, department=?, section=?, shift=?, shift_start=?, shift_end=?, employment_type=?, work_days=?, job_title=?, phone=?, user_id=?, status=?, notes=? WHERE id=?`
-    ).run(name, department, section, shift, shift_start, shift_end, employment_type, work_days, job_title, phone, user_id, status || 'active', notes, id);
+      `UPDATE team_members SET
+         name=?, department=?, section=?,
+         shift=?, shift_start=?, shift_end=?, employment_type=?, work_days=?,
+         shift2=?, shift2_start=?, shift2_end=?, shift2_employment_type=?, shift2_work_days=?,
+         job_title=?, phone=?, user_id=?, status=?, notes=?
+       WHERE id=?`
+    ).run(
+      name, department, section,
+      s1.shift, s1.start, s1.end, s1.emp_type, s1.days,
+      s2.shift, s2.start, s2.end, s2.emp_type, s2.days,
+      job_title, phone, user_id, status || 'active', notes, id
+    );
     const member = db.prepare('SELECT * FROM team_members WHERE id = ?').get(id);
     if (!member) return res.status(404).json({ error: 'Not found' });
     return res.json(member);

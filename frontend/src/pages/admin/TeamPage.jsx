@@ -62,55 +62,155 @@ const SECTION_COLORS = {
 };
 
 // ─── EMPTY FORM ───────────────────────────────────────────────────────────────
-const emptyForm = { name: '', department: 'customer_services', section: 'general', shift: '', shift_start: '', shift_end: '', employment_type: '', work_days: '', job_title: '', phone: '', status: 'active', notes: '' };
+const emptyForm = {
+  name: '', department: 'customer_services', section: 'general',
+  shift: '', shift_start: '', shift_end: '', employment_type: '', work_days: '',
+  shift2: '', shift2_start: '', shift2_end: '', shift2_employment_type: '', shift2_work_days: '',
+  job_title: '', phone: '', status: 'active', notes: '',
+};
+
+// ─── SHIFT SECTION (reusable for shift 1 and shift 2) ─────────────────────────
+function ShiftSection({
+  title, shiftValue, startValue, endValue, employmentValue, daysValue,
+  onShiftChange, onStartChange, onEndChange, onEmploymentChange, onDaysChange,
+  onRemove, inputCls, labelCls,
+}) {
+  // Clear time range when shift is unselected
+  useEffect(() => {
+    if (!shiftValue) {
+      if (startValue) onStartChange('');
+      if (endValue)   onEndChange('');
+    }
+  }, [shiftValue]);
+
+  // Auto-fill all days for Full Time, clear for no employment type
+  useEffect(() => {
+    if (employmentValue === 'full_time') {
+      onDaysChange(ALL_DAYS.join(','));
+    } else if (!employmentValue) {
+      onDaysChange('');
+    }
+  }, [employmentValue]);
+
+  const selectedDays = (daysValue || '').split(',').filter(Boolean);
+  const isPairSelected = (pair) => pair.days.every(d => selectedDays.includes(d));
+  const togglePair = (pair) => {
+    if (employmentValue !== 'part_time') return;
+    const next = isPairSelected(pair)
+      ? selectedDays.filter(d => !pair.days.includes(d))
+      : [...new Set([...selectedDays, ...pair.days])];
+    const ordered = ALL_DAYS.filter(d => next.includes(d));
+    onDaysChange(ordered.join(','));
+  };
+
+  return (
+    <div className="space-y-3 border border-gray-200 rounded-xl p-3 bg-gray-50/40">
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-bold text-gray-700">{title}</div>
+        {onRemove && (
+          <button type="button" onClick={onRemove}
+                  className="text-xs font-semibold text-red-500 hover:text-red-700 transition-all">
+            × حذف الشيفت
+          </button>
+        )}
+      </div>
+
+      <div>
+        <label className={labelCls}>الشيفت</label>
+        <select className={inputCls} value={shiftValue} onChange={e => onShiftChange(e.target.value)}>
+          <option value="">— اختر الشيفت —</option>
+          {Object.entries(SHIFTS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+      </div>
+
+      {shiftValue && (
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={labelCls}>الساعة من</label>
+            <input type="time" className={inputCls} value={startValue || ''}
+                   onChange={e => onStartChange(e.target.value)} dir="ltr" />
+          </div>
+          <div>
+            <label className={labelCls}>الساعة إلى</label>
+            <input type="time" className={inputCls} value={endValue || ''}
+                   onChange={e => onEndChange(e.target.value)} dir="ltr" />
+          </div>
+        </div>
+      )}
+
+      <div>
+        <label className={labelCls}>الدوام</label>
+        <div className="flex gap-3">
+          {Object.entries(EMPLOYMENT_TYPES).map(([k, v]) => (
+            <button key={k} type="button"
+              onClick={() => onEmploymentChange(employmentValue === k ? '' : k)}
+              className={`flex-1 py-2 rounded-xl text-sm font-semibold border transition-all ${
+                employmentValue === k
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-100'
+              }`}
+            >{v}</button>
+          ))}
+        </div>
+      </div>
+
+      {employmentValue && (
+        <div>
+          <label className={labelCls}>
+            أيام العمل
+            {employmentValue === 'full_time' && (
+              <span className="text-[10px] text-gray-400 mr-2">(كل الأيام — Full Time)</span>
+            )}
+          </label>
+          <div className="grid grid-cols-3 gap-2">
+            {DAY_PAIRS.map(pair => {
+              const selected = isPairSelected(pair);
+              const locked = employmentValue === 'full_time';
+              return (
+                <button key={pair.key} type="button"
+                  onClick={() => togglePair(pair)}
+                  disabled={locked}
+                  className={`py-2 px-2 rounded-xl text-xs font-semibold border transition-all ${
+                    selected
+                      ? 'bg-emerald-500 text-white border-emerald-500'
+                      : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-100'
+                  } ${locked ? 'opacity-80 cursor-not-allowed' : ''}`}
+                >{pair.label}</button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─── MEMBER MODAL ─────────────────────────────────────────────────────────────
 function MemberModal({ initial, onSave, onClose, loading }) {
   const [form, setForm] = useState(initial ?? emptyForm);
+  // Show shift 2 block by default if the loaded employee already has a second shift
+  const [showShift2, setShowShift2] = useState(!!(initial && initial.shift2));
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  // Reset section when dept changes if invalid
+  const clearShift2 = () => {
+    setShowShift2(false);
+    setForm(f => ({ ...f, shift2: '', shift2_start: '', shift2_end: '', shift2_employment_type: '', shift2_work_days: '' }));
+  };
+
+  // Reset section when dept changes if invalid; clear shift fields if leaving education
   useEffect(() => {
     if (!DEPT_SECTIONS[form.department]?.includes(form.section)) {
       set('section', DEPT_SECTIONS[form.department][0]);
     }
     if (form.department !== 'education') {
-      set('shift', '');
-      set('shift_start', '');
-      set('shift_end', '');
+      setForm(f => ({
+        ...f,
+        shift: '', shift_start: '', shift_end: '', employment_type: '', work_days: '',
+        shift2: '', shift2_start: '', shift2_end: '', shift2_employment_type: '', shift2_work_days: '',
+      }));
+      setShowShift2(false);
     }
   }, [form.department]);
-
-  // Clear time range when shift is unselected
-  useEffect(() => {
-    if (!form.shift) {
-      if (form.shift_start) set('shift_start', '');
-      if (form.shift_end)   set('shift_end', '');
-    }
-  }, [form.shift]);
-
-  // Auto-fill all days for Full Time, clear for no employment type
-  useEffect(() => {
-    if (form.employment_type === 'full_time') {
-      set('work_days', ALL_DAYS.join(','));
-    } else if (!form.employment_type) {
-      set('work_days', '');
-    }
-    // For part_time → keep current work_days (user picks pairs manually)
-  }, [form.employment_type]);
-
-  // Helpers for day-pair selection
-  const selectedDays = (form.work_days || '').split(',').filter(Boolean);
-  const isPairSelected = (pair) => pair.days.every(d => selectedDays.includes(d));
-  const togglePair = (pair) => {
-    if (form.employment_type !== 'part_time') return; // locked when full-time
-    const next = isPairSelected(pair)
-      ? selectedDays.filter(d => !pair.days.includes(d))
-      : [...new Set([...selectedDays, ...pair.days])];
-    // Re-order according to ALL_DAYS canonical order
-    const ordered = ALL_DAYS.filter(d => next.includes(d));
-    set('work_days', ordered.join(','));
-  };
 
   const inputCls = 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 bg-white';
   const labelCls = 'block text-xs font-semibold text-gray-600 mb-1';
@@ -148,79 +248,49 @@ function MemberModal({ initial, onSave, onClose, loading }) {
             </select>
           </div>
 
-          {/* Shift — education only */}
+          {/* Shift 1 — education only */}
           {form.department === 'education' && (
-            <div className="space-y-3">
-              <div>
-                <label className={labelCls}>الشيفت</label>
-                <select className={inputCls} value={form.shift} onChange={e => set('shift', e.target.value)}>
-                  <option value="">— اختر الشيفت —</option>
-                  {Object.entries(SHIFTS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                </select>
-              </div>
-
-              {/* Shift time range — appears once a shift is selected */}
-              {form.shift && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className={labelCls}>الساعة من</label>
-                    <input type="time" className={inputCls} value={form.shift_start || ''}
-                           onChange={e => set('shift_start', e.target.value)} dir="ltr" />
-                  </div>
-                  <div>
-                    <label className={labelCls}>الساعة إلى</label>
-                    <input type="time" className={inputCls} value={form.shift_end || ''}
-                           onChange={e => set('shift_end', e.target.value)} dir="ltr" />
-                  </div>
-                </div>
-              )}
-            </div>
+            <ShiftSection
+              title="الشيفت الأول"
+              shiftValue={form.shift}
+              startValue={form.shift_start}
+              endValue={form.shift_end}
+              employmentValue={form.employment_type}
+              daysValue={form.work_days}
+              onShiftChange={(v) => set('shift', v)}
+              onStartChange={(v) => set('shift_start', v)}
+              onEndChange={(v) => set('shift_end', v)}
+              onEmploymentChange={(v) => set('employment_type', v)}
+              onDaysChange={(v) => set('work_days', v)}
+              inputCls={inputCls} labelCls={labelCls}
+            />
           )}
 
-          {/* Employment type */}
-          <div>
-            <label className={labelCls}>الدوام</label>
-            <div className="flex gap-3">
-              {Object.entries(EMPLOYMENT_TYPES).map(([k, v]) => (
-                <button key={k} type="button"
-                  onClick={() => set('employment_type', form.employment_type === k ? '' : k)}
-                  className={`flex-1 py-2 rounded-xl text-sm font-semibold border transition-all ${
-                    form.employment_type === k
-                      ? 'bg-blue-600 text-white border-blue-600'
-                      : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
-                  }`}
-                >{v}</button>
-              ))}
-            </div>
-          </div>
+          {/* Add second shift — only when first shift is set */}
+          {form.department === 'education' && form.shift && !showShift2 && (
+            <button type="button"
+              onClick={() => setShowShift2(true)}
+              className="w-full py-2.5 rounded-xl border-2 border-dashed border-gray-300 text-sm font-semibold text-gray-500 hover:bg-gray-50 hover:border-gray-400 transition-all"
+            >+ إضافة شيفت ثاني</button>
+          )}
 
-          {/* Work days — appears once an employment type is chosen */}
-          {form.employment_type && (
-            <div>
-              <label className={labelCls}>
-                أيام العمل
-                {form.employment_type === 'full_time' && (
-                  <span className="text-[10px] text-gray-400 mr-2">(كل الأيام — Full Time)</span>
-                )}
-              </label>
-              <div className="grid grid-cols-3 gap-2">
-                {DAY_PAIRS.map(pair => {
-                  const selected = isPairSelected(pair);
-                  const locked = form.employment_type === 'full_time';
-                  return (
-                    <button key={pair.key} type="button"
-                      onClick={() => togglePair(pair)}
-                      disabled={locked}
-                      className={`py-2 px-2 rounded-xl text-xs font-semibold border transition-all ${
-                        selected
-                          ? 'bg-emerald-500 text-white border-emerald-500'
-                          : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
-                      } ${locked ? 'opacity-80 cursor-not-allowed' : ''}`}
-                    >{pair.label}</button>
-                  );
-                })}
-              </div>
-            </div>
+          {/* Shift 2 — education only, opt-in */}
+          {form.department === 'education' && showShift2 && (
+            <ShiftSection
+              title="الشيفت الثاني"
+              shiftValue={form.shift2}
+              startValue={form.shift2_start}
+              endValue={form.shift2_end}
+              employmentValue={form.shift2_employment_type}
+              daysValue={form.shift2_work_days}
+              onShiftChange={(v) => set('shift2', v)}
+              onStartChange={(v) => set('shift2_start', v)}
+              onEndChange={(v) => set('shift2_end', v)}
+              onEmploymentChange={(v) => set('shift2_employment_type', v)}
+              onDaysChange={(v) => set('shift2_work_days', v)}
+              onRemove={clearShift2}
+              inputCls={inputCls} labelCls={labelCls}
+            />
           )}
 
           {/* Job title + Phone */}
