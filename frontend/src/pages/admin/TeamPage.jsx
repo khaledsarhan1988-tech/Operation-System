@@ -47,7 +47,7 @@ const SECTION_COLORS = {
 };
 
 // ─── EMPTY FORM ───────────────────────────────────────────────────────────────
-const emptyForm = { name: '', department: 'customer_services', section: 'general', shift: '', job_title: '', phone: '', status: 'active', notes: '' };
+const emptyForm = { name: '', department: 'customer_services', section: 'general', shift: '', shift_start: '', shift_end: '', job_title: '', phone: '', status: 'active', notes: '' };
 
 // ─── MEMBER MODAL ─────────────────────────────────────────────────────────────
 function MemberModal({ initial, onSave, onClose, loading }) {
@@ -59,8 +59,20 @@ function MemberModal({ initial, onSave, onClose, loading }) {
     if (!DEPT_SECTIONS[form.department]?.includes(form.section)) {
       set('section', DEPT_SECTIONS[form.department][0]);
     }
-    if (form.department !== 'education') set('shift', '');
+    if (form.department !== 'education') {
+      set('shift', '');
+      set('shift_start', '');
+      set('shift_end', '');
+    }
   }, [form.department]);
+
+  // Clear time range when shift is unselected
+  useEffect(() => {
+    if (!form.shift) {
+      if (form.shift_start) set('shift_start', '');
+      if (form.shift_end)   set('shift_end', '');
+    }
+  }, [form.shift]);
 
   const inputCls = 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 bg-white';
   const labelCls = 'block text-xs font-semibold text-gray-600 mb-1';
@@ -100,12 +112,30 @@ function MemberModal({ initial, onSave, onClose, loading }) {
 
           {/* Shift — education only */}
           {form.department === 'education' && (
-            <div>
-              <label className={labelCls}>الشيفت</label>
-              <select className={inputCls} value={form.shift} onChange={e => set('shift', e.target.value)}>
-                <option value="">— اختر الشيفت —</option>
-                {Object.entries(SHIFTS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-              </select>
+            <div className="space-y-3">
+              <div>
+                <label className={labelCls}>الشيفت</label>
+                <select className={inputCls} value={form.shift} onChange={e => set('shift', e.target.value)}>
+                  <option value="">— اختر الشيفت —</option>
+                  {Object.entries(SHIFTS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </select>
+              </div>
+
+              {/* Shift time range — appears once a shift is selected */}
+              {form.shift && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className={labelCls}>الساعة من</label>
+                    <input type="time" className={inputCls} value={form.shift_start || ''}
+                           onChange={e => set('shift_start', e.target.value)} dir="ltr" />
+                  </div>
+                  <div>
+                    <label className={labelCls}>الساعة إلى</label>
+                    <input type="time" className={inputCls} value={form.shift_end || ''}
+                           onChange={e => set('shift_end', e.target.value)} dir="ltr" />
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

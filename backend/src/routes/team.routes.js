@@ -27,19 +27,22 @@ router.get('/', (req, res) => {
 // ─── POST /api/team ───────────────────────────────────────────────────────────
 router.post('/', (req, res) => {
   const { name, department, section, status = 'active' } = req.body;
-  const shift     = req.body.shift     || null;
-  const job_title = req.body.job_title || null;
-  const phone     = req.body.phone     || null;
-  const user_id   = req.body.user_id   || null;
-  const notes     = req.body.notes     || null;
+  const shift       = req.body.shift       || null;
+  // shift_start/shift_end only stored when shift itself is set — keep null otherwise
+  const shift_start = shift ? (req.body.shift_start || null) : null;
+  const shift_end   = shift ? (req.body.shift_end   || null) : null;
+  const job_title   = req.body.job_title   || null;
+  const phone       = req.body.phone       || null;
+  const user_id     = req.body.user_id     || null;
+  const notes       = req.body.notes       || null;
   const validSections = ['all','general','private','semi','phone_call'];
   if (!name || !department || !section || !validSections.includes(section))
     return res.status(400).json({ error: 'name, department, section required' });
   try {
     const r = db.prepare(
-      `INSERT INTO team_members (name, department, section, shift, job_title, phone, user_id, status, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(name, department, section, shift, job_title, phone, user_id, status, notes);
+      `INSERT INTO team_members (name, department, section, shift, shift_start, shift_end, job_title, phone, user_id, status, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(name, department, section, shift, shift_start, shift_end, job_title, phone, user_id, status, notes);
     const member = db.prepare('SELECT * FROM team_members WHERE id = ?').get(r.lastInsertRowid);
     return res.status(201).json(member);
   } catch (err) {
@@ -51,16 +54,18 @@ router.post('/', (req, res) => {
 router.put('/:id', (req, res) => {
   const { id } = req.params;
   const { name, department, section, status } = req.body;
-  const shift     = req.body.shift     || null;
-  const job_title = req.body.job_title || null;
-  const phone     = req.body.phone     || null;
-  const user_id   = req.body.user_id   || null;
-  const notes     = req.body.notes     || null;
+  const shift       = req.body.shift       || null;
+  const shift_start = shift ? (req.body.shift_start || null) : null;
+  const shift_end   = shift ? (req.body.shift_end   || null) : null;
+  const job_title   = req.body.job_title   || null;
+  const phone       = req.body.phone       || null;
+  const user_id     = req.body.user_id     || null;
+  const notes       = req.body.notes       || null;
   if (!name || !department || !section) return res.status(400).json({ error: 'name, department, section required' });
   try {
     db.prepare(
-      `UPDATE team_members SET name=?, department=?, section=?, shift=?, job_title=?, phone=?, user_id=?, status=?, notes=? WHERE id=?`
-    ).run(name, department, section, shift, job_title, phone, user_id, status || 'active', notes, id);
+      `UPDATE team_members SET name=?, department=?, section=?, shift=?, shift_start=?, shift_end=?, job_title=?, phone=?, user_id=?, status=?, notes=? WHERE id=?`
+    ).run(name, department, section, shift, shift_start, shift_end, job_title, phone, user_id, status || 'active', notes, id);
     const member = db.prepare('SELECT * FROM team_members WHERE id = ?').get(id);
     if (!member) return res.status(404).json({ error: 'Not found' });
     return res.json(member);

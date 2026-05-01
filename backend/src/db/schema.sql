@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS team_members (
   department  TEXT NOT NULL CHECK(department IN ('customer_services','education')),
   section     TEXT NOT NULL CHECK(section IN ('all','general','private','semi','phone_call')),
   shift       TEXT CHECK(shift IN ('morning','evening') OR shift IS NULL),
+  shift_start TEXT,  -- HH:MM, only meaningful when shift is set
+  shift_end   TEXT,  -- HH:MM, only meaningful when shift is set
   job_title   TEXT,
   phone       TEXT,
   user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,

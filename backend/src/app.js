@@ -133,6 +133,21 @@ initDb().then(db => {
     }
   });
 
+  // 4a. TEAM MEMBERS: add shift_start / shift_end columns for shift time-range
+  ['shift_start', 'shift_end'].forEach(col => {
+    try {
+      const info = db._raw.exec(`PRAGMA table_info(team_members)`);
+      const cols = info[0]?.values.map(r => r[1]) || [];
+      if (cols.length > 0 && !cols.includes(col)) {
+        db._raw.run(`ALTER TABLE team_members ADD COLUMN ${col} TEXT`);
+        saveNow();
+        console.log(`✅ Migration: added \`${col}\` column to team_members`);
+      }
+    } catch (e) {
+      console.error(`team_members.${col} migration error:`, e.message);
+    }
+  });
+
   // 4b. AUTO-ABSENT: add `auto_generated` column to absent tables
   //     Tags rows generated from lectures with empty attendance + confirmed status,
   //     so they can be deleted/recreated without affecting manually-uploaded rows.
