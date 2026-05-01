@@ -44,12 +44,14 @@ CREATE TABLE IF NOT EXISTS team_members (
   shift       TEXT CHECK(shift IN ('morning','evening') OR shift IS NULL),
   shift_start TEXT,  -- HH:MM, only meaningful when shift is set
   shift_end   TEXT,  -- HH:MM, only meaningful when shift is set
+  shift_rests TEXT,  -- JSON array of {"start":"HH:MM","end":"HH:MM"} for breaks
   employment_type TEXT CHECK(employment_type IN ('full_time','part_time') OR employment_type IS NULL),
   work_days       TEXT,  -- comma-separated day codes: saturday,sunday,monday,tuesday,wednesday,thursday
-  -- Optional second shift (independent days/hours/employment from the first)
+  -- Optional second shift (independent days/hours/employment/rests from the first)
   shift2                  TEXT CHECK(shift2 IN ('morning','evening') OR shift2 IS NULL),
   shift2_start            TEXT,
   shift2_end              TEXT,
+  shift2_rests            TEXT,
   shift2_employment_type  TEXT CHECK(shift2_employment_type IN ('full_time','part_time') OR shift2_employment_type IS NULL),
   shift2_work_days        TEXT,
   job_title   TEXT,

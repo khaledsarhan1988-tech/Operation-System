@@ -135,8 +135,8 @@ initDb().then(db => {
 
   // 4a. TEAM MEMBERS: add shift1 + shift2 columns (start/end/employment/work_days)
   [
-    'shift_start', 'shift_end', 'employment_type', 'work_days',
-    'shift2', 'shift2_start', 'shift2_end', 'shift2_employment_type', 'shift2_work_days',
+    'shift_start', 'shift_end', 'shift_rests', 'employment_type', 'work_days',
+    'shift2', 'shift2_start', 'shift2_end', 'shift2_rests', 'shift2_employment_type', 'shift2_work_days',
   ].forEach(col => {
     try {
       const info = db._raw.exec(`PRAGMA table_info(team_members)`);

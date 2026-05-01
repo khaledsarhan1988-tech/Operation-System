@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Users, Plus, Pencil, Trash2, X, Search, Sun, Moon,
@@ -64,22 +64,74 @@ const SECTION_COLORS = {
 // ─── EMPTY FORM ───────────────────────────────────────────────────────────────
 const emptyForm = {
   name: '', department: 'customer_services', section: 'general',
-  shift: '', shift_start: '', shift_end: '', employment_type: '', work_days: '',
-  shift2: '', shift2_start: '', shift2_end: '', shift2_employment_type: '', shift2_work_days: '',
+  shift: '', shift_start: '', shift_end: '', shift_rests: [],
+  employment_type: '', work_days: '',
+  shift2: '', shift2_start: '', shift2_end: '', shift2_rests: [],
+  shift2_employment_type: '', shift2_work_days: '',
   job_title: '', phone: '', status: 'active', notes: '',
 };
 
+// Safely parse a JSON-stored rests array — accepts string, array, or null/garbage.
+function parseRests(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+// Hydrate a freshly-loaded member: parse rests strings into arrays so the form
+// can edit them, leave everything else as-is.
+function hydrateMember(member) {
+  if (!member) return emptyForm;
+  return {
+    ...emptyForm,
+    ...member,
+    shift_rests:  parseRests(member.shift_rests),
+    shift2_rests: parseRests(member.shift2_rests),
+  };
+}
+
 // ─── SHIFT SECTION (reusable for shift 1 and shift 2) ─────────────────────────
 function ShiftSection({
-  title, shiftValue, startValue, endValue, employmentValue, daysValue,
-  onShiftChange, onStartChange, onEndChange, onEmploymentChange, onDaysChange,
+  title, shiftValue, startValue, endValue, restsValue, employmentValue, daysValue,
+  onShiftChange, onStartChange, onEndChange, onRestsChange, onEmploymentChange, onDaysChange,
   onRemove, inputCls, labelCls,
 }) {
-  // Clear time range when shift is unselected
+  const rests = Array.isArray(restsValue) ? restsValue : [];
+  const updateRest = (index, key, value) => {
+    const next = rests.map((r, i) => (i === index ? { ...r, [key]: value } : r));
+    onRestsChange(next);
+  };
+  const addRest    = () => onRestsChange([...rests, { start: '', end: '' }]);
+  const removeRest = (index) => onRestsChange(rests.filter((_, i) => i !== index));
+
+  // When the user actively changes the shift, apply sensible default times so
+  // the AM/PM marker matches the shift kind:
+  //   morning → 10:00 AM → 06:00 PM
+  //   evening → 04:00 PM → 12:00 AM (midnight, treated as end-of-day)
+  // The first render is skipped so that loading an existing employee never
+  // overwrites their already-saved times.
+  const isFirstShiftRender = useRef(true);
   useEffect(() => {
+    if (isFirstShiftRender.current) {
+      isFirstShiftRender.current = false;
+      return;
+    }
     if (!shiftValue) {
       if (startValue) onStartChange('');
       if (endValue)   onEndChange('');
+      return;
+    }
+    if (shiftValue === 'morning') {
+      onStartChange('10:00');  // 10 AM
+      onEndChange('18:00');    // 6 PM
+    } else if (shiftValue === 'evening') {
+      onStartChange('16:00');  // 4 PM
+      onEndChange('00:00');    // 12 AM (midnight, same shift day)
     }
   }, [shiftValue]);
 
@@ -138,6 +190,38 @@ function ShiftSection({
         </div>
       )}
 
+      {/* Rest periods — multiple per shift */}
+      {shiftValue && (
+        <div>
+          <label className={labelCls}>وقت الراحة</label>
+          <div className="space-y-2">
+            {rests.map((rest, i) => (
+              <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
+                <div>
+                  <div className="text-[10px] text-gray-400 mb-0.5">من</div>
+                  <input type="time" className={inputCls} value={rest.start || ''}
+                         onChange={e => updateRest(i, 'start', e.target.value)} dir="ltr" />
+                </div>
+                <div>
+                  <div className="text-[10px] text-gray-400 mb-0.5">إلى</div>
+                  <input type="time" className={inputCls} value={rest.end || ''}
+                         onChange={e => updateRest(i, 'end', e.target.value)} dir="ltr" />
+                </div>
+                <button type="button" onClick={() => removeRest(i)}
+                        title="حذف وقت الراحة"
+                        className="h-[42px] w-[42px] flex items-center justify-center rounded-xl border border-red-200 text-red-500 hover:bg-red-50 transition-all">
+                  <X size={14} />
+                </button>
+              </div>
+            ))}
+            <button type="button" onClick={addRest}
+                    className="w-full py-2 rounded-xl border-2 border-dashed border-gray-300 text-xs font-semibold text-gray-500 hover:bg-gray-50 hover:border-gray-400 transition-all">
+              + إضافة وقت راحة
+            </button>
+          </div>
+        </div>
+      )}
+
       <div>
         <label className={labelCls}>الدوام</label>
         <div className="flex gap-3">
@@ -187,14 +271,14 @@ function ShiftSection({
 
 // ─── MEMBER MODAL ─────────────────────────────────────────────────────────────
 function MemberModal({ initial, onSave, onClose, loading }) {
-  const [form, setForm] = useState(initial ?? emptyForm);
+  const [form, setForm] = useState(() => hydrateMember(initial));
   // Show shift 2 block by default if the loaded employee already has a second shift
   const [showShift2, setShowShift2] = useState(!!(initial && initial.shift2));
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const clearShift2 = () => {
     setShowShift2(false);
-    setForm(f => ({ ...f, shift2: '', shift2_start: '', shift2_end: '', shift2_employment_type: '', shift2_work_days: '' }));
+    setForm(f => ({ ...f, shift2: '', shift2_start: '', shift2_end: '', shift2_rests: [], shift2_employment_type: '', shift2_work_days: '' }));
   };
 
   // Reset section when dept changes if invalid; clear shift fields if leaving education
@@ -205,12 +289,21 @@ function MemberModal({ initial, onSave, onClose, loading }) {
     if (form.department !== 'education') {
       setForm(f => ({
         ...f,
-        shift: '', shift_start: '', shift_end: '', employment_type: '', work_days: '',
-        shift2: '', shift2_start: '', shift2_end: '', shift2_employment_type: '', shift2_work_days: '',
+        shift: '', shift_start: '', shift_end: '', shift_rests: [], employment_type: '', work_days: '',
+        shift2: '', shift2_start: '', shift2_end: '', shift2_rests: [], shift2_employment_type: '', shift2_work_days: '',
       }));
       setShowShift2(false);
     }
   }, [form.department]);
+
+  // Convert rests arrays back to JSON strings before sending to backend
+  const handleSave = () => {
+    onSave({
+      ...form,
+      shift_rests:  JSON.stringify(form.shift_rests  || []),
+      shift2_rests: JSON.stringify(form.shift2_rests || []),
+    });
+  };
 
   const inputCls = 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 bg-white';
   const labelCls = 'block text-xs font-semibold text-gray-600 mb-1';
@@ -255,11 +348,13 @@ function MemberModal({ initial, onSave, onClose, loading }) {
               shiftValue={form.shift}
               startValue={form.shift_start}
               endValue={form.shift_end}
+              restsValue={form.shift_rests}
               employmentValue={form.employment_type}
               daysValue={form.work_days}
               onShiftChange={(v) => set('shift', v)}
               onStartChange={(v) => set('shift_start', v)}
               onEndChange={(v) => set('shift_end', v)}
+              onRestsChange={(v) => set('shift_rests', v)}
               onEmploymentChange={(v) => set('employment_type', v)}
               onDaysChange={(v) => set('work_days', v)}
               inputCls={inputCls} labelCls={labelCls}
@@ -281,11 +376,13 @@ function MemberModal({ initial, onSave, onClose, loading }) {
               shiftValue={form.shift2}
               startValue={form.shift2_start}
               endValue={form.shift2_end}
+              restsValue={form.shift2_rests}
               employmentValue={form.shift2_employment_type}
               daysValue={form.shift2_work_days}
               onShiftChange={(v) => set('shift2', v)}
               onStartChange={(v) => set('shift2_start', v)}
               onEndChange={(v) => set('shift2_end', v)}
+              onRestsChange={(v) => set('shift2_rests', v)}
               onEmploymentChange={(v) => set('shift2_employment_type', v)}
               onDaysChange={(v) => set('shift2_work_days', v)}
               onRemove={clearShift2}
@@ -337,7 +434,7 @@ function MemberModal({ initial, onSave, onClose, loading }) {
         <div className="flex gap-3 px-6 py-4 border-t border-gray-100">
           <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-all">إلغاء</button>
           <button
-            onClick={() => onSave(form)}
+            onClick={handleSave}
             disabled={!form.name.trim() || loading}
             className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold transition-all disabled:opacity-50"
           >{loading ? 'جاري الحفظ...' : 'حفظ'}</button>

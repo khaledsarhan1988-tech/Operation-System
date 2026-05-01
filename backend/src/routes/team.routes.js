@@ -34,12 +34,32 @@ function normalizeWorkDays(raw) {
   return valid.length ? valid.join(',') : null;
 }
 
-// Build a normalized shift bundle (start/end/employment_type/work_days) from raw body.
+// Coerce a raw rests value (array, JSON string, or null) into a normalized
+// JSON string of [{start,end}, ...] — drops malformed entries silently.
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+function normalizeRests(raw) {
+  if (!raw) return null;
+  let arr = raw;
+  if (typeof raw === 'string') {
+    try { arr = JSON.parse(raw); } catch { return null; }
+  }
+  if (!Array.isArray(arr)) return null;
+  const cleaned = arr
+    .filter(x => x && typeof x === 'object')
+    .map(x => ({
+      start: typeof x.start === 'string' && HHMM_RE.test(x.start) ? x.start : null,
+      end:   typeof x.end   === 'string' && HHMM_RE.test(x.end)   ? x.end   : null,
+    }))
+    .filter(x => x.start && x.end);
+  return cleaned.length ? JSON.stringify(cleaned) : null;
+}
+
+// Build a normalized shift bundle (start/end/rests/employment_type/work_days) from raw body.
 // Shift fields are only meaningful when the shift itself is set.
-function buildShiftBundle(rawShift, rawStart, rawEnd, rawEmpType, rawDays) {
+function buildShiftBundle(rawShift, rawStart, rawEnd, rawRests, rawEmpType, rawDays) {
   const shift = rawShift || null;
   if (!shift) {
-    return { shift: null, start: null, end: null, emp_type: null, days: null };
+    return { shift: null, start: null, end: null, rests: null, emp_type: null, days: null };
   }
   const emp_type = rawEmpType || null;
   const days = emp_type === 'full_time'
@@ -49,6 +69,7 @@ function buildShiftBundle(rawShift, rawStart, rawEnd, rawEmpType, rawDays) {
     shift,
     start: rawStart || null,
     end: rawEnd || null,
+    rests: normalizeRests(rawRests),
     emp_type,
     days,
   };
@@ -57,8 +78,8 @@ function buildShiftBundle(rawShift, rawStart, rawEnd, rawEmpType, rawDays) {
 // ─── POST /api/team ───────────────────────────────────────────────────────────
 router.post('/', (req, res) => {
   const { name, department, section, status = 'active' } = req.body;
-  const s1 = buildShiftBundle(req.body.shift,  req.body.shift_start,  req.body.shift_end,  req.body.employment_type,        req.body.work_days);
-  const s2 = buildShiftBundle(req.body.shift2, req.body.shift2_start, req.body.shift2_end, req.body.shift2_employment_type, req.body.shift2_work_days);
+  const s1 = buildShiftBundle(req.body.shift,  req.body.shift_start,  req.body.shift_end,  req.body.shift_rests,  req.body.employment_type,        req.body.work_days);
+  const s2 = buildShiftBundle(req.body.shift2, req.body.shift2_start, req.body.shift2_end, req.body.shift2_rests, req.body.shift2_employment_type, req.body.shift2_work_days);
   const job_title = req.body.job_title || null;
   const phone     = req.body.phone     || null;
   const user_id   = req.body.user_id   || null;
@@ -70,14 +91,14 @@ router.post('/', (req, res) => {
     const r = db.prepare(
       `INSERT INTO team_members (
          name, department, section,
-         shift, shift_start, shift_end, employment_type, work_days,
-         shift2, shift2_start, shift2_end, shift2_employment_type, shift2_work_days,
+         shift, shift_start, shift_end, shift_rests, employment_type, work_days,
+         shift2, shift2_start, shift2_end, shift2_rests, shift2_employment_type, shift2_work_days,
          job_title, phone, user_id, status, notes
-       ) VALUES (?, ?, ?,  ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?)`
+       ) VALUES (?, ?, ?,  ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?)`
     ).run(
       name, department, section,
-      s1.shift, s1.start, s1.end, s1.emp_type, s1.days,
-      s2.shift, s2.start, s2.end, s2.emp_type, s2.days,
+      s1.shift, s1.start, s1.end, s1.rests, s1.emp_type, s1.days,
+      s2.shift, s2.start, s2.end, s2.rests, s2.emp_type, s2.days,
       job_title, phone, user_id, status, notes
     );
     const member = db.prepare('SELECT * FROM team_members WHERE id = ?').get(r.lastInsertRowid);
@@ -91,8 +112,8 @@ router.post('/', (req, res) => {
 router.put('/:id', (req, res) => {
   const { id } = req.params;
   const { name, department, section, status } = req.body;
-  const s1 = buildShiftBundle(req.body.shift,  req.body.shift_start,  req.body.shift_end,  req.body.employment_type,        req.body.work_days);
-  const s2 = buildShiftBundle(req.body.shift2, req.body.shift2_start, req.body.shift2_end, req.body.shift2_employment_type, req.body.shift2_work_days);
+  const s1 = buildShiftBundle(req.body.shift,  req.body.shift_start,  req.body.shift_end,  req.body.shift_rests,  req.body.employment_type,        req.body.work_days);
+  const s2 = buildShiftBundle(req.body.shift2, req.body.shift2_start, req.body.shift2_end, req.body.shift2_rests, req.body.shift2_employment_type, req.body.shift2_work_days);
   const job_title = req.body.job_title || null;
   const phone     = req.body.phone     || null;
   const user_id   = req.body.user_id   || null;
@@ -102,14 +123,14 @@ router.put('/:id', (req, res) => {
     db.prepare(
       `UPDATE team_members SET
          name=?, department=?, section=?,
-         shift=?, shift_start=?, shift_end=?, employment_type=?, work_days=?,
-         shift2=?, shift2_start=?, shift2_end=?, shift2_employment_type=?, shift2_work_days=?,
+         shift=?, shift_start=?, shift_end=?, shift_rests=?, employment_type=?, work_days=?,
+         shift2=?, shift2_start=?, shift2_end=?, shift2_rests=?, shift2_employment_type=?, shift2_work_days=?,
          job_title=?, phone=?, user_id=?, status=?, notes=?
        WHERE id=?`
     ).run(
       name, department, section,
-      s1.shift, s1.start, s1.end, s1.emp_type, s1.days,
-      s2.shift, s2.start, s2.end, s2.emp_type, s2.days,
+      s1.shift, s1.start, s1.end, s1.rests, s1.emp_type, s1.days,
+      s2.shift, s2.start, s2.end, s2.rests, s2.emp_type, s2.days,
       job_title, phone, user_id, status || 'active', notes, id
     );
     const member = db.prepare('SELECT * FROM team_members WHERE id = ?').get(id);
