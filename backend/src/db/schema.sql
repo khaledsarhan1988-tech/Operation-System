@@ -44,6 +44,8 @@ CREATE TABLE IF NOT EXISTS team_members (
   shift       TEXT CHECK(shift IN ('morning','evening') OR shift IS NULL),
   shift_start TEXT,  -- HH:MM, only meaningful when shift is set
   shift_end   TEXT,  -- HH:MM, only meaningful when shift is set
+  employment_type TEXT CHECK(employment_type IN ('full_time','part_time') OR employment_type IS NULL),
+  work_days       TEXT,  -- comma-separated day codes: saturday,sunday,monday,tuesday,wednesday,thursday
   job_title   TEXT,
   phone       TEXT,
   user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,

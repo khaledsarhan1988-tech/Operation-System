@@ -27,6 +27,21 @@ const SHIFTS = {
   evening: 'مسائي',
 };
 
+const EMPLOYMENT_TYPES = {
+  full_time: 'Full Time',
+  part_time: 'Part Time',
+};
+
+// Days of the week (Saturday → Thursday, no Friday)
+const ALL_DAYS = ['saturday','sunday','monday','tuesday','wednesday','thursday'];
+
+// Day pairs — selecting one day in a pair auto-selects its partner
+const DAY_PAIRS = [
+  { key: 'sat_tue', label: 'السبت + الثلاثاء',  days: ['saturday', 'tuesday']  },
+  { key: 'sun_wed', label: 'الأحد + الأربعاء',  days: ['sunday',   'wednesday'] },
+  { key: 'mon_thu', label: 'الاثنين + الخميس', days: ['monday',   'thursday']  },
+];
+
 const DEPT_SECTIONS = {
   customer_services: ['all', 'general', 'private', 'semi'],
   education:         ['all', 'general', 'private', 'semi', 'phone_call'],
@@ -47,7 +62,7 @@ const SECTION_COLORS = {
 };
 
 // ─── EMPTY FORM ───────────────────────────────────────────────────────────────
-const emptyForm = { name: '', department: 'customer_services', section: 'general', shift: '', shift_start: '', shift_end: '', job_title: '', phone: '', status: 'active', notes: '' };
+const emptyForm = { name: '', department: 'customer_services', section: 'general', shift: '', shift_start: '', shift_end: '', employment_type: '', work_days: '', job_title: '', phone: '', status: 'active', notes: '' };
 
 // ─── MEMBER MODAL ─────────────────────────────────────────────────────────────
 function MemberModal({ initial, onSave, onClose, loading }) {
@@ -73,6 +88,29 @@ function MemberModal({ initial, onSave, onClose, loading }) {
       if (form.shift_end)   set('shift_end', '');
     }
   }, [form.shift]);
+
+  // Auto-fill all days for Full Time, clear for no employment type
+  useEffect(() => {
+    if (form.employment_type === 'full_time') {
+      set('work_days', ALL_DAYS.join(','));
+    } else if (!form.employment_type) {
+      set('work_days', '');
+    }
+    // For part_time → keep current work_days (user picks pairs manually)
+  }, [form.employment_type]);
+
+  // Helpers for day-pair selection
+  const selectedDays = (form.work_days || '').split(',').filter(Boolean);
+  const isPairSelected = (pair) => pair.days.every(d => selectedDays.includes(d));
+  const togglePair = (pair) => {
+    if (form.employment_type !== 'part_time') return; // locked when full-time
+    const next = isPairSelected(pair)
+      ? selectedDays.filter(d => !pair.days.includes(d))
+      : [...new Set([...selectedDays, ...pair.days])];
+    // Re-order according to ALL_DAYS canonical order
+    const ordered = ALL_DAYS.filter(d => next.includes(d));
+    set('work_days', ordered.join(','));
+  };
 
   const inputCls = 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 bg-white';
   const labelCls = 'block text-xs font-semibold text-gray-600 mb-1';
@@ -136,6 +174,52 @@ function MemberModal({ initial, onSave, onClose, loading }) {
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Employment type */}
+          <div>
+            <label className={labelCls}>الدوام</label>
+            <div className="flex gap-3">
+              {Object.entries(EMPLOYMENT_TYPES).map(([k, v]) => (
+                <button key={k} type="button"
+                  onClick={() => set('employment_type', form.employment_type === k ? '' : k)}
+                  className={`flex-1 py-2 rounded-xl text-sm font-semibold border transition-all ${
+                    form.employment_type === k
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                  }`}
+                >{v}</button>
+              ))}
+            </div>
+          </div>
+
+          {/* Work days — appears once an employment type is chosen */}
+          {form.employment_type && (
+            <div>
+              <label className={labelCls}>
+                أيام العمل
+                {form.employment_type === 'full_time' && (
+                  <span className="text-[10px] text-gray-400 mr-2">(كل الأيام — Full Time)</span>
+                )}
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {DAY_PAIRS.map(pair => {
+                  const selected = isPairSelected(pair);
+                  const locked = form.employment_type === 'full_time';
+                  return (
+                    <button key={pair.key} type="button"
+                      onClick={() => togglePair(pair)}
+                      disabled={locked}
+                      className={`py-2 px-2 rounded-xl text-xs font-semibold border transition-all ${
+                        selected
+                          ? 'bg-emerald-500 text-white border-emerald-500'
+                          : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                      } ${locked ? 'opacity-80 cursor-not-allowed' : ''}`}
+                    >{pair.label}</button>
+                  );
+                })}
+              </div>
             </div>
           )}
 
