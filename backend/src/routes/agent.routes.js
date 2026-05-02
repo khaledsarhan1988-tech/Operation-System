@@ -4,6 +4,11 @@ const db = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { lineClause, lineFilter } = require('../utils/lineFilter');
+const { nameInListParam } = require('../utils/nameMatch');
+
+// Coordinator field token-exact matcher: prevents "Alaa" matching "Alaa wael".
+const coordTokenMatch = nameInListParam('coordinators');
+const coordTokenMatchB = nameInListParam('b.coordinators');
 
 const router = express.Router();
 router.use(authenticate, requireRole('agent'));
@@ -331,9 +336,10 @@ router.get('/schedule', (req, res) => {
   const bf = lineClause(req);
 
   // Get groups where this agent is coordinator (scoped to line)
+  const _m1 = coordTokenMatch(name);
   const batches = db.prepare(
-    `SELECT group_name FROM batches WHERE coordinators LIKE ? AND status = 'نشطة'${bf.clause}`
-  ).all(`%${name}%`, ...bf.params).map(b => b.group_name);
+    `SELECT group_name FROM batches WHERE ${_m1.clause} AND status = 'نشطة'${bf.clause}`
+  ).all(_m1.param, ...bf.params).map(b => b.group_name);
 
   if (!batches.length) return res.json([]);
 
@@ -363,9 +369,10 @@ router.get('/zoom-sessions', (req, res) => {
   const lineB  = line ? ` AND b.line = l.line` : '';
 
   // Agent's groups — all batches (no status restriction)
+  const _m2 = coordTokenMatch(name);
   const batchRows = db.prepare(
-    `SELECT group_name, dept_type, coordinators FROM batches WHERE coordinators LIKE ?${bf.clause}`
-  ).all(`%${name}%`, ...bf.params);
+    `SELECT group_name, dept_type, coordinators FROM batches WHERE ${_m2.clause}${bf.clause}`
+  ).all(_m2.param, ...bf.params);
 
   if (!batchRows.length)
     return res.json({ total: 0, page: parseInt(page), data: [] });
@@ -432,9 +439,10 @@ router.get('/absent', (req, res) => {
   } = req.query;
 
   const bf = lineClause(req);
+  const _m3 = coordTokenMatch(name);
   const batchRows = db.prepare(
-    `SELECT group_name, dept_type, coordinators FROM batches WHERE coordinators LIKE ?${bf.clause}`
-  ).all(`%${name}%`, ...bf.params);
+    `SELECT group_name, dept_type, coordinators FROM batches WHERE ${_m3.clause}${bf.clause}`
+  ).all(_m3.param, ...bf.params);
 
   if (!batchRows.length) return res.json({ total: 0, page: parseInt(page), data: [], filter_opts: { departments: [], coordinators: [] } });
 
@@ -467,7 +475,7 @@ router.get('/absent', (req, res) => {
     )`);
     params.push(department, department);
   }
-  if (coordinator) { conditions.push('b.coordinators LIKE ?'); params.push(`%${coordinator}%`); }
+  if (coordinator) { const _mc = coordTokenMatchB(coordinator); conditions.push(_mc.clause); params.push(_mc.param); }
   if (session_type) {
     if (session_type === 'side') {
       conditions.push("l.session_type = 'side'");
@@ -538,9 +546,10 @@ router.get('/absent-zoom', (req, res) => {
   } = req.query;
 
   const bf = lineClause(req);
+  const _m4 = coordTokenMatch(name);
   const batchRows = db.prepare(
-    `SELECT group_name, dept_type, coordinators FROM batches WHERE coordinators LIKE ?${bf.clause}`
-  ).all(`%${name}%`, ...bf.params);
+    `SELECT group_name, dept_type, coordinators FROM batches WHERE ${_m4.clause}${bf.clause}`
+  ).all(_m4.param, ...bf.params);
 
   if (!batchRows.length)
     return res.json({ total: 0, page: parseInt(page), data: [], filter_opts: { departments: [], coordinators: [] } });
@@ -573,7 +582,7 @@ router.get('/absent-zoom', (req, res) => {
     )`);
     params.push(department, department);
   }
-  if (coordinator) { conditions.push('b.coordinators LIKE ?'); params.push(`%${coordinator}%`); }
+  if (coordinator) { const _mc = coordTokenMatchB(coordinator); conditions.push(_mc.clause); params.push(_mc.param); }
 
   const where = conditions.join(' AND ');
   const batchJoinLine = line ? ' AND b.line = a.line' : '';
@@ -641,9 +650,10 @@ router.get('/absent-zoom-detail', (req, res) => {
   const lineR = line ? ` AND r.line = '${line.replace(/'/g, "''")}'` : '';
 
   // Verify group belongs to this agent
+  const _m5 = coordTokenMatch(name);
   const batch = db.prepare(
-    `SELECT group_name FROM batches WHERE group_name = ? AND coordinators LIKE ?${bf.clause}`
-  ).get(group_name, `%${name}%`, ...bf.params);
+    `SELECT group_name FROM batches WHERE group_name = ? AND ${_m5.clause}${bf.clause}`
+  ).get(group_name, _m5.param, ...bf.params);
   if (!batch) return res.status(403).json({ error: 'Access denied' });
 
   // ── Source 0: absent_zoom_students table (uploaded Zoom absences file) ──
@@ -749,9 +759,10 @@ router.get('/side-session-check', (req, res) => {
   const session_type = req.query.session_type || 'side';
   const bf = lineClause(req);
 
+  const _m6 = coordTokenMatch(name);
   const batches = db.prepare(
-    `SELECT group_name FROM batches WHERE coordinators LIKE ? AND status = 'نشطة'${bf.clause}`
-  ).all(`%${name}%`, ...bf.params).map(b => b.group_name);
+    `SELECT group_name FROM batches WHERE ${_m6.clause} AND status = 'نشطة'${bf.clause}`
+  ).all(_m6.param, ...bf.params).map(b => b.group_name);
 
   if (!batches.length) return res.json([]);
 

@@ -4,6 +4,11 @@ const db = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { lineFilter } = require('../utils/lineFilter');
+const { nameInListParam } = require('../utils/nameMatch');
+
+// Coordinator field token-exact matcher: prevents "Alaa" matching "Alaa wael".
+const coordTokenMatch = nameInListParam('b.coordinators');
+const coordTokenMatchAbsent = nameInListParam('b.coordinators');
 
 const router = express.Router();
 router.use(authenticate, requireRole('leader'));
@@ -25,8 +30,9 @@ router.get('/team', (req, res) => {
   const line = lineFilter(req);
   if (line) { userConditions.push('(u.line = ? OR u.full_name = ?)'); userParams.push(line, req.user.full_name); }
   if (coordinator) {
-    userConditions.push('u.full_name LIKE ?');
-    userParams.push(`%${coordinator}%`);
+    // Exact-name match (case-insensitive, trimmed) — "Alaa" must NOT match "Alaa wael".
+    userConditions.push('LOWER(TRIM(u.full_name)) = LOWER(TRIM(?))');
+    userParams.push(coordinator);
   }
   const userWhere = 'WHERE ' + userConditions.join(' AND ');
 
@@ -66,8 +72,9 @@ router.get('/absent-report', (req, res) => {
   if (to)          { conditions.push('date <= ?'); params.push(to); }
   if (coordinator) {
     const joinBatchLine = line ? ' AND b.line = absent_students.line' : '';
-    conditions.push(`EXISTS (SELECT 1 FROM batches b WHERE b.group_name = absent_students.group_name${joinBatchLine} AND b.coordinators LIKE ?)`);
-    params.push(`%${coordinator}%`);
+    const m = coordTokenMatchAbsent(coordinator);
+    conditions.push(`EXISTS (SELECT 1 FROM batches b WHERE b.group_name = absent_students.group_name${joinBatchLine} AND ${m.clause})`);
+    params.push(m.param);
   }
   const dept = req.user?.department;
   if (dept && dept !== 'All') {
@@ -114,7 +121,7 @@ router.get('/groups', (req, res) => {
   const line = lineFilter(req);
   if (line) { conditions.push('b.line = ?'); params.push(line); }
 
-  if (coordinator) { conditions.push('b.coordinators LIKE ?'); params.push(`%${coordinator}%`); }
+  if (coordinator) { const m = coordTokenMatch(coordinator); conditions.push(m.clause); params.push(m.param); }
   const dept = req.user?.department;
   if (dept && dept !== 'All') {
     conditions.push(`(
@@ -161,8 +168,9 @@ router.get('/performance', (req, res) => {
   const line = lineFilter(req);
   if (line) { userConditions.push('u.line = ?'); userParams.push(line); }
   if (coordinator) {
-    userConditions.push('u.full_name LIKE ?');
-    userParams.push(`%${coordinator}%`);
+    // Exact-name match — "Alaa" must NOT match "Alaa wael".
+    userConditions.push('LOWER(TRIM(u.full_name)) = LOWER(TRIM(?))');
+    userParams.push(coordinator);
   }
   const userWhere = 'WHERE ' + userConditions.join(' AND ');
 

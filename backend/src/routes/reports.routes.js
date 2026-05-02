@@ -4,6 +4,7 @@ const db = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { lineFilter } = require('../utils/lineFilter');
+const { nameInListInline } = require('../utils/nameMatch');
 
 const router = express.Router();
 router.use(authenticate, requireRole('agent'));
@@ -57,8 +58,10 @@ function buildStrictDeptFilter(table, department) {
 
 function buildCoordFilter(table, value) {
   if (!value) return '';
-  const safe = value.replace(/'/g, "''");
-  return ` AND ${table}.coordinators LIKE '%${safe}%'`;
+  // Use exact-token match so "Alaa" never matches "Alaa wael" (and vice versa).
+  // The coordinators field can hold a comma-separated list, so this matches
+  // each token individually.
+  return ` AND ${nameInListInline(`${table}.coordinators`, value)}`;
 }
 
 // Department filter for the `remarks` table — coordinator-first rule (Fix 16) + Fix 9 fallback.
@@ -143,8 +146,8 @@ function buildRemarksNotesMainInnerQ({ from_date, to_date, department, employee,
   const safeCoord3  = coordinator ? coordinator.replace(/'/g, "''") : '';
   const safeDept3   = resolvedDept ? resolvedDept.replace(/'/g, "''") : '';
   const deptFilter3 = safeDept3  ? ` AND (b3.dept_type = '${safeDept3}' OR b3.coordinators IS NULL)` : '';
-  const empFilter3  = employee   ? ` AND (b3.coordinators LIKE '%${employee.replace(/'/g,"''")}%' OR b3.coordinators IS NULL)` : '';
-  const coord3      = safeCoord3 ? ` AND (b3.coordinators LIKE '%${safeCoord3}%' OR b3.coordinators IS NULL)` : '';
+  const empFilter3  = employee   ? ` AND (${nameInListInline('b3.coordinators', employee)} OR b3.coordinators IS NULL)` : '';
+  const coord3      = coordinator ? ` AND (${nameInListInline('b3.coordinators', coordinator)} OR b3.coordinators IS NULL)` : '';
   const search3     = search ? ` AND (COALESCE(c3.name, r3.client_name) LIKE '%${escapeLike(search)}%' ESCAPE '\\' OR c3.group_name LIKE '%${escapeLike(search)}%' ESCAPE '\\' OR r3.client_phone LIKE '%${escapeLike(search)}%' ESCAPE '\\')` : '';
 
   const dateFilter = from_date && to_date
@@ -322,8 +325,8 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
   const srchA  = search ? ` AND (a.student_name LIKE '%${escapeLike(search)}%' ESCAPE '\\' OR a.phone LIKE '%${escapeLike(search)}%' ESCAPE '\\' OR a.group_name LIKE '%${escapeLike(search)}%' ESCAPE '\\')` : '';
 
   const dept2  = safeDept  ? ` AND (b2.dept_type = '${safeDept}' OR EXISTS (SELECT 1 FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(r2.assigned_to)) AND u.department='${safeDept}'))` : '';
-  const emp2   = safeEmp   ? ` AND (b2.coordinators LIKE '%${safeEmp}%' OR r2.assigned_to LIKE '%${safeEmp}%')` : '';
-  const coord2 = safeCoord ? ` AND (b2.coordinators LIKE '%${safeCoord}%' OR r2.assigned_to LIKE '%${safeCoord}%')` : '';
+  const emp2   = employee   ? ` AND (${nameInListInline('b2.coordinators', employee)}   OR ${nameInListInline('r2.assigned_to', employee)})`   : '';
+  const coord2 = coordinator ? ` AND (${nameInListInline('b2.coordinators', coordinator)} OR ${nameInListInline('r2.assigned_to', coordinator)})` : '';
   const srch2  = search ? ` AND (r2.client_name LIKE '%${escapeLike(search)}%' ESCAPE '\\' OR r2.client_phone LIKE '%${escapeLike(search)}%' ESCAPE '\\')` : '';
 
   const dateFilter = from_date && to_date
@@ -1229,8 +1232,8 @@ router.get('/remarks-list', (req, res) => {
   const dateFilter     = activeFrom && activeTo ? ` AND ${remarkDate} BETWEEN '${activeFrom}' AND '${activeTo}'`
                        : activeFrom ? ` AND ${remarkDate} >= '${activeFrom}'`
                        : activeTo   ? ` AND ${remarkDate} <= '${activeTo}'` : '';
-  const empFilter      = employee        ? ` AND assigned_to LIKE '%${escapeLike(employee)}%' ESCAPE '\\'` : '';
-  const assignFilter   = assigned_to     ? ` AND assigned_to LIKE '%${escapeLike(assigned_to)}%' ESCAPE '\\'` : '';
+  const empFilter      = employee        ? ` AND ${nameInListInline('assigned_to', employee)}` : '';
+  const assignFilter   = assigned_to     ? ` AND ${nameInListInline('assigned_to', assigned_to)}` : '';
   const priorityFilter = priority        ? ` AND priority = '${priority}'` : '';
   const categoryFilter = category_search ? ` AND category LIKE '%${escapeLike(category_search)}%' ESCAPE '\\'` : '';
   const statusFilter   = status_filter   ? ` AND status = '${status_filter}'` : '';
@@ -1400,8 +1403,8 @@ router.get('/remarks-categories', (req, res) => {
   const deptFilter     = activeDept
     ? ` AND EXISTS (SELECT 1 FROM clients cx INNER JOIN batches bx ON cx.group_name=bx.group_name WHERE cx.phone=r.client_phone AND (bx.dept_type='${safeDeptCat}' OR EXISTS (SELECT 1 FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(bx.coordinators)) AND u.department='${safeDeptCat}')))`
     : '';
-  const empFilter      = employee       ? ` AND r.assigned_to LIKE '%${escapeLike(employee)}%' ESCAPE '\\'` : '';
-  const assignFilter   = assigned_to    ? ` AND r.assigned_to LIKE '%${escapeLike(assigned_to)}%' ESCAPE '\\'` : '';
+  const empFilter      = employee       ? ` AND ${nameInListInline('r.assigned_to', employee)}` : '';
+  const assignFilter   = assigned_to    ? ` AND ${nameInListInline('r.assigned_to', assigned_to)}` : '';
   const catFilter      = category_filter ? ` AND r.category LIKE '%${escapeLike(category_filter)}%' ESCAPE '\\'` : '';
   const searchFilter   = search         ? ` AND (r.client_name LIKE '%${escapeLike(search)}%' ESCAPE '\\' OR r.category LIKE '%${escapeLike(search)}%' ESCAPE '\\' OR r.client_phone LIKE '%${escapeLike(search)}%' ESCAPE '\\')` : '';
   const dateFilter     = buildDateFilter(remarkDateSQL, activeFrom, activeTo);
