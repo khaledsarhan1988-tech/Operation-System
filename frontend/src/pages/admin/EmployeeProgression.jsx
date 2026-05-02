@@ -4,12 +4,14 @@ import {
   BarChart2, TrendingUp, TrendingDown, Minus, Lock, Download, Trophy,
   Sparkles, Target, ShieldAlert, Award, Users, Calendar, Zap, Star,
   ChevronLeft, X, Plus, Edit2, Trash2, MessageSquare, Filter, Crown,
-  Flame, Gem, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown,
+  Flame, Gem, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, FileText,
 } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ReferenceLine, Legend, Area, AreaChart,
 } from 'recharts';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 import api from '../../api/axios';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
@@ -156,7 +158,7 @@ function StatPill({ value, suffix = '', icon: Icon, label, animated = true, sign
   );
 }
 
-function HeroBanner({ summary, onFreezeClick, onExport }) {
+function HeroBanner({ summary, onFreezeClick, onExport, onExportPdf, pdfBusy }) {
   return (
     <div
       className="relative overflow-hidden rounded-3xl p-6 text-white"
@@ -183,13 +185,21 @@ function HeroBanner({ summary, onFreezeClick, onExport }) {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={onFreezeClick}
               className="px-4 py-2.5 bg-amber-500 hover:bg-amber-400 transition-all rounded-xl font-black text-sm flex items-center gap-2 shadow-lg shadow-amber-500/40 hover:-translate-y-0.5"
             >
               <Lock size={16} />
               تجميد الشهر
+            </button>
+            <button
+              onClick={onExportPdf}
+              disabled={pdfBusy}
+              className="px-4 py-2.5 bg-rose-500/90 hover:bg-rose-500 disabled:opacity-60 transition-all rounded-xl font-black text-sm flex items-center gap-2 shadow-lg shadow-rose-500/30 border border-rose-400/40"
+            >
+              <FileText size={16} />
+              {pdfBusy ? '...جارٍ' : 'PDF'}
             </button>
             <button
               onClick={onExport}
@@ -1136,6 +1146,114 @@ function NotesModal({ snapshot, onClose }) {
   );
 }
 
+// ─── BRIEF PDF REPORT (rendered hidden, captured by html2canvas) ──────────────
+
+function PdfReport({ summary, leaderboard, periodLabel }) {
+  const todayStr = new Date().toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric' });
+
+  const Section = ({ title, items, emptyText, valueKey = 'overall_score', accent }) => (
+    <div style={{ marginBottom: 18, breakInside: 'avoid' }}>
+      <h3 style={{ fontSize: 16, fontWeight: 900, color: accent, margin: '0 0 10px 0', borderRight: `4px solid ${accent}`, paddingRight: 10 }}>
+        {title}
+      </h3>
+      {(!items || items.length === 0) ? (
+        <p style={{ color: '#9CA3AF', fontSize: 13, fontWeight: 700, padding: 12, background: '#F9FAFB', borderRadius: 8, margin: 0 }}>
+          {emptyText}
+        </p>
+      ) : (
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr style={{ background: '#F3F4F6', borderBottom: `2px solid ${accent}` }}>
+              <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 800, color: '#6B7280', fontSize: 11 }}>#</th>
+              <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 800, color: '#6B7280', fontSize: 11 }}>الموظف</th>
+              <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 800, color: '#6B7280', fontSize: 11 }}>القسم</th>
+              <th style={{ padding: '8px 12px', textAlign: 'center', fontWeight: 800, color: '#6B7280', fontSize: 11 }}>القيمة</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.slice(0, 5).map((it, i) => (
+              <tr key={i} style={{ borderBottom: '1px solid #F3F4F6' }}>
+                <td style={{ padding: '8px 12px', fontWeight: 900, color: '#9CA3AF' }}>{i + 1}</td>
+                <td style={{ padding: '8px 12px', fontWeight: 900, color: '#111827' }}>{it.agent_name}</td>
+                <td style={{ padding: '8px 12px', fontWeight: 700, color: '#6B7280' }}>{it.department}</td>
+                <td style={{ padding: '8px 12px', textAlign: 'center', fontWeight: 900, color: accent, fontSize: 14 }}>
+                  {it[valueKey] ?? 0}%{it.delta != null ? ` (${it.delta > 0 ? '+' : ''}${it.delta}%)` : ''}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+
+  return (
+    <div dir="rtl" style={{
+      fontFamily: 'Arial, "Segoe UI", Tahoma, sans-serif',
+      width: 794, // A4 width @ 96 dpi
+      padding: 40,
+      background: '#fff',
+      color: '#111827',
+    }}>
+      {/* Header */}
+      <div style={{
+        background: 'linear-gradient(135deg, #1e3a5f 0%, #3b5fa0 100%)',
+        color: '#fff',
+        padding: '24px 28px',
+        borderRadius: 16,
+        marginBottom: 24,
+        textAlign: 'center',
+      }}>
+        <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 2, opacity: 0.85 }}>AHMED HASSAN ACADEMY</div>
+        <h1 style={{ fontSize: 26, fontWeight: 900, margin: '8px 0 4px 0' }}>تقرير تطوّر أداء الفريق</h1>
+        <p style={{ fontSize: 13, fontWeight: 700, opacity: 0.85, margin: 0 }}>
+          الفترة: {periodLabel} · تاريخ التقرير: {todayStr}
+        </p>
+      </div>
+
+      {/* Summary Stats */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
+        {[
+          { label: 'شهور مجمّدة',   value: summary?.months || 0,           color: '#6366F1' },
+          { label: 'موظف نشط',      value: summary?.agents || 0,           color: '#10B981' },
+          { label: 'متوسط الإنجاز', value: (summary?.avgScore || 0) + '%', color: '#F59E0B' },
+          { label: 'تحسّن الشهر',   value: ((summary?.monthDelta ?? 0) >= 0 ? '+' : '') + (summary?.monthDelta ?? 0) + '%', color: (summary?.monthDelta ?? 0) >= 0 ? '#10B981' : '#EF4444' },
+        ].map((s, i) => (
+          <div key={i} style={{
+            background: '#F9FAFB',
+            border: '1px solid #E5E7EB',
+            borderRadius: 12,
+            padding: '14px 12px',
+            textAlign: 'center',
+          }}>
+            <p style={{ fontSize: 10, fontWeight: 800, color: '#6B7280', margin: '0 0 6px 0', textTransform: 'uppercase', letterSpacing: 1 }}>{s.label}</p>
+            <p style={{ fontSize: 22, fontWeight: 900, color: s.color, margin: 0 }}>{s.value}</p>
+          </div>
+        ))}
+      </div>
+
+      <Section title="🥇 الأفضل أداءً"        items={leaderboard?.top}            emptyText="لا توجد بيانات بعد" accent="#D97706" />
+      <Section title="🚀 الأكثر تحسناً"        items={leaderboard?.improved}        emptyText="يحتاج إلى شهرين متتاليين على الأقل" valueKey="score" accent="#7C3AED" />
+      <Section title="🏆 حقّقوا الأهداف"       items={leaderboard?.targetMasters}   emptyText="لم يحقّق أحد جميع الأهداف هذا الشهر" accent="#059669" />
+      <Section title="💎 التزام مثالي (SLA)"  items={leaderboard?.perfectSla}      emptyText="لا يوجد التزام 100%"  valueKey="sla_rate" accent="#0891B2" />
+      <Section title="⚠️ يحتاج اهتمام"        items={leaderboard?.attention}       emptyText="لا أحد تحت 70% — أداء جيد للجميع 👏" accent="#DC2626" />
+
+      {/* Footer */}
+      <div style={{
+        marginTop: 30,
+        paddingTop: 16,
+        borderTop: '2px solid #E5E7EB',
+        textAlign: 'center',
+        color: '#9CA3AF',
+        fontSize: 11,
+        fontWeight: 700,
+      }}>
+        تم إنشاء التقرير تلقائياً من نظام إدارة الأكاديمية · {new Date().toLocaleString('ar-EG')}
+      </div>
+    </div>
+  );
+}
+
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 
 export default function EmployeeProgression() {
@@ -1152,6 +1270,8 @@ export default function EmployeeProgression() {
   const [drawerAgent, setDrawerAgent] = useState(null);
   const [freezeOpen, setFreezeOpen] = useState(false);
   const [notesSnapshot, setNotesSnapshot] = useState(null);
+  const [pdfRendering, setPdfRendering] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
 
   // Compute date range from period preset
   const range = useMemo(() => {
@@ -1249,6 +1369,61 @@ export default function EmployeeProgression() {
     setKpi('overall_score');
   }
 
+  async function exportPDF() {
+    if (pdfBusy) return;
+    setPdfBusy(true);
+    setPdfRendering(true);
+    try {
+      // Wait two animation frames for the hidden node to actually mount and lay out
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      await new Promise(r => setTimeout(r, 80));
+
+      const node = document.getElementById('pdf-export-canvas');
+      if (!node) throw new Error('PDF render node missing');
+
+      const canvas = await html2canvas(node, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+        useCORS: true,
+        logging: false,
+        windowWidth: node.scrollWidth,
+        windowHeight: node.scrollHeight,
+      });
+
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const pageWidth  = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const imgWidth   = pageWidth;
+      const imgHeight  = (canvas.height * imgWidth) / canvas.width;
+
+      const imgData = canvas.toDataURL('image/jpeg', 0.93);
+
+      if (imgHeight <= pageHeight) {
+        pdf.addImage(imgData, 'JPEG', 0, 0, imgWidth, imgHeight);
+      } else {
+        // Multi-page: paint full image but shift y per page so each page shows next chunk
+        let position = 0;
+        let heightLeft = imgHeight;
+        while (heightLeft > 0) {
+          pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+          heightLeft -= pageHeight;
+          if (heightLeft > 0) {
+            position -= pageHeight;
+            pdf.addPage();
+          }
+        }
+      }
+
+      const ts = new Date().toISOString().slice(0, 10);
+      pdf.save(`employee-progression-${ts}.pdf`);
+    } catch (e) {
+      alert('تعذّر إنشاء الـ PDF: ' + (e.message || 'خطأ غير معروف'));
+    } finally {
+      setPdfRendering(false);
+      setPdfBusy(false);
+    }
+  }
+
   function exportCSV() {
     if (!heatmap.agents?.length) return;
     const headers = ['الموظف', 'القسم', ...heatmap.periods.map(p => `${MONTH_NAMES_AR_SHORT[p.month]} ${p.year}`), 'المتوسط', 'الاتجاه'];
@@ -1273,6 +1448,8 @@ export default function EmployeeProgression() {
         summary={summary}
         onFreezeClick={() => setFreezeOpen(true)}
         onExport={exportCSV}
+        onExportPdf={exportPDF}
+        pdfBusy={pdfBusy}
       />
 
       <FiltersBar
@@ -1374,6 +1551,23 @@ export default function EmployeeProgression() {
           }}
           onClose={() => setNotesSnapshot(null)}
         />
+      )}
+
+      {/* Hidden PDF capture target — rendered off-screen while pdfRendering = true */}
+      {pdfRendering && (
+        <div style={{ position: 'fixed', left: -10000, top: 0, zIndex: -1, pointerEvents: 'none' }}>
+          <div id="pdf-export-canvas">
+            <PdfReport
+              summary={summary}
+              leaderboard={leaderboard}
+              periodLabel={
+                latestPeriod
+                  ? `${MONTH_NAMES_AR[latestPeriod.month]} ${latestPeriod.year}`
+                  : 'لم يُجمَّد أي شهر'
+              }
+            />
+          </div>
+        </div>
       )}
     </div>
   );
