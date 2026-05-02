@@ -35,6 +35,9 @@ import TeamPage from './pages/admin/TeamPage';
 import DashboardDetail from './pages/admin/DashboardDetail';
 import ClientDistribution from './pages/admin/ClientDistribution';
 import AdminPipeline from './pages/admin/AdminPipeline';
+import EmployeeProgression from './pages/admin/EmployeeProgression';
+import TargetsManagement from './pages/admin/TargetsManagement';
+import MyProgression from './pages/agent/MyProgression';
 
 // Enrollment pages
 import EnrollmentPipeline from './pages/enrollment/Pipeline';
@@ -61,6 +64,7 @@ const router = createBrowserRouter([
       { path: 'side-session-check', element: <SideSessionCheck /> },
       { path: 'code-problems',      element: <AgentCodeProblems /> },
       { path: 'pipeline',           element: <Pipeline /> },
+      { path: 'my-progression',     element: <MyProgression /> },
     ],
   },
 
@@ -107,6 +111,8 @@ const router = createBrowserRouter([
       { path: 'reports/attendance-absence',   element: <AttendanceAbsenceReport /> },
       { path: 'distribution',                  element: <ClientDistribution /> },
       { path: 'pipeline',                      element: <AdminPipeline /> },
+      { path: 'employee-progression',          element: <EmployeeProgression /> },
+      { path: 'targets',                       element: <TargetsManagement /> },
     ],
   },
 

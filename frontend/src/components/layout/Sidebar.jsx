@@ -4,7 +4,8 @@ import { useAuth } from '../../auth/AuthContext';
 import {
   LayoutDashboard, ClipboardList, Search, UserX, Calendar,
   Video, Users, BarChart2, Globe, UserCog, Upload, FileText,
-  LogOut, Headphones, GraduationCap, ShieldCheck, AlertTriangle, Activity, Shuffle, Kanban
+  LogOut, Headphones, GraduationCap, ShieldCheck, AlertTriangle, Activity, Shuffle, Kanban,
+  TrendingUp, Target
 } from 'lucide-react';
 
 // ─── COLOR PALETTE ─────────────────────────────────────────────────────────
@@ -41,6 +42,7 @@ const AGENT_LINKS = [
   { to: '/agent/code-problems',      label: 'nav.codeProblems',     icon: AlertTriangle,   color: 'amber' },
   { to: '/agent/pipeline',           label: 'nav.clientPipeline',   icon: Kanban,          color: 'emerald' },
   { to: '/agent/tasks',              label: 'nav.myTasks',          icon: ClipboardList,   color: 'indigo' },
+  { to: '/agent/my-progression',     label: 'nav.myProgression',    icon: TrendingUp,      color: 'violet' },
 ];
 
 const ENROLLMENT_LINKS = [
@@ -89,6 +91,8 @@ function getAdminLinks(user) {
     { to: '/admin/control',      label: 'nav.controlPanel',       icon: LayoutDashboard, color: 'pink' },
     { to: '/admin/distribution', label: 'nav.clientDistribution', icon: Shuffle,         color: 'cyan' },
     { to: '/admin/pipeline',     label: 'nav.clientPipeline',     icon: Kanban,          color: 'emerald' },
+    { to: '/admin/employee-progression', label: 'nav.employeeProgression', icon: TrendingUp, color: 'violet' },
+    { to: '/admin/targets',      label: 'nav.targets',            icon: Target,          color: 'green' },
     { type: 'section', label: 'nav.reportsSection' },
   ];
   const mgmt = user?.management;

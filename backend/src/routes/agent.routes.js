@@ -1042,4 +1042,70 @@ router.get('/transfer-history', (req, res) => {
   return res.json({ total, page: parseInt(page), data });
 });
 
+// ─── SELF-VIEW: PROGRESSION ───────────────────────────────────────────────────
+// GET /api/agent/my-progression?year=
+// Returns the agent's own monthly snapshots (no peer names) plus dept averages
+// for context. Designed for the employee-facing "تطوّري" page.
+router.get('/my-progression', (req, res) => {
+  const userLine = req.user?.line || 'Ahmed Hassan';
+  const lineFilterParam = userLine === 'All' ? null : userLine;
+  const yearFilter = req.query.year ? parseInt(req.query.year, 10) : null;
+
+  const params = [req.user?.full_name];
+  let where = 'WHERE LOWER(TRIM(agent_name)) = LOWER(TRIM(?))';
+  if (lineFilterParam) { where += ' AND line = ?'; params.push(lineFilterParam); }
+  if (yearFilter)      { where += ' AND year = ?'; params.push(yearFilter); }
+
+  const mySnaps = db.prepare(`
+    SELECT id, year, month, period_label, department,
+           tasks_total, tasks_done, tasks_overdue, tasks_urgent,
+           completion_rate, sla_rate,
+           absents_total, absents_followed_up, followup_rate,
+           code_problems_total, code_problems_resolved, fix_rate,
+           overall_score,
+           target_completion, target_followup, target_fix, target_overall,
+           met_target,
+           dept_avg_completion, dept_avg_followup, dept_avg_fix, dept_avg_overall,
+           rank_in_dept, total_in_dept,
+           achievements,
+           frozen_at
+    FROM monthly_snapshots
+    ${where}
+    ORDER BY year DESC, month DESC
+  `).all(...params);
+
+  mySnaps.forEach(r => {
+    try { r.achievements = r.achievements ? JSON.parse(r.achievements) : []; }
+    catch (_) { r.achievements = []; }
+  });
+
+  // Aggregate badges across all snapshots (lifetime achievements)
+  const lifetimeBadges = {};
+  for (const s of mySnaps) {
+    for (const b of s.achievements) {
+      lifetimeBadges[b] = (lifetimeBadges[b] || 0) + 1;
+    }
+  }
+
+  // Latest target effective for the agent
+  let latestTarget = null;
+  if (mySnaps.length > 0) {
+    const latest = mySnaps[0];
+    latestTarget = {
+      completion: latest.target_completion,
+      followup:   latest.target_followup,
+      fix:        latest.target_fix,
+      overall:    latest.target_overall,
+    };
+  }
+
+  return res.json({
+    agent_name: req.user?.full_name,
+    department: req.user?.department,
+    snapshots: mySnaps,
+    lifetime_badges: lifetimeBadges,
+    latest_target: latestTarget,
+  });
+});
+
 module.exports = router;

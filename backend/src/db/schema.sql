@@ -323,6 +323,108 @@ CREATE INDEX IF NOT EXISTS idx_clients_group_line      ON clients(group_name, li
 CREATE INDEX IF NOT EXISTS idx_batches_group_line      ON batches(group_name, line);
 
 -- =============================================
+-- MONTHLY SNAPSHOTS — frozen KPIs per agent per month (Level 2)
+-- =============================================
+CREATE TABLE IF NOT EXISTS monthly_snapshots (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_name      TEXT NOT NULL,
+  agent_id        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  department      TEXT NOT NULL,
+  line            TEXT NOT NULL DEFAULT 'Ahmed Hassan',
+
+  -- Period
+  year            INTEGER NOT NULL,
+  month           INTEGER NOT NULL,
+  period_label    TEXT NOT NULL,        -- '2026-04'
+
+  -- Tasks / Remarks
+  tasks_total     INTEGER DEFAULT 0,
+  tasks_done      INTEGER DEFAULT 0,
+  tasks_overdue   INTEGER DEFAULT 0,
+  tasks_urgent    INTEGER DEFAULT 0,
+  completion_rate INTEGER DEFAULT 0,
+  sla_rate        INTEGER DEFAULT 0,
+
+  -- Absent follow-up
+  absents_total       INTEGER DEFAULT 0,
+  absents_followed_up INTEGER DEFAULT 0,
+  followup_rate       INTEGER DEFAULT 0,
+
+  -- Code problems
+  code_problems_total    INTEGER DEFAULT 0,
+  code_problems_resolved INTEGER DEFAULT 0,
+  fix_rate               INTEGER DEFAULT 0,
+
+  overall_score   INTEGER DEFAULT 0,
+
+  -- Targets snapshot (frozen at the time of freezing)
+  target_completion INTEGER,
+  target_followup   INTEGER,
+  target_fix        INTEGER,
+  target_overall    INTEGER,
+  met_target        INTEGER NOT NULL DEFAULT 0,
+
+  -- Department benchmarking
+  dept_avg_completion INTEGER,
+  dept_avg_followup   INTEGER,
+  dept_avg_fix        INTEGER,
+  dept_avg_overall    INTEGER,
+  rank_in_dept        INTEGER,
+  total_in_dept       INTEGER,
+
+  -- Achievements (JSON array of badge keys)
+  achievements    TEXT,
+
+  -- Metadata
+  frozen_by       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  frozen_at       TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+  notes           TEXT,
+  UNIQUE(agent_name, year, month, line)
+);
+CREATE INDEX IF NOT EXISTS idx_ms_agent      ON monthly_snapshots(agent_name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_ms_period     ON monthly_snapshots(year, month);
+CREATE INDEX IF NOT EXISTS idx_ms_line       ON monthly_snapshots(line);
+CREATE INDEX IF NOT EXISTS idx_ms_dept       ON monthly_snapshots(department);
+CREATE INDEX IF NOT EXISTS idx_ms_dept_period ON monthly_snapshots(department, year, month);
+
+-- =============================================
+-- EMPLOYEE TARGETS — KPI goals (per-agent / per-dept / global)
+-- =============================================
+CREATE TABLE IF NOT EXISTS employee_targets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_name TEXT,                 -- NULL = applies to all (in dept or globally)
+  department TEXT,                 -- NULL = applies globally
+  line       TEXT NOT NULL DEFAULT 'Ahmed Hassan',
+
+  target_completion INTEGER NOT NULL DEFAULT 85,
+  target_followup   INTEGER NOT NULL DEFAULT 80,
+  target_fix        INTEGER NOT NULL DEFAULT 90,
+  target_overall    INTEGER NOT NULL DEFAULT 80,
+
+  effective_from TEXT NOT NULL,    -- 'YYYY-MM-DD' — first month this target applies
+  set_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  set_at TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+  notes  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_targets_agent      ON employee_targets(agent_name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_targets_department ON employee_targets(department);
+CREATE INDEX IF NOT EXISTS idx_targets_line       ON employee_targets(line);
+CREATE INDEX IF NOT EXISTS idx_targets_effective  ON employee_targets(effective_from);
+
+-- =============================================
+-- SNAPSHOT NOTES — admin annotations on a frozen snapshot
+-- =============================================
+CREATE TABLE IF NOT EXISTS snapshot_notes (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  snapshot_id INTEGER NOT NULL REFERENCES monthly_snapshots(id) ON DELETE CASCADE,
+  note        TEXT NOT NULL,
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+  updated_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_snapshot_notes_sid ON snapshot_notes(snapshot_id);
+
+-- =============================================
 -- JWT REFRESH TOKENS
 -- =============================================
 CREATE TABLE IF NOT EXISTS refresh_tokens (

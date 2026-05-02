@@ -397,3 +397,17 @@
 /* ─── LEGACY ALIASES ───────────────────────────────────────────────────────── */
 .animate-fadeIn { animation: fadeIn 0.2s ease-out; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Drawer slide-in (RTL-friendly: enters from the right edge) */
+.animate-slide-in-right { animation: slideInRight 0.3s ease-out; }
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(-100%); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* Filter chip removal — 180° rotation + shrink + fade */
+.chip-removing { animation: chipRemove 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards; pointer-events: none; }
+@keyframes chipRemove {
+  0%   { opacity: 1; transform: rotate(0deg) scale(1); }
+  100% { opacity: 0; transform: rotate(180deg) scale(0.3); }
+}
