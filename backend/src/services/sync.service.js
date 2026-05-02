@@ -232,7 +232,9 @@ function syncTrainees(buffer, line) {
   });
   run();
   // Roster changed → recompute auto-absences (students added/removed from groups)
-  regenerateAutoAbsents(line);
+  // Auto-absent refresh is best-effort — never let a failure here break the upload.
+  try { regenerateAutoAbsents(line); }
+  catch (e) { console.error('[regenerateAutoAbsents]', e.message); }
   return rows.length;
 }
 
@@ -381,7 +383,9 @@ function syncLectures(buffer, line) {
   });
   run();
   // Main lectures changed → recompute auto-absences for confirmed empty-attendance rows
-  regenerateAutoAbsents(line);
+  // Auto-absent refresh is best-effort — never let a failure here break the upload.
+  try { regenerateAutoAbsents(line); }
+  catch (e) { console.error('[regenerateAutoAbsents]', e.message); }
   return rows.length;
 }
 
@@ -400,7 +404,9 @@ function syncSideSessions(buffer, line) {
   });
   run();
   // Side sessions changed → recompute auto-absences for zoom calls (regular)
-  regenerateAutoAbsents(line);
+  // Auto-absent refresh is best-effort — never let a failure here break the upload.
+  try { regenerateAutoAbsents(line); }
+  catch (e) { console.error('[regenerateAutoAbsents]', e.message); }
   return rows.length;
 }
 
@@ -435,7 +441,9 @@ function syncAbsent(buffer, line) {
   });
   run();
   // Manual upload wiped the table → re-create auto-generated rows from current lectures+clients
-  regenerateAutoAbsents(line);
+  // Auto-absent refresh is best-effort — never let a failure here break the upload.
+  try { regenerateAutoAbsents(line); }
+  catch (e) { console.error('[regenerateAutoAbsents]', e.message); }
   return rows.length;
 }
 
@@ -471,7 +479,9 @@ function syncAbsentZoom(buffer, line) {
   });
   run();
   // Manual upload wiped the table → re-create auto-generated rows from current lectures+clients
-  regenerateAutoAbsents(line);
+  // Auto-absent refresh is best-effort — never let a failure here break the upload.
+  try { regenerateAutoAbsents(line); }
+  catch (e) { console.error('[regenerateAutoAbsents]', e.message); }
   return rows.length;
 }
 
