@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Cairo:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Cairo:wght@400;500;600;700;800;900&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -17,9 +17,14 @@
   html[lang="ar"] { font-family: 'Cairo', 'Inter', system-ui, sans-serif; }
 
   body {
-    background-color: #F8FAFC;
+    background-color: #F1F5F9;
+    background-image:
+      radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.04) 0px, transparent 50%),
+      radial-gradient(at 100% 100%, rgba(168, 85, 247, 0.03) 0px, transparent 50%);
+    background-attachment: fixed;
     color: #0F172A;
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    font-weight: 500;
   }
 
   /* Selection color matches brand */
@@ -34,159 +39,261 @@
     outline-offset: 2px;
     border-radius: 6px;
   }
+
+  /* Bolder default headings — gives the dashboard real hierarchy */
+  h1 { @apply text-2xl font-extrabold text-text-primary tracking-tight; }
+  h2 { @apply text-xl  font-bold       text-text-primary tracking-tight; }
+  h3 { @apply text-lg  font-bold       text-text-primary; }
+  h4 { @apply text-base font-bold      text-text-primary; }
 }
 
 /* ─── COMPONENTS ───────────────────────────────────────────────────────────── */
 @layer components {
-  /* ── BUTTONS ───────────────────────────────────────────────────────────── */
+
+  /* ── BUTTONS — with 3D press feedback ──────────────────────────────────── */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold
            transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed
-           focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary;
+           focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary
+           select-none;
   }
   .btn-primary {
-    @apply btn bg-primary text-white shadow-glow-primary
-           hover:bg-primary-hover hover:shadow-md active:scale-[0.98];
+    @apply btn text-white shadow-glow-primary border border-indigo-700/50 active:scale-[0.97]
+           hover:shadow-md;
+    background-image: linear-gradient(180deg, #6366F1 0%, #4F46E5 100%);
+  }
+  .btn-primary:hover {
+    background-image: linear-gradient(180deg, #4F46E5 0%, #4338CA 100%);
   }
   .btn-accent {
-    @apply btn bg-accent text-white shadow-sm
-           hover:bg-amber-600 hover:shadow-md active:scale-[0.98];
+    @apply btn text-white shadow-md border border-amber-700/40 active:scale-[0.97];
+    background-image: linear-gradient(180deg, #FBBF24 0%, #F59E0B 100%);
   }
+  .btn-accent:hover { background-image: linear-gradient(180deg, #F59E0B 0%, #D97706 100%); }
   .btn-secondary {
-    @apply btn bg-card text-text-primary border border-border shadow-xs
-           hover:bg-card-muted hover:border-border-strong active:scale-[0.98];
+    @apply btn bg-white text-text-primary border border-border shadow-xs
+           hover:bg-slate-50 hover:border-border-strong hover:shadow-sm active:scale-[0.97];
   }
   .btn-outline {
     @apply btn bg-transparent text-text-primary border border-border
-           hover:bg-card-muted hover:border-border-strong active:scale-[0.98];
+           hover:bg-card-muted hover:border-border-strong active:scale-[0.97];
   }
   .btn-ghost {
     @apply btn bg-transparent text-text-secondary
-           hover:bg-card-muted hover:text-text-primary active:scale-[0.98];
+           hover:bg-card-muted hover:text-text-primary active:scale-[0.97];
   }
   .btn-danger {
-    @apply btn bg-danger text-white shadow-glow-danger
-           hover:bg-red-600 hover:shadow-md active:scale-[0.98];
+    @apply btn text-white shadow-glow-danger border border-red-700/40 active:scale-[0.97]
+           hover:shadow-md;
+    background-image: linear-gradient(180deg, #F87171 0%, #EF4444 100%);
   }
+  .btn-danger:hover { background-image: linear-gradient(180deg, #EF4444 0%, #DC2626 100%); }
   .btn-success {
-    @apply btn bg-success text-white shadow-sm
-           hover:bg-emerald-600 hover:shadow-md active:scale-[0.98];
+    @apply btn text-white shadow-md border border-emerald-700/40 active:scale-[0.97];
+    background-image: linear-gradient(180deg, #34D399 0%, #10B981 100%);
   }
-  /* Icon-only button — used for table actions */
+  .btn-success:hover { background-image: linear-gradient(180deg, #10B981 0%, #059669 100%); }
+
+  /* Icon-only button */
   .btn-icon {
     @apply inline-flex items-center justify-center h-9 w-9 rounded-lg transition-all duration-150
-           focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary;
+           focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary
+           border;
   }
   .btn-icon-primary {
-    @apply btn-icon text-primary hover:bg-primary-soft;
+    @apply btn-icon bg-primary-soft text-primary border-primary-ring/60 hover:bg-indigo-100 hover:border-primary;
   }
   .btn-icon-danger {
-    @apply btn-icon text-danger hover:bg-danger-soft;
+    @apply btn-icon bg-danger-soft text-danger border-red-200 hover:bg-red-100 hover:border-red-400;
   }
   .btn-icon-ghost {
-    @apply btn-icon text-text-secondary hover:bg-card-muted hover:text-text-primary;
+    @apply btn-icon bg-transparent text-text-secondary border-transparent
+           hover:bg-card-muted hover:text-text-primary;
   }
   .btn-sm { @apply px-3 py-1.5 text-xs; }
   .btn-lg { @apply px-5 py-3 text-base; }
 
-  /* ── CARDS ─────────────────────────────────────────────────────────────── */
+  /* ── CARDS — subtle gradient + layered shadow for depth ────────────────── */
   .card {
-    @apply bg-card rounded-xl shadow-sm border border-border p-5 transition-shadow duration-200;
+    @apply rounded-2xl border border-border p-5 transition-all duration-200;
+    background: linear-gradient(180deg, #FFFFFF 0%, #FAFBFC 100%);
+    box-shadow:
+      0 1px 3px 0 rgba(15, 23, 42, 0.04),
+      0 1px 2px -1px rgba(15, 23, 42, 0.04),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.9);
   }
-  .card-hover {
-    @apply hover:shadow-md hover:border-border-strong;
+  .card-hover:hover {
+    transform: translateY(-1px);
+    box-shadow:
+      0 8px 16px -4px rgba(15, 23, 42, 0.08),
+      0 4px 8px -2px rgba(15, 23, 42, 0.04),
+      inset 0 1px 0 0 rgba(255, 255, 255, 1);
+    border-color: #CBD5E1;
   }
   .card-header {
     @apply flex items-center justify-between pb-4 mb-4 border-b border-border;
   }
   .card-title {
-    @apply text-base font-bold text-text-primary;
+    @apply text-lg font-extrabold text-text-primary tracking-tight;
   }
   .card-subtitle {
-    @apply text-xs text-text-secondary mt-0.5;
+    @apply text-xs text-text-secondary mt-0.5 font-medium;
   }
 
   /* ── INPUTS ────────────────────────────────────────────────────────────── */
   .input {
-    @apply w-full bg-card border border-border rounded-lg px-3.5 py-2.5 text-sm text-text-primary
-           placeholder:text-text-muted shadow-inner-soft
+    @apply w-full bg-white border border-border rounded-lg px-3.5 py-2.5 text-sm font-medium text-text-primary
+           placeholder:text-text-muted placeholder:font-normal
            focus:outline-none focus:ring-4 focus:ring-primary-ring/40 focus:border-primary
            hover:border-border-strong transition-all duration-150
            disabled:bg-surface disabled:cursor-not-allowed;
+    box-shadow: inset 0 1px 2px 0 rgba(15, 23, 42, 0.04);
   }
   .input-sm { @apply px-3 py-1.5 text-xs; }
   .label {
-    @apply block text-xs font-semibold text-text-secondary mb-1.5 uppercase tracking-wide;
+    @apply block text-xs font-bold text-text-secondary mb-1.5 uppercase tracking-wider;
   }
   .label-normal {
-    @apply block text-sm font-semibold text-text-primary mb-1.5;
+    @apply block text-sm font-bold text-text-primary mb-1.5;
   }
 
-  /* ── BADGES ────────────────────────────────────────────────────────────── */
+  /* ── BADGES — bolder, with stronger contrast ───────────────────────────── */
   .badge {
-    @apply inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold border;
+    @apply inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border;
   }
-  .badge-success { @apply badge bg-success-soft text-emerald-700 border-emerald-200; }
-  .badge-warning { @apply badge bg-warning-soft text-amber-700 border-amber-200; }
-  .badge-danger  { @apply badge bg-danger-soft text-red-700 border-red-200; }
-  .badge-info    { @apply badge bg-info-soft text-blue-700 border-blue-200; }
+  .badge-success { @apply badge bg-success-soft text-emerald-700 border-emerald-300; }
+  .badge-warning { @apply badge bg-warning-soft text-amber-800 border-amber-300; }
+  .badge-danger  { @apply badge bg-danger-soft text-red-700 border-red-300; }
+  .badge-info    { @apply badge bg-info-soft text-blue-700 border-blue-300; }
   .badge-primary { @apply badge bg-primary-soft text-primary border-primary-ring; }
-  .badge-neutral { @apply badge bg-card-muted text-text-secondary border-border; }
+  .badge-neutral { @apply badge bg-card-muted text-text-secondary border-border-strong; }
 
-  /* ── SIDEBAR ───────────────────────────────────────────────────────────── */
+  /* ── SIDEBAR — 3D, raised active state, icon containers ────────────────── */
   .sidebar-link {
-    @apply relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sidebar-text
-           hover:bg-sidebar-hover hover:text-white transition-all duration-150 cursor-pointer;
+    @apply relative flex items-center gap-3 px-2.5 py-2.5 rounded-xl text-slate-300
+           transition-all duration-200 cursor-pointer font-semibold text-sm;
+  }
+  .sidebar-link:hover {
+    @apply text-white;
+    background: linear-gradient(180deg, rgba(51, 65, 85, 0.7) 0%, rgba(30, 41, 59, 0.7) 100%);
+  }
+  .sidebar-link .si-icon {
+    @apply inline-flex items-center justify-center h-9 w-9 rounded-lg flex-shrink-0
+           transition-all duration-200;
+    background: linear-gradient(180deg, rgba(51, 65, 85, 0.5) 0%, rgba(30, 41, 59, 0.6) 100%);
+    color: #CBD5E1;
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.05),
+      0 1px 2px 0 rgba(0, 0, 0, 0.2);
+  }
+  .sidebar-link:hover .si-icon {
+    background: linear-gradient(180deg, rgba(99, 102, 241, 0.25) 0%, rgba(79, 70, 229, 0.2) 100%);
+    color: #FFFFFF;
   }
   .sidebar-link.active {
-    @apply bg-sidebar-hover text-white font-semibold;
+    @apply text-white;
+    background: linear-gradient(180deg, rgba(99, 102, 241, 0.18) 0%, rgba(79, 70, 229, 0.15) 100%);
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.06),
+      0 4px 14px -4px rgba(99, 102, 241, 0.4);
+  }
+  .sidebar-link.active .si-icon {
+    background: linear-gradient(180deg, #6366F1 0%, #4F46E5 100%);
+    color: #FFFFFF;
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.2),
+      0 4px 8px -2px rgba(99, 102, 241, 0.5);
   }
   .sidebar-link.active::before {
     content: '';
     position: absolute;
-    inset-inline-start: 0;
-    top: 25%;
-    bottom: 25%;
-    width: 3px;
+    inset-inline-start: -10px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 4px;
+    height: 24px;
     border-radius: 0 4px 4px 0;
     background: linear-gradient(180deg, #818CF8 0%, #4F46E5 100%);
+    box-shadow: 0 0 12px rgba(129, 140, 248, 0.6);
   }
   [dir="rtl"] .sidebar-link.active::before { border-radius: 4px 0 0 4px; }
 
   /* ── TABLES ────────────────────────────────────────────────────────────── */
   .table-wrap {
-    @apply bg-card rounded-xl border border-border shadow-sm overflow-hidden;
+    @apply bg-white rounded-2xl border border-border overflow-hidden;
+    box-shadow:
+      0 1px 3px 0 rgba(15, 23, 42, 0.04),
+      0 1px 2px -1px rgba(15, 23, 42, 0.04);
   }
   .table-header {
-    @apply bg-card-muted text-xs font-bold text-text-secondary uppercase tracking-wider
+    @apply text-xs font-extrabold text-text-secondary uppercase tracking-widest
            px-4 py-3 border-b border-border text-start;
+    background: linear-gradient(180deg, #F8FAFC 0%, #F1F5F9 100%);
   }
   .table-cell {
-    @apply px-4 py-3 text-sm text-text-primary border-b border-border;
+    @apply px-4 py-3 text-sm font-medium text-text-primary border-b border-border;
   }
   .table-row {
-    @apply hover:bg-card-muted transition-colors duration-100;
+    @apply transition-colors duration-100;
+  }
+  .table-row:hover {
+    background: linear-gradient(180deg, #F8FAFC 0%, #F1F5F9 50%, #F8FAFC 100%);
   }
 
-  /* ── AVATAR ────────────────────────────────────────────────────────────── */
+  /* ── AVATAR — refined rim + drop shadow for depth ──────────────────────── */
   .avatar {
-    @apply inline-flex items-center justify-center rounded-full font-bold text-white shadow-sm
-           ring-2 ring-white/40;
+    @apply inline-flex items-center justify-center rounded-full font-extrabold text-white
+           ring-2 ring-white/30 select-none;
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+      0 4px 8px -2px rgba(15, 23, 42, 0.18),
+      0 2px 4px -2px rgba(15, 23, 42, 0.1);
   }
   .avatar-sm { @apply h-8 w-8 text-sm; }
-  .avatar-md { @apply h-10 w-10 text-sm; }
-  .avatar-lg { @apply h-12 w-12 text-base; }
+  .avatar-md { @apply h-10 w-10 text-base; }
+  .avatar-lg { @apply h-12 w-12 text-lg; }
+  .avatar-xl { @apply h-16 w-16 text-xl; }
 
   /* ── DIVIDER ───────────────────────────────────────────────────────────── */
   .divider {
-    @apply h-px bg-border w-full;
+    @apply h-px w-full;
+    background-image: linear-gradient(90deg, transparent, #E2E8F0 20%, #E2E8F0 80%, transparent);
   }
   .divider-vertical {
-    @apply w-px bg-border h-6;
+    @apply w-px h-6;
+    background-image: linear-gradient(180deg, transparent, #E2E8F0 30%, #E2E8F0 70%, transparent);
+  }
+
+  /* ── PAGE HEADER — title + subtitle pattern ────────────────────────────── */
+  .page-header {
+    @apply flex items-start justify-between gap-4 mb-6;
+  }
+  .page-title {
+    @apply text-2xl md:text-3xl font-extrabold text-text-primary tracking-tight;
+  }
+  .page-subtitle {
+    @apply text-sm text-text-secondary mt-1 font-medium;
+  }
+
+  /* ── STAT CARD — KPI tile with inner highlight ─────────────────────────── */
+  .stat-card {
+    @apply relative rounded-2xl border border-border p-5 overflow-hidden transition-all duration-200;
+    background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%);
+    box-shadow:
+      0 1px 3px 0 rgba(15, 23, 42, 0.05),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.9);
+  }
+  .stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow:
+      0 12px 24px -8px rgba(15, 23, 42, 0.1),
+      0 4px 8px -2px rgba(15, 23, 42, 0.04),
+      inset 0 1px 0 0 rgba(255, 255, 255, 1);
+    border-color: #CBD5E1;
   }
 }
 
-/* ─── SCROLLBAR (refined, modern) ──────────────────────────────────────────── */
+/* ─── SCROLLBAR ────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar       { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
@@ -198,15 +305,21 @@
 ::-webkit-scrollbar-thumb:hover { background: rgba(100, 116, 139, 0.6); background-clip: content-box; }
 * { scrollbar-width: thin; scrollbar-color: rgba(148, 163, 184, 0.4) transparent; }
 
-/* ─── MODAL BACKDROP & CONTENT ─────────────────────────────────────────────── */
+/* ─── MODAL ────────────────────────────────────────────────────────────────── */
 .modal-backdrop {
-  @apply fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in;
+  @apply fixed inset-0 flex items-center justify-center z-50 p-4 animate-fade-in;
+  background-color: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(8px);
 }
 .modal-content {
-  @apply bg-card rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto animate-scale-in
+  @apply bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto animate-scale-in
          border border-border;
+  box-shadow:
+    0 25px 50px -12px rgba(15, 23, 42, 0.4),
+    0 4px 8px -2px rgba(15, 23, 42, 0.1),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.9);
 }
 
-/* ─── LEGACY ALIASES (so older pages keep working without rewrites) ────────── */
+/* ─── LEGACY ALIASES ───────────────────────────────────────────────────────── */
 .animate-fadeIn { animation: fadeIn 0.2s ease-out; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }

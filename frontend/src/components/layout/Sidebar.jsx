@@ -74,7 +74,6 @@ function getAdminLinks(user) {
   return [...base, ...reports];
 }
 
-// Same gradient logic as Topbar so the same user has the same color across the UI
 const AVATAR_GRADIENTS = [
   'from-indigo-500 to-purple-600',
   'from-blue-500 to-cyan-600',
@@ -111,27 +110,62 @@ export default function Sidebar({ mobile, onClose }) {
   const gradient = gradientFor(user?.full_name);
 
   return (
-    <div className="flex flex-col h-full bg-sidebar w-64 border-e border-slate-800">
+    <div
+      className="flex flex-col h-full w-72 relative overflow-hidden"
+      style={{
+        background: 'linear-gradient(180deg, #0F172A 0%, #1E1B4B 100%)',
+        boxShadow: 'inset -1px 0 0 rgba(255,255,255,0.05), 4px 0 24px -8px rgba(15, 23, 42, 0.4)',
+      }}
+    >
+      {/* Decorative gradient orb in background */}
+      <div
+        className="absolute top-0 right-0 w-64 h-64 rounded-full opacity-20 blur-3xl pointer-events-none"
+        style={{ background: 'radial-gradient(circle, #6366F1 0%, transparent 70%)' }}
+      />
+      <div
+        className="absolute bottom-0 left-0 w-72 h-72 rounded-full opacity-15 blur-3xl pointer-events-none"
+        style={{ background: 'radial-gradient(circle, #A855F7 0%, transparent 70%)' }}
+      />
+
       {/* Brand header */}
-      <div className="flex items-center gap-3 px-5 py-5 border-b border-slate-800">
-        <div className="h-10 w-10 rounded-xl bg-white flex items-center justify-center flex-shrink-0 shadow-md">
-          <img src="/logo.png" alt="Logo" className="h-8 w-8 object-contain" />
+      <div className="relative z-10 flex items-center gap-3 px-5 py-5 border-b border-white/5">
+        <div
+          className="h-11 w-11 rounded-xl flex items-center justify-center flex-shrink-0"
+          style={{
+            background: 'linear-gradient(180deg, #FFFFFF 0%, #F1F5F9 100%)',
+            boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.8), 0 4px 12px -2px rgba(0,0,0,0.3)',
+          }}
+        >
+          <img src="/logo.png" alt="Logo" className="h-9 w-9 object-contain" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-white font-bold text-sm leading-tight truncate">{t('app.name')}</p>
-          <p className="text-slate-400 text-[11px] truncate mt-0.5">{t('app.tagline')}</p>
+          <p className="text-white font-extrabold text-base leading-tight truncate tracking-tight">
+            {t('app.name')}
+          </p>
+          <p className="text-slate-400 text-[11px] truncate mt-0.5 font-semibold">
+            {t('app.tagline')}
+          </p>
         </div>
       </div>
 
-      {/* User card — colored avatar + name + role */}
-      <div className="px-3 py-3 border-b border-slate-800">
-        <div className="flex items-center gap-3 px-2 py-2 rounded-lg bg-slate-800/50">
-          <div className={`avatar avatar-md bg-gradient-to-br ${gradient} ring-slate-700`}>
+      {/* User card — raised, gradient avatar */}
+      <div className="relative z-10 px-3 py-3 border-b border-white/5">
+        <div
+          className="flex items-center gap-3 px-3 py-2.5 rounded-xl"
+          style={{
+            background: 'linear-gradient(180deg, rgba(51, 65, 85, 0.6) 0%, rgba(30, 41, 59, 0.6) 100%)',
+            boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.05), 0 2px 6px -1px rgba(0,0,0,0.3)',
+            border: '1px solid rgba(255,255,255,0.05)',
+          }}
+        >
+          <div className={`avatar avatar-md bg-gradient-to-br ${gradient}`}>
             {initial}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-white text-sm font-semibold truncate">{user?.full_name}</p>
-            <p className="text-slate-400 text-[11px] truncate">
+            <p className="text-white text-sm font-bold truncate leading-tight">
+              {user?.full_name}
+            </p>
+            <p className="text-slate-400 text-[11px] truncate font-semibold mt-0.5">
               {t(`roles.${user?.role}`, user?.role)}
               {user?.management ? ` · ${managementMap[user?.management] || user?.management}` : ''}
             </p>
@@ -140,12 +174,16 @@ export default function Sidebar({ mobile, onClose }) {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto py-3 px-2.5 space-y-0.5">
+      <nav className="relative z-10 flex-1 overflow-y-auto py-4 px-3 space-y-1">
         {links.map((item, i) => {
           if (item.type === 'section') {
             return (
-              <div key={i} className="px-3 pt-5 pb-1.5">
-                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.12em]">{item.label}</p>
+              <div key={i} className="px-3 pt-5 pb-2 flex items-center gap-2">
+                <div className="h-px flex-1 bg-gradient-to-r from-transparent via-white/10 to-white/10" />
+                <p className="text-[10px] font-extrabold text-slate-500 uppercase tracking-[0.15em]">
+                  {item.label}
+                </p>
+                <div className="h-px flex-1 bg-gradient-to-l from-transparent via-white/10 to-white/10" />
               </div>
             );
           }
@@ -158,25 +196,41 @@ export default function Sidebar({ mobile, onClose }) {
               onClick={mobile ? onClose : undefined}
               className={({ isActive }) =>
                 sub
-                  ? `sidebar-link ms-4 opacity-90 ${isActive ? 'active' : ''}`
+                  ? `sidebar-link ms-4 ${isActive ? 'active' : ''}`
                   : `sidebar-link ${isActive ? 'active' : ''}`
               }
             >
-              <Icon size={sub ? 15 : 18} className="flex-shrink-0" />
-              <span className={`flex-1 ${sub ? 'text-xs' : 'text-sm'}`}>{t(label, label)}</span>
+              <span className="si-icon">
+                <Icon size={sub ? 15 : 17} strokeWidth={2.2} />
+              </span>
+              <span className={`flex-1 ${sub ? 'text-xs' : 'text-sm'} truncate`}>
+                {t(label, label)}
+              </span>
             </NavLink>
           );
         })}
       </nav>
 
       {/* Logout */}
-      <div className="p-3 border-t border-slate-800">
+      <div className="relative z-10 p-3 border-t border-white/5">
         <button
           onClick={handleLogout}
-          className="w-full inline-flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium
-                     text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 transition-colors"
+          className="w-full inline-flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold
+                     text-rose-300 hover:text-white transition-all duration-200 group"
+          style={{
+            background: 'linear-gradient(180deg, rgba(244, 63, 94, 0.08) 0%, rgba(225, 29, 72, 0.05) 100%)',
+            border: '1px solid rgba(244, 63, 94, 0.15)',
+          }}
         >
-          <LogOut size={18} />
+          <span
+            className="inline-flex items-center justify-center h-9 w-9 rounded-lg flex-shrink-0 transition-all duration-200"
+            style={{
+              background: 'linear-gradient(180deg, rgba(244, 63, 94, 0.2) 0%, rgba(225, 29, 72, 0.15) 100%)',
+              boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.08)',
+            }}
+          >
+            <LogOut size={17} strokeWidth={2.2} />
+          </span>
           <span>{t('nav.logout')}</span>
         </button>
       </div>
