@@ -74,6 +74,23 @@ function getAdminLinks(user) {
   return [...base, ...reports];
 }
 
+// Same gradient logic as Topbar so the same user has the same color across the UI
+const AVATAR_GRADIENTS = [
+  'from-indigo-500 to-purple-600',
+  'from-blue-500 to-cyan-600',
+  'from-emerald-500 to-teal-600',
+  'from-rose-500 to-pink-600',
+  'from-amber-500 to-orange-600',
+  'from-violet-500 to-fuchsia-600',
+  'from-sky-500 to-indigo-600',
+  'from-teal-500 to-emerald-600',
+];
+function gradientFor(name = '') {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
+  return AVATAR_GRADIENTS[Math.abs(hash) % AVATAR_GRADIENTS.length];
+}
+
 export default function Sidebar({ mobile, onClose }) {
   const { t } = useTranslation();
   const { user, logout } = useAuth();
@@ -90,34 +107,45 @@ export default function Sidebar({ mobile, onClose }) {
     navigate('/login');
   };
 
+  const initial = user?.full_name?.[0]?.toUpperCase() || '?';
+  const gradient = gradientFor(user?.full_name);
+
   return (
-    <div className="flex flex-col h-full bg-sidebar text-sidebar-text w-64">
-      {/* Logo */}
-      <div className="flex items-center gap-3 p-5 border-b border-white/10">
-        <div className="h-11 w-11 rounded-xl bg-white flex items-center justify-center flex-shrink-0 shadow-md">
-          <img src="/logo.png" alt="Logo" className="h-9 w-9 object-contain" />
+    <div className="flex flex-col h-full bg-sidebar w-64 border-e border-slate-800">
+      {/* Brand header */}
+      <div className="flex items-center gap-3 px-5 py-5 border-b border-slate-800">
+        <div className="h-10 w-10 rounded-xl bg-white flex items-center justify-center flex-shrink-0 shadow-md">
+          <img src="/logo.png" alt="Logo" className="h-8 w-8 object-contain" />
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="text-white font-bold text-sm leading-tight truncate">{t('app.name')}</p>
-          <p className="text-sidebar-text/70 text-xs truncate">{t('app.tagline')}</p>
+          <p className="text-slate-400 text-[11px] truncate mt-0.5">{t('app.tagline')}</p>
         </div>
       </div>
 
-      {/* User info */}
-      <div className="px-4 py-3 border-b border-white/10">
-        <p className="text-white text-sm font-semibold truncate">{user?.full_name}</p>
-        <p className="text-sidebar-text/60 text-xs">
-          {t(`roles.${user?.role}`, user?.role)} · {managementMap[user?.management] || user?.management}
-        </p>
+      {/* User card — colored avatar + name + role */}
+      <div className="px-3 py-3 border-b border-slate-800">
+        <div className="flex items-center gap-3 px-2 py-2 rounded-lg bg-slate-800/50">
+          <div className={`avatar avatar-md bg-gradient-to-br ${gradient} ring-slate-700`}>
+            {initial}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-white text-sm font-semibold truncate">{user?.full_name}</p>
+            <p className="text-slate-400 text-[11px] truncate">
+              {t(`roles.${user?.role}`, user?.role)}
+              {user?.management ? ` · ${managementMap[user?.management] || user?.management}` : ''}
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
+      <nav className="flex-1 overflow-y-auto py-3 px-2.5 space-y-0.5">
         {links.map((item, i) => {
           if (item.type === 'section') {
             return (
-              <div key={i} className="px-3 pt-4 pb-1">
-                <p className="text-xs font-semibold text-sidebar-text/40 uppercase tracking-wider">{item.label}</p>
+              <div key={i} className="px-3 pt-5 pb-1.5">
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.12em]">{item.label}</p>
               </div>
             );
           }
@@ -130,11 +158,11 @@ export default function Sidebar({ mobile, onClose }) {
               onClick={mobile ? onClose : undefined}
               className={({ isActive }) =>
                 sub
-                  ? `sidebar-link mr-4 border-r-2 border-white/10 pr-2 opacity-80 ${isActive ? 'active' : ''}`
+                  ? `sidebar-link ms-4 opacity-90 ${isActive ? 'active' : ''}`
                   : `sidebar-link ${isActive ? 'active' : ''}`
               }
             >
-              <Icon size={sub ? 15 : 18} />
+              <Icon size={sub ? 15 : 18} className="flex-shrink-0" />
               <span className={`flex-1 ${sub ? 'text-xs' : 'text-sm'}`}>{t(label, label)}</span>
             </NavLink>
           );
@@ -142,10 +170,14 @@ export default function Sidebar({ mobile, onClose }) {
       </nav>
 
       {/* Logout */}
-      <div className="p-3 border-t border-white/10">
-        <button onClick={handleLogout} className="sidebar-link w-full text-danger/80 hover:text-danger">
+      <div className="p-3 border-t border-slate-800">
+        <button
+          onClick={handleLogout}
+          className="w-full inline-flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium
+                     text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 transition-colors"
+        >
           <LogOut size={18} />
-          <span className="text-sm">{t('nav.logout')}</span>
+          <span>{t('nav.logout')}</span>
         </button>
       </div>
     </div>
