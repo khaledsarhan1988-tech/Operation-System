@@ -47,40 +47,75 @@ const fmtDate = (d) => {
   } catch { return d; }
 };
 
-// ─── KPI CARD ─────────────────────────────────────────────────────────────────
+// ─── KPI CARD — premium gradient with depth ──────────────────────────────────
 function KpiCard({ label, value, icon: Icon, gradient, loading, onClick, pulse }) {
+  // Layered shadow: inset top highlight + bottom darker line for depth, plus a
+  // brand-colored drop shadow that approximates a glow under the card.
+  const cardStyle = {
+    background: gradient,
+    boxShadow: `
+      inset 0 1px 0 0 rgba(255,255,255,0.28),
+      inset 0 -1px 0 0 rgba(0,0,0,0.12),
+      0 10px 24px -8px rgba(15, 23, 42, 0.18),
+      0 4px 8px -2px rgba(15, 23, 42, 0.08)
+    `,
+    border: '1px solid rgba(255,255,255,0.18)',
+  };
   return (
     <div
       onClick={onClick}
-      className={`relative overflow-hidden rounded-xl flex items-center gap-3 px-4 py-3 transition-all duration-200 select-none
-        ${onClick ? 'cursor-pointer hover:-translate-y-0.5 hover:shadow-lg active:scale-95' : ''}
-        ${pulse ? 'ring-2 ring-red-400 ring-offset-1' : ''}
-        shadow-sm`}
-      style={{ background: gradient }}
+      className={`relative overflow-hidden rounded-2xl flex items-center gap-3 px-4 py-4 transition-all duration-200 select-none
+        ${onClick ? 'cursor-pointer hover:-translate-y-1 active:scale-[0.98]' : ''}
+        ${pulse ? 'ring-2 ring-red-300 ring-offset-2' : ''}`}
+      style={cardStyle}
     >
-      {/* Decorative circle */}
-      <div className="absolute -top-3 -left-3 w-16 h-16 rounded-full bg-white/10 pointer-events-none" />
-      <div className="absolute -bottom-4 -right-1 w-14 h-14 rounded-full bg-white/10 pointer-events-none" />
+      {/* Decorative orbs */}
+      <div
+        className="absolute -top-8 -end-8 w-28 h-28 rounded-full pointer-events-none"
+        style={{ background: 'radial-gradient(circle, rgba(255,255,255,0.22) 0%, transparent 70%)' }}
+      />
+      <div
+        className="absolute -bottom-10 -start-6 w-24 h-24 rounded-full pointer-events-none"
+        style={{ background: 'radial-gradient(circle, rgba(255,255,255,0.12) 0%, transparent 70%)' }}
+      />
 
-      {/* Icon */}
-      <div className="relative z-10 bg-white/20 backdrop-blur-sm p-2 rounded-lg flex-shrink-0">
-        <Icon className="w-4 h-4 text-white" />
+      {/* Icon — frosted-glass tile */}
+      <div
+        className="relative z-10 inline-flex items-center justify-center h-11 w-11 rounded-xl flex-shrink-0"
+        style={{
+          background: 'rgba(255,255,255,0.2)',
+          backdropFilter: 'blur(10px)',
+          boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.3)',
+          border: '1px solid rgba(255,255,255,0.22)',
+        }}
+      >
+        <Icon className="w-5 h-5 text-white" strokeWidth={2.4} />
       </div>
 
       {/* Text */}
       <div className="relative z-10 flex-1 min-w-0">
         {loading ? (
-          <div className="h-6 w-12 bg-white/30 animate-pulse rounded mb-0.5" />
+          <div className="h-7 w-16 bg-white/30 animate-pulse rounded mb-1" />
         ) : (
-          <p className="text-xl font-black text-white leading-none">{value ?? '—'}</p>
+          <p className="text-2xl font-black text-white leading-none tracking-tight drop-shadow">
+            {value ?? '—'}
+          </p>
         )}
-        <p className="text-xs text-white/75 mt-0.5 font-medium truncate">{label}</p>
+        <p className="text-[11px] text-white/85 mt-1.5 font-bold truncate uppercase tracking-wider">
+          {label}
+        </p>
       </div>
 
-      {/* Eye */}
+      {/* Eye chip */}
       {onClick && (
-        <div className="relative z-10 bg-white/20 p-1 rounded-lg flex-shrink-0">
-          <Eye className="w-3 h-3 text-white/70" />
+        <div
+          className="relative z-10 inline-flex items-center justify-center h-7 w-7 rounded-lg flex-shrink-0"
+          style={{
+            background: 'rgba(255,255,255,0.18)',
+            border: '1px solid rgba(255,255,255,0.22)',
+          }}
+        >
+          <Eye className="w-3.5 h-3.5 text-white/85" strokeWidth={2.4} />
         </div>
       )}
     </div>
@@ -2365,12 +2400,33 @@ export default function SystemReports() {
       </div>
 
       {/* ── FILTER BAR ── */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="px-5 py-3 bg-gradient-to-l from-[#1e3a5f]/5 to-[#1e3a5f]/10 border-b border-[#1e3a5f]/10 flex items-center gap-2">
-          <Filter size={14} className="text-[#1e3a5f]" />
-          <span className="text-sm font-bold text-[#1e3a5f]">فلاتر البحث</span>
+      <div
+        className="rounded-2xl border border-border overflow-hidden"
+        style={{
+          background: 'linear-gradient(180deg, #FFFFFF 0%, #FAFBFC 100%)',
+          boxShadow: '0 1px 3px 0 rgba(15, 23, 42, 0.04), inset 0 1px 0 0 rgba(255,255,255,0.9)',
+        }}
+      >
+        <div
+          className="px-5 py-3.5 border-b border-border flex items-center gap-2.5"
+          style={{ background: 'linear-gradient(135deg, #EEF2FF 0%, #F5F3FF 100%)' }}
+        >
+          <div
+            className="inline-flex items-center justify-center h-8 w-8 rounded-lg"
+            style={{
+              background: 'linear-gradient(180deg, #6366F1 0%, #4F46E5 100%)',
+              boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.25), 0 4px 8px -2px rgba(79, 70, 229, 0.4)',
+            }}
+          >
+            <Filter size={14} className="text-white" strokeWidth={2.4} />
+          </div>
+          <span className="text-sm font-extrabold text-text-primary tracking-tight">فلاتر البحث</span>
           {Object.keys(applied).length > 0 && (
-            <span className="mr-auto text-xs bg-[#1e3a5f] text-white px-2.5 py-0.5 rounded-full font-semibold">
+            <span className="ms-auto text-[11px] font-extrabold px-2.5 py-1 rounded-full text-white"
+              style={{
+                background: 'linear-gradient(180deg, #6366F1 0%, #4F46E5 100%)',
+                boxShadow: '0 2px 6px -1px rgba(79, 70, 229, 0.5)',
+              }}>
               {Object.keys(applied).length} فلتر مفعّل
             </span>
           )}
