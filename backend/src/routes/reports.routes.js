@@ -1651,8 +1651,24 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
       const key = `${problem.group_name}|${problem.problem_type}|${sessionType}`;
       const s = statusMap[key];
       if (s && (s.status === 'wont_repeat' || s.status === 'exception' || s.status === 'resolved')) {
+        // Detect "repeated violation": stored status was won't-repeat / exception /
+        // resolved, but the actual count has grown since then. Detected ONCE here
+        // so both KPI mode (showResolved=false) and modal mode (showResolved=true)
+        // agree on which items are still active.
+        const isRepeated =
+          problem.actual != null &&
+          s.actual_at_status != null &&
+          problem.actual > s.actual_at_status;
+        if (isRepeated) {
+          problem.repeated_violation = true;
+          problem.previous_status    = s.status;
+          problem.previous_actual    = s.actual_at_status;
+        }
         if (showResolved) {
-          // Include resolved items when explicitly requested (for filter view)
+          // Include resolved items when explicitly requested (for filter view).
+          // We attach the resolved metadata AND keep the repeated_violation flag
+          // (set above) so the modal's default-hide-resolved filter still surfaces
+          // genuinely-active rows — matching what the KPI count reports.
           problem._resolved_status = s.status;
           problem._status_note     = s.note;
           problem._status_by       = s.updated_by_name;
@@ -1660,15 +1676,8 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
           arr.push(problem);
           return;
         }
-        if (problem.actual != null && s.actual_at_status != null) {
-          if (problem.actual <= s.actual_at_status) return; // still same or less → skip
-          // Count increased → employee repeated the mistake
-          problem.repeated_violation = true;
-          problem.previous_status    = s.status;
-          problem.previous_actual    = s.actual_at_status;
-        } else {
-          return; // date-based problem → skip
-        }
+        // KPI mode: include only if it's a fresh repeated violation, otherwise skip.
+        if (!isRepeated) return;
       }
       arr.push(problem);
     };
