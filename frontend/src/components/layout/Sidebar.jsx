@@ -38,17 +38,17 @@ const AGENT_LINKS = [
   { to: '/agent/absent',             label: 'nav.absentFollowUp',   icon: UserX,           color: 'rose' },
   { to: '/agent/side-session-check', label: 'nav.sideSessionCheck', icon: Video,           color: 'purple' },
   { to: '/agent/clients',            label: 'nav.clientSearch',     icon: Search,          color: 'cyan' },
-  { to: '/agent/code-problems',      label: 'أكواد بها مشكلة',     icon: AlertTriangle,   color: 'amber' },
-  { to: '/agent/pipeline',           label: 'بايبلاين العملاء',     icon: Kanban,          color: 'emerald' },
+  { to: '/agent/code-problems',      label: 'nav.codeProblems',     icon: AlertTriangle,   color: 'amber' },
+  { to: '/agent/pipeline',           label: 'nav.clientPipeline',   icon: Kanban,          color: 'emerald' },
   { to: '/agent/tasks',              label: 'nav.myTasks',          icon: ClipboardList,   color: 'indigo' },
 ];
 
 const ENROLLMENT_LINKS = [
-  { to: '/enrollment/pipeline', label: 'بايبلاين العملاء', icon: Kanban, color: 'emerald' },
+  { to: '/enrollment/pipeline', label: 'nav.clientPipeline', icon: Kanban, color: 'emerald' },
 ];
 
 const ENROLLMENT_LEADER_LINKS = [
-  { to: '/enrollment-leader/pipeline', label: 'بايبلاين العملاء', icon: Kanban, color: 'emerald' },
+  { to: '/enrollment-leader/pipeline', label: 'nav.clientPipeline', icon: Kanban, color: 'emerald' },
 ];
 
 const LEADER_LINKS = [
@@ -58,19 +58,19 @@ const LEADER_LINKS = [
   { to: '/leader/absent',                       label: 'nav.absentReport',     icon: UserX,           color: 'rose' },
   { to: '/leader/performance',                  label: 'nav.performance',      icon: BarChart2,       color: 'green' },
   { to: '/leader/tasks',                        label: 'nav.taskDistribution', icon: ClipboardList,   color: 'indigo' },
-  { to: '/leader/code-problems',                label: 'أكواد بها مشكلة',     icon: AlertTriangle,   color: 'amber' },
-  { to: '/leader/pipeline',                     label: 'بايبلاين العملاء',    icon: Kanban,          color: 'emerald' },
-  { type: 'section', label: 'التقارير' },
-  { to: '/leader/reports/fix-report',           label: 'تقارير الإصلاح',          icon: FileText, color: 'orange' },
-  { to: '/leader/reports/attendance-absence',   label: 'تقارير الحضور والغياب',  icon: Activity, color: 'teal' },
+  { to: '/leader/code-problems',                label: 'nav.codeProblems',     icon: AlertTriangle,   color: 'amber' },
+  { to: '/leader/pipeline',                     label: 'nav.clientPipeline',   icon: Kanban,          color: 'emerald' },
+  { type: 'section', label: 'nav.reportsSection' },
+  { to: '/leader/reports/fix-report',           label: 'nav.fixReports',          icon: FileText, color: 'orange' },
+  { to: '/leader/reports/attendance-absence',   label: 'nav.attendanceReports',   icon: Activity, color: 'teal' },
 ];
 
 const REPORT_LINKS = [
-  { to: '/admin/reports/customer-services',     label: 'تقارير خدمة العملاء',     icon: Headphones,    color: 'rose',    management: 'Customer Services' },
-  { to: '/admin/reports/fix-report',            label: 'تقارير الإصلاح',           icon: FileText,      color: 'orange',  management: 'Customer Services', sub: true },
-  { to: '/admin/reports/attendance-absence',    label: 'تقارير الحضور والغياب',   icon: Activity,      color: 'teal',    management: 'Customer Services', sub: true },
-  { to: '/admin/reports/education',             label: 'تقارير الإدارة التعليمية', icon: GraduationCap, color: 'violet',  management: 'Education' },
-  { to: '/admin/reports/quality',               label: 'تقارير الجودة',            icon: ShieldCheck,   color: 'green',   management: 'Quality' },
+  { to: '/admin/reports/customer-services',     label: 'nav.csReports',          icon: Headphones,    color: 'rose',    management: 'Customer Services' },
+  { to: '/admin/reports/fix-report',            label: 'nav.fixReports',         icon: FileText,      color: 'orange',  management: 'Customer Services', sub: true },
+  { to: '/admin/reports/attendance-absence',    label: 'nav.attendanceReports',  icon: Activity,      color: 'teal',    management: 'Customer Services', sub: true },
+  { to: '/admin/reports/education',             label: 'nav.educationReports',   icon: GraduationCap, color: 'violet',  management: 'Education' },
+  { to: '/admin/reports/quality',               label: 'nav.qualityReports',     icon: ShieldCheck,   color: 'green',   management: 'Quality' },
 ];
 
 const managementMap = {
@@ -86,10 +86,10 @@ function getAdminLinks(user) {
     { to: '/admin/users',        label: 'nav.users',         icon: UserCog,         color: 'indigo' },
     { to: '/admin/upload',       label: 'nav.excelUpload',   icon: Upload,          color: 'orange' },
     { to: '/admin/team',         label: 'nav.team',          icon: Users,           color: 'purple' },
-    { to: '/admin/control',      label: 'لوحة التحكم',       icon: LayoutDashboard, color: 'pink' },
-    { to: '/admin/distribution', label: 'توزيع العملاء',     icon: Shuffle,         color: 'cyan' },
-    { to: '/admin/pipeline',     label: 'بايبلاين العملاء',  icon: Kanban,          color: 'emerald' },
-    { type: 'section', label: 'التقارير' },
+    { to: '/admin/control',      label: 'nav.controlPanel',       icon: LayoutDashboard, color: 'pink' },
+    { to: '/admin/distribution', label: 'nav.clientDistribution', icon: Shuffle,         color: 'cyan' },
+    { to: '/admin/pipeline',     label: 'nav.clientPipeline',     icon: Kanban,          color: 'emerald' },
+    { type: 'section', label: 'nav.reportsSection' },
   ];
   const mgmt = user?.management;
   const reports = mgmt === 'All'

@@ -29,7 +29,17 @@
     "users": "User Management",
     "excelUpload": "Excel Upload",
     "systemReports": "Reports",
-    "logout": "Logout"
+    "logout": "Logout",
+    "controlPanel": "Control Panel",
+    "clientDistribution": "Client Distribution",
+    "clientPipeline": "Client Pipeline",
+    "codeProblems": "Code Problems",
+    "reportsSection": "REPORTS",
+    "csReports": "Customer Service Reports",
+    "fixReports": "Fix Reports",
+    "attendanceReports": "Attendance & Absence Reports",
+    "educationReports": "Education Reports",
+    "qualityReports": "Quality Reports"
   },
   "auth": {
     "login": "Login",

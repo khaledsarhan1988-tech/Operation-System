@@ -29,7 +29,17 @@
     "users": "إدارة المستخدمين",
     "excelUpload": "رفع ملفات Excel",
     "systemReports": "التقارير",
-    "logout": "تسجيل الخروج"
+    "logout": "تسجيل الخروج",
+    "controlPanel": "لوحة التحكم",
+    "clientDistribution": "توزيع العملاء",
+    "clientPipeline": "بايبلاين العملاء",
+    "codeProblems": "أكواد بها مشكلة",
+    "reportsSection": "التقارير",
+    "csReports": "تقارير خدمة العملاء",
+    "fixReports": "تقارير الإصلاح",
+    "attendanceReports": "تقارير الحضور والغياب",
+    "educationReports": "تقارير الإدارة التعليمية",
+    "qualityReports": "تقارير الجودة"
   },
   "auth": {
     "login": "تسجيل الدخول",
