@@ -278,19 +278,28 @@ function syncRemarks(buffer, line, warnings) {
 
   // ─── CROSS-LINE DUPLICATE DETECTION ───────────────────────────
   // Check: any external_id from incoming rows that already exists in OTHER lines?
-  const incomingIds = rows.map(r => r.external_id).filter(id => id != null);
+  // Use DISTINCT + filter to incoming ids only — defends against any accidental
+  // duplicate rows that might exist for the same (external_id, line) pair.
+  const incomingIds = [...new Set(rows.map(r => r.external_id).filter(id => id != null && Number.isFinite(id)))];
+  console.log(`[syncRemarks] line=${line} | parsed_rows=${rows.length} | unique_incoming_ids=${incomingIds.length}`);
   if (incomingIds.length) {
     // Build chunked IN-query (SQLite handles up to ~999 params; chunk at 500 to be safe)
     const CHUNK = 500;
-    const collisions = [];
+    // Use a Map keyed by external_id to dedupe collisions and report each ID once
+    const collisionMap = new Map();
     for (let i = 0; i < incomingIds.length; i += CHUNK) {
       const chunk = incomingIds.slice(i, i + CHUNK);
       const placeholders = chunk.map(() => '?').join(',');
       const found = db.prepare(
-        `SELECT external_id, line FROM remarks WHERE line != ? AND external_id IN (${placeholders})`
+        `SELECT DISTINCT external_id, line FROM remarks WHERE line != ? AND external_id IN (${placeholders})`
       ).all(line, ...chunk);
-      collisions.push(...found);
+      for (const f of found) {
+        const key = `${f.external_id}|${f.line}`;
+        if (!collisionMap.has(key)) collisionMap.set(key, f);
+      }
     }
+    const collisions = [...collisionMap.values()];
+    console.log(`[syncRemarks] line=${line} | collision_count=${collisions.length}`);
     if (collisions.length) {
       warnings.push({
         type: 'cross_line_duplicate_external_id',
