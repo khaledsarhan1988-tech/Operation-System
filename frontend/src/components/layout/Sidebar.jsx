@@ -7,46 +7,70 @@ import {
   LogOut, Headphones, GraduationCap, ShieldCheck, AlertTriangle, Activity, Shuffle, Kanban
 } from 'lucide-react';
 
+// ─── COLOR PALETTE ─────────────────────────────────────────────────────────
+// Each link gets a brand color used for its icon container — this gives the
+// sidebar a vibrant, app-launcher feel instead of one monolithic indigo.
+// Idle: subtle tint of the color (~15%). Hover: ramps up. Active: full gradient.
+const COLOR_MAP = {
+  blue:    { from: '#3B82F6', to: '#06B6D4', glow: 'rgba(59, 130, 246, 0.5)' },
+  indigo:  { from: '#6366F1', to: '#8B5CF6', glow: 'rgba(99, 102, 241, 0.5)' },
+  purple:  { from: '#A855F7', to: '#EC4899', glow: 'rgba(168, 85, 247, 0.5)' },
+  pink:    { from: '#EC4899', to: '#F43F5E', glow: 'rgba(236, 72, 153, 0.5)' },
+  rose:    { from: '#F43F5E', to: '#EF4444', glow: 'rgba(244, 63, 94, 0.5)' },
+  red:     { from: '#EF4444', to: '#F97316', glow: 'rgba(239, 68, 68, 0.5)' },
+  orange:  { from: '#F97316', to: '#F59E0B', glow: 'rgba(249, 115, 22, 0.5)' },
+  amber:   { from: '#F59E0B', to: '#EAB308', glow: 'rgba(245, 158, 11, 0.5)' },
+  yellow:  { from: '#EAB308', to: '#84CC16', glow: 'rgba(234, 179, 8, 0.5)' },
+  green:   { from: '#22C55E', to: '#10B981', glow: 'rgba(34, 197, 94, 0.5)' },
+  emerald: { from: '#10B981', to: '#14B8A6', glow: 'rgba(16, 185, 129, 0.5)' },
+  teal:    { from: '#14B8A6', to: '#06B6D4', glow: 'rgba(20, 184, 166, 0.5)' },
+  cyan:    { from: '#06B6D4', to: '#3B82F6', glow: 'rgba(6, 182, 212, 0.5)' },
+  sky:     { from: '#0EA5E9', to: '#6366F1', glow: 'rgba(14, 165, 233, 0.5)' },
+  violet:  { from: '#8B5CF6', to: '#A855F7', glow: 'rgba(139, 92, 246, 0.5)' },
+  fuchsia: { from: '#D946EF', to: '#EC4899', glow: 'rgba(217, 70, 239, 0.5)' },
+  slate:   { from: '#64748B', to: '#475569', glow: 'rgba(100, 116, 139, 0.4)' },
+};
+
+// ─── LINKS ─────────────────────────────────────────────────────────────────
 const AGENT_LINKS = [
-  { to: '/agent',                    label: 'nav.dashboard',        icon: LayoutDashboard, end: true },
-  { to: '/agent/schedule',           label: 'nav.todaySchedule',    icon: Calendar },
-  { to: '/agent/absent',             label: 'nav.absentFollowUp',   icon: UserX },
-  { to: '/agent/side-session-check', label: 'nav.sideSessionCheck', icon: Video },
-  { to: '/agent/clients',            label: 'nav.clientSearch',     icon: Search },
-  { to: '/agent/code-problems',      label: 'أكواد بها مشكلة',     icon: AlertTriangle },
-  { to: '/agent/pipeline',           label: 'بايبلاين العملاء',     icon: Kanban },
-  { to: '/agent/tasks',              label: 'nav.myTasks',          icon: ClipboardList },
+  { to: '/agent',                    label: 'nav.dashboard',        icon: LayoutDashboard, end: true, color: 'blue' },
+  { to: '/agent/schedule',           label: 'nav.todaySchedule',    icon: Calendar,        color: 'orange' },
+  { to: '/agent/absent',             label: 'nav.absentFollowUp',   icon: UserX,           color: 'rose' },
+  { to: '/agent/side-session-check', label: 'nav.sideSessionCheck', icon: Video,           color: 'purple' },
+  { to: '/agent/clients',            label: 'nav.clientSearch',     icon: Search,          color: 'cyan' },
+  { to: '/agent/code-problems',      label: 'أكواد بها مشكلة',     icon: AlertTriangle,   color: 'amber' },
+  { to: '/agent/pipeline',           label: 'بايبلاين العملاء',     icon: Kanban,          color: 'emerald' },
+  { to: '/agent/tasks',              label: 'nav.myTasks',          icon: ClipboardList,   color: 'indigo' },
 ];
 
 const ENROLLMENT_LINKS = [
-  { to: '/enrollment/pipeline', label: 'بايبلاين العملاء', icon: Kanban },
+  { to: '/enrollment/pipeline', label: 'بايبلاين العملاء', icon: Kanban, color: 'emerald' },
 ];
 
 const ENROLLMENT_LEADER_LINKS = [
-  { to: '/enrollment-leader/pipeline', label: 'بايبلاين العملاء', icon: Kanban },
+  { to: '/enrollment-leader/pipeline', label: 'بايبلاين العملاء', icon: Kanban, color: 'emerald' },
 ];
 
 const LEADER_LINKS = [
-  { to: '/leader',                              label: 'nav.dashboard',        icon: LayoutDashboard, end: true },
-  { to: '/leader/team',                         label: 'nav.team',             icon: Users },
-  { to: '/leader/groups',                       label: 'nav.groupCoverage',    icon: Globe },
-  { to: '/leader/absent',                       label: 'nav.absentReport',     icon: UserX },
-  { to: '/leader/performance',                  label: 'nav.performance',      icon: BarChart2 },
-  { to: '/leader/tasks',                        label: 'nav.taskDistribution', icon: ClipboardList },
-  { to: '/leader/code-problems',                label: 'أكواد بها مشكلة',     icon: AlertTriangle },
-  { to: '/leader/pipeline',                     label: 'بايبلاين العملاء',    icon: Kanban },
+  { to: '/leader',                              label: 'nav.dashboard',        icon: LayoutDashboard, end: true, color: 'blue' },
+  { to: '/leader/team',                         label: 'nav.team',             icon: Users,           color: 'purple' },
+  { to: '/leader/groups',                       label: 'nav.groupCoverage',    icon: Globe,           color: 'cyan' },
+  { to: '/leader/absent',                       label: 'nav.absentReport',     icon: UserX,           color: 'rose' },
+  { to: '/leader/performance',                  label: 'nav.performance',      icon: BarChart2,       color: 'green' },
+  { to: '/leader/tasks',                        label: 'nav.taskDistribution', icon: ClipboardList,   color: 'indigo' },
+  { to: '/leader/code-problems',                label: 'أكواد بها مشكلة',     icon: AlertTriangle,   color: 'amber' },
+  { to: '/leader/pipeline',                     label: 'بايبلاين العملاء',    icon: Kanban,          color: 'emerald' },
   { type: 'section', label: 'التقارير' },
-  { to: '/leader/reports/fix-report',           label: 'تقارير الإصلاح',          icon: FileText },
-  { to: '/leader/reports/attendance-absence',   label: 'تقارير الحضور والغياب',  icon: Activity },
+  { to: '/leader/reports/fix-report',           label: 'تقارير الإصلاح',          icon: FileText, color: 'orange' },
+  { to: '/leader/reports/attendance-absence',   label: 'تقارير الحضور والغياب',  icon: Activity, color: 'teal' },
 ];
 
-
 const REPORT_LINKS = [
-  { to: '/admin/reports/customer-services',     label: 'تقارير خدمة العملاء',     icon: Headphones,    management: 'Customer Services' },
-  { to: '/admin/reports/fix-report',            label: 'تقارير الإصلاح',           icon: FileText,      management: 'Customer Services', sub: true },
-  { to: '/admin/reports/attendance-absence',    label: 'تقارير الحضور والغياب',   icon: Activity,      management: 'Customer Services', sub: true },
-  { to: '/admin/reports/education',             label: 'تقارير الإدارة التعليمية', icon: GraduationCap, management: 'Education' },
-  { to: '/admin/reports/quality',               label: 'تقارير الجودة',            icon: ShieldCheck,   management: 'Quality' },
+  { to: '/admin/reports/customer-services',     label: 'تقارير خدمة العملاء',     icon: Headphones,    color: 'rose',    management: 'Customer Services' },
+  { to: '/admin/reports/fix-report',            label: 'تقارير الإصلاح',           icon: FileText,      color: 'orange',  management: 'Customer Services', sub: true },
+  { to: '/admin/reports/attendance-absence',    label: 'تقارير الحضور والغياب',   icon: Activity,      color: 'teal',    management: 'Customer Services', sub: true },
+  { to: '/admin/reports/education',             label: 'تقارير الإدارة التعليمية', icon: GraduationCap, color: 'violet',  management: 'Education' },
+  { to: '/admin/reports/quality',               label: 'تقارير الجودة',            icon: ShieldCheck,   color: 'green',   management: 'Quality' },
 ];
 
 const managementMap = {
@@ -58,13 +82,13 @@ const managementMap = {
 
 function getAdminLinks(user) {
   const base = [
-    { to: '/admin',         label: 'nav.dashboard', icon: LayoutDashboard, end: true },
-    { to: '/admin/users',   label: 'nav.users',     icon: UserCog },
-    { to: '/admin/upload',  label: 'nav.excelUpload', icon: Upload },
-    { to: '/admin/team',    label: 'nav.team',      icon: Users },
-    { to: '/admin/control',       label: 'لوحة التحكم',   icon: LayoutDashboard },
-    { to: '/admin/distribution', label: 'توزيع العملاء', icon: Shuffle },
-    { to: '/admin/pipeline',     label: 'بايبلاين العملاء', icon: Kanban },
+    { to: '/admin',              label: 'nav.dashboard',     icon: LayoutDashboard, end: true, color: 'blue' },
+    { to: '/admin/users',        label: 'nav.users',         icon: UserCog,         color: 'indigo' },
+    { to: '/admin/upload',       label: 'nav.excelUpload',   icon: Upload,          color: 'orange' },
+    { to: '/admin/team',         label: 'nav.team',          icon: Users,           color: 'purple' },
+    { to: '/admin/control',      label: 'لوحة التحكم',       icon: LayoutDashboard, color: 'pink' },
+    { to: '/admin/distribution', label: 'توزيع العملاء',     icon: Shuffle,         color: 'cyan' },
+    { to: '/admin/pipeline',     label: 'بايبلاين العملاء',  icon: Kanban,          color: 'emerald' },
     { type: 'section', label: 'التقارير' },
   ];
   const mgmt = user?.management;
@@ -90,6 +114,16 @@ function gradientFor(name = '') {
   return AVATAR_GRADIENTS[Math.abs(hash) % AVATAR_GRADIENTS.length];
 }
 
+// Build CSS variables for a colored link — used for icon container bg/glow
+function colorVars(color) {
+  const c = COLOR_MAP[color] || COLOR_MAP.indigo;
+  return {
+    '--link-from': c.from,
+    '--link-to':   c.to,
+    '--link-glow': c.glow,
+  };
+}
+
 export default function Sidebar({ mobile, onClose }) {
   const { t } = useTranslation();
   const { user, logout } = useAuth();
@@ -113,27 +147,31 @@ export default function Sidebar({ mobile, onClose }) {
     <div
       className="flex flex-col h-full w-72 relative overflow-hidden"
       style={{
-        background: 'linear-gradient(180deg, #0F172A 0%, #1E1B4B 100%)',
-        boxShadow: 'inset -1px 0 0 rgba(255,255,255,0.05), 4px 0 24px -8px rgba(15, 23, 42, 0.4)',
+        background: 'linear-gradient(165deg, #0B1120 0%, #1E1B4B 55%, #1A0F2E 100%)',
+        boxShadow: 'inset -1px 0 0 rgba(255,255,255,0.06), 8px 0 32px -8px rgba(15, 23, 42, 0.5)',
       }}
     >
-      {/* Decorative gradient orb in background */}
+      {/* Decorative gradient orbs in background */}
       <div
-        className="absolute top-0 right-0 w-64 h-64 rounded-full opacity-20 blur-3xl pointer-events-none"
+        className="absolute top-0 right-0 w-72 h-72 rounded-full opacity-25 blur-3xl pointer-events-none"
         style={{ background: 'radial-gradient(circle, #6366F1 0%, transparent 70%)' }}
       />
       <div
-        className="absolute bottom-0 left-0 w-72 h-72 rounded-full opacity-15 blur-3xl pointer-events-none"
+        className="absolute bottom-32 left-0 w-72 h-72 rounded-full opacity-20 blur-3xl pointer-events-none"
         style={{ background: 'radial-gradient(circle, #A855F7 0%, transparent 70%)' }}
+      />
+      <div
+        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full opacity-10 blur-3xl pointer-events-none"
+        style={{ background: 'radial-gradient(circle, #EC4899 0%, transparent 70%)' }}
       />
 
       {/* Brand header */}
-      <div className="relative z-10 flex items-center gap-3 px-5 py-5 border-b border-white/5">
+      <div className="relative z-10 flex items-center gap-3 px-5 py-5 border-b border-white/[0.06]">
         <div
-          className="h-11 w-11 rounded-xl flex items-center justify-center flex-shrink-0"
+          className="h-11 w-11 rounded-2xl flex items-center justify-center flex-shrink-0"
           style={{
-            background: 'linear-gradient(180deg, #FFFFFF 0%, #F1F5F9 100%)',
-            boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.8), 0 4px 12px -2px rgba(0,0,0,0.3)',
+            background: 'linear-gradient(180deg, #FFFFFF 0%, #E2E8F0 100%)',
+            boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.9), 0 8px 16px -4px rgba(99, 102, 241, 0.4)',
           }}
         >
           <img src="/logo.png" alt="Logo" className="h-9 w-9 object-contain" />
@@ -142,30 +180,30 @@ export default function Sidebar({ mobile, onClose }) {
           <p className="text-white font-extrabold text-base leading-tight truncate tracking-tight">
             {t('app.name')}
           </p>
-          <p className="text-slate-400 text-[11px] truncate mt-0.5 font-semibold">
+          <p className="text-slate-400 text-[11px] truncate mt-0.5 font-bold">
             {t('app.tagline')}
           </p>
         </div>
       </div>
 
-      {/* User card — raised, gradient avatar */}
-      <div className="relative z-10 px-3 py-3 border-b border-white/5">
+      {/* User card — glassmorphism */}
+      <div className="relative z-10 px-3 py-3 border-b border-white/[0.06]">
         <div
-          className="flex items-center gap-3 px-3 py-2.5 rounded-xl"
+          className="flex items-center gap-3 px-3 py-3 rounded-xl backdrop-blur-md"
           style={{
-            background: 'linear-gradient(180deg, rgba(51, 65, 85, 0.6) 0%, rgba(30, 41, 59, 0.6) 100%)',
-            boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.05), 0 2px 6px -1px rgba(0,0,0,0.3)',
-            border: '1px solid rgba(255,255,255,0.05)',
+            background: 'linear-gradient(135deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.02) 100%)',
+            boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.08), 0 4px 12px -2px rgba(0,0,0,0.4)',
+            border: '1px solid rgba(255,255,255,0.08)',
           }}
         >
           <div className={`avatar avatar-md bg-gradient-to-br ${gradient}`}>
             {initial}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-white text-sm font-bold truncate leading-tight">
+            <p className="text-white text-sm font-extrabold truncate leading-tight tracking-tight">
               {user?.full_name}
             </p>
-            <p className="text-slate-400 text-[11px] truncate font-semibold mt-0.5">
+            <p className="text-slate-400 text-[11px] truncate font-bold mt-0.5">
               {t(`roles.${user?.role}`, user?.role)}
               {user?.management ? ` · ${managementMap[user?.management] || user?.management}` : ''}
             </p>
@@ -179,31 +217,32 @@ export default function Sidebar({ mobile, onClose }) {
           if (item.type === 'section') {
             return (
               <div key={i} className="px-3 pt-5 pb-2 flex items-center gap-2">
-                <div className="h-px flex-1 bg-gradient-to-r from-transparent via-white/10 to-white/10" />
-                <p className="text-[10px] font-extrabold text-slate-500 uppercase tracking-[0.15em]">
+                <div className="h-px flex-1 bg-gradient-to-r from-transparent via-white/15 to-white/15" />
+                <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-[0.18em]">
                   {item.label}
                 </p>
-                <div className="h-px flex-1 bg-gradient-to-l from-transparent via-white/10 to-white/10" />
+                <div className="h-px flex-1 bg-gradient-to-l from-transparent via-white/15 to-white/15" />
               </div>
             );
           }
-          const { to, label, icon: Icon, end, sub } = item;
+          const { to, label, icon: Icon, end, sub, color } = item;
           return (
             <NavLink
               key={to}
               to={to}
               end={end}
               onClick={mobile ? onClose : undefined}
+              style={colorVars(color)}
               className={({ isActive }) =>
                 sub
-                  ? `sidebar-link ms-4 ${isActive ? 'active' : ''}`
-                  : `sidebar-link ${isActive ? 'active' : ''}`
+                  ? `sidebar-link-v2 ms-4 ${isActive ? 'active' : ''}`
+                  : `sidebar-link-v2 ${isActive ? 'active' : ''}`
               }
             >
-              <span className="si-icon">
-                <Icon size={sub ? 15 : 17} strokeWidth={2.2} />
+              <span className="si-icon-v2">
+                <Icon size={sub ? 15 : 18} strokeWidth={2.4} />
               </span>
-              <span className={`flex-1 ${sub ? 'text-xs' : 'text-sm'} truncate`}>
+              <span className={`flex-1 ${sub ? 'text-xs' : 'text-sm'} truncate font-bold`}>
                 {t(label, label)}
               </span>
             </NavLink>
@@ -212,24 +251,26 @@ export default function Sidebar({ mobile, onClose }) {
       </nav>
 
       {/* Logout */}
-      <div className="relative z-10 p-3 border-t border-white/5">
+      <div className="relative z-10 p-3 border-t border-white/[0.06]">
         <button
           onClick={handleLogout}
-          className="w-full inline-flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold
-                     text-rose-300 hover:text-white transition-all duration-200 group"
+          className="w-full inline-flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-extrabold
+                     text-rose-100 hover:text-white transition-all duration-200 group"
           style={{
-            background: 'linear-gradient(180deg, rgba(244, 63, 94, 0.08) 0%, rgba(225, 29, 72, 0.05) 100%)',
-            border: '1px solid rgba(244, 63, 94, 0.15)',
+            background: 'linear-gradient(135deg, rgba(244, 63, 94, 0.15) 0%, rgba(225, 29, 72, 0.08) 100%)',
+            border: '1px solid rgba(244, 63, 94, 0.25)',
+            boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.05), 0 4px 12px -4px rgba(244, 63, 94, 0.3)',
           }}
         >
           <span
             className="inline-flex items-center justify-center h-9 w-9 rounded-lg flex-shrink-0 transition-all duration-200"
             style={{
-              background: 'linear-gradient(180deg, rgba(244, 63, 94, 0.2) 0%, rgba(225, 29, 72, 0.15) 100%)',
-              boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.08)',
+              background: 'linear-gradient(180deg, #F43F5E 0%, #E11D48 100%)',
+              boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.25), 0 4px 8px -2px rgba(244, 63, 94, 0.5)',
+              color: '#FFFFFF',
             }}
           >
-            <LogOut size={17} strokeWidth={2.2} />
+            <LogOut size={17} strokeWidth={2.4} />
           </span>
           <span>{t('nav.logout')}</span>
         </button>
