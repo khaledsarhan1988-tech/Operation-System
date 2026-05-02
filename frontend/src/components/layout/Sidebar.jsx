@@ -219,7 +219,7 @@ export default function Sidebar({ mobile, onClose }) {
               <div key={i} className="px-3 pt-5 pb-2 flex items-center gap-2">
                 <div className="h-px flex-1 bg-gradient-to-r from-transparent via-white/15 to-white/15" />
                 <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-[0.18em]">
-                  {item.label}
+                  {t(item.label, item.label)}
                 </p>
                 <div className="h-px flex-1 bg-gradient-to-l from-transparent via-white/15 to-white/15" />
               </div>
