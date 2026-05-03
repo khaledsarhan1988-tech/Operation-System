@@ -411,3 +411,146 @@
   0%   { opacity: 1; transform: rotate(0deg) scale(1); }
   100% { opacity: 0; transform: rotate(180deg) scale(0.3); }
 }
+
+/* ─── DARK MODE ────────────────────────────────────────────────────────────── */
+/*
+ * The dark theme is opt-in via [data-theme="dark"] on <html>. Rather than
+ * rewriting every Tailwind class, we re-skin the most common surfaces here so
+ * the existing pages look correct without touching their JSX:
+ *   - body/page background
+ *   - white cards / borders / dividers
+ *   - gray text shades
+ *   - inputs / selects / textareas
+ *   - hover/striped table rows
+ *   - shadcn-ish backdrops & overlays
+ */
+html[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+html[data-theme="dark"] body {
+  background-color: #0B1120;
+  background-image:
+    radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.10) 0px, transparent 55%),
+    radial-gradient(at 100% 100%, rgba(168, 85, 247, 0.08) 0px, transparent 55%);
+  color: #E2E8F0;
+}
+
+html[data-theme="dark"] ::selection { background-color: #4338CA; color: #F8FAFC; }
+
+/* White surfaces → deep slate panels */
+html[data-theme="dark"] .bg-white                         { background-color: #111827 !important; }
+html[data-theme="dark"] .bg-white\/80                     { background-color: rgba(17, 24, 39, 0.85) !important; }
+html[data-theme="dark"] .bg-white\/90                     { background-color: rgba(17, 24, 39, 0.92) !important; }
+html[data-theme="dark"] .bg-white\/60                     { background-color: rgba(17, 24, 39, 0.7)  !important; }
+
+/* Soft gray surfaces */
+html[data-theme="dark"] .bg-gray-50                       { background-color: #0F172A !important; }
+html[data-theme="dark"] .bg-gray-50\/40                   { background-color: rgba(15, 23, 42, 0.4)  !important; }
+html[data-theme="dark"] .bg-gray-50\/50                   { background-color: rgba(15, 23, 42, 0.55) !important; }
+html[data-theme="dark"] .bg-gray-50\/60                   { background-color: rgba(15, 23, 42, 0.6)  !important; }
+html[data-theme="dark"] .bg-gray-100                      { background-color: #1F2937 !important; }
+html[data-theme="dark"] .bg-gray-100\/60                  { background-color: rgba(31, 41, 55, 0.6) !important; }
+html[data-theme="dark"] .bg-gray-100\/70                  { background-color: rgba(31, 41, 55, 0.7) !important; }
+html[data-theme="dark"] .bg-gray-200                      { background-color: #374151 !important; }
+html[data-theme="dark"] .hover\:bg-gray-50:hover          { background-color: #1F2937 !important; }
+html[data-theme="dark"] .hover\:bg-gray-100:hover         { background-color: #374151 !important; }
+html[data-theme="dark"] .hover\:bg-gray-50\/30:hover      { background-color: rgba(31, 41, 55, 0.4) !important; }
+html[data-theme="dark"] .hover\:bg-gray-50\/40:hover      { background-color: rgba(31, 41, 55, 0.5) !important; }
+html[data-theme="dark"] .hover\:bg-gray-50\/60:hover      { background-color: rgba(31, 41, 55, 0.55) !important; }
+html[data-theme="dark"] .hover\:bg-gray-100\/70:hover     { background-color: rgba(55, 65, 81, 0.7)  !important; }
+
+/* Borders */
+html[data-theme="dark"] .border-gray-100                  { border-color: rgba(55, 65, 81, 0.5) !important; }
+html[data-theme="dark"] .border-gray-200                  { border-color: rgba(75, 85, 99, 0.5) !important; }
+html[data-theme="dark"] .border-gray-300                  { border-color: rgba(107, 114, 128, 0.5) !important; }
+html[data-theme="dark"] .border-t-gray-100                { border-top-color: rgba(55, 65, 81, 0.5) !important; }
+html[data-theme="dark"] .border-b-gray-100                { border-bottom-color: rgba(55, 65, 81, 0.5) !important; }
+
+/* Divides */
+html[data-theme="dark"] .divide-gray-50    > * + *        { border-color: rgba(31, 41, 55, 0.6) !important; }
+html[data-theme="dark"] .divide-gray-100   > * + *        { border-color: rgba(55, 65, 81, 0.5) !important; }
+
+/* Text shades — keep accent-coloured text untouched */
+html[data-theme="dark"] .text-gray-900                    { color: #F1F5F9 !important; }
+html[data-theme="dark"] .text-gray-800                    { color: #E2E8F0 !important; }
+html[data-theme="dark"] .text-gray-700                    { color: #CBD5E1 !important; }
+html[data-theme="dark"] .text-gray-600                    { color: #94A3B8 !important; }
+html[data-theme="dark"] .text-gray-500                    { color: #94A3B8 !important; }
+html[data-theme="dark"] .text-gray-400                    { color: #94A3B8 !important; }
+html[data-theme="dark"] .text-gray-300                    { color: #CBD5E1 !important; }
+html[data-theme="dark"] .text-text-primary                { color: #F1F5F9 !important; }
+html[data-theme="dark"] .text-text-secondary              { color: #94A3B8 !important; }
+html[data-theme="dark"] .text-text-muted                  { color: #64748B !important; }
+
+/* Inputs */
+html[data-theme="dark"] input,
+html[data-theme="dark"] select,
+html[data-theme="dark"] textarea {
+  background-color: #1F2937 !important;
+  color: #E2E8F0 !important;
+  border-color: rgba(75, 85, 99, 0.5) !important;
+}
+html[data-theme="dark"] input::placeholder,
+html[data-theme="dark"] textarea::placeholder { color: #64748B !important; }
+
+/* Card class (legacy from globals) */
+html[data-theme="dark"] .card { background-color: #111827 !important; border-color: rgba(55, 65, 81, 0.5) !important; }
+
+/* Soft accent tints stay readable on dark */
+html[data-theme="dark"] .bg-emerald-50   { background-color: rgba(16, 185, 129, 0.12) !important; }
+html[data-theme="dark"] .bg-emerald-100  { background-color: rgba(16, 185, 129, 0.18) !important; }
+html[data-theme="dark"] .bg-blue-50      { background-color: rgba(59, 130, 246, 0.12) !important; }
+html[data-theme="dark"] .bg-blue-100     { background-color: rgba(59, 130, 246, 0.18) !important; }
+html[data-theme="dark"] .bg-indigo-50    { background-color: rgba(99, 102, 241, 0.14) !important; }
+html[data-theme="dark"] .bg-indigo-100   { background-color: rgba(99, 102, 241, 0.20) !important; }
+html[data-theme="dark"] .bg-violet-50    { background-color: rgba(139, 92, 246, 0.12) !important; }
+html[data-theme="dark"] .bg-violet-100   { background-color: rgba(139, 92, 246, 0.18) !important; }
+html[data-theme="dark"] .bg-amber-50     { background-color: rgba(245, 158, 11, 0.12) !important; }
+html[data-theme="dark"] .bg-amber-100    { background-color: rgba(245, 158, 11, 0.20) !important; }
+html[data-theme="dark"] .bg-rose-50      { background-color: rgba(244, 63, 94, 0.12) !important; }
+html[data-theme="dark"] .bg-rose-100     { background-color: rgba(244, 63, 94, 0.18) !important; }
+html[data-theme="dark"] .bg-red-50       { background-color: rgba(239, 68, 68, 0.12) !important; }
+html[data-theme="dark"] .bg-red-100      { background-color: rgba(239, 68, 68, 0.18) !important; }
+html[data-theme="dark"] .bg-cyan-50      { background-color: rgba(6, 182, 212, 0.12) !important; }
+html[data-theme="dark"] .bg-cyan-100     { background-color: rgba(6, 182, 212, 0.18) !important; }
+html[data-theme="dark"] .bg-pink-50      { background-color: rgba(236, 72, 153, 0.12) !important; }
+html[data-theme="dark"] .bg-pink-100     { background-color: rgba(236, 72, 153, 0.18) !important; }
+html[data-theme="dark"] .bg-fuchsia-50   { background-color: rgba(217, 70, 239, 0.12) !important; }
+html[data-theme="dark"] .bg-fuchsia-100  { background-color: rgba(217, 70, 239, 0.18) !important; }
+html[data-theme="dark"] .bg-orange-50    { background-color: rgba(249, 115, 22, 0.12) !important; }
+html[data-theme="dark"] .bg-orange-100   { background-color: rgba(249, 115, 22, 0.18) !important; }
+
+/* Match the corresponding -700/-800 text on those tinted bgs to a brighter shade */
+html[data-theme="dark"] .text-emerald-700,
+html[data-theme="dark"] .text-emerald-800  { color: #6EE7B7 !important; }
+html[data-theme="dark"] .text-blue-700,
+html[data-theme="dark"] .text-blue-800     { color: #93C5FD !important; }
+html[data-theme="dark"] .text-indigo-700,
+html[data-theme="dark"] .text-indigo-800   { color: #A5B4FC !important; }
+html[data-theme="dark"] .text-violet-700,
+html[data-theme="dark"] .text-violet-800   { color: #C4B5FD !important; }
+html[data-theme="dark"] .text-amber-700,
+html[data-theme="dark"] .text-amber-800    { color: #FCD34D !important; }
+html[data-theme="dark"] .text-rose-700,
+html[data-theme="dark"] .text-rose-800     { color: #FDA4AF !important; }
+html[data-theme="dark"] .text-red-700,
+html[data-theme="dark"] .text-red-800      { color: #FCA5A5 !important; }
+html[data-theme="dark"] .text-cyan-700,
+html[data-theme="dark"] .text-cyan-800     { color: #67E8F9 !important; }
+html[data-theme="dark"] .text-pink-700     { color: #F9A8D4 !important; }
+html[data-theme="dark"] .text-fuchsia-700  { color: #E9D5FF !important; }
+html[data-theme="dark"] .text-orange-700   { color: #FDBA74 !important; }
+
+/* Backdrops behind modals — keep them dark but readable */
+html[data-theme="dark"] .bg-black\/40  { background-color: rgba(0, 0, 0, 0.55) !important; }
+html[data-theme="dark"] .bg-black\/50  { background-color: rgba(0, 0, 0, 0.65) !important; }
+html[data-theme="dark"] .bg-black\/60  { background-color: rgba(0, 0, 0, 0.7)  !important; }
+
+/* Shadows — subtle them down so they don't glow */
+html[data-theme="dark"] .shadow-sm  { box-shadow: 0 1px 2px 0 rgba(0,0,0,0.4) !important; }
+html[data-theme="dark"] .shadow,
+html[data-theme="dark"] .shadow-md  { box-shadow: 0 2px 6px -1px rgba(0,0,0,0.5) !important; }
+html[data-theme="dark"] .shadow-lg  { box-shadow: 0 8px 18px -4px rgba(0,0,0,0.55) !important; }
+html[data-theme="dark"] .shadow-xl  { box-shadow: 0 14px 28px -6px rgba(0,0,0,0.6)  !important; }
+html[data-theme="dark"] .shadow-2xl { box-shadow: 0 25px 50px -12px rgba(0,0,0,0.7) !important; }

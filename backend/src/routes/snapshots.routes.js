@@ -38,9 +38,42 @@ function safeRate(num, denom) {
   return clampPct((num / denom) * 100);
 }
 
-// Compute overall = 0.5*completion + 0.25*followup + 0.25*fix
-function computeOverall(completion, followup, fix) {
-  return clampPct(completion * 0.5 + followup * 0.25 + fix * 0.25);
+// Compute overall using current admin-configured weights
+// (falls back to 50/25/25/0 if the weights row is missing).
+function getKpiWeights() {
+  try {
+    const row = db.prepare(`SELECT weight_completion, weight_followup, weight_fix, weight_sla FROM kpi_weights WHERE id = 1`).get();
+    if (row) return row;
+  } catch (_) {}
+  return { weight_completion: 50, weight_followup: 25, weight_fix: 25, weight_sla: 0 };
+}
+
+function computeOverall(completion, followup, fix, sla = 0) {
+  const w = getKpiWeights();
+  const sum = (w.weight_completion || 0) + (w.weight_followup || 0) + (w.weight_fix || 0) + (w.weight_sla || 0);
+  if (sum <= 0) return clampPct(completion * 0.5 + followup * 0.25 + fix * 0.25);
+  // Normalize so weights always sum to 100 in effect
+  return clampPct(
+    (completion * (w.weight_completion || 0) +
+     followup   * (w.weight_followup   || 0) +
+     fix        * (w.weight_fix        || 0) +
+     sla        * (w.weight_sla        || 0)) / sum
+  );
+}
+
+// Audit log helper — fail-soft (never break the parent operation)
+function logAudit({ action, year = null, month = null, agent_name = null, details = null, user_id = null, user_name = null, line = 'Ahmed Hassan' }) {
+  try {
+    db.prepare(`INSERT INTO snapshot_audit_log
+      (action, year, month, agent_name, details, user_id, user_name, line)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      action, year, month, agent_name,
+      details ? (typeof details === 'string' ? details : JSON.stringify(details)) : null,
+      user_id, user_name, line
+    );
+  } catch (e) {
+    console.error('audit log error:', e.message);
+  }
 }
 
 // Look up the effective target for an agent on a given month.
@@ -169,7 +202,7 @@ function computeAgentKpis(agent, year, month, line) {
   const code_problems_resolved = cp?.resolved || 0;
   const fix_rate = code_problems_total === 0 ? 100 : safeRate(code_problems_resolved, code_problems_total);
 
-  const overall_score = computeOverall(completion_rate, followup_rate, fix_rate);
+  const overall_score = computeOverall(completion_rate, followup_rate, fix_rate, sla_rate);
 
   // Targets snapshot
   const t = lookupTarget(agent.full_name, agent.department, line, start);
@@ -421,6 +454,12 @@ router.post('/freeze', (req, res) => {
 
   try {
     const result = freezeMonth(y, m, line, req.user?.id, !!overwrite);
+    logAudit({
+      action: overwrite ? 'overwrite' : 'freeze',
+      year: y, month: m,
+      details: { created: result.created, updated: result.updated, skipped: result.skipped },
+      user_id: req.user?.id, user_name: req.user?.full_name, line,
+    });
     return res.json({ year: y, month: m, line, ...result });
   } catch (e) {
     console.error('freeze error', e);
@@ -468,6 +507,11 @@ router.post('/freeze-bulk', (req, res) => {
       all.push({ year: p.year, month: p.month, status: 'error', error: e.message });
     }
   }
+  logAudit({
+    action: 'freeze_bulk',
+    details: { from, to, overwrite: !!overwrite, results: all.map(a => ({ y: a.year, m: a.month, status: a.status, created: a.created, updated: a.updated })) },
+    user_id: req.user?.id, user_name: req.user?.full_name, line,
+  });
   return res.json({ line, months: all });
 });
 
@@ -755,6 +799,11 @@ router.delete('/:year(\\d{4})/:month(\\d{1,2})', (req, res) => {
   const before = db.prepare(`SELECT COUNT(*) AS c FROM monthly_snapshots ${where}`).get(...params);
   db.prepare(`DELETE FROM monthly_snapshots ${where}`).run(...params);
   saveNow();
+  logAudit({
+    action: 'delete', year: y, month: m,
+    details: { deleted: before?.c || 0 },
+    user_id: req.user?.id, user_name: req.user?.full_name, line: line || 'Ahmed Hassan',
+  });
   return res.json({ deleted: before?.c || 0, year: y, month: m });
 });
 
@@ -791,6 +840,14 @@ router.post('/:id/notes', (req, res) => {
     VALUES (?, ?, ?)
   `).run(id, note.trim(), req.user?.id);
   saveNow();
+  // Audit
+  const meta = db.prepare(`SELECT year, month, agent_name, line FROM monthly_snapshots WHERE id = ?`).get(id);
+  logAudit({
+    action: 'note_add',
+    year: meta?.year, month: meta?.month, agent_name: meta?.agent_name,
+    details: { snapshot_id: id, note_id: r.lastInsertRowid, preview: note.trim().slice(0, 80) },
+    user_id: req.user?.id, user_name: req.user?.full_name, line: meta?.line || 'Ahmed Hassan',
+  });
   return res.json({ id: r.lastInsertRowid, snapshot_id: id });
 });
 
@@ -807,6 +864,19 @@ router.put('/notes/:noteId', (req, res) => {
   `).run(note.trim(), noteId);
   saveNow();
   if (r.changes === 0) return res.status(404).json({ error: 'Note not found' });
+  // Audit
+  const meta = db.prepare(`
+    SELECT ms.year, ms.month, ms.agent_name, ms.line, sn.snapshot_id
+    FROM snapshot_notes sn
+    LEFT JOIN monthly_snapshots ms ON ms.id = sn.snapshot_id
+    WHERE sn.id = ?
+  `).get(noteId);
+  logAudit({
+    action: 'note_edit',
+    year: meta?.year, month: meta?.month, agent_name: meta?.agent_name,
+    details: { snapshot_id: meta?.snapshot_id, note_id: noteId, preview: note.trim().slice(0, 80) },
+    user_id: req.user?.id, user_name: req.user?.full_name, line: meta?.line || 'Ahmed Hassan',
+  });
   return res.json({ id: noteId });
 });
 
@@ -814,10 +884,250 @@ router.put('/notes/:noteId', (req, res) => {
 router.delete('/notes/:noteId', (req, res) => {
   const noteId = parseInt(req.params.noteId, 10);
   if (!noteId) return res.status(400).json({ error: 'Invalid note id' });
+  // Get metadata before deletion (for audit log)
+  const meta = db.prepare(`
+    SELECT ms.year, ms.month, ms.agent_name, ms.line, sn.snapshot_id
+    FROM snapshot_notes sn
+    LEFT JOIN monthly_snapshots ms ON ms.id = sn.snapshot_id
+    WHERE sn.id = ?
+  `).get(noteId);
   const r = db.prepare(`DELETE FROM snapshot_notes WHERE id = ?`).run(noteId);
   saveNow();
   if (r.changes === 0) return res.status(404).json({ error: 'Note not found' });
+  logAudit({
+    action: 'note_delete',
+    year: meta?.year, month: meta?.month, agent_name: meta?.agent_name,
+    details: { snapshot_id: meta?.snapshot_id, note_id: noteId },
+    user_id: req.user?.id, user_name: req.user?.full_name, line: meta?.line || 'Ahmed Hassan',
+  });
   return res.json({ deleted: 1 });
+});
+
+// ─── KPI WEIGHTS ──────────────────────────────────────────────────────────────
+
+// GET /api/admin/snapshots/weights
+router.get('/weights', (req, res) => {
+  const w = getKpiWeights();
+  return res.json(w);
+});
+
+// PUT /api/admin/snapshots/weights
+router.put('/weights', (req, res) => {
+  const wc = parseInt(req.body?.weight_completion, 10);
+  const wf = parseInt(req.body?.weight_followup,   10);
+  const wx = parseInt(req.body?.weight_fix,        10);
+  const ws = parseInt(req.body?.weight_sla,        10);
+  if ([wc, wf, wx, ws].some(v => !Number.isFinite(v) || v < 0 || v > 100)) {
+    return res.status(400).json({ error: 'كل الأوزان لازم تكون بين 0 و 100' });
+  }
+  if ((wc + wf + wx + ws) === 0) {
+    return res.status(400).json({ error: 'يجب أن يكون مجموع الأوزان أكبر من صفر' });
+  }
+  const before = getKpiWeights();
+  db.prepare(`
+    UPDATE kpi_weights
+    SET weight_completion=?, weight_followup=?, weight_fix=?, weight_sla=?,
+        updated_by=?, updated_at=datetime('now','+2 hours')
+    WHERE id=1
+  `).run(wc, wf, wx, ws, req.user?.id);
+  saveNow();
+  logAudit({
+    action: 'weights_change',
+    details: { before, after: { weight_completion: wc, weight_followup: wf, weight_fix: wx, weight_sla: ws } },
+    user_id: req.user?.id, user_name: req.user?.full_name,
+    line: lineFilter(req) || 'Ahmed Hassan',
+  });
+  return res.json(getKpiWeights());
+});
+
+// ─── AUDIT LOG ────────────────────────────────────────────────────────────────
+
+// GET /api/admin/snapshots/audit?action=&from=&to=&user_id=&limit=
+router.get('/audit', (req, res) => {
+  const { action, from, to, user_id } = req.query;
+  const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
+  const offset = parseInt(req.query.offset, 10) || 0;
+  const line = lineFilter(req);
+
+  const params = [];
+  let where = 'WHERE 1=1';
+  if (line) { where += ' AND line = ?'; params.push(line); }
+  if (action)  { where += ' AND action = ?'; params.push(action); }
+  if (user_id) { where += ' AND user_id = ?'; params.push(parseInt(user_id, 10)); }
+  if (from) { where += ' AND created_at >= ?'; params.push(from); }
+  if (to)   { where += ' AND created_at <= ?'; params.push(to); }
+
+  const rows = db.prepare(`
+    SELECT id, action, year, month, agent_name, details,
+           user_id, user_name, line, created_at
+    FROM snapshot_audit_log
+    ${where}
+    ORDER BY id DESC
+    LIMIT ? OFFSET ?
+  `).all(...params, limit, offset);
+
+  rows.forEach(r => {
+    try { r.details = r.details ? JSON.parse(r.details) : null; }
+    catch (_) {}
+  });
+
+  const totalRow = db.prepare(`SELECT COUNT(*) AS c FROM snapshot_audit_log ${where}`).get(...params);
+
+  return res.json({ total: totalRow?.c || 0, rows, limit, offset });
+});
+
+// ─── DEPARTMENT ROLLUP ────────────────────────────────────────────────────────
+// GET /api/admin/snapshots/dept-rollup?from_year=&from_month=&to_year=&to_month=
+// Aggregates monthly snapshots into per-department averages by month.
+router.get('/dept-rollup', (req, res) => {
+  const { from_year, from_month, to_year, to_month } = req.query;
+  const line = lineFilter(req);
+
+  const params = [];
+  let where = 'WHERE 1=1';
+  if (line) { where += ' AND line = ?'; params.push(line); }
+  if (from_year && from_month) {
+    where += ' AND (year > ? OR (year = ? AND month >= ?))';
+    params.push(+from_year, +from_year, +from_month);
+  }
+  if (to_year && to_month) {
+    where += ' AND (year < ? OR (year = ? AND month <= ?))';
+    params.push(+to_year, +to_year, +to_month);
+  }
+
+  const rows = db.prepare(`
+    SELECT department, year, month, period_label,
+           COUNT(*) AS agents,
+           ROUND(AVG(completion_rate)) AS avg_completion,
+           ROUND(AVG(sla_rate))        AS avg_sla,
+           ROUND(AVG(followup_rate))   AS avg_followup,
+           ROUND(AVG(fix_rate))        AS avg_fix,
+           ROUND(AVG(overall_score))   AS avg_overall,
+           SUM(tasks_total)            AS total_tasks,
+           SUM(tasks_done)             AS total_done,
+           SUM(tasks_overdue)          AS total_overdue,
+           SUM(absents_total)          AS total_absents,
+           SUM(absents_followed_up)    AS total_followed,
+           SUM(code_problems_total)    AS total_code_problems,
+           SUM(code_problems_resolved) AS total_code_resolved,
+           SUM(CASE WHEN met_target = 1 THEN 1 ELSE 0 END) AS targets_met
+    FROM monthly_snapshots
+    ${where}
+    GROUP BY department, year, month
+    ORDER BY year, month, department
+  `).all(...params);
+
+  // Pivot for the chart: { period_label, [dept]: avg_overall, ... }
+  const periodSet = new Set();
+  const periods = [];
+  const deptNames = new Set();
+  const matrix = {};
+  for (const r of rows) {
+    if (!periodSet.has(r.period_label)) {
+      periodSet.add(r.period_label);
+      periods.push({ year: r.year, month: r.month, label: r.period_label });
+    }
+    deptNames.add(r.department);
+    matrix[r.department] = matrix[r.department] || { department: r.department, cells: {}, avg_overall: 0, total_agents: 0 };
+    matrix[r.department].cells[r.period_label] = r;
+  }
+  periods.sort((a, b) => a.year - b.year || a.month - b.month);
+
+  // Compute per-dept aggregate
+  const departments = Object.values(matrix);
+  departments.forEach(d => {
+    const cells = Object.values(d.cells);
+    if (cells.length > 0) {
+      d.avg_overall  = Math.round(cells.reduce((s, c) => s + (c.avg_overall || 0), 0) / cells.length);
+      d.total_agents = Math.max(...cells.map(c => c.agents || 0));
+    }
+  });
+  departments.sort((a, b) => b.avg_overall - a.avg_overall);
+
+  return res.json({ periods, departments, rows });
+});
+
+// ─── COMPARE TWO MONTHS ───────────────────────────────────────────────────────
+// GET /api/admin/snapshots/compare?a_year=&a_month=&b_year=&b_month=&department=
+router.get('/compare', (req, res) => {
+  const { a_year, a_month, b_year, b_month, department } = req.query;
+  const ay = parseInt(a_year, 10), am = parseInt(a_month, 10);
+  const by = parseInt(b_year, 10), bm = parseInt(b_month, 10);
+  if (!ay || !am || !by || !bm) {
+    return res.status(400).json({ error: 'a_year, a_month, b_year, b_month all required' });
+  }
+  const line = lineFilter(req);
+  const lineCl = line ? ' AND line = ?' : '';
+  const lineP  = line ? [line] : [];
+  const deptCl = (department && department !== 'All') ? ' AND department = ?' : '';
+  const deptP  = (department && department !== 'All') ? [department] : [];
+
+  const aRows = db.prepare(`
+    SELECT * FROM monthly_snapshots
+    WHERE year = ? AND month = ?${lineCl}${deptCl}
+    ORDER BY agent_name COLLATE NOCASE
+  `).all(ay, am, ...lineP, ...deptP);
+
+  const bRows = db.prepare(`
+    SELECT * FROM monthly_snapshots
+    WHERE year = ? AND month = ?${lineCl}${deptCl}
+    ORDER BY agent_name COLLATE NOCASE
+  `).all(by, bm, ...lineP, ...deptP);
+
+  const byNameA = Object.fromEntries(aRows.map(r => [r.agent_name.toLowerCase().trim(), r]));
+  const byNameB = Object.fromEntries(bRows.map(r => [r.agent_name.toLowerCase().trim(), r]));
+  const allNames = new Set([...Object.keys(byNameA), ...Object.keys(byNameB)]);
+
+  const compare = [];
+  for (const key of allNames) {
+    const a = byNameA[key];
+    const b = byNameB[key];
+    const display = a?.agent_name || b?.agent_name;
+    compare.push({
+      agent_name: display,
+      department: a?.department || b?.department,
+      a: a ? {
+        overall: a.overall_score, completion: a.completion_rate, sla: a.sla_rate,
+        followup: a.followup_rate, fix: a.fix_rate, met_target: a.met_target,
+      } : null,
+      b: b ? {
+        overall: b.overall_score, completion: b.completion_rate, sla: b.sla_rate,
+        followup: b.followup_rate, fix: b.fix_rate, met_target: b.met_target,
+      } : null,
+      delta_overall: (a && b) ? (b.overall_score - a.overall_score) : null,
+    });
+  }
+  // Sort by delta desc (improvers first)
+  compare.sort((x, y) => {
+    const dx = x.delta_overall ?? -999;
+    const dy = y.delta_overall ?? -999;
+    return dy - dx;
+  });
+
+  // Aggregate stats
+  const validDeltas = compare.filter(c => c.delta_overall != null);
+  const improved = validDeltas.filter(c => c.delta_overall > 0);
+  const declined = validDeltas.filter(c => c.delta_overall < 0);
+  const stable   = validDeltas.filter(c => c.delta_overall === 0);
+  const onlyA    = compare.filter(c => c.a && !c.b);
+  const onlyB    = compare.filter(c => !c.a && c.b);
+
+  const avgA = aRows.length > 0 ? Math.round(aRows.reduce((s, r) => s + (r.overall_score || 0), 0) / aRows.length) : 0;
+  const avgB = bRows.length > 0 ? Math.round(bRows.reduce((s, r) => s + (r.overall_score || 0), 0) / bRows.length) : 0;
+
+  return res.json({
+    a: { year: ay, month: am, agents: aRows.length, avg_overall: avgA },
+    b: { year: by, month: bm, agents: bRows.length, avg_overall: avgB },
+    delta_avg: avgB - avgA,
+    summary: {
+      improved: improved.length,
+      declined: declined.length,
+      stable:   stable.length,
+      only_in_a: onlyA.length,
+      only_in_b: onlyB.length,
+    },
+    rows: compare,
+  });
 });
 
 module.exports = router;

@@ -425,6 +425,40 @@ CREATE TABLE IF NOT EXISTS snapshot_notes (
 CREATE INDEX IF NOT EXISTS idx_snapshot_notes_sid ON snapshot_notes(snapshot_id);
 
 -- =============================================
+-- SNAPSHOT AUDIT LOG — tracks every freeze/unfreeze/edit for accountability
+-- =============================================
+CREATE TABLE IF NOT EXISTS snapshot_audit_log (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  action     TEXT NOT NULL CHECK(action IN ('freeze','freeze_bulk','overwrite','delete','note_add','note_edit','note_delete','target_change','weights_change')),
+  year       INTEGER,
+  month      INTEGER,
+  agent_name TEXT,
+  details    TEXT,                                -- JSON freeform
+  user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  user_name  TEXT,
+  line       TEXT NOT NULL DEFAULT 'Ahmed Hassan',
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+);
+CREATE INDEX IF NOT EXISTS idx_audit_action ON snapshot_audit_log(action);
+CREATE INDEX IF NOT EXISTS idx_audit_period ON snapshot_audit_log(year, month);
+CREATE INDEX IF NOT EXISTS idx_audit_user   ON snapshot_audit_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_line   ON snapshot_audit_log(line);
+CREATE INDEX IF NOT EXISTS idx_audit_at     ON snapshot_audit_log(created_at);
+
+-- =============================================
+-- KPI WEIGHTS — admin-configurable formula for overall_score
+-- =============================================
+CREATE TABLE IF NOT EXISTS kpi_weights (
+  id INTEGER PRIMARY KEY CHECK(id = 1),           -- single-row table
+  weight_completion INTEGER NOT NULL DEFAULT 50,
+  weight_followup   INTEGER NOT NULL DEFAULT 25,
+  weight_fix        INTEGER NOT NULL DEFAULT 25,
+  weight_sla        INTEGER NOT NULL DEFAULT 0,
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+);
+
+-- =============================================
 -- JWT REFRESH TOKENS
 -- =============================================
 CREATE TABLE IF NOT EXISTS refresh_tokens (

@@ -5,6 +5,7 @@ import {
   Sparkles, Target, ShieldAlert, Award, Users, Calendar, Zap, Star,
   ChevronLeft, X, Plus, Edit2, Trash2, MessageSquare, Filter, Crown,
   Flame, Gem, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, FileText,
+  GitCompare,
 } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -13,6 +14,7 @@ import {
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import api from '../../api/axios';
+import CompareMonthsModal from './CompareMonthsModal';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const MONTH_NAMES_AR = ['', 'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
@@ -158,7 +160,7 @@ function StatPill({ value, suffix = '', icon: Icon, label, animated = true, sign
   );
 }
 
-function HeroBanner({ summary, onFreezeClick, onExport, onExportPdf, pdfBusy }) {
+function HeroBanner({ summary, onFreezeClick, onExport, onExportPdf, pdfBusy, onCompare, pdfMode, setPdfMode }) {
   return (
     <div
       className="relative overflow-hidden rounded-3xl p-6 text-white"
@@ -194,13 +196,32 @@ function HeroBanner({ summary, onFreezeClick, onExport, onExportPdf, pdfBusy }) 
               تجميد الشهر
             </button>
             <button
-              onClick={onExportPdf}
-              disabled={pdfBusy}
-              className="px-4 py-2.5 bg-rose-500/90 hover:bg-rose-500 disabled:opacity-60 transition-all rounded-xl font-black text-sm flex items-center gap-2 shadow-lg shadow-rose-500/30 border border-rose-400/40"
+              onClick={onCompare}
+              className="px-4 py-2.5 bg-violet-500/90 hover:bg-violet-500 transition-all rounded-xl font-black text-sm flex items-center gap-2 shadow-lg shadow-violet-500/30 border border-violet-400/40"
             >
-              <FileText size={16} />
-              {pdfBusy ? '...جارٍ' : 'PDF'}
+              <GitCompare size={16} />
+              مقارنة شهرين
             </button>
+            <div className="relative group">
+              <button
+                onClick={onExportPdf}
+                disabled={pdfBusy}
+                className="px-4 py-2.5 bg-rose-500/90 hover:bg-rose-500 disabled:opacity-60 transition-all rounded-xl font-black text-sm flex items-center gap-2 shadow-lg shadow-rose-500/30 border border-rose-400/40"
+              >
+                <FileText size={16} />
+                {pdfBusy ? '...جارٍ' : `PDF (${pdfMode === 'brief' ? 'مختصر' : 'مفصّل'})`}
+              </button>
+            </div>
+            <select
+              value={pdfMode}
+              onChange={e => setPdfMode(e.target.value)}
+              disabled={pdfBusy}
+              className="px-2 py-2.5 bg-white/10 hover:bg-white/20 transition-all rounded-xl font-black text-xs text-white border border-white/30 focus:outline-none cursor-pointer"
+              title="نوع التقرير"
+            >
+              <option value="brief"    className="text-gray-700">مختصر</option>
+              <option value="detailed" className="text-gray-700">مفصّل (صفحة لكل موظف)</option>
+            </select>
             <button
               onClick={onExport}
               className="px-4 py-2.5 bg-white/10 hover:bg-white/20 transition-all rounded-xl font-black text-sm flex items-center gap-2 border border-white/30"
@@ -1148,7 +1169,7 @@ function NotesModal({ snapshot, onClose }) {
 
 // ─── BRIEF PDF REPORT (rendered hidden, captured by html2canvas) ──────────────
 
-function PdfReport({ summary, leaderboard, periodLabel }) {
+function PdfReport({ summary, leaderboard, periodLabel, detailed = false, heatmap, history }) {
   const todayStr = new Date().toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric' });
 
   const Section = ({ title, items, emptyText, valueKey = 'overall_score', accent }) => (
@@ -1250,6 +1271,133 @@ function PdfReport({ summary, leaderboard, periodLabel }) {
       }}>
         تم إنشاء التقرير تلقائياً من نظام إدارة الأكاديمية · {new Date().toLocaleString('ar-EG')}
       </div>
+
+      {/* DETAILED MODE — one section per employee with full KPIs + history */}
+      {detailed && heatmap?.agents?.length > 0 && (
+        <div style={{ marginTop: 32 }}>
+          <div style={{
+            background: 'linear-gradient(135deg, #4c1d95 0%, #6d28d9 100%)',
+            color: '#fff',
+            padding: '18px 24px',
+            borderRadius: 16,
+            marginBottom: 18,
+            textAlign: 'center',
+          }}>
+            <h2 style={{ fontSize: 20, fontWeight: 900, margin: 0 }}>📋 تفاصيل كل موظف</h2>
+            <p style={{ fontSize: 12, fontWeight: 700, opacity: 0.85, margin: '4px 0 0 0' }}>
+              ملف شخصي مفصّل لـ {heatmap.agents.length} موظف
+            </p>
+          </div>
+
+          {heatmap.agents.map((a, idx) => {
+            // Latest cell for this agent (used for current-period KPIs)
+            const periodsSorted = [...heatmap.periods].sort((p1, p2) => p2.year - p1.year || p2.month - p1.month);
+            const latestPeriodForAgent = periodsSorted.find(p => a.cells[p.label]);
+            const latestCell = latestPeriodForAgent ? a.cells[latestPeriodForAgent.label] : null;
+            // Build per-employee history
+            const agentHistory = (history || []).filter(h => h.agent_name === a.agent_name);
+
+            return (
+              <div key={a.agent_name} style={{
+                pageBreakInside: 'avoid',
+                breakInside: 'avoid',
+                marginBottom: 22,
+                padding: 18,
+                background: '#F9FAFB',
+                border: '1px solid #E5E7EB',
+                borderRadius: 14,
+              }}>
+                {/* Header row */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, paddingBottom: 12, borderBottom: '2px solid #E5E7EB' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{
+                      width: 44, height: 44, borderRadius: 22,
+                      background: 'linear-gradient(135deg, #6366F1, #A855F7)',
+                      color: '#fff', fontWeight: 900, fontSize: 18,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>{(a.agent_name?.[0] || '?').toUpperCase()}</div>
+                    <div>
+                      <p style={{ fontSize: 16, fontWeight: 900, color: '#111827', margin: 0 }}>{a.agent_name}</p>
+                      <p style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', margin: '2px 0 0 0' }}>{a.department} · {agentHistory.length} شهر مجمّد</p>
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'left' }}>
+                    <p style={{ fontSize: 10, fontWeight: 800, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: 1, margin: 0 }}>متوسط</p>
+                    <p style={{ fontSize: 26, fontWeight: 900, color: '#1e3a5f', margin: 0 }}>{a.avg}<span style={{ fontSize: 14 }}>%</span></p>
+                  </div>
+                </div>
+
+                {/* KPI grid — latest period */}
+                {latestCell && (
+                  <>
+                    <p style={{ fontSize: 10, fontWeight: 800, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
+                      آخر شهر مسجّل ({latestPeriodForAgent.label})
+                    </p>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8, marginBottom: 14 }}>
+                      {[
+                        { label: 'الأداء العام', v: latestCell.overall_score, color: '#6366F1' },
+                        { label: 'الإنجاز',      v: latestCell.completion_rate, color: '#10B981' },
+                        { label: 'SLA',          v: latestCell.sla_rate,        color: '#06B6D4' },
+                        { label: 'متابعة',       v: latestCell.followup_rate,   color: '#F59E0B' },
+                        { label: 'أعطال',        v: latestCell.fix_rate,        color: '#EC4899' },
+                      ].map((k, i) => (
+                        <div key={i} style={{
+                          background: '#fff',
+                          border: '1px solid #E5E7EB',
+                          borderRadius: 10,
+                          padding: '8px 10px',
+                          textAlign: 'center',
+                        }}>
+                          <p style={{ fontSize: 9, fontWeight: 800, color: '#9CA3AF', margin: '0 0 3px 0' }}>{k.label}</p>
+                          <p style={{ fontSize: 18, fontWeight: 900, color: k.color, margin: 0 }}>{k.v}<span style={{ fontSize: 10 }}>%</span></p>
+                        </div>
+                      ))}
+                    </div>
+                    {latestCell.met_target === 1 && (
+                      <div style={{ background: '#FEF3C7', border: '1px solid #FCD34D', color: '#92400E', padding: '6px 12px', borderRadius: 8, fontSize: 11, fontWeight: 800, marginBottom: 12, textAlign: 'center' }}>
+                        🏆 حقّق جميع الأهداف
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* History table */}
+                {agentHistory.length > 0 && (
+                  <>
+                    <p style={{ fontSize: 10, fontWeight: 800, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
+                      السجل الشهري ({agentHistory.length})
+                    </p>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, marginBottom: 8 }}>
+                      <thead>
+                        <tr style={{ background: '#E5E7EB' }}>
+                          {['الشهر', 'الإنجاز', 'SLA', 'متابعة', 'أعطال', 'العام', 'المركز'].map(h => (
+                            <th key={h} style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 800, color: '#374151', fontSize: 10 }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {agentHistory.map(h => (
+                          <tr key={h.id} style={{ background: '#fff', borderBottom: '1px solid #F3F4F6' }}>
+                            <td style={{ padding: '6px 8px', fontWeight: 800, color: '#111827' }}>{h.period_label}</td>
+                            <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 800, color: '#10B981' }}>{h.completion_rate}%</td>
+                            <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 800, color: '#06B6D4' }}>{h.sla_rate}%</td>
+                            <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 800, color: '#F59E0B' }}>{h.followup_rate}%</td>
+                            <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 800, color: '#EC4899' }}>{h.fix_rate}%</td>
+                            <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 900, color: '#6366F1', fontSize: 12 }}>{h.overall_score}%</td>
+                            <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 700, color: '#6B7280', fontSize: 10 }}>
+                              {h.rank_in_dept ? `${h.rank_in_dept}/${h.total_in_dept}` : '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -1272,6 +1420,8 @@ export default function EmployeeProgression() {
   const [notesSnapshot, setNotesSnapshot] = useState(null);
   const [pdfRendering, setPdfRendering] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [pdfMode, setPdfMode] = useState('brief'); // 'brief' | 'detailed'
 
   // Compute date range from period preset
   const range = useMemo(() => {
@@ -1450,6 +1600,9 @@ export default function EmployeeProgression() {
         onExport={exportCSV}
         onExportPdf={exportPDF}
         pdfBusy={pdfBusy}
+        onCompare={() => setCompareOpen(true)}
+        pdfMode={pdfMode}
+        setPdfMode={setPdfMode}
       />
 
       <FiltersBar
@@ -1565,10 +1718,21 @@ export default function EmployeeProgression() {
                   ? `${MONTH_NAMES_AR[latestPeriod.month]} ${latestPeriod.year}`
                   : 'لم يُجمَّد أي شهر'
               }
+              detailed={pdfMode === 'detailed'}
+              heatmap={heatmap}
+              history={history}
             />
           </div>
         </div>
       )}
+
+      {/* Compare two months modal */}
+      <CompareMonthsModal
+        open={compareOpen}
+        onClose={() => setCompareOpen(false)}
+        frozenList={frozenList}
+        department={department}
+      />
     </div>
   );
 }

@@ -86,6 +86,16 @@ router.post('/', (req, res) => {
     notes || null
   );
   saveNow();
+  // Audit the target change (fail-soft — don't break parent if audit fails)
+  try {
+    db.prepare(`INSERT INTO snapshot_audit_log
+      (action, agent_name, details, user_id, user_name, line)
+      VALUES ('target_change', ?, ?, ?, ?, ?)`).run(
+      agent_name || department || 'global',
+      JSON.stringify({ op: 'create', id: r.lastInsertRowid, scope: agent_name ? 'agent' : department ? 'department' : 'global', target: { tc, tf, tx, to, effective_from } }),
+      req.user?.id, req.user?.full_name, line
+    );
+  } catch (_) {}
   return res.json({ id: r.lastInsertRowid });
 });
 
@@ -126,6 +136,17 @@ router.put('/:id', (req, res) => {
   const r = db.prepare(`UPDATE employee_targets SET ${fields.join(', ')} WHERE id = ?`).run(...params);
   saveNow();
   if (r.changes === 0) return res.status(404).json({ error: 'Target not found' });
+  // Audit
+  try {
+    const t = db.prepare(`SELECT agent_name, department, line FROM employee_targets WHERE id = ?`).get(id);
+    db.prepare(`INSERT INTO snapshot_audit_log
+      (action, agent_name, details, user_id, user_name, line)
+      VALUES ('target_change', ?, ?, ?, ?, ?)`).run(
+      t?.agent_name || t?.department || 'global',
+      JSON.stringify({ op: 'update', id, fields: req.body }),
+      req.user?.id, req.user?.full_name, t?.line || lineFilter(req) || 'Ahmed Hassan'
+    );
+  } catch (_) {}
   return res.json({ id });
 });
 
@@ -133,9 +154,20 @@ router.put('/:id', (req, res) => {
 router.delete('/:id', (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!id) return res.status(400).json({ error: 'Invalid id' });
+  const t = db.prepare(`SELECT agent_name, department, line FROM employee_targets WHERE id = ?`).get(id);
   const r = db.prepare(`DELETE FROM employee_targets WHERE id = ?`).run(id);
   saveNow();
   if (r.changes === 0) return res.status(404).json({ error: 'Target not found' });
+  // Audit
+  try {
+    db.prepare(`INSERT INTO snapshot_audit_log
+      (action, agent_name, details, user_id, user_name, line)
+      VALUES ('target_change', ?, ?, ?, ?, ?)`).run(
+      t?.agent_name || t?.department || 'global',
+      JSON.stringify({ op: 'delete', id }),
+      req.user?.id, req.user?.full_name, t?.line || lineFilter(req) || 'Ahmed Hassan'
+    );
+  } catch (_) {}
   return res.json({ deleted: 1 });
 });
 

@@ -5,7 +5,7 @@ import {
   LayoutDashboard, ClipboardList, Search, UserX, Calendar,
   Video, Users, BarChart2, Globe, UserCog, Upload, FileText,
   LogOut, Headphones, GraduationCap, ShieldCheck, AlertTriangle, Activity, Shuffle, Kanban,
-  TrendingUp, Target
+  TrendingUp, Target, Settings
 } from 'lucide-react';
 
 // ─── COLOR PALETTE ─────────────────────────────────────────────────────────
@@ -62,6 +62,7 @@ const LEADER_LINKS = [
   { to: '/leader/tasks',                        label: 'nav.taskDistribution', icon: ClipboardList,   color: 'indigo' },
   { to: '/leader/code-problems',                label: 'nav.codeProblems',     icon: AlertTriangle,   color: 'amber' },
   { to: '/leader/pipeline',                     label: 'nav.clientPipeline',   icon: Kanban,          color: 'emerald' },
+  { to: '/leader/team-progression',             label: 'nav.teamProgression',  icon: TrendingUp,      color: 'violet' },
   { type: 'section', label: 'nav.reportsSection' },
   { to: '/leader/reports/fix-report',           label: 'nav.fixReports',          icon: FileText, color: 'orange' },
   { to: '/leader/reports/attendance-absence',   label: 'nav.attendanceReports',   icon: Activity, color: 'teal' },
@@ -93,6 +94,7 @@ function getAdminLinks(user) {
     { to: '/admin/pipeline',     label: 'nav.clientPipeline',     icon: Kanban,          color: 'emerald' },
     { to: '/admin/employee-progression', label: 'nav.employeeProgression', icon: TrendingUp, color: 'violet' },
     { to: '/admin/targets',      label: 'nav.targets',            icon: Target,          color: 'green' },
+    { to: '/admin/settings',     label: 'nav.systemSettings',     icon: Settings,        color: 'slate' },
     { type: 'section', label: 'nav.reportsSection' },
   ];
   const mgmt = user?.management;
