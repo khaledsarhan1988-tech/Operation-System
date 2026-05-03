@@ -44,7 +44,7 @@ const PERIODS = [
   { value: 'all',   label: 'كل الوقت' },
 ];
 
-function DetailModal({ coordinator, period, items, onClose }) {
+function DetailModal({ coordinator, period, periodLabel: pLabel, items, onClose }) {
   // Items are already filtered by caller (same source as summary numbers).
   const isLoading = false;
   const data = items;
@@ -57,7 +57,7 @@ function DetailModal({ coordinator, period, items, onClose }) {
           <div>
             <p className="text-xs font-bold text-emerald-600 uppercase tracking-wide mb-0.5">تفاصيل الإصلاحات</p>
             <p className="text-lg font-black text-gray-900">{coordinator}</p>
-            <p className="text-xs text-gray-400 mt-0.5">{PERIODS.find(p => p.value === period)?.label}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{pLabel || PERIODS.find(p => p.value === period)?.label}</p>
           </div>
           <button onClick={onClose} className="p-2 rounded-xl hover:bg-gray-100 transition-colors">
             <X size={18} className="text-gray-500" />
@@ -130,14 +130,10 @@ export default function FixReport() {
   const [period, setPeriod] = useState('today');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [detail, setDetail] = useState(null); // { coordinator, period, dateFrom, dateTo }
+  const [detail, setDetail] = useState(null);
 
   const hasDateRange = dateFrom || dateTo;
 
-  // Single source: all problems from code-problems with show_resolved=true.
-  // Both totals AND fixed counts are derived from the same dataset so numbers
-  // always match the "Code Problems" page exactly (no stale cps rows, no
-  // JOIN duplication, no double-count from ghost entries).
   const { data: codeProbs, isLoading } = useQuery({
     queryKey: ['fix-report-code-probs'],
     queryFn: () => api.get('/reports/code-problems', { params: { show_resolved: true } }).then(r => r.data),
@@ -146,56 +142,83 @@ export default function FixReport() {
 
   const todayStr = new Date().toISOString().slice(0, 10);
 
+  // ── Period label (used in table header + detail modal) ─────────────────────
+  const periodLabel = hasDateRange
+    ? `${dateFrom || '...'} → ${dateTo || '...'}`
+    : PERIODS.find(p => p.value === period)?.label ?? '';
+
+  // ── Check if a fix-date falls within the selected period/range ─────────────
+  const isInPeriod = (dateStr) => {
+    if (!dateStr) return false;
+    const d = String(dateStr).slice(0, 10);
+    if (hasDateRange) {
+      if (dateFrom && d < dateFrom) return false;
+      if (dateTo   && d > dateTo)   return false;
+      return true;
+    }
+    if (period === 'today') return d === todayStr;
+    if (period === 'week') {
+      const now = new Date();
+      const sun = new Date(now); sun.setDate(now.getDate() - now.getDay());
+      const sat = new Date(sun); sat.setDate(sun.getDate() + 6);
+      return d >= sun.toISOString().slice(0, 10) && d <= sat.toISOString().slice(0, 10);
+    }
+    if (period === 'month') return d.startsWith(todayStr.slice(0, 7));
+    return true; // 'all'
+  };
+
   // Flatten all problems, tag session_type, drop ghost duplicates
   const allProblems = [
     ...(codeProbs?.main_problems ?? []).map(p => ({ ...p, _session_type: 'main' })),
     ...(codeProbs?.zoom_problems ?? []).map(p => ({ ...p, _session_type: 'side' })),
   ].filter(p => !p._ghost);
 
-  // Aggregate per coordinator. Split multi-name coordinator fields
-  // (e.g. "Mostafa, fouad" → ["Mostafa", "fouad"]) so each coordinator gets credit.
+  // Aggregate per coordinator
   const agg = {};
   allProblems.forEach(p => {
     const raw    = p.coordinators || '--';
     const coords = raw.includes(',') ? raw.split(',').map(c => c.trim()).filter(Boolean) : [raw.trim()];
-    const isFixed      = ['resolved', 'wont_repeat', 'exception'].includes(p._resolved_status);
-    const statusDate   = p._status_at ? String(p._status_at).slice(0, 10) : null;
-    const isFixedToday = isFixed && statusDate === todayStr;
+    const isFixed         = ['resolved', 'wont_repeat', 'exception'].includes(p._resolved_status);
+    const statusDate      = p._status_at ? String(p._status_at).slice(0, 10) : null;
+    const isFixedInPeriod = isFixed && isInPeriod(statusDate);
+    const isFixedToday    = isFixed && statusDate === todayStr;
 
     coords.forEach(coord => {
-      if (!agg[coord]) agg[coord] = { total: 0, fixed: 0, fixed_today: 0 };
-      agg[coord].total += 1;
-      if (isFixed)      agg[coord].fixed += 1;
-      if (isFixedToday) agg[coord].fixed_today += 1;
+      if (!agg[coord]) agg[coord] = { total: 0, fixed_all: 0, fixed_in_period: 0, fixed_today: 0 };
+      agg[coord].total          += 1;
+      if (isFixed)         agg[coord].fixed_all       += 1;
+      if (isFixedInPeriod) agg[coord].fixed_in_period += 1;
+      if (isFixedToday)    agg[coord].fixed_today     += 1;
     });
   });
 
-  // Helper: pick fixed problems for a given coordinator + period (for detail modal)
-  const pickFixed = (coord, periodKey) => allProblems.filter(p => {
+  // Helper: pick fixed problems for detail modal
+  const pickFixed = (coord, key) => allProblems.filter(p => {
     if (!['resolved', 'wont_repeat', 'exception'].includes(p._resolved_status)) return false;
     const raw    = p.coordinators || '--';
     const coords = raw.includes(',') ? raw.split(',').map(c => c.trim()).filter(Boolean) : [raw.trim()];
     if (!coords.includes(coord)) return false;
-    if (periodKey === 'today') {
-      const d = p._status_at ? String(p._status_at).slice(0, 10) : null;
-      if (d !== todayStr) return false;
-    }
-    return true;
+    const d = p._status_at ? String(p._status_at).slice(0, 10) : null;
+    if (key === 'today')  return d === todayStr;
+    if (key === 'period') return isInPeriod(d);
+    return true; // 'all'
   });
 
   const data = Object.entries(agg).map(([coord, x]) => ({
-    coordinator: coord,
-    all_count:   x.total,
-    fixed:       x.fixed,
-    fixed_today: x.fixed_today,
-    remaining:   Math.max(0, x.total - x.fixed),
-  })).sort((a, b) => b.remaining - a.remaining || b.fixed - a.fixed);
+    coordinator:    coord,
+    all_count:      x.total,
+    fixed_all:      x.fixed_all,
+    fixed_in_period: x.fixed_in_period,
+    fixed_today:    x.fixed_today,
+    remaining:      Math.max(0, x.total - x.fixed_all),
+  })).sort((a, b) => b.remaining - a.remaining || b.fixed_in_period - a.fixed_in_period);
 
-  const totalAllCount = data.reduce((a, r) => a + r.all_count,   0);
-  const totalFixed    = data.reduce((a, r) => a + r.fixed,        0);
-  const totalRemain   = data.reduce((a, r) => a + r.remaining,    0);
-  const totalToday    = data.reduce((a, r) => a + r.fixed_today,  0);
-  const pct = totalAllCount > 0 ? Math.round((totalFixed / totalAllCount) * 100) : 0;
+  const totalAllCount   = data.reduce((a, r) => a + r.all_count,       0);
+  const totalFixedAll   = data.reduce((a, r) => a + r.fixed_all,        0);
+  const totalFixedPeriod= data.reduce((a, r) => a + r.fixed_in_period,  0);
+  const totalRemain     = data.reduce((a, r) => a + r.remaining,         0);
+  const totalToday      = data.reduce((a, r) => a + r.fixed_today,       0);
+  const pct = totalAllCount > 0 ? Math.round((totalFixedAll / totalAllCount) * 100) : 0;
 
   const selectCls = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]';
   const dateCls  = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]';
@@ -241,10 +264,10 @@ export default function FixReport() {
         gradient="emerald"
         actions={filterEl}
         stats={[
-          { label: 'إجمالي المشاكل',   value: totalAllCount, icon: AlertCircle },
-          { label: 'المتبقية',          value: totalRemain,   icon: AlertCircle },
-          { label: 'إجمالي تم إصلاحه', value: totalFixed,    icon: CheckCircle, suffix: ` (${pct}%)` },
-          { label: 'تم إصلاحه اليوم',  value: totalToday,    icon: CheckCircle },
+          { label: 'إجمالي المشاكل',            value: totalAllCount,    icon: AlertCircle },
+          { label: 'المتبقية',                   value: totalRemain,      icon: AlertCircle },
+          { label: 'إجمالي تم إصلاحه (الكل)',   value: totalFixedAll,    icon: CheckCircle, suffix: ` (${pct}%)` },
+          { label: `تم إصلاحه — ${periodLabel}`, value: totalFixedPeriod, icon: CheckCircle },
         ]}
       />
 
@@ -254,7 +277,7 @@ export default function FixReport() {
         <table className="w-full text-sm text-right">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-100">
-              {['المنسق', 'إجمالي المشاكل', 'المتبقية', 'إجمالي تم إصلاحه', 'تم إصلاحه اليوم', 'النسبة'].map(h => (
+              {['المنسق', 'إجمالي المشاكل', 'المتبقية', `تم إصلاحه (${periodLabel})`, 'إجمالي تم إصلاحه', 'النسبة'].map(h => (
                 <th key={h} className="px-5 py-3 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
               ))}
             </tr>
@@ -278,7 +301,7 @@ export default function FixReport() {
                 />
               </td></tr>
             ) : data.map((r, i) => {
-              const rowPct = r.all_count > 0 ? Math.round((r.fixed / r.all_count) * 100) : 0;
+              const rowPct = r.all_count > 0 ? Math.round((r.fixed_all / r.all_count) * 100) : 0;
               return (
                 <tr key={i} className="hover:bg-gray-50/60 transition-colors">
                   <td className="px-5 py-4 font-bold text-gray-900 text-sm">{r.coordinator || '—'}</td>
@@ -288,27 +311,29 @@ export default function FixReport() {
                       r.remaining > 0 ? 'bg-red-100 text-red-700 border-red-200' : 'bg-gray-50 text-gray-400 border-gray-200'
                     }`}>{r.remaining}</span>
                   </td>
+                  {/* Fixed in selected period — responds to filter */}
                   <td className="px-5 py-4">
                     <button
-                      onClick={() => r.fixed > 0 && setDetail({ coordinator: r.coordinator, period: 'all', items: pickFixed(r.coordinator, 'all') })}
-                      disabled={r.fixed === 0}
+                      onClick={() => r.fixed_in_period > 0 && setDetail({ coordinator: r.coordinator, period: 'period', items: pickFixed(r.coordinator, 'period') })}
+                      disabled={r.fixed_in_period === 0}
                       className={`inline-flex items-center px-3 py-1 rounded-xl text-xs font-black border transition-all ${
-                        r.fixed > 0
-                          ? 'bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-200 cursor-pointer'
-                          : 'bg-gray-50 text-gray-400 border-gray-200 cursor-default'
-                      }`}
-                    >{r.fixed}</button>
-                  </td>
-                  <td className="px-5 py-4">
-                    <button
-                      onClick={() => r.fixed_today > 0 && setDetail({ coordinator: r.coordinator, period: 'today', items: pickFixed(r.coordinator, 'today') })}
-                      disabled={r.fixed_today === 0}
-                      className={`inline-flex items-center px-2.5 py-1 rounded-xl text-xs font-black border transition-all ${
-                        r.fixed_today > 0
+                        r.fixed_in_period > 0
                           ? 'bg-blue-100 text-blue-700 border-blue-200 hover:bg-blue-200 cursor-pointer'
                           : 'bg-gray-50 text-gray-400 border-gray-200 cursor-default'
                       }`}
-                    >{r.fixed_today}</button>
+                    >{r.fixed_in_period}</button>
+                  </td>
+                  {/* Fixed all time */}
+                  <td className="px-5 py-4">
+                    <button
+                      onClick={() => r.fixed_all > 0 && setDetail({ coordinator: r.coordinator, period: 'all', items: pickFixed(r.coordinator, 'all') })}
+                      disabled={r.fixed_all === 0}
+                      className={`inline-flex items-center px-3 py-1 rounded-xl text-xs font-black border transition-all ${
+                        r.fixed_all > 0
+                          ? 'bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-200 cursor-pointer'
+                          : 'bg-gray-50 text-gray-400 border-gray-200 cursor-default'
+                      }`}
+                    >{r.fixed_all}</button>
                   </td>
                   <td className="px-5 py-4">
                     <div className="flex items-center gap-2">
@@ -330,6 +355,7 @@ export default function FixReport() {
         <DetailModal
           coordinator={detail.coordinator}
           period={detail.period}
+          periodLabel={detail.period === 'period' ? periodLabel : undefined}
           items={detail.items}
           onClose={() => setDetail(null)}
         />
