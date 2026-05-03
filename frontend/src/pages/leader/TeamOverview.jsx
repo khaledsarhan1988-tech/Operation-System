@@ -1,10 +1,13 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Download, RefreshCw } from 'lucide-react';
+import { Download, RefreshCw, Users, Filter, UserPlus } from 'lucide-react';
 import api from '../../api/axios';
 import DataTable from '../../components/ui/DataTable';
 import Modal from '../../components/ui/Modal';
+import PageHero from '../../components/ui/PageHero';
+import SectionCard from '../../components/ui/SectionCard';
+import ModernButton from '../../components/ui/ModernButton';
 
 function AssignModal({ open, onClose, onAssign }) {
   const { t } = useTranslation();
@@ -77,34 +80,38 @@ export default function TeamOverview() {
     { key: 'overdue',         label: t('leader.overdue'),   render: v => v > 0 ? <span className="font-semibold text-danger">{v}</span> : '—' },
   ];
 
-  return (
-    <div className="space-y-5 animate-fadeIn" dir="rtl">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-bold text-text-primary">{t('leader.teamOverview')}</h1>
-        <div className="flex gap-2 flex-wrap items-center">
-          <select
-            value={coordinator}
-            onChange={e => setCoordinator(e.target.value)}
-            className={`${selectCls} ${coordinator ? 'ring-2 ring-[#1e3a5f]/30 border-[#1e3a5f] font-bold' : ''}`}
-          >
-            <option value="">كل المنسقين</option>
-            {(allTeam ?? []).map((a, i) => (
-              <option key={i} value={a.name}>{a.name}</option>
-            ))}
-          </select>
-          <button onClick={() => refetch()} className="btn-outline flex items-center gap-2 text-sm">
-            <RefreshCw size={14} />
-          </button>
-          <button onClick={handleExport} className="btn-outline flex items-center gap-2 text-sm">
-            <Download size={14} /> {t('common.export')}
-          </button>
-          <button onClick={() => setShowAssign(true)} className="btn-primary text-sm">
-            {t('leader.assign')}
-          </button>
-        </div>
+  const headerActions = (
+    <>
+      <div className="flex items-center gap-2 bg-white/10 backdrop-blur-md border border-white/20 rounded-xl pr-3 py-1">
+        <Filter size={13} className="text-white/70" />
+        <select
+          value={coordinator}
+          onChange={e => setCoordinator(e.target.value)}
+          className="bg-transparent text-white text-xs font-bold focus:outline-none cursor-pointer min-w-[140px] py-1"
+        >
+          <option value="" className="text-gray-700">كل المنسقين</option>
+          {(allTeam ?? []).map((a, i) => (
+            <option key={i} value={a.name} className="text-gray-700">{a.name}</option>
+          ))}
+        </select>
       </div>
+      <ModernButton variant="glass" icon={RefreshCw} onClick={() => refetch()}>تحديث</ModernButton>
+      <ModernButton variant="glass" icon={Download} onClick={handleExport}>{t('common.export')}</ModernButton>
+      <ModernButton variant="amber" icon={UserPlus} onClick={() => setShowAssign(true)}>{t('leader.assign')}</ModernButton>
+    </>
+  );
 
-      <div className="card p-0 overflow-hidden">
+  return (
+    <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
+      <PageHero
+        title={t('leader.teamOverview')}
+        subtitle="نظرة شاملة على أداء كل أفراد الفريق"
+        icon={Users}
+        gradient="navy"
+        actions={headerActions}
+      />
+
+      <SectionCard title="فريق العمل" icon={Users} accent="indigo" noBodyPad>
         <DataTable
           columns={columns}
           data={team}
@@ -114,7 +121,7 @@ export default function TeamOverview() {
           onPageChange={() => {}}
           loading={isLoading}
         />
-      </div>
+      </SectionCard>
 
       <AssignModal open={showAssign} onClose={() => setShowAssign(false)} onAssign={() => qc.invalidateQueries(['leader-team'])} />
     </div>

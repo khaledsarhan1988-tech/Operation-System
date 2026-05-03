@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+import { Globe, Filter } from 'lucide-react';
 import api from '../../api/axios';
 import DataTable from '../../components/ui/DataTable';
 import Badge from '../../components/ui/Badge';
+import PageHero from '../../components/ui/PageHero';
+import SectionCard from '../../components/ui/SectionCard';
 
 export default function GroupCoverage() {
   const { t } = useTranslation();
@@ -19,11 +22,9 @@ export default function GroupCoverage() {
     queryFn: () => api.get('/leader/groups', { params: coordinator ? { coordinator } : {} }).then(r => r.data),
   });
 
-  const selectCls = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f] min-w-[180px]';
-
   const columns = [
-    { key: 'external_id',  label: '#',                    render: v => <span className="text-text-secondary text-xs">{v}</span> },
-    { key: 'group_name',   label: t('leader.groupName'),  render: v => <span className="text-xs font-mono">{v}</span> },
+    { key: 'external_id',  label: '#',                    render: v => <span className="text-gray-400 text-xs font-bold">{v}</span> },
+    { key: 'group_name',   label: t('leader.groupName'),  render: v => <span className="text-xs font-mono font-black">{v}</span> },
     { key: 'course',       label: t('leader.course') },
     { key: 'dept_type',    label: 'Type',                 render: v => v ? <Badge value={v === 'General' ? 'نشطة' : 'مجدولة'} /> : '—' },
     { key: 'trainers',     label: 'Trainer',              render: v => <span className="text-xs">{v}</span> },
@@ -34,26 +35,33 @@ export default function GroupCoverage() {
     { key: 'status',               label: 'Status',              render: v => <Badge value={v} /> },
   ];
 
-  return (
-    <div className="space-y-5 animate-fadeIn" dir="rtl">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-bold text-text-primary">{t('nav.groupCoverage')}</h1>
-        <div className="flex items-center gap-3">
-          <select
-            value={coordinator}
-            onChange={e => setCoordinator(e.target.value)}
-            className={`${selectCls} ${coordinator ? 'ring-2 ring-[#1e3a5f]/30 border-[#1e3a5f] font-bold' : ''}`}
-          >
-            <option value="">كل المنسقين</option>
-            {(allTeam ?? []).map((a, i) => (
-              <option key={i} value={a.name}>{a.name}</option>
-            ))}
-          </select>
-          <p className="text-text-secondary text-sm">{groups?.length || 0} active groups</p>
-        </div>
-      </div>
+  const filterEl = (
+    <div className="flex items-center gap-2 bg-white/10 backdrop-blur-md border border-white/20 rounded-xl pr-3 py-1">
+      <Filter size={13} className="text-white/70" />
+      <select
+        value={coordinator}
+        onChange={e => setCoordinator(e.target.value)}
+        className="bg-transparent text-white text-xs font-bold focus:outline-none cursor-pointer min-w-[160px] py-1"
+      >
+        <option value="" className="text-gray-700">كل المنسقين</option>
+        {(allTeam ?? []).map((a, i) => (
+          <option key={i} value={a.name} className="text-gray-700">{a.name}</option>
+        ))}
+      </select>
+    </div>
+  );
 
-      <div className="card p-0 overflow-hidden">
+  return (
+    <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
+      <PageHero
+        title={t('nav.groupCoverage')}
+        subtitle={`${groups?.length || 0} مجموعة نشطة`}
+        icon={Globe}
+        gradient="cyan"
+        actions={filterEl}
+      />
+
+      <SectionCard title="جميع المجموعات" icon={Globe} accent="cyan" noBodyPad>
         <DataTable
           columns={columns}
           data={groups}
@@ -63,7 +71,7 @@ export default function GroupCoverage() {
           onPageChange={() => {}}
           loading={isLoading}
         />
-      </div>
+      </SectionCard>
     </div>
   );
 }

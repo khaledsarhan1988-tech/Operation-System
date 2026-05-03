@@ -7,8 +7,11 @@ import {
   TrendingUp, Zap, Users, Filter,
   BookOpen, PhoneOff, MinusCircle,
   Bell, ChevronDown, CheckSquare, Square, ArrowRightLeft, History,
+  Kanban,
 } from 'lucide-react';
 import api from '../../api/axios';
+import PageHero from '../../components/ui/PageHero';
+import ModernButton from '../../components/ui/ModernButton';
 
 // ─── config ───────────────────────────────────────────────────────────────────
 const STAGES = [
@@ -933,40 +936,30 @@ export default function AdminPipeline() {
   const doneRate  = totalAll>0 ? Math.round(((pipeline?.['Retention Done']?.length||0)/totalAll)*100) : 0;
 
   return (
-    <div className="space-y-5" dir="rtl">
-
-      {/* header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">بايبلاين العملاء</h1>
-          <p className="text-sm text-gray-400 mt-0.5">
-            {isLoading ? '...' : `${totalOpen} مهمة نشطة · نسبة الإنجاز ${doneRate}%`}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => { setSelectionMode(m => !m); setSelectedIds(new Set()); }}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm rounded-xl border transition shadow-sm font-medium ${
-              selectionMode
-                ? 'bg-primary text-white border-primary'
-                : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
-            }`}
-          >
-            <CheckSquare size={14} />
-            {selectionMode ? 'إلغاء التحديد' : 'تحديد'}
-          </button>
-          <button
-            onClick={() => setShowHistory(true)}
-            className="flex items-center gap-2 px-3 py-2.5 text-sm bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition shadow-sm text-gray-600"
-          >
-            <History size={14} /> سجل الحركات
-          </button>
-          <button onClick={()=>refetch()} disabled={isFetching}
-            className="flex items-center gap-2 px-4 py-2.5 text-sm bg-white border border-gray-200 rounded-xl hover:bg-gray-50 disabled:opacity-50 transition shadow-sm">
-            <RefreshCw size={14} className={isFetching?'animate-spin':''}/> تحديث
-          </button>
-        </div>
-      </div>
+    <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
+      <PageHero
+        title="بايبلاين العملاء"
+        subtitle={isLoading ? '...' : `${totalOpen} مهمة نشطة · نسبة الإنجاز ${doneRate}%`}
+        icon={Kanban}
+        gradient="emerald"
+        actions={
+          <>
+            <ModernButton
+              variant={selectionMode ? 'amber' : 'glass'}
+              icon={CheckSquare}
+              onClick={() => { setSelectionMode(m => !m); setSelectedIds(new Set()); }}
+            >
+              {selectionMode ? 'إلغاء التحديد' : 'تحديد'}
+            </ModernButton>
+            <ModernButton variant="glass" icon={History} onClick={() => setShowHistory(true)}>
+              سجل الحركات
+            </ModernButton>
+            <ModernButton variant="glass" icon={RefreshCw} onClick={()=>refetch()} loading={isFetching}>
+              تحديث
+            </ModernButton>
+          </>
+        }
+      />
 
       {/* filters */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">

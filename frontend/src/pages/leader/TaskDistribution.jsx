@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Download } from 'lucide-react';
+import { Download, ClipboardList, Filter } from 'lucide-react';
 import api from '../../api/axios';
 import DataTable from '../../components/ui/DataTable';
+import PageHero from '../../components/ui/PageHero';
+import SectionCard from '../../components/ui/SectionCard';
+import ModernButton from '../../components/ui/ModernButton';
 
 export default function TaskDistribution() {
   const { t } = useTranslation();
@@ -26,38 +29,46 @@ export default function TaskDistribution() {
     window.open(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/export/remarks?${params}`, '_blank');
   };
 
-  const selectCls = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f] min-w-[180px]';
-
   const columns = [
     { key: 'name',    label: t('leader.agent') },
     { key: 'total',   label: t('leader.totalTasks') },
-    { key: 'pending', label: t('leader.pending'), render: v => <span className="font-bold text-warning">{v}</span> },
-    { key: 'overdue', label: t('leader.overdue'), render: v => v > 0 ? <span className="font-bold text-danger">{v}</span> : '—' },
-    { key: 'urgent',  label: t('tasks.urgent'),   render: v => v > 0 ? <span className="font-bold text-danger">{v}</span> : '—' },
+    { key: 'pending', label: t('leader.pending'), render: v => <span className="font-black text-amber-600">{v}</span> },
+    { key: 'overdue', label: t('leader.overdue'), render: v => v > 0 ? <span className="font-black text-red-600">{v}</span> : '—' },
+    { key: 'urgent',  label: t('tasks.urgent'),   render: v => v > 0 ? <span className="font-black text-red-600">{v}</span> : '—' },
   ];
 
-  return (
-    <div className="space-y-5 animate-fadeIn" dir="rtl">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-bold text-text-primary">{t('nav.taskDistribution')}</h1>
-        <div className="flex items-center gap-2 flex-wrap">
-          <select
-            value={coordinator}
-            onChange={e => setCoordinator(e.target.value)}
-            className={`${selectCls} ${coordinator ? 'ring-2 ring-[#1e3a5f]/30 border-[#1e3a5f] font-bold' : ''}`}
-          >
-            <option value="">كل المنسقين</option>
-            {(allTeam ?? []).map((a, i) => (
-              <option key={i} value={a.name}>{a.name}</option>
-            ))}
-          </select>
-          <button onClick={handleExport} className="btn-outline flex items-center gap-2 text-sm">
-            <Download size={14} /> {t('common.export')}
-          </button>
-        </div>
+  const filterEl = (
+    <>
+      <div className="flex items-center gap-2 bg-white/10 backdrop-blur-md border border-white/20 rounded-xl pr-3 py-1">
+        <Filter size={13} className="text-white/70" />
+        <select
+          value={coordinator}
+          onChange={e => setCoordinator(e.target.value)}
+          className="bg-transparent text-white text-xs font-bold focus:outline-none cursor-pointer min-w-[160px] py-1"
+        >
+          <option value="" className="text-gray-700">كل المنسقين</option>
+          {(allTeam ?? []).map((a, i) => (
+            <option key={i} value={a.name} className="text-gray-700">{a.name}</option>
+          ))}
+        </select>
       </div>
+      <ModernButton variant="glass" icon={Download} onClick={handleExport}>
+        {t('common.export')}
+      </ModernButton>
+    </>
+  );
 
-      <div className="card p-0 overflow-hidden">
+  return (
+    <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
+      <PageHero
+        title={t('nav.taskDistribution')}
+        subtitle="توزيع المهام على فريقك"
+        icon={ClipboardList}
+        gradient="navy"
+        actions={filterEl}
+      />
+
+      <SectionCard title="توزيع المهام" icon={ClipboardList} accent="indigo" noBodyPad>
         <DataTable
           columns={columns}
           data={team}
@@ -67,7 +78,7 @@ export default function TaskDistribution() {
           onPageChange={() => {}}
           loading={isLoading}
         />
-      </div>
+      </SectionCard>
     </div>
   );
 }

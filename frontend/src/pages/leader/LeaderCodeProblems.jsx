@@ -2,10 +2,11 @@ import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle, Search, CheckCircle, Bell,
-  Loader2, Save, X, Edit3
+  Loader2, Save, X, Edit3, AlertTriangle, Filter,
 } from 'lucide-react';
 import api from '../../api/axios';
 import CopyButton from '../../components/ui/CopyButton';
+import PageHero from '../../components/ui/PageHero';
 
 // ─── STATUS CONFIG ─────────────────────────────────────────────────────────────
 const STATUS_CFG = {
@@ -297,58 +298,40 @@ export default function LeaderCodeProblems() {
     </div>
   );
 
-  return (
-    <div className="space-y-0 animate-fadeIn" dir="rtl">
-      {/* ── HEADER ── */}
-      <div className="px-6 pt-5 pb-4 border-b border-gray-100 bg-gradient-to-l from-slate-50 to-white rounded-t-2xl">
-        <div className="flex items-center justify-between gap-3 mb-5 flex-wrap">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-gray-100 rounded-xl">
-              <AlertCircle className="w-5 h-5 text-gray-700" />
-            </div>
-            <div>
-              <h1 className="text-xl font-black text-gray-900">أكواد بها مشكلة</h1>
-              <p className="text-sm text-gray-400 mt-0.5">
-                {isLoading ? 'جاري التحميل...' : `${total} مشكلة معروضة من إجمالي ${totalAll}`}
-              </p>
-            </div>
-          </div>
-          {/* Employee filter */}
-          <select
-            value={fEmployee}
-            onChange={e => { setFEmployee(e.target.value); setFStatus(''); setSearch(''); setFSection('all'); setFProbType(''); }}
-            className={`${selectCls} ${fEmployee ? 'ring-2 ring-[#1e3a5f]/30 border-[#1e3a5f] font-bold' : ''}`}
-          >
-            <option value="">كل الموظفين</option>
-            {(team ?? []).map((a, i) => (
-              <option key={i} value={a.full_name}>{a.full_name}</option>
-            ))}
-          </select>
-        </div>
+  const employeeFilterEl = (
+    <div className="flex items-center gap-2 bg-white/10 backdrop-blur-md border border-white/20 rounded-xl pr-3 py-1">
+      <Filter size={13} className="text-white/70" />
+      <select
+        value={fEmployee}
+        onChange={e => { setFEmployee(e.target.value); setFStatus(''); setSearch(''); setFSection('all'); setFProbType(''); }}
+        className="bg-transparent text-white text-xs font-bold focus:outline-none cursor-pointer min-w-[160px] py-1"
+      >
+        <option value="" className="text-gray-700">كل الموظفين</option>
+        {(team ?? []).map((a, i) => (
+          <option key={i} value={a.full_name} className="text-gray-700">{a.full_name}</option>
+        ))}
+      </select>
+    </div>
+  );
 
-        {/* ── SUMMARY BOXES ── */}
-        <div className="flex gap-3 mb-4">
-          <div className="flex-1 flex items-center gap-3 bg-emerald-50 border border-emerald-200 rounded-2xl px-4 py-3">
-            <div className="p-2 bg-emerald-100 rounded-xl"><CheckCircle size={18} className="text-emerald-600" /></div>
-            <div>
-              <p className="text-xs text-emerald-600 font-semibold">ما تم إنجازه</p>
-              <p className="text-xl font-black text-emerald-700">{achieved}</p>
-            </div>
-            <div className="mr-auto text-xs text-emerald-500 font-medium">
-              {totalAll > 0 ? Math.round((achieved / totalAll) * 100) : 0}%
-            </div>
-          </div>
-          <div className="flex-1 flex items-center gap-3 bg-red-50 border border-red-200 rounded-2xl px-4 py-3">
-            <div className="p-2 bg-red-100 rounded-xl"><AlertCircle size={18} className="text-red-500" /></div>
-            <div>
-              <p className="text-xs text-red-500 font-semibold">المتبقي</p>
-              <p className="text-xl font-black text-red-600">{remaining}</p>
-            </div>
-            <div className="mr-auto text-xs text-red-400 font-medium">
-              {totalAll > 0 ? Math.round((remaining / totalAll) * 100) : 0}%
-            </div>
-          </div>
-        </div>
+  return (
+    <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
+      <PageHero
+        title="أكواد بها مشكلة"
+        subtitle={isLoading ? 'جاري التحميل...' : `${total} مشكلة معروضة من إجمالي ${totalAll}`}
+        icon={AlertTriangle}
+        gradient="amber"
+        actions={employeeFilterEl}
+        stats={[
+          { label: 'الإجمالي', value: totalAll, icon: AlertCircle },
+          { label: 'ما تم إنجازه', value: achieved, icon: CheckCircle, suffix: ` (${totalAll > 0 ? Math.round((achieved / totalAll) * 100) : 0}%)` },
+          { label: 'المتبقي', value: remaining, icon: AlertCircle, suffix: ` (${totalAll > 0 ? Math.round((remaining / totalAll) * 100) : 0}%)` },
+        ]}
+      />
+
+      {/* ── BODY (tabs + filters + tables) ─────────────────────────────────── */}
+      <div className="bg-white rounded-3xl border border-gray-100 overflow-hidden shadow-sm">
+        <div className="px-6 pt-5 pb-4 border-b border-gray-100">
 
         {/* ── STATUS TABS ── */}
         <div className="flex flex-wrap gap-2 mb-4">
@@ -402,7 +385,7 @@ export default function LeaderCodeProblems() {
       </div>
 
       {/* ── TABLES ── */}
-      <div className="bg-white rounded-b-2xl overflow-x-auto border border-t-0 border-gray-100">
+      <div className="overflow-x-auto">
         {fSection !== 'side' && (
           <ProbTable rows={filteredMain} labelFirst="تاريخ أول محاضرة"
             sectionLabel="مشاكل المحاضرات الأساسية"
@@ -416,11 +399,12 @@ export default function LeaderCodeProblems() {
       </div>
 
       {/* ── FOOTER ── */}
-      <div className="px-6 py-3 bg-gray-50/50 border border-t-0 border-gray-100 rounded-b-2xl">
+      <div className="px-6 py-3 bg-gray-50/40 border-t border-gray-100">
         <p className="text-xs text-gray-400 flex items-center gap-1.5">
           <Bell size={12} />
           انقر على أي حالة لتحديثها · التغييرات تُحفظ فوراً ولا تتأثر بإعادة رفع Excel
         </p>
+      </div>
       </div>
 
       {/* ── STATUS EDITOR ── */}

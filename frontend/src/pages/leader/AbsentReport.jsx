@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Download } from 'lucide-react';
+import { Download, UserX, Search, Filter } from 'lucide-react';
 import api from '../../api/axios';
 import DataTable from '../../components/ui/DataTable';
 import Badge from '../../components/ui/Badge';
-import SearchBar from '../../components/ui/SearchBar';
+import PageHero from '../../components/ui/PageHero';
+import SectionCard from '../../components/ui/SectionCard';
+import ModernButton from '../../components/ui/ModernButton';
 
 export default function AbsentReport() {
   const { t } = useTranslation();
@@ -33,7 +35,7 @@ export default function AbsentReport() {
     window.open(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/export/absent?${params}`, '_blank');
   };
 
-  const selectCls = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f] min-w-[180px]';
+  const inputCls = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30';
 
   const columns = [
     { key: 'student_name', label: t('absent.student'), render: v => v || '—' },
@@ -42,40 +44,60 @@ export default function AbsentReport() {
     { key: 'date',         label: t('absent.date'),   render: v => v?.slice(0,10) },
     { key: 'lecture_no',   label: '#' },
     { key: 'follow_up_status', label: t('absent.followUpStatus'), render: v => <Badge value={v} ns="absent" /> },
-    { key: 'follow_up_note',   label: t('absent.followUpNote'),   render: v => <span className="text-xs text-text-secondary">{v || '—'}</span> },
+    { key: 'follow_up_note',   label: t('absent.followUpNote'),   render: v => <span className="text-xs text-gray-500">{v || '—'}</span> },
     { key: 'follow_up_by',     label: 'By',                       render: v => <span className="text-xs">{v || '—'}</span> },
   ];
 
   return (
-    <div className="space-y-5 animate-fadeIn" dir="rtl">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-bold text-text-primary">{t('nav.absentReport')}</h1>
-        <button onClick={handleExport} className="btn-outline flex items-center gap-2 text-sm">
-          <Download size={14} /> {t('common.export')}
-        </button>
-      </div>
+    <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
+      <PageHero
+        title={t('nav.absentReport')}
+        subtitle={`${data?.total || 0} حالة غياب`}
+        icon={UserX}
+        gradient="rose"
+        actions={
+          <ModernButton variant="glass" icon={Download} onClick={handleExport}>
+            {t('common.export')}
+          </ModernButton>
+        }
+      />
 
-      <div className="card p-3 flex flex-wrap gap-3 items-center">
-        {/* Coordinator filter */}
-        <select
-          value={coordinator}
-          onChange={e => { setCoordinator(e.target.value); setPage(1); }}
-          className={`${selectCls} ${coordinator ? 'ring-2 ring-[#1e3a5f]/30 border-[#1e3a5f] font-bold' : ''}`}
-        >
-          <option value="">كل المنسقين</option>
-          {(allTeam ?? []).map((a, i) => (
-            <option key={i} value={a.name}>{a.name}</option>
-          ))}
-        </select>
+      {/* Filters */}
+      <div className="bg-white/80 backdrop-blur-md border border-gray-100 rounded-2xl p-4 shadow-sm space-y-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2">
+            <Filter size={13} className="text-gray-400" />
+            <select
+              value={coordinator}
+              onChange={e => { setCoordinator(e.target.value); setPage(1); }}
+              className="bg-transparent text-sm font-bold text-gray-700 focus:outline-none cursor-pointer min-w-[140px]"
+            >
+              <option value="">كل المنسقين</option>
+              {(allTeam ?? []).map((a, i) => (
+                <option key={i} value={a.name}>{a.name}</option>
+              ))}
+            </select>
+          </div>
 
-        <SearchBar value={group} onChange={v => { setGroup(v); setPage(1); }}
-          placeholder="Filter by group..." className="flex-1 min-w-48" />
+          <div className="flex items-center gap-1.5 bg-white border border-gray-200 rounded-xl px-3 py-2 flex-1 min-w-[200px]">
+            <Search size={13} className="text-gray-400" />
+            <input
+              type="text"
+              value={group}
+              onChange={e => { setGroup(e.target.value); setPage(1); }}
+              placeholder="بحث باسم المجموعة..."
+              className="bg-transparent text-sm font-bold text-gray-700 focus:outline-none flex-1"
+            />
+          </div>
+        </div>
 
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap pt-1">
           {['', 'pending', 'contacted', 'resolved'].map(s => (
             <button key={s} onClick={() => { setStatus(s); setPage(1); }}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                status === s ? 'bg-primary text-white' : 'bg-surface text-text-secondary hover:bg-border'
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all ${
+                status === s
+                  ? 'bg-[#1e3a5f] text-white shadow-lg shadow-[#1e3a5f]/30'
+                  : 'bg-gray-50 text-gray-600 hover:bg-gray-100 border border-gray-200'
               }`}>
               {s ? t(`absent.${s}`) : t('common.all')}
             </button>
@@ -83,7 +105,7 @@ export default function AbsentReport() {
         </div>
       </div>
 
-      <div className="card p-0 overflow-hidden">
+      <SectionCard title="قائمة الغيابات" icon={UserX} accent="rose" noBodyPad>
         <DataTable
           columns={columns}
           data={data?.data}
@@ -94,7 +116,7 @@ export default function AbsentReport() {
           loading={isLoading}
           emptyMsg={t('absent.noAbsent')}
         />
-      </div>
+      </SectionCard>
     </div>
   );
 }
