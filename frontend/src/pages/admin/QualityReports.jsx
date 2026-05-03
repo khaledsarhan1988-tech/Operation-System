@@ -1,13 +1,25 @@
-import { ShieldCheck } from 'lucide-react';
+import { ShieldCheck, Construction } from 'lucide-react';
+import PageHero from '../../components/ui/PageHero';
+import EmptyState from '../../components/ui/EmptyState';
 
 export default function QualityReports() {
   return (
-    <div className="flex flex-col items-center justify-center py-24 space-y-4 animate-fadeIn">
-      <div className="h-16 w-16 rounded-2xl bg-success/10 flex items-center justify-center">
-        <ShieldCheck size={32} className="text-success" />
+    <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
+      <PageHero
+        title="تقارير الجودة"
+        subtitle="إحصائيات وتقارير قسم ضمان الجودة"
+        icon={ShieldCheck}
+        gradient="emerald"
+      />
+
+      <div className="bg-white rounded-3xl border border-gray-100 shadow-sm">
+        <EmptyState
+          icon={Construction}
+          accent="emerald"
+          title="قيد الإنشاء"
+          message="هذه الصفحة قيد التطوير، وستتوفر التقارير الكاملة قريباً جداً."
+        />
       </div>
-      <h1 className="text-xl font-bold text-gray-800">تقارير الجودة</h1>
-      <p className="text-gray-500 text-sm">قيد الإنشاء — سيتم إضافة التقارير قريباً</p>
     </div>
   );
 }

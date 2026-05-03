@@ -2,9 +2,10 @@ import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   UserX, Users, Video, CalendarDays, TrendingDown, XCircle,
-  AlertTriangle, CheckCircle2, Activity,
+  AlertTriangle, CheckCircle2, Activity, Search,
 } from 'lucide-react';
 import api from '../../api/axios';
+import PageHero from '../../components/ui/PageHero';
 
 /* ─── Utilities ──────────────────────────────────────────────────────────── */
 const PERIODS = [
@@ -173,68 +174,51 @@ export default function AttendanceAbsenceReport() {
 
   const selectCls = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]';
 
-  return (
-    <div className="space-y-5 animate-fadeIn" dir="rtl">
-      {/* ─── Header ─────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-gradient-to-br from-[#1e3a5f] to-[#2d5a8e] rounded-xl shadow-md">
-            <Activity className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <h1 className="text-xl font-black text-gray-900">تقارير الحضور والغياب</h1>
-            <p className="text-xs text-gray-400 mt-0.5">إحصائيات الحضور الأساسية والزووم كولز لكل منسق</p>
-          </div>
-        </div>
-
-        {/* Filters */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <input
-            type="search"
-            placeholder="🔍 ابحث باسم المنسق..."
-            value={coordQuery}
-            onChange={e => setCoordQuery(e.target.value)}
-            className={`${selectCls} w-52`}
-          />
-
-          <select
-            value={period}
-            onChange={e => setPeriod(e.target.value)}
-            disabled={!!hasDateRange}
-            className={`${selectCls} ${hasDateRange ? 'opacity-40 cursor-not-allowed' : ''}`}
-          >
-            {PERIODS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-          </select>
-
-          <div className="flex items-center gap-1.5 bg-white border border-gray-200 rounded-xl px-3 py-1.5">
-            <CalendarDays size={14} className="text-gray-400" />
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={e => setDateFrom(e.target.value)}
-              className="border-0 p-0 text-xs focus:ring-0 outline-none bg-transparent text-gray-700"
-              placeholder="من"
-            />
-            <span className="text-xs text-gray-300">←</span>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={e => setDateTo(e.target.value)}
-              className="border-0 p-0 text-xs focus:ring-0 outline-none bg-transparent text-gray-700"
-              placeholder="إلى"
-            />
-            {hasDateRange && (
-              <button
-                onClick={() => { setDateFrom(''); setDateTo(''); }}
-                className="text-gray-400 hover:text-red-500 transition-colors"
-                title="مسح التاريخ"
-              >
-                <XCircle size={15} />
-              </button>
-            )}
-          </div>
-        </div>
+  const filterEl = (
+    <div className="flex items-center gap-2 flex-wrap">
+      <div className="flex items-center gap-1.5 bg-white/10 backdrop-blur-md border border-white/20 rounded-xl px-3 py-1.5">
+        <Search size={13} className="text-white/70" />
+        <input
+          type="search"
+          placeholder="بحث باسم المنسق..."
+          value={coordQuery}
+          onChange={e => setCoordQuery(e.target.value)}
+          className="bg-transparent text-white placeholder-white/50 text-xs font-bold focus:outline-none w-40"
+        />
       </div>
+      <select
+        value={period}
+        onChange={e => setPeriod(e.target.value)}
+        disabled={!!hasDateRange}
+        className={`bg-white/10 backdrop-blur-md border border-white/20 rounded-xl px-3 py-1.5 text-white text-xs font-bold focus:outline-none cursor-pointer ${hasDateRange ? 'opacity-40 cursor-not-allowed' : ''}`}
+      >
+        {PERIODS.map(p => <option key={p.value} value={p.value} className="text-gray-700">{p.label}</option>)}
+      </select>
+      <div className="flex items-center gap-1.5 bg-white/10 backdrop-blur-md border border-white/20 rounded-xl px-3 py-1.5">
+        <CalendarDays size={13} className="text-white/70" />
+        <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+          className="bg-transparent text-white text-xs font-bold focus:outline-none border-0 p-0" />
+        <span className="text-[10px] text-white/60 font-bold">←</span>
+        <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+          className="bg-transparent text-white text-xs font-bold focus:outline-none border-0 p-0" />
+        {hasDateRange && (
+          <button onClick={() => { setDateFrom(''); setDateTo(''); }} className="text-white/70 hover:text-white transition-colors">
+            <XCircle size={14} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
+      <PageHero
+        title="تقارير الحضور والغياب"
+        subtitle="إحصائيات الحضور الأساسية والزووم كولز لكل منسق"
+        icon={Activity}
+        gradient="cyan"
+        actions={filterEl}
+      />
 
       {/* ─── KPI Summary Row (6 cards in 2 rows) ────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">

@@ -7,10 +7,13 @@ import {
   UserCheck, Eye, Search, Filter, TrendingUp, Calendar,
   CheckCircle, XCircle, AlertOctagon, BarChart2, Zap, FileText,
   Edit3, Save, Bell, ShieldCheck, Loader2, Copy, Check, Video,
+  Headphones,
 } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { copyText } from '../../utils/clipboard';
+import PageHero from '../../components/ui/PageHero';
+import ModernButton from '../../components/ui/ModernButton';
 
 // ─── COPY BUTTON ──────────────────────────────────────────────────────────────
 function CopyButton({ text }) {
@@ -2381,23 +2384,19 @@ export default function SystemReports() {
   };
 
   return (
-    <div className="space-y-4" dir="rtl">
+    <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
 
-      {/* ── PAGE HEADER ── */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-black text-gray-900 tracking-tight">تقارير خدمة العملاء</h1>
-          <p className="text-sm text-gray-400 mt-1 flex items-center gap-1.5">
-            <BarChart2 size={14} />
-            لوحة متابعة شاملة بمؤشرات الأداء والأخطاء
-          </p>
-        </div>
-        <button onClick={() => refetch()}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-all font-medium">
-          <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
-          تحديث
-        </button>
-      </div>
+      <PageHero
+        title="تقارير خدمة العملاء"
+        subtitle="لوحة متابعة شاملة بمؤشرات الأداء والأخطاء"
+        icon={Headphones}
+        gradient="rose"
+        actions={
+          <ModernButton variant="glass" icon={RefreshCw} onClick={() => refetch()} loading={isLoading}>
+            تحديث
+          </ModernButton>
+        }
+      />
 
       {/* ── FILTER BAR ── */}
       <div

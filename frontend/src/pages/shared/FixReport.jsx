@@ -1,8 +1,11 @@
 import { useState, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { CheckCircle, AlertCircle, X, FileText, XCircle, Copy, Check } from 'lucide-react';
+import { CheckCircle, AlertCircle, X, FileText, XCircle, Copy, Check, Calendar } from 'lucide-react';
 import api from '../../api/axios';
 import { copyText } from '../../utils/clipboard';
+import PageHero from '../../components/ui/PageHero';
+import SectionCard from '../../components/ui/SectionCard';
+import EmptyState from '../../components/ui/EmptyState';
 
 function CopyButton({ text }) {
   const [copied, setCopied] = useState(false);
@@ -197,96 +200,57 @@ export default function FixReport() {
   const selectCls = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]';
   const dateCls  = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]';
 
-  return (
-    <div className="space-y-5 animate-fadeIn" dir="rtl">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-emerald-100 rounded-xl">
-            <FileText className="w-5 h-5 text-emerald-600" />
-          </div>
-          <div>
-            <h1 className="text-xl font-black text-gray-900">تقارير إصلاح الأكواد</h1>
-            <p className="text-xs text-gray-400 mt-0.5">إجمالي ما تم إصلاحه لكل منسق</p>
-          </div>
-        </div>
+  const filterEl = (
+    <div className="flex items-center gap-2 flex-wrap">
+      <select
+        value={period}
+        onChange={e => setPeriod(e.target.value)}
+        disabled={!!hasDateRange}
+        className={`bg-white/10 backdrop-blur-md border border-white/20 rounded-xl px-3 py-1.5 text-white text-xs font-bold focus:outline-none cursor-pointer ${hasDateRange ? 'opacity-40 cursor-not-allowed' : ''}`}
+      >
+        {PERIODS.map(p => <option key={p.value} value={p.value} className="text-gray-700">{p.label}</option>)}
+      </select>
 
-        {/* Filters */}
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Period — disabled when date range is active */}
-          <select
-            value={period}
-            onChange={e => setPeriod(e.target.value)}
-            disabled={!!hasDateRange}
-            className={`${selectCls} ${hasDateRange ? 'opacity-40 cursor-not-allowed' : ''}`}
+      <div className="flex items-center gap-1.5 bg-white/10 backdrop-blur-md border border-white/20 rounded-xl px-3 py-1.5">
+        <Calendar size={13} className="text-white/70" />
+        <span className="text-[10px] text-white/60 font-bold">من</span>
+        <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+          className="bg-transparent text-white text-xs font-bold focus:outline-none border-0 p-0" />
+        <span className="text-[10px] text-white/60 font-bold">إلى</span>
+        <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+          className="bg-transparent text-white text-xs font-bold focus:outline-none border-0 p-0" />
+        {hasDateRange && (
+          <button
+            onClick={() => { setDateFrom(''); setDateTo(''); }}
+            className="text-white/70 hover:text-white transition-colors mr-1"
+            title="مسح التاريخ"
           >
-            {PERIODS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-          </select>
-
-          {/* Date range */}
-          <div className="flex items-center gap-1.5 bg-white border border-gray-200 rounded-xl px-3 py-1.5">
-            <span className="text-xs text-gray-400 whitespace-nowrap">من</span>
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={e => setDateFrom(e.target.value)}
-              className={`${dateCls} border-0 p-0 text-xs focus:ring-0`}
-            />
-            <span className="text-xs text-gray-400 whitespace-nowrap">إلى</span>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={e => setDateTo(e.target.value)}
-              className={`${dateCls} border-0 p-0 text-xs focus:ring-0`}
-            />
-            {hasDateRange && (
-              <button
-                onClick={() => { setDateFrom(''); setDateTo(''); }}
-                className="text-gray-400 hover:text-red-500 transition-colors mr-1"
-                title="مسح التاريخ"
-              >
-                <XCircle size={15} />
-              </button>
-            )}
-          </div>
-        </div>
+            <XCircle size={14} />
+          </button>
+        )}
       </div>
+    </div>
+  );
 
-      {/* Summary boxes */}
-      <div className="grid grid-cols-4 gap-4">
-        <div className="bg-gray-50 border border-gray-200 rounded-2xl px-5 py-4 flex items-center gap-4">
-          <div className="p-2 bg-gray-100 rounded-xl"><AlertCircle size={20} className="text-gray-500" /></div>
-          <div>
-            <p className="text-xs text-gray-500 font-semibold">إجمالي المشاكل</p>
-            <p className="text-2xl font-black text-gray-700">{totalAllCount}</p>
-          </div>
-        </div>
-        <div className="bg-red-50 border border-red-200 rounded-2xl px-5 py-4 flex items-center gap-4">
-          <div className="p-2 bg-red-100 rounded-xl"><AlertCircle size={20} className="text-red-500" /></div>
-          <div>
-            <p className="text-xs text-red-500 font-semibold">المتبقية</p>
-            <p className="text-2xl font-black text-red-600">{totalRemain}</p>
-          </div>
-        </div>
-        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl px-5 py-4 flex items-center gap-4">
-          <div className="p-2 bg-emerald-100 rounded-xl"><CheckCircle size={20} className="text-emerald-600" /></div>
-          <div>
-            <p className="text-xs text-emerald-600 font-semibold">إجمالي تم إصلاحه</p>
-            <p className="text-2xl font-black text-emerald-700">{totalFixed}</p>
-          </div>
-          <div className="mr-auto text-sm font-bold text-emerald-500">{pct}%</div>
-        </div>
-        <div className="bg-blue-50 border border-blue-200 rounded-2xl px-5 py-4 flex items-center gap-4">
-          <div className="p-2 bg-blue-100 rounded-xl"><CheckCircle size={20} className="text-blue-500" /></div>
-          <div>
-            <p className="text-xs text-blue-500 font-semibold">تم إصلاحه اليوم</p>
-            <p className="text-2xl font-black text-blue-600">{totalToday}</p>
-          </div>
-        </div>
-      </div>
+  return (
+    <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
+      <PageHero
+        title="تقارير إصلاح الأكواد"
+        subtitle="إجمالي ما تم إصلاحه لكل منسق"
+        icon={FileText}
+        gradient="emerald"
+        actions={filterEl}
+        stats={[
+          { label: 'إجمالي المشاكل',   value: totalAllCount, icon: AlertCircle },
+          { label: 'المتبقية',          value: totalRemain,   icon: AlertCircle },
+          { label: 'إجمالي تم إصلاحه', value: totalFixed,    icon: CheckCircle, suffix: ` (${pct}%)` },
+          { label: 'تم إصلاحه اليوم',  value: totalToday,    icon: CheckCircle },
+        ]}
+      />
 
       {/* Table */}
-      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+      <SectionCard title="تفاصيل الإصلاح لكل منسق" icon={FileText} accent="emerald" noBodyPad>
+        <div className="overflow-x-auto">
         <table className="w-full text-sm text-right">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-100">
@@ -305,7 +269,14 @@ export default function FixReport() {
                 </tr>
               ))
             ) : !data?.length ? (
-              <tr><td colSpan={6} className="text-center py-12 text-gray-400 text-sm">لا توجد بيانات</td></tr>
+              <tr><td colSpan={6} className="p-0">
+                <EmptyState
+                  icon={FileText}
+                  accent="emerald"
+                  title="لا توجد إصلاحات بعد"
+                  message="غيّر الفلاتر أو الفترة لمشاهدة بيانات الإصلاح."
+                />
+              </td></tr>
             ) : data.map((r, i) => {
               const rowPct = r.all_count > 0 ? Math.round((r.fixed / r.all_count) * 100) : 0;
               return (
@@ -352,7 +323,8 @@ export default function FixReport() {
             })}
           </tbody>
         </table>
-      </div>
+        </div>
+      </SectionCard>
 
       {detail && (
         <DetailModal
