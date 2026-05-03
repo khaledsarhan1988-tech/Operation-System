@@ -3,9 +3,12 @@ import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Users, Plus, Pencil, Trash2, X, Search, Sun, Moon,
-  Phone, Briefcase, CheckCircle, XCircle, ChevronDown,
+  Phone, Briefcase, CheckCircle, XCircle, ChevronDown, UserX,
 } from 'lucide-react';
 import api from '../../api/axios';
+import PageHero from '../../components/ui/PageHero';
+import EmptyState from '../../components/ui/EmptyState';
+import ModernButton from '../../components/ui/ModernButton';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const DEPTS = {
@@ -640,21 +643,18 @@ export default function TeamPage() {
   const totalVisible = visible.length;
 
   return (
-    <div className="space-y-5 animate-fadeIn" dir="rtl">
-
-      {/* ── Header ── */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-black text-gray-900 tracking-tight">فريق العمل</h1>
-          <p className="text-sm text-gray-400 mt-1">دليل موظفي الأكاديمية</p>
-        </div>
-        <button
-          onClick={() => setEditMember(true)}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold transition-all shadow-sm"
-        >
-          <Plus size={16} /> إضافة موظف
-        </button>
-      </div>
+    <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
+      <PageHero
+        title="فريق العمل"
+        subtitle="دليل موظفي الأكاديمية"
+        icon={Users}
+        gradient="navy"
+        actions={
+          <ModernButton variant="amber" icon={Plus} onClick={() => setEditMember(true)}>
+            إضافة موظف
+          </ModernButton>
+        }
+      />
 
       {/* ── Dept Tabs ── */}
       <div className="flex gap-3">
@@ -721,10 +721,13 @@ export default function TeamPage() {
             />
           ))}
           {totalVisible === 0 && (
-            <div className="text-center py-16 text-gray-400">
-              <Users className="w-10 h-10 mx-auto mb-3 text-gray-200" />
-              <p className="text-sm font-medium">لا يوجد موظفين</p>
-              <p className="text-xs mt-1">اضغط "إضافة موظف" لإضافة أول موظف</p>
+            <div className="bg-white rounded-3xl border border-gray-100">
+              <EmptyState
+                icon={UserX}
+                accent="gray"
+                title="لا يوجد موظفين"
+                message="اضغط 'إضافة موظف' لإضافة أول موظف للقسم"
+              />
             </div>
           )}
         </div>

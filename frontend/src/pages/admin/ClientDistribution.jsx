@@ -7,6 +7,7 @@ import {
   Calendar, PlayCircle,
 } from 'lucide-react';
 import api from '../../api/axios';
+import PageHero from '../../components/ui/PageHero';
 
 const LINES      = ['Ahmed Hassan', 'Dardasha'];
 const PRIORITIES = ['عادية', 'هامة', 'عاجلة'];
@@ -1063,9 +1064,36 @@ export default function ClientDistribution() {
     return iso[iso.length - 1] || '';
   }, [displayItems]);
 
+  const tabsEl = (
+    <div className="flex items-center gap-2 flex-wrap">
+      {[
+        { key: 'new',     icon: Upload,     label: 'توزيع جديد', onClick: () => { setTab('new'); setStep('upload'); } },
+        { key: 'coords',  icon: UserCheck,  label: 'حالة المنسقين', onClick: () => setTab('coords') },
+        { key: 'history', icon: History,    label: 'السجل', onClick: () => setTab('history') },
+      ].map(t => {
+        const Icon = t.icon;
+        const active = tab === t.key;
+        return (
+          <button
+            key={t.key}
+            onClick={t.onClick}
+            className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black transition-all ${
+              active
+                ? 'bg-white text-[#1e3a5f] shadow-lg shadow-black/15'
+                : 'bg-white/10 hover:bg-white/20 text-white border border-white/20'
+            }`}
+          >
+            <Icon size={14} />
+            {t.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+
   // ─────────────────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-6 max-w-6xl mx-auto" dir="rtl">
+    <div className="space-y-5 animate-fadeIn pb-12 max-w-6xl mx-auto" dir="rtl">
       {/* ── Modals ── */}
       {showTTMgr     && <TaskTypeManager onClose={() => setShowTTMgr(false)} />}
       {detailId      && <HistoryDetail sessionId={detailId} onClose={() => setDetailId(null)} />}
@@ -1080,42 +1108,13 @@ export default function ClientDistribution() {
         />
       )}
 
-      {/* ── Header ── */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">توزيع العملاء الجدد</h1>
-          <p className="text-sm text-gray-500 mt-1">رفع شيت العملاء وتوزيعهم تلقائياً على المنسقين</p>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => { setTab('new'); setStep('upload'); }}
-            className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
-              tab === 'new' ? 'bg-primary text-white shadow' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-            }`}
-          >
-            <Upload size={16} className="inline ml-1.5" />
-            توزيع جديد
-          </button>
-          <button
-            onClick={() => setTab('coords')}
-            className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
-              tab === 'coords' ? 'bg-primary text-white shadow' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-            }`}
-          >
-            <UserCheck size={16} className="inline ml-1.5" />
-            حالة المنسقين
-          </button>
-          <button
-            onClick={() => setTab('history')}
-            className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
-              tab === 'history' ? 'bg-primary text-white shadow' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-            }`}
-          >
-            <History size={16} className="inline ml-1.5" />
-            السجل
-          </button>
-        </div>
-      </div>
+      <PageHero
+        title="توزيع العملاء الجدد"
+        subtitle="رفع شيت العملاء وتوزيعهم تلقائياً على المنسقين"
+        icon={Shuffle}
+        gradient="cyan"
+        actions={tabsEl}
+      />
 
       {/* ═══════════════════ TAB: NEW DISTRIBUTION ═══════════════════════════ */}
       {tab === 'new' && (

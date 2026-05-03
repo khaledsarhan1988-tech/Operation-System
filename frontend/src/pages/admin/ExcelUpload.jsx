@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Upload, CheckCircle, AlertCircle, Clock, FileSpreadsheet, RefreshCw, Trash2, X, AlertTriangle } from 'lucide-react';
 import api from '../../api/axios';
 import { useAuth } from '../../auth/AuthContext';
+import PageHero from '../../components/ui/PageHero';
 
 const FILE_TYPES = [
   { key: 'data',          labelAr: 'الموظفون',              labelEn: 'Employees',             file: 'Data.xlsx' },
@@ -544,18 +545,15 @@ export default function ExcelUpload() {
   };
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">
-          {isAr ? 'رفع ملفات Excel' : 'Excel File Upload'}
-        </h1>
-        <p className="text-sm text-gray-500 mt-1">
-          {isAr
-            ? 'ارفع ملفات Excel لتحديث بيانات النظام. البيانات القديمة ستُستبدل (مع الحفاظ على بيانات المتابعة).'
-            : 'Upload Excel files to update system data. Existing data will be replaced (follow-up data preserved).'}
-        </p>
-      </div>
+    <div className="space-y-5 animate-fadeIn pb-12" dir={isAr ? 'rtl' : 'ltr'}>
+      <PageHero
+        title={isAr ? 'رفع ملفات Excel' : 'Excel File Upload'}
+        subtitle={isAr
+          ? 'ارفع ملفات Excel لتحديث بيانات النظام. البيانات القديمة ستُستبدل (مع الحفاظ على بيانات المتابعة).'
+          : 'Upload Excel files to update system data. Existing data will be replaced (follow-up data preserved).'}
+        icon={Upload}
+        gradient="amber"
+      />
 
       {/* Line selector banner */}
       <div className="bg-white rounded-xl border-2 border-primary/20 p-4 flex items-center gap-4">

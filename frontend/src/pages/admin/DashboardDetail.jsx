@@ -1,8 +1,11 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, Search, Loader2, AlertTriangle } from 'lucide-react';
+import { ArrowRight, Search, Loader2, AlertTriangle, FileText } from 'lucide-react';
 import api from '../../api/axios';
+import PageHero from '../../components/ui/PageHero';
+import SectionCard from '../../components/ui/SectionCard';
+import EmptyState from '../../components/ui/EmptyState';
 
 // ─── METRIC CONFIG ─────────────────────────────────────────────────────────────
 // Each entry describes: Arabic title, columns (key + label + optional renderer)
@@ -167,54 +170,55 @@ export default function DashboardDetail() {
     );
   }
 
-  return (
-    <div className="space-y-4 animate-fadeIn" dir="rtl">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-3">
-          <Link
-            to="/admin/dashboard"
-            className="p-2 rounded-xl border border-gray-200 hover:bg-gray-50 transition-colors"
-            title="العودة"
-          >
-            <ArrowRight size={16} />
-          </Link>
-          <div>
-            <h1 className="text-xl font-black text-gray-900">{cfg.title}</h1>
-            <p className="text-sm text-gray-500 mt-0.5">
-              {isLoading ? 'جاري التحميل...' : `${filtered.length} من إجمالي ${data?.count ?? 0}`}
-            </p>
-          </div>
-        </div>
+  const searchEl = (
+    <div className="flex items-center gap-1.5 bg-white/10 backdrop-blur-md border border-white/20 rounded-xl px-3 py-1.5 min-w-[240px]">
+      <Search size={13} className="text-white/70" />
+      <input
+        type="text"
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        placeholder="بحث..."
+        className="bg-transparent text-white placeholder-white/50 text-xs font-bold focus:outline-none flex-1"
+      />
+    </div>
+  );
 
-        {/* Search */}
-        <div className="relative min-w-[260px]">
-          <Search className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input
-            type="text"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="بحث..."
-            className="w-full bg-white border border-gray-200 rounded-xl pr-10 pl-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
-          />
-        </div>
-      </div>
+  const backEl = (
+    <Link
+      to="/admin/dashboard"
+      className="inline-flex items-center justify-center p-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 transition-colors"
+      title="العودة"
+    >
+      <ArrowRight size={14} className="text-white" />
+    </Link>
+  );
+
+  return (
+    <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
+      <PageHero
+        title={cfg.title}
+        subtitle={isLoading ? 'جاري التحميل...' : `${filtered.length} من إجمالي ${data?.count ?? 0}`}
+        icon={FileText}
+        gradient="navy"
+        actions={<>{searchEl}{backEl}</>}
+      />
 
       {/* Error */}
       {isError && (
-        <div className="card bg-red-50 border-red-200 text-red-700 text-sm">
+        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-2xl p-4 font-bold flex items-start gap-2">
+          <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
           {error?.response?.data?.error || error?.message || 'حدث خطأ أثناء التحميل'}
         </div>
       )}
 
       {/* Table */}
-      <div className="card p-0 overflow-hidden">
+      <SectionCard noBodyPad icon={FileText} title="البيانات التفصيلية" accent="indigo">
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-right" style={{ minWidth: '900px' }}>
-            <thead className="bg-gray-50 border-b border-gray-100">
+            <thead className="bg-gray-50/60 border-b border-gray-100">
               <tr>
                 {cfg.columns.map(c => (
-                  <th key={c.key} className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">
+                  <th key={c.key} className="px-4 py-3 text-xs font-black text-gray-500 uppercase tracking-wide whitespace-nowrap">
                     {c.label}
                   </th>
                 ))}
@@ -230,13 +234,18 @@ export default function DashboardDetail() {
               )}
               {!isLoading && !filtered.length && (
                 <tr>
-                  <td colSpan={cfg.columns.length} className="px-4 py-12 text-center text-gray-400 text-sm">
-                    لا توجد بيانات
+                  <td colSpan={cfg.columns.length} className="p-0">
+                    <EmptyState
+                      icon={Search}
+                      accent="gray"
+                      title="لا توجد بيانات"
+                      message={search ? `لم يتم العثور على نتائج لـ "${search}"` : 'لا توجد سجلات لعرضها حالياً'}
+                    />
                   </td>
                 </tr>
               )}
               {!isLoading && filtered.map((row, i) => (
-                <tr key={row.id ?? i} className="hover:bg-gray-50/60 transition-colors">
+                <tr key={row.id ?? i} className="hover:bg-gray-50/40 transition-colors">
                   {cfg.columns.map(c => (
                     <td key={c.key} className="px-4 py-3 text-xs text-gray-700 whitespace-nowrap" style={{ maxWidth: '260px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {formatCell(row[c.key], c)}
@@ -247,7 +256,7 @@ export default function DashboardDetail() {
             </tbody>
           </table>
         </div>
-      </div>
+      </SectionCard>
     </div>
   );
 }

@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Plus, Eye, EyeOff, Pencil, Trash2, ToggleLeft, ToggleRight, Download } from 'lucide-react';
+import { Plus, Eye, EyeOff, Pencil, Trash2, ToggleLeft, ToggleRight, Download, UserCog } from 'lucide-react';
 import api from '../../api/axios';
 import DataTable from '../../components/ui/DataTable';
 import Modal from '../../components/ui/Modal';
 import Badge from '../../components/ui/Badge';
+import PageHero from '../../components/ui/PageHero';
+import SectionCard from '../../components/ui/SectionCard';
+import ModernButton from '../../components/ui/ModernButton';
 
 const EMPTY_FORM = {
   username: '', password: '', full_name: '',
@@ -261,25 +264,25 @@ export default function UserManagement() {
   ];
 
   return (
-    <div className="space-y-5 animate-fadeIn">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-gray-800">{t('admin.users')}</h1>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleBackupDownload}
-            disabled={downloading}
-            className="btn-outline flex items-center gap-2 text-sm"
-          >
-            <Download size={15} />
-            {downloading ? 'جاري التحميل...' : 'نسخة احتياطية'}
-          </button>
-          <button onClick={() => { setSelected(null); setShowModal(true); }} className="btn-primary flex items-center gap-2 text-sm">
-            <Plus size={15} /> {t('admin.addUser')}
-          </button>
-        </div>
-      </div>
+    <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
+      <PageHero
+        title={t('admin.users')}
+        subtitle="إدارة كاملة لحسابات المستخدمين والصلاحيات"
+        icon={UserCog}
+        gradient="navy"
+        actions={
+          <>
+            <ModernButton variant="glass" icon={Download} onClick={handleBackupDownload} loading={downloading}>
+              {downloading ? 'جارٍ التحميل...' : 'نسخة احتياطية'}
+            </ModernButton>
+            <ModernButton variant="amber" icon={Plus} onClick={() => { setSelected(null); setShowModal(true); }}>
+              {t('admin.addUser')}
+            </ModernButton>
+          </>
+        }
+      />
 
-      <div className="card p-0 overflow-hidden">
+      <SectionCard title="قائمة المستخدمين" subtitle={`${users?.length || 0} مستخدم`} icon={UserCog} accent="indigo" noBodyPad>
         <DataTable
           columns={columns}
           data={users}
@@ -289,7 +292,7 @@ export default function UserManagement() {
           onPageChange={() => {}}
           loading={isLoading}
         />
-      </div>
+      </SectionCard>
 
       <UserModal
         key={selected?.id ?? 'new'}
