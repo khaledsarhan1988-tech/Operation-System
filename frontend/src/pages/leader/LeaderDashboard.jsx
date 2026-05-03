@@ -1,10 +1,15 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Users, ClipboardList, UserX, Globe, AlertTriangle } from 'lucide-react';
+import {
+  Users, ClipboardList, UserX, Globe, AlertTriangle, LayoutDashboard,
+  BarChart3, PieChart as PieIcon, Filter,
+} from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import api from '../../api/axios';
 import StatCard from '../../components/ui/StatCard';
+import PageHero from '../../components/ui/PageHero';
+import SectionCard from '../../components/ui/SectionCard';
 
 export default function LeaderDashboard() {
   const { t } = useTranslation();
@@ -43,54 +48,65 @@ export default function LeaderDashboard() {
     done:    a.done    || 0,
   })) || [];
 
-  const COLORS = ['#E67E22', '#27AE60'];
+  const COLORS = ['#F59E0B', '#10B981'];
 
-  const selectCls = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f] min-w-[180px]';
+  const filterEl = (
+    <div className="flex items-center gap-2 bg-white/10 backdrop-blur-md border border-white/20 rounded-xl pr-3 py-1">
+      <Filter size={14} className="text-white/70" />
+      <select
+        value={coordinator}
+        onChange={e => setCoordinator(e.target.value)}
+        className="bg-transparent text-white text-sm font-bold focus:outline-none cursor-pointer min-w-[160px] py-1"
+      >
+        <option value="" className="text-gray-700">كل المنسقين</option>
+        {(allTeam ?? []).map((a, i) => (
+          <option key={i} value={a.name} className="text-gray-700">{a.name}</option>
+        ))}
+      </select>
+    </div>
+  );
 
   return (
-    <div className="space-y-6 animate-fadeIn" dir="rtl">
-      {/* Header + filter */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-bold text-text-primary">{t('nav.dashboard')}</h1>
-        <select
-          value={coordinator}
-          onChange={e => setCoordinator(e.target.value)}
-          className={`${selectCls} ${coordinator ? 'ring-2 ring-[#1e3a5f]/30 border-[#1e3a5f] font-bold' : ''}`}
-        >
-          <option value="">كل المنسقين</option>
-          {(allTeam ?? []).map((a, i) => (
-            <option key={i} value={a.name}>{a.name}</option>
-          ))}
-        </select>
-      </div>
+    <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
+      <PageHero
+        title={t('nav.dashboard')}
+        subtitle="نظرة سريعة على فريقك ومجموعاتك"
+        icon={LayoutDashboard}
+        gradient="navy"
+        actions={filterEl}
+      />
 
-      {/* Stats */}
+      {/* Stats — preserved data unchanged */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label={t('stats.totalTasks')}   value={totalTasks}          icon={ClipboardList} color="primary" />
-        <StatCard label={t('stats.pending')}       value={totalPending}        icon={AlertTriangle} color="warning" />
-        <StatCard label={t('stats.absentPending')} value={absentReport?.total} icon={UserX}         color="danger"  />
-        <StatCard label={t('stats.activeGroups')}  value={groups?.length}      icon={Globe}         color="success" />
+        <StatCard label={t('stats.totalTasks')}    value={totalTasks}          icon={ClipboardList} color="primary" />
+        <StatCard label={t('stats.pending')}        value={totalPending}        icon={AlertTriangle} color="amber"   />
+        <StatCard label={t('stats.absentPending')} value={absentReport?.total} icon={UserX}         color="rose"    />
+        <StatCard label={t('stats.activeGroups')}  value={groups?.length}      icon={Globe}         color="emerald" />
       </div>
 
-      {/* Charts */}
-      <div className="grid lg:grid-cols-2 gap-6">
-        <div className="card">
-          <h2 className="font-semibold text-text-primary mb-4">{t('leader.teamOverview')}</h2>
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={barData} margin={{ top: 0, right: 10, left: -20, bottom: 0 }}>
-              <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="pending" fill="#E67E22" name={t('tasks.pending')} radius={[4,4,0,0]} />
-              <Bar dataKey="done"    fill="#27AE60" name={t('tasks.done')}    radius={[4,4,0,0]} />
+      {/* Charts — modernized cards, same data */}
+      <div className="grid lg:grid-cols-2 gap-5">
+        <SectionCard title={t('leader.teamOverview')} icon={BarChart3} accent="indigo">
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={barData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+              <XAxis dataKey="name" tick={{ fontSize: 11, fontWeight: 700 }} stroke="#94A3B8" />
+              <YAxis tick={{ fontSize: 11, fontWeight: 700 }} stroke="#94A3B8" />
+              <Tooltip
+                contentStyle={{
+                  background: 'rgba(15, 23, 42, 0.95)',
+                  border: 'none', borderRadius: 12, color: '#fff',
+                  fontWeight: 700, fontSize: 12,
+                }}
+              />
+              <Legend wrapperStyle={{ fontSize: 12, fontWeight: 700 }} />
+              <Bar dataKey="pending" fill={COLORS[0]} name={t('tasks.pending')} radius={[8, 8, 0, 0]} />
+              <Bar dataKey="done"    fill={COLORS[1]} name={t('tasks.done')}    radius={[8, 8, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
-        </div>
+        </SectionCard>
 
-        <div className="card">
-          <h2 className="font-semibold text-text-primary mb-4">توزيع المهام</h2>
-          <ResponsiveContainer width="100%" height={220}>
+        <SectionCard title="توزيع المهام" icon={PieIcon} accent="violet">
+          <ResponsiveContainer width="100%" height={240}>
             <PieChart>
               <Pie
                 data={[
@@ -98,16 +114,23 @@ export default function LeaderDashboard() {
                   { name: t('tasks.done'),    value: totalTasks - totalPending },
                 ]}
                 cx="50%" cy="50%"
-                innerRadius={60} outerRadius={90}
+                innerRadius={60} outerRadius={95}
                 dataKey="value"
+                paddingAngle={2}
               >
                 {COLORS.map((color, i) => <Cell key={i} fill={color} />)}
               </Pie>
-              <Tooltip />
-              <Legend />
+              <Tooltip
+                contentStyle={{
+                  background: 'rgba(15, 23, 42, 0.95)',
+                  border: 'none', borderRadius: 12, color: '#fff',
+                  fontWeight: 700, fontSize: 12,
+                }}
+              />
+              <Legend wrapperStyle={{ fontSize: 12, fontWeight: 700 }} />
             </PieChart>
           </ResponsiveContainer>
-        </div>
+        </SectionCard>
       </div>
     </div>
   );
