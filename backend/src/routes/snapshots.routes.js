@@ -1390,9 +1390,10 @@ router.get('/audit/export', adminOnly, (req, res) => {
     csv.push(row.join(','));
   }
   const ts = new Date().toISOString().slice(0, 10);
-  res.setHeader('Content-Type', 'text/csv;charset=utf-8;');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="audit-log-${ts}.csv"`);
-  res.send('﻿' + csv.join('\n'));
+  // ﻿ = UTF-8 BOM so Excel opens the Arabic file correctly
+  res.end('﻿' + csv.join('\n'), 'utf8');
 });
 
 // ─── AUTO-FREEZE TRIGGER ──────────────────────────────────────────────────────
