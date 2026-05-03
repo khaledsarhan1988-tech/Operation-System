@@ -3,13 +3,15 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   TrendingUp, Trophy, Target, Sparkles, Award, Calendar,
   CheckCircle2, Zap, ShieldAlert, Users, ArrowUp, ArrowDown, Minus,
-  Crown, Flame, Gem, Edit2, Save, X, Heart, Lightbulb, Trash2,
+  Crown, Flame, Gem, Edit2, Save, X, Heart, Lightbulb, Trash2, Plus, Flag,
 } from 'lucide-react';
 import {
   LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, BarChart, Bar,
 } from 'recharts';
 import api from '../../api/axios';
+import CustomGoalCard from '../../components/custom-goals/CustomGoalCard';
+import GoalFormModal from '../../components/custom-goals/GoalFormModal';
 
 const MONTH_NAMES_AR = ['', 'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
   'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
@@ -296,15 +298,27 @@ function EditGoalsModal({ open, current, onClose, onSaved }) {
 export default function MyProgression() {
   const qc = useQueryClient();
   const [editGoalsOpen, setEditGoalsOpen] = useState(false);
+  const [customGoalForm, setCustomGoalForm] = useState({ open: false, goal: null });
 
   const { data, isLoading } = useQuery({
     queryKey: ['my-progression'],
     queryFn: () => api.get('/agent/my-progression').then(r => r.data),
   });
 
+  // Custom goals — fetched separately so the section refreshes independently
+  const { data: customGoals = [] } = useQuery({
+    queryKey: ['my-custom-goals'],
+    queryFn: () => api.get('/custom-goals/mine').then(r => r.data),
+  });
+
   const clearM = useMutation({
     mutationFn: () => api.delete('/agent/my-goals'),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['my-progression'] }),
+  });
+
+  const deleteCustomM = useMutation({
+    mutationFn: (id) => api.delete(`/custom-goals/mine/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['my-custom-goals'] }),
   });
 
   const snapshots = data?.snapshots || [];
@@ -429,6 +443,53 @@ export default function MyProgression() {
             }}
             deleting={clearM.isPending}
           />
+
+          {/* Custom goals — Retention, side projects, etc. Evaluated by leader */}
+          <div className="bg-white border border-gray-100 rounded-3xl p-6">
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-indigo-100 rounded-xl">
+                  <Flag size={18} className="text-indigo-600" strokeWidth={2.5} />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-gray-800">أهدافي الإضافية</h3>
+                  <p className="text-[11px] text-gray-500 font-bold mt-0.5">
+                    🎯 أهداف زي Retention أو تاسكات إضافية — قائد فريقك بيقيّمها
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setCustomGoalForm({ open: true, goal: null })}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 shadow-lg shadow-indigo-500/30"
+              >
+                <Plus size={13} /> هدف جديد
+              </button>
+            </div>
+
+            {customGoals.length === 0 ? (
+              <div className="text-center py-8 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                <Flag size={28} className="mx-auto text-gray-300 mb-2" />
+                <p className="text-sm font-black text-gray-500">لا توجد أهداف إضافية</p>
+                <p className="text-[11px] text-gray-400 font-bold mt-1 max-w-md mx-auto leading-relaxed">
+                  أضف هدف شخصي إضافي يقدر القائد يقيّمه ويدّيك ملاحظات على نقاط قوتك ونقاط التحسين
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {customGoals.map(g => (
+                  <CustomGoalCard
+                    key={g.id}
+                    goal={g}
+                    variant="agent"
+                    onEdit={(goal) => setCustomGoalForm({ open: true, goal })}
+                    onDelete={(goal) => {
+                      if (confirm(`حذف الهدف "${goal.title}"؟`)) deleteCustomM.mutate(goal.id);
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Chart */}
           {chartData.length > 1 && (
@@ -562,6 +623,14 @@ export default function MyProgression() {
         current={data?.personal_goals}
         onClose={() => setEditGoalsOpen(false)}
         onSaved={() => setEditGoalsOpen(false)}
+      />
+
+      <GoalFormModal
+        open={customGoalForm.open}
+        goal={customGoalForm.goal}
+        mode="agent"
+        onClose={() => setCustomGoalForm({ open: false, goal: null })}
+        onSuccess={() => setCustomGoalForm({ open: false, goal: null })}
       />
     </div>
   );

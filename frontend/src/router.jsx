@@ -40,6 +40,7 @@ import TargetsManagement from './pages/admin/TargetsManagement';
 import MyProgression from './pages/agent/MyProgression';
 import SystemSettings from './pages/admin/SystemSettings';
 import TeamProgression from './pages/leader/TeamProgression';
+import EvaluateGoals from './pages/leader/EvaluateGoals';
 
 // Enrollment pages
 import EnrollmentPipeline from './pages/enrollment/Pipeline';
@@ -87,6 +88,7 @@ const router = createBrowserRouter([
       { path: 'performance',                  element: <LeaderPerformance /> },
       { path: 'pipeline',                     element: <LeaderPipeline /> },
       { path: 'team-progression',             element: <TeamProgression /> },
+      { path: 'evaluate-goals',               element: <EvaluateGoals /> },
       { path: 'reports/customer-services',    element: <SystemReports /> },
       { path: 'reports/education',            element: <EducationReports /> },
       { path: 'reports/quality',              element: <QualityReports /> },

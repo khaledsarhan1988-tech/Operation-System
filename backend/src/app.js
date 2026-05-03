@@ -645,6 +645,34 @@ initDb().then(db => {
     db._raw.prepare(`INSERT OR IGNORE INTO kpi_weights (id, weight_completion, weight_followup, weight_fix, weight_sla)
                      VALUES (1, 50, 25, 25, 0)`).run();
 
+    // Custom goals — extra goals (Retention/etc.) created by agent or leader, evaluated by leader
+    db._raw.run(`CREATE TABLE IF NOT EXISTS custom_goals (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      title           TEXT NOT NULL,
+      description     TEXT,
+      target_value    INTEGER,
+      unit            TEXT NOT NULL DEFAULT '%' CHECK(unit IN ('%','عميل','تاسك','جلسة','نقطة','مجموعة','custom')),
+      unit_custom     TEXT,
+      year            INTEGER,
+      month           INTEGER,
+      achieved_value     INTEGER,
+      result_status      TEXT NOT NULL DEFAULT 'pending'
+                         CHECK(result_status IN ('pending','achieved','partially','not_achieved')),
+      evaluation_reason  TEXT,
+      strengths          TEXT,
+      weaknesses         TEXT,
+      leader_note        TEXT,
+      evaluated_by       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      evaluated_at       TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+      updated_at TEXT
+    )`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_custom_goals_user   ON custom_goals(user_id)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_custom_goals_status ON custom_goals(result_status)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_custom_goals_period ON custom_goals(year, month)`);
+
     // Personal goals — motivational targets set by the agent themselves
     db._raw.run(`CREATE TABLE IF NOT EXISTS personal_goals (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -775,6 +803,7 @@ initDb().then(db => {
   app.use('/api/admin/targets',   require('./routes/targets.routes'));
   app.use('/api/admin',           require('./routes/admin.routes'));
   app.use('/api/notifications',   require('./routes/notifications.routes'));
+  app.use('/api/custom-goals',    require('./routes/custom-goals.routes'));
   app.use('/api/export',  require('./routes/export.routes'));
   app.use('/api/reports',       require('./routes/reports.routes'));
   app.use('/api/team',          require('./routes/team.routes'));

@@ -474,6 +474,40 @@ CREATE TABLE IF NOT EXISTS personal_goals (
 CREATE INDEX IF NOT EXISTS idx_personal_goals_user ON personal_goals(user_id);
 
 -- =============================================
+-- CUSTOM GOALS — extra agent-defined goals (Retention, side projects, etc.)
+-- evaluated by the leader. Optional period (year/month).
+-- =============================================
+CREATE TABLE IF NOT EXISTS custom_goals (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,  -- agent or leader
+  title           TEXT NOT NULL,
+  description     TEXT,
+  target_value    INTEGER,                                          -- numeric target (e.g. 80)
+  unit            TEXT NOT NULL DEFAULT '%' CHECK(unit IN ('%','عميل','تاسك','جلسة','نقطة','مجموعة','custom')),
+  unit_custom     TEXT,                                              -- when unit='custom'
+  year            INTEGER,
+  month           INTEGER,
+
+  -- Leader evaluation (filled by leader, NULL while pending)
+  achieved_value     INTEGER,
+  result_status      TEXT NOT NULL DEFAULT 'pending'
+                     CHECK(result_status IN ('pending','achieved','partially','not_achieved')),
+  evaluation_reason  TEXT,                                          -- لماذا تم تقييمها بهذا الشكل
+  strengths          TEXT,                                          -- نقاط القوة
+  weaknesses         TEXT,                                          -- نقاط الضعف
+  leader_note        TEXT,                                          -- ملاحظة عامة للموظف (اختياري)
+  evaluated_by       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  evaluated_at       TEXT,
+
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+  updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_custom_goals_user   ON custom_goals(user_id);
+CREATE INDEX IF NOT EXISTS idx_custom_goals_status ON custom_goals(result_status);
+CREATE INDEX IF NOT EXISTS idx_custom_goals_period ON custom_goals(year, month);
+
+-- =============================================
 -- NOTIFICATIONS — in-app notifications for users
 -- =============================================
 CREATE TABLE IF NOT EXISTS notifications (
