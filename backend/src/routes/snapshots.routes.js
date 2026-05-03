@@ -9,7 +9,19 @@ const { lineFilter } = require('../utils/lineFilter');
 const { nameInListInline } = require('../utils/nameMatch');
 
 const router = express.Router();
-router.use(authenticate, requireRole('admin'));
+// Read endpoints need at least leader (so the team-progression page works).
+// Write/destructive endpoints are gated with `requireRole('admin')` per-route.
+router.use(authenticate, requireRole('leader'));
+const adminOnly = requireRole('admin');
+
+// For leader: scope every read query to their own department automatically,
+// regardless of what the client passed in `?department=`. Admins see everything.
+function leaderScopedDept(req) {
+  if (req.user?.role === 'leader' && req.user?.department && req.user.department !== 'All') {
+    return req.user.department;
+  }
+  return null; // null = trust client's ?department= param
+}
 
 // Notification helper — fail-soft
 function createNotification(userId, type, title, body, link = null, meta = null) {
@@ -468,7 +480,7 @@ function freezeMonth(year, month, line, frozenBy, overwrite) {
 // ─── ENDPOINTS ────────────────────────────────────────────────────────────────
 
 // POST /api/admin/snapshots/freeze
-router.post('/freeze', (req, res) => {
+router.post('/freeze', adminOnly, (req, res) => {
   const { year, month, overwrite } = req.body || {};
   const y = parseInt(year, 10), m = parseInt(month, 10);
   if (!y || !m || m < 1 || m > 12) {
@@ -508,7 +520,7 @@ router.post('/freeze', (req, res) => {
 
 // POST /api/admin/snapshots/freeze-bulk
 // Body: { from: {year, month}, to: {year, month}, overwrite }
-router.post('/freeze-bulk', (req, res) => {
+router.post('/freeze-bulk', adminOnly, (req, res) => {
   const { from, to, overwrite } = req.body || {};
   if (!from?.year || !from?.month || !to?.year || !to?.month) {
     return res.status(400).json({ error: 'Provide from {year,month} and to {year,month}' });
@@ -577,7 +589,9 @@ router.get('/list', (req, res) => {
 // Query: agent (optional), department (optional), from_year, from_month, to_year, to_month, kpi
 // Returns array of rows for chart.
 router.get('/history', (req, res) => {
-  const { agent, department, from_year, from_month, to_year, to_month } = req.query;
+  const { agent, from_year, from_month, to_year, to_month } = req.query;
+  // Leaders are auto-scoped to their own dept regardless of ?department=
+  const department = leaderScopedDept(req) || req.query.department;
   const line = lineFilter(req);
   const params = [];
   let where = 'WHERE 1=1';
@@ -628,7 +642,8 @@ router.get('/leaderboard', (req, res) => {
   const m = parseInt(req.query.month, 10);
   if (!y || !m) return res.status(400).json({ error: 'year and month are required' });
   const line = lineFilter(req);
-  const dept = req.query.department;
+  // Leader auto-scoped to own dept
+  const dept = leaderScopedDept(req) || req.query.department;
 
   const params = [y, m];
   let where = 'WHERE year = ? AND month = ?';
@@ -740,7 +755,9 @@ router.get('/leaderboard', (req, res) => {
 
 // GET /api/admin/snapshots/heatmap?from_year=&from_month=&to_year=&to_month=&kpi=
 router.get('/heatmap', (req, res) => {
-  const { from_year, from_month, to_year, to_month, department } = req.query;
+  const { from_year, from_month, to_year, to_month } = req.query;
+  // Leader auto-scoped to own dept
+  const department = leaderScopedDept(req) || req.query.department;
   const kpi = ['completion_rate','sla_rate','followup_rate','fix_rate','overall_score']
     .includes(req.query.kpi) ? req.query.kpi : 'overall_score';
   const line = lineFilter(req);
@@ -810,6 +827,9 @@ router.get('/employee/:name', (req, res) => {
   const params = [name];
   let where = 'WHERE LOWER(TRIM(agent_name)) = LOWER(TRIM(?))';
   if (line) { where += ' AND line = ?'; params.push(line); }
+  // Leaders may only view agents inside their own department
+  const leaderDept = leaderScopedDept(req);
+  if (leaderDept) { where += ' AND department = ?'; params.push(leaderDept); }
   if (req.query.year) {
     where += ' AND year = ?';
     params.push(+req.query.year);
@@ -828,7 +848,7 @@ router.get('/employee/:name', (req, res) => {
 
 // DELETE /api/admin/snapshots/:year/:month
 // Numeric-only constraint prevents this from swallowing /notes/:noteId.
-router.delete('/:year(\\d{4})/:month(\\d{1,2})', (req, res) => {
+router.delete('/:year(\\d{4})/:month(\\d{1,2})', adminOnly, (req, res) => {
   const y = parseInt(req.params.year, 10), m = parseInt(req.params.month, 10);
   if (!y || !m) return res.status(400).json({ error: 'Invalid year/month' });
   const line = lineFilter(req);
@@ -864,7 +884,7 @@ router.get('/:id/notes', (req, res) => {
 });
 
 // POST /api/admin/snapshots/:id/notes
-router.post('/:id/notes', (req, res) => {
+router.post('/:id/notes', adminOnly, (req, res) => {
   const id = parseInt(req.params.id, 10);
   const { note } = req.body || {};
   if (!id || !note || !note.trim()) {
@@ -891,7 +911,7 @@ router.post('/:id/notes', (req, res) => {
 });
 
 // PUT /api/admin/snapshots/notes/:noteId
-router.put('/notes/:noteId', (req, res) => {
+router.put('/notes/:noteId', adminOnly, (req, res) => {
   const noteId = parseInt(req.params.noteId, 10);
   const { note } = req.body || {};
   if (!noteId || !note || !note.trim()) {
@@ -920,7 +940,7 @@ router.put('/notes/:noteId', (req, res) => {
 });
 
 // DELETE /api/admin/snapshots/notes/:noteId
-router.delete('/notes/:noteId', (req, res) => {
+router.delete('/notes/:noteId', adminOnly, (req, res) => {
   const noteId = parseInt(req.params.noteId, 10);
   if (!noteId) return res.status(400).json({ error: 'Invalid note id' });
   // Get metadata before deletion (for audit log)
@@ -951,7 +971,7 @@ router.get('/weights', (req, res) => {
 });
 
 // PUT /api/admin/snapshots/weights
-router.put('/weights', (req, res) => {
+router.put('/weights', adminOnly, (req, res) => {
   const wc = parseInt(req.body?.weight_completion, 10);
   const wf = parseInt(req.body?.weight_followup,   10);
   const wx = parseInt(req.body?.weight_fix,        10);
@@ -982,7 +1002,7 @@ router.put('/weights', (req, res) => {
 // ─── AUDIT LOG ────────────────────────────────────────────────────────────────
 
 // GET /api/admin/snapshots/audit?action=&from=&to=&user_id=&limit=
-router.get('/audit', (req, res) => {
+router.get('/audit', adminOnly, (req, res) => {
   const { action, from, to, user_id } = req.query;
   const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
   const offset = parseInt(req.query.offset, 10) || 0;
@@ -1021,10 +1041,12 @@ router.get('/audit', (req, res) => {
 router.get('/dept-rollup', (req, res) => {
   const { from_year, from_month, to_year, to_month } = req.query;
   const line = lineFilter(req);
+  const leaderDept = leaderScopedDept(req);
 
   const params = [];
   let where = 'WHERE 1=1';
   if (line) { where += ' AND line = ?'; params.push(line); }
+  if (leaderDept) { where += ' AND department = ?'; params.push(leaderDept); }
   if (from_year && from_month) {
     where += ' AND (year > ? OR (year = ? AND month >= ?))';
     params.push(+from_year, +from_year, +from_month);
@@ -1089,7 +1111,9 @@ router.get('/dept-rollup', (req, res) => {
 // ─── COMPARE TWO MONTHS ───────────────────────────────────────────────────────
 // GET /api/admin/snapshots/compare?a_year=&a_month=&b_year=&b_month=&department=
 router.get('/compare', (req, res) => {
-  const { a_year, a_month, b_year, b_month, department } = req.query;
+  const { a_year, a_month, b_year, b_month } = req.query;
+  // Leader auto-scoped to own dept
+  const department = leaderScopedDept(req) || req.query.department;
   const ay = parseInt(a_year, 10), am = parseInt(a_month, 10);
   const by = parseInt(b_year, 10), bm = parseInt(b_month, 10);
   if (!ay || !am || !by || !bm) {
@@ -1172,7 +1196,7 @@ router.get('/compare', (req, res) => {
 // ─── EXCEL EXPORT ─────────────────────────────────────────────────────────────
 // GET /api/admin/snapshots/export-excel?year=&month=&department=
 // Multi-sheet Excel: Summary, by Department, Achievements
-router.get('/export-excel', async (req, res) => {
+router.get('/export-excel', adminOnly, async (req, res) => {
   const y = parseInt(req.query.year, 10);
   const m = parseInt(req.query.month, 10);
   const department = req.query.department;
@@ -1298,20 +1322,24 @@ router.get('/yoy/:agentName', (req, res) => {
   const line = lineFilter(req);
   const lineCl = line ? ' AND line = ?' : '';
   const lineP  = line ? [line] : [];
+  // Leaders can only see agents in their own department
+  const leaderDept = leaderScopedDept(req);
+  const deptCl = leaderDept ? ' AND department = ?' : '';
+  const deptP  = leaderDept ? [leaderDept] : [];
 
   const current = db.prepare(`
     SELECT overall_score, completion_rate, sla_rate, followup_rate, fix_rate
     FROM monthly_snapshots
     WHERE LOWER(TRIM(agent_name)) = LOWER(TRIM(?))
-      AND year = ? AND month = ?${lineCl}
-  `).get(agent, y, m, ...lineP);
+      AND year = ? AND month = ?${lineCl}${deptCl}
+  `).get(agent, y, m, ...lineP, ...deptP);
 
   const prev = db.prepare(`
     SELECT overall_score, completion_rate, sla_rate, followup_rate, fix_rate
     FROM monthly_snapshots
     WHERE LOWER(TRIM(agent_name)) = LOWER(TRIM(?))
-      AND year = ? AND month = ?${lineCl}
-  `).get(agent, y - 1, m, ...lineP);
+      AND year = ? AND month = ?${lineCl}${deptCl}
+  `).get(agent, y - 1, m, ...lineP, ...deptP);
 
   if (!current && !prev) return res.json({ current: null, prev: null, delta: null });
 
@@ -1328,7 +1356,7 @@ router.get('/yoy/:agentName', (req, res) => {
 
 // ─── AUDIT LOG CSV EXPORT ─────────────────────────────────────────────────────
 // GET /api/admin/snapshots/audit/export
-router.get('/audit/export', (req, res) => {
+router.get('/audit/export', adminOnly, (req, res) => {
   const { action, from, to } = req.query;
   const line = lineFilter(req);
 
@@ -1383,7 +1411,7 @@ function autoFreezeMonth(year, month, line, userName = 'System (Auto)') {
 router.autoFreezeMonth = autoFreezeMonth;
 
 // POST /api/admin/snapshots/auto-freeze-now — manually trigger the cron job's logic
-router.post('/auto-freeze-now', (req, res) => {
+router.post('/auto-freeze-now', adminOnly, (req, res) => {
   // Most useful for testing. Freezes the previous calendar month for current line.
   const today = new Date();
   // Auto-freeze runs at month start, so target = previous month
