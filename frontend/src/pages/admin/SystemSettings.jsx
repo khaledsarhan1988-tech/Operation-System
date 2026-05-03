@@ -4,6 +4,7 @@ import {
   Settings, Sliders, Activity, Building2, Save, AlertTriangle,
   Lock, Trash2, Edit2, MessageSquare, Target, RefreshCw,
   TrendingUp, TrendingDown, Minus, Filter, ChevronDown, ChevronUp,
+  Download,
 } from 'lucide-react';
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -208,7 +209,41 @@ function AuditTab() {
 
   return (
     <div className="space-y-4">
-      <SectionCard title="سجل عمليات النظام" subtitle={`${data?.total || 0} عملية مسجّلة`} icon={Activity} accent="indigo">
+      <SectionCard
+        title="سجل عمليات النظام"
+        subtitle={`${data?.total || 0} عملية مسجّلة`}
+        icon={Activity}
+        accent="indigo"
+        actions={
+          <ModernButton
+            variant="secondary"
+            size="sm"
+            icon={Download}
+            onClick={async () => {
+              try {
+                const r = await api.get('/admin/snapshots/audit/export', {
+                  params: {
+                    action: action || undefined,
+                    from:   from   || undefined,
+                    to:     to     || undefined,
+                  },
+                  responseType: 'blob',
+                });
+                const blobUrl = URL.createObjectURL(r.data);
+                const link = document.createElement('a');
+                link.href = blobUrl;
+                link.download = `audit-log-${new Date().toISOString().slice(0, 10)}.csv`;
+                link.click();
+                URL.revokeObjectURL(blobUrl);
+              } catch (e) {
+                alert('تعذّر تنزيل السجل: ' + (e.response?.data?.error || e.message));
+              }
+            }}
+          >
+            تنزيل CSV
+          </ModernButton>
+        }
+      >
         {/* Filters */}
         <div className="flex items-center gap-3 flex-wrap mb-4 pb-4 border-b border-gray-100">
           <div className="flex items-center gap-1.5">

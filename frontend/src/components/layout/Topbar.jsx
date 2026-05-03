@@ -2,6 +2,7 @@ import { Menu, Globe, Bell, Sun, Moon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../auth/AuthContext';
 import { useTheme } from '../../hooks/useTheme';
+import NotificationsBell from './NotificationsBell';
 
 const AVATAR_GRADIENTS = [
   'from-indigo-500 to-purple-600',
@@ -81,22 +82,7 @@ export default function Topbar({ onMenuClick }) {
       {/* Right cluster */}
       <div className="relative z-10 flex items-center gap-2">
         {/* Notifications */}
-        <button
-          type="button"
-          className="relative inline-flex items-center justify-center h-10 w-10 rounded-xl text-slate-300
-                     hover:text-white transition-all"
-          style={chipStyle}
-          title={isAr ? 'الإشعارات' : 'Notifications'}
-        >
-          <Bell size={18} strokeWidth={2.2} />
-          <span
-            className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-red-500"
-            style={{
-              border: '2px solid #0F172A',
-              boxShadow: '0 0 0 2px rgba(239, 68, 68, 0.3)',
-            }}
-          />
-        </button>
+        <NotificationsBell chipStyle={chipStyle} />
 
         {/* Theme toggle */}
         <button

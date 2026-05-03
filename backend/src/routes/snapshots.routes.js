@@ -1,5 +1,6 @@
 'use strict';
 const express = require('express');
+const ExcelJS = require('exceljs');
 const db = require('../config/database');
 const { saveNow } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
@@ -9,6 +10,18 @@ const { nameInListInline } = require('../utils/nameMatch');
 
 const router = express.Router();
 router.use(authenticate, requireRole('admin'));
+
+// Notification helper — fail-soft
+function createNotification(userId, type, title, body, link = null, meta = null) {
+  if (!userId) return;
+  try {
+    db.prepare(`INSERT INTO notifications (user_id, type, title, body, link, meta)
+                VALUES (?, ?, ?, ?, ?, ?)`).run(
+      userId, type, title, body || null, link || null,
+      meta ? (typeof meta === 'string' ? meta : JSON.stringify(meta)) : null
+    );
+  } catch (e) { console.error('notify error:', e.message); }
+}
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 
@@ -421,6 +434,32 @@ function freezeMonth(year, month, line, frozenBy, overwrite) {
   // Apply benchmarks + achievements after all snapshots written
   applyDepartmentBenchmarks(year, month, line);
   applyAchievements(year, month, line);
+
+  // Send in-app notifications to each agent whose snapshot was created/updated
+  try {
+    const periodLabel = `${MONTH_NAMES_AR[month] || month} ${year}`;
+    const agentRows = db.prepare(`
+      SELECT ms.agent_name, ms.overall_score, ms.met_target, ms.achievements, ms.agent_id
+      FROM monthly_snapshots ms
+      WHERE ms.line = ? AND ms.year = ? AND ms.month = ?
+    `).all(line, year, month);
+    for (const a of agentRows) {
+      if (!a.agent_id) continue;
+      let achievementsCount = 0;
+      try { achievementsCount = (JSON.parse(a.achievements || '[]') || []).length; } catch (_) {}
+      const body = a.met_target === 1
+        ? `🎉 رائع! حقّقت كل الأهداف هذا الشهر بأداء ${a.overall_score}%`
+        : `أداء الشهر: ${a.overall_score}% — اطّلع على التفاصيل في صفحة "تطوّري"`;
+      createNotification(
+        a.agent_id,
+        'snapshot_frozen',
+        `📊 تم تجميد نتائج ${periodLabel}`,
+        achievementsCount > 0 ? `${body} · حصلت على ${achievementsCount} إنجاز جديد` : body,
+        '/agent/my-progression',
+        { year, month, score: a.overall_score, met_target: a.met_target }
+      );
+    }
+  } catch (e) { console.error('notify-on-freeze error:', e.message); }
 
   saveNow();
   return result;
@@ -1128,6 +1167,235 @@ router.get('/compare', (req, res) => {
     },
     rows: compare,
   });
+});
+
+// ─── EXCEL EXPORT ─────────────────────────────────────────────────────────────
+// GET /api/admin/snapshots/export-excel?year=&month=&department=
+// Multi-sheet Excel: Summary, by Department, Achievements
+router.get('/export-excel', async (req, res) => {
+  const y = parseInt(req.query.year, 10);
+  const m = parseInt(req.query.month, 10);
+  const department = req.query.department;
+  if (!y || !m) return res.status(400).json({ error: 'year and month are required' });
+  const line = lineFilter(req);
+
+  const params = [y, m];
+  let where = 'WHERE year = ? AND month = ?';
+  if (line) { where += ' AND line = ?'; params.push(line); }
+  if (department && department !== 'All') { where += ' AND department = ?'; params.push(department); }
+
+  const rows = db.prepare(`
+    SELECT * FROM monthly_snapshots ${where}
+    ORDER BY department, overall_score DESC
+  `).all(...params);
+
+  if (rows.length === 0) return res.status(404).json({ error: 'No data for this period' });
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Academy System';
+  wb.created = new Date();
+
+  // ── Sheet 1: Summary (all agents) ──
+  const sumSheet = wb.addWorksheet('الملخّص', { views: [{ rightToLeft: true }] });
+  sumSheet.columns = [
+    { header: 'الموظف',         key: 'agent_name', width: 24 },
+    { header: 'القسم',           key: 'department', width: 12 },
+    { header: 'إجمالي المهام',  key: 'tasks_total', width: 14 },
+    { header: 'مكتملة',          key: 'tasks_done', width: 12 },
+    { header: 'متأخرة',          key: 'tasks_overdue', width: 12 },
+    { header: 'الإنجاز %',       key: 'completion_rate', width: 12 },
+    { header: 'SLA %',           key: 'sla_rate', width: 10 },
+    { header: 'متابعة الغياب %', key: 'followup_rate', width: 16 },
+    { header: 'حل الأعطال %',   key: 'fix_rate', width: 14 },
+    { header: 'الأداء العام %',  key: 'overall_score', width: 14 },
+    { header: 'حقّق الأهداف',    key: 'met_target', width: 14 },
+    { header: 'المركز',          key: 'rank_in_dept', width: 10 },
+    { header: 'الإنجازات',       key: 'achievements', width: 30 },
+  ];
+  rows.forEach(r => {
+    let badges = [];
+    try { badges = JSON.parse(r.achievements || '[]'); } catch (_) {}
+    sumSheet.addRow({
+      ...r,
+      met_target: r.met_target === 1 ? 'نعم' : 'لا',
+      rank_in_dept: r.rank_in_dept ? `${r.rank_in_dept}/${r.total_in_dept}` : '—',
+      achievements: badges.join(', '),
+    });
+  });
+  sumSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  sumSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A5F' } };
+  sumSheet.getRow(1).alignment = { horizontal: 'center', vertical: 'middle' };
+  sumSheet.getRow(1).height = 26;
+
+  // ── Sheet 2: By Department (averages) ──
+  const deptSheet = wb.addWorksheet('حسب القسم', { views: [{ rightToLeft: true }] });
+  deptSheet.columns = [
+    { header: 'القسم',                key: 'department', width: 14 },
+    { header: 'عدد الموظفين',         key: 'agents', width: 14 },
+    { header: 'متوسط الإنجاز %',      key: 'avg_completion', width: 16 },
+    { header: 'متوسط SLA %',          key: 'avg_sla', width: 14 },
+    { header: 'متوسط متابعة الغياب %',key: 'avg_followup', width: 18 },
+    { header: 'متوسط حل الأعطال %',  key: 'avg_fix', width: 18 },
+    { header: 'متوسط الأداء %',       key: 'avg_overall', width: 14 },
+    { header: 'حقّقوا الأهداف',       key: 'targets_met', width: 14 },
+  ];
+  const deptAgg = db.prepare(`
+    SELECT department, COUNT(*) AS agents,
+           ROUND(AVG(completion_rate)) AS avg_completion,
+           ROUND(AVG(sla_rate))        AS avg_sla,
+           ROUND(AVG(followup_rate))   AS avg_followup,
+           ROUND(AVG(fix_rate))        AS avg_fix,
+           ROUND(AVG(overall_score))   AS avg_overall,
+           SUM(CASE WHEN met_target = 1 THEN 1 ELSE 0 END) AS targets_met
+    FROM monthly_snapshots ${where}
+    GROUP BY department
+    ORDER BY avg_overall DESC
+  `).all(...params);
+  deptAgg.forEach(r => deptSheet.addRow(r));
+  deptSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  deptSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A5F' } };
+  deptSheet.getRow(1).alignment = { horizontal: 'center', vertical: 'middle' };
+  deptSheet.getRow(1).height = 26;
+
+  // ── Sheet 3: Achievements ──
+  const achSheet = wb.addWorksheet('الإنجازات', { views: [{ rightToLeft: true }] });
+  achSheet.columns = [
+    { header: 'الموظف',  key: 'agent', width: 24 },
+    { header: 'القسم',    key: 'dept', width: 14 },
+    { header: 'الإنجاز',  key: 'badge', width: 24 },
+  ];
+  const BADGE_LABELS = {
+    top_performer: '🥇 بطل القسم', top_3_performer: '🥈 ضمن أعلى 3',
+    rising_star: '🚀 النجم الصاعد', streak_3: '🔥 3 شهور متتالية',
+    streak_6: '🔥🔥 6 شهور متتالية', perfect_sla: '💎 التزام مثالي',
+    perfect_completion: '🎯 إنجاز كامل', consistent: '🛡️ الثابت',
+    target_master: '🏆 محقق الأهداف', excellence: '🎓 تميّز',
+  };
+  rows.forEach(r => {
+    let badges = [];
+    try { badges = JSON.parse(r.achievements || '[]'); } catch (_) {}
+    badges.forEach(b => {
+      achSheet.addRow({ agent: r.agent_name, dept: r.department, badge: BADGE_LABELS[b] || b });
+    });
+  });
+  achSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  achSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A5F' } };
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="snapshots-${y}-${pad2(m)}.xlsx"`);
+  await wb.xlsx.write(res);
+  res.end();
+});
+
+// ─── YoY (Year-over-Year) ─────────────────────────────────────────────────────
+// GET /api/admin/snapshots/yoy/:agent_name?year=&month=
+// Returns the same agent's snapshot from one year ago alongside the current one.
+router.get('/yoy/:agentName', (req, res) => {
+  const agent = req.params.agentName;
+  const y = parseInt(req.query.year, 10);
+  const m = parseInt(req.query.month, 10);
+  if (!agent || !y || !m) return res.status(400).json({ error: 'agent, year, month required' });
+  const line = lineFilter(req);
+  const lineCl = line ? ' AND line = ?' : '';
+  const lineP  = line ? [line] : [];
+
+  const current = db.prepare(`
+    SELECT overall_score, completion_rate, sla_rate, followup_rate, fix_rate
+    FROM monthly_snapshots
+    WHERE LOWER(TRIM(agent_name)) = LOWER(TRIM(?))
+      AND year = ? AND month = ?${lineCl}
+  `).get(agent, y, m, ...lineP);
+
+  const prev = db.prepare(`
+    SELECT overall_score, completion_rate, sla_rate, followup_rate, fix_rate
+    FROM monthly_snapshots
+    WHERE LOWER(TRIM(agent_name)) = LOWER(TRIM(?))
+      AND year = ? AND month = ?${lineCl}
+  `).get(agent, y - 1, m, ...lineP);
+
+  if (!current && !prev) return res.json({ current: null, prev: null, delta: null });
+
+  const delta = (current && prev) ? {
+    overall:    current.overall_score    - prev.overall_score,
+    completion: current.completion_rate  - prev.completion_rate,
+    sla:        current.sla_rate          - prev.sla_rate,
+    followup:   current.followup_rate     - prev.followup_rate,
+    fix:        current.fix_rate          - prev.fix_rate,
+  } : null;
+
+  return res.json({ year: y, month: m, agent, current, prev, delta });
+});
+
+// ─── AUDIT LOG CSV EXPORT ─────────────────────────────────────────────────────
+// GET /api/admin/snapshots/audit/export
+router.get('/audit/export', (req, res) => {
+  const { action, from, to } = req.query;
+  const line = lineFilter(req);
+
+  const params = [];
+  let where = 'WHERE 1=1';
+  if (line)   { where += ' AND line = ?'; params.push(line); }
+  if (action) { where += ' AND action = ?'; params.push(action); }
+  if (from)   { where += ' AND created_at >= ?'; params.push(from); }
+  if (to)     { where += ' AND created_at <= ?'; params.push(to); }
+
+  const rows = db.prepare(`
+    SELECT id, action, year, month, agent_name, details, user_name, line, created_at
+    FROM snapshot_audit_log ${where}
+    ORDER BY id DESC LIMIT 5000
+  `).all(...params);
+
+  const headers = ['ID', 'العملية', 'السنة', 'الشهر', 'الموظف', 'التفاصيل', 'المستخدم', 'الخط', 'الوقت'];
+  const csv = [headers.join(',')];
+  for (const r of rows) {
+    const row = [
+      r.id,
+      r.action,
+      r.year || '',
+      r.month || '',
+      `"${(r.agent_name || '').replace(/"/g, '""')}"`,
+      `"${(r.details || '').replace(/"/g, '""').replace(/\n/g, ' ').slice(0, 500)}"`,
+      `"${(r.user_name || '').replace(/"/g, '""')}"`,
+      r.line,
+      r.created_at,
+    ];
+    csv.push(row.join(','));
+  }
+  const ts = new Date().toISOString().slice(0, 10);
+  res.setHeader('Content-Type', 'text/csv;charset=utf-8;');
+  res.setHeader('Content-Disposition', `attachment; filename="audit-log-${ts}.csv"`);
+  res.send('﻿' + csv.join('\n'));
+});
+
+// ─── AUTO-FREEZE TRIGGER ──────────────────────────────────────────────────────
+// Helper exposed for the cron job. Internal — same as POST /freeze with overwrite=true.
+function autoFreezeMonth(year, month, line, userName = 'System (Auto)') {
+  const result = freezeMonth(year, month, line, null, true);
+  logAudit({
+    action: 'freeze',
+    year, month,
+    details: { ...result, source: 'auto_cron' },
+    user_id: null, user_name: userName, line,
+  });
+  return result;
+}
+// Expose for cron + manual trigger from app.js
+router.autoFreezeMonth = autoFreezeMonth;
+
+// POST /api/admin/snapshots/auto-freeze-now — manually trigger the cron job's logic
+router.post('/auto-freeze-now', (req, res) => {
+  // Most useful for testing. Freezes the previous calendar month for current line.
+  const today = new Date();
+  // Auto-freeze runs at month start, so target = previous month
+  let y = today.getFullYear(), m = today.getMonth(); // (last month: 1-12 of previous if Jan)
+  if (m === 0) { m = 12; y -= 1; }
+  const line = lineFilter(req) || 'Ahmed Hassan';
+  try {
+    const result = autoFreezeMonth(y, m, line, req.user?.full_name || 'Admin (Manual)');
+    return res.json({ year: y, month: m, line, ...result });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
 });
 
 module.exports = router;

@@ -645,6 +645,23 @@ initDb().then(db => {
     db._raw.prepare(`INSERT OR IGNORE INTO kpi_weights (id, weight_completion, weight_followup, weight_fix, weight_sla)
                      VALUES (1, 50, 25, 25, 0)`).run();
 
+    // Notifications
+    db._raw.run(`CREATE TABLE IF NOT EXISTS notifications (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      type       TEXT NOT NULL CHECK(type IN ('snapshot_frozen','target_changed','achievement_earned','system','custom')),
+      title      TEXT NOT NULL,
+      body       TEXT,
+      link       TEXT,
+      meta       TEXT,
+      is_read    INTEGER NOT NULL DEFAULT 0,
+      read_at    TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+    )`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_notifications_user    ON notifications(user_id)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_notifications_read    ON notifications(user_id, is_read)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at)`);
+
     // Seed a default global target if no targets exist
     const existingTargets = db._raw.prepare(`SELECT COUNT(*) AS c FROM employee_targets`).get();
     if (!existingTargets || existingTargets.c === 0) {
@@ -740,9 +757,11 @@ initDb().then(db => {
   app.use('/api/leader',  require('./routes/leader.routes'));
   // Level 2: snapshots + targets — mount BEFORE generic /api/admin so the
   // sub-paths win (Express matches in registration order).
-  app.use('/api/admin/snapshots', require('./routes/snapshots.routes'));
+  const snapshotsRoutes = require('./routes/snapshots.routes');
+  app.use('/api/admin/snapshots', snapshotsRoutes);
   app.use('/api/admin/targets',   require('./routes/targets.routes'));
-  app.use('/api/admin',   require('./routes/admin.routes'));
+  app.use('/api/admin',           require('./routes/admin.routes'));
+  app.use('/api/notifications',   require('./routes/notifications.routes'));
   app.use('/api/export',  require('./routes/export.routes'));
   app.use('/api/reports',       require('./routes/reports.routes'));
   app.use('/api/team',          require('./routes/team.routes'));
@@ -765,6 +784,40 @@ initDb().then(db => {
     console.log(`🚀 Academy System backend running on port ${PORT}`);
     console.log(`   Environment: ${process.env.NODE_ENV || 'development'}`);
   });
+
+  // ─── AUTO-FREEZE CRON ────────────────────────────────────────────────────
+  // Runs at 02:00 on the 1st of every month (Cairo time +2 hours).
+  // For each registered line, freezes the previous calendar month.
+  // Use AUTO_FREEZE_DISABLE=1 to opt out.
+  if (process.env.AUTO_FREEZE_DISABLE !== '1' && snapshotsRoutes?.autoFreezeMonth) {
+    try {
+      const cron = require('node-cron');
+      cron.schedule('0 2 1 * *', () => {
+        try {
+          const today = new Date();
+          let y = today.getFullYear(), m = today.getMonth(); // m = previous month (0-11 → 1-12)
+          if (m === 0) { m = 12; y -= 1; }
+          // Freeze every distinct line that has at least one user
+          const lines = db._raw.prepare(
+            `SELECT DISTINCT line FROM users WHERE line IS NOT NULL AND line != 'All'`
+          ).all();
+          for (const lineRow of lines) {
+            try {
+              const result = snapshotsRoutes.autoFreezeMonth(y, m, lineRow.line, 'System (Cron)');
+              console.log(`🔒 Auto-freeze ${lineRow.line} ${y}-${m}: created=${result.created} updated=${result.updated} skipped=${result.skipped}`);
+            } catch (e) {
+              console.error(`Auto-freeze ${lineRow.line} ${y}-${m} failed:`, e.message);
+            }
+          }
+        } catch (e) {
+          console.error('Cron job error:', e.message);
+        }
+      }, { timezone: 'Africa/Cairo' });
+      console.log('⏰ Auto-freeze cron scheduled (1st of month, 02:00 Cairo time)');
+    } catch (e) {
+      console.error('Failed to schedule auto-freeze cron:', e.message);
+    }
+  }
 
   // Graceful shutdown
   process.on('SIGTERM', () => { db.close(); process.exit(0); });

@@ -5,7 +5,7 @@ import {
   Sparkles, Target, ShieldAlert, Award, Users, Calendar, Zap, Star,
   ChevronLeft, X, Plus, Edit2, Trash2, MessageSquare, Filter, Crown,
   Flame, Gem, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, FileText,
-  GitCompare,
+  GitCompare, FileSpreadsheet,
 } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -160,7 +160,7 @@ function StatPill({ value, suffix = '', icon: Icon, label, animated = true, sign
   );
 }
 
-function HeroBanner({ summary, onFreezeClick, onExport, onExportPdf, pdfBusy, onCompare, pdfMode, setPdfMode }) {
+function HeroBanner({ summary, onFreezeClick, onExport, onExportExcel, onExportPdf, pdfBusy, onCompare, pdfMode, setPdfMode }) {
   return (
     <div
       className="relative overflow-hidden rounded-3xl p-6 text-white"
@@ -222,6 +222,13 @@ function HeroBanner({ summary, onFreezeClick, onExport, onExportPdf, pdfBusy, on
               <option value="brief"    className="text-gray-700">مختصر</option>
               <option value="detailed" className="text-gray-700">مفصّل (صفحة لكل موظف)</option>
             </select>
+            <button
+              onClick={onExportExcel}
+              className="px-4 py-2.5 bg-emerald-500/90 hover:bg-emerald-500 transition-all rounded-xl font-black text-sm flex items-center gap-2 shadow-lg shadow-emerald-500/30 border border-emerald-400/40"
+            >
+              <FileSpreadsheet size={16} />
+              Excel
+            </button>
             <button
               onClick={onExport}
               className="px-4 py-2.5 bg-white/10 hover:bg-white/20 transition-all rounded-xl font-black text-sm flex items-center gap-2 border border-white/30"
@@ -698,6 +705,7 @@ function KpiBar({ label, value, target, deptAvg, color }) {
 }
 
 function EmployeeDrawer({ agent, onClose, onOpenNotes }) {
+  const [pdfBusy, setPdfBusy] = useState(false);
   const { data: snapshots = [], isLoading } = useQuery({
     queryKey: ['employee-snapshots', agent],
     queryFn: () => api.get(`/admin/snapshots/employee/${encodeURIComponent(agent)}`).then(r => r.data),
@@ -707,6 +715,15 @@ function EmployeeDrawer({ agent, onClose, onOpenNotes }) {
   if (!agent) return null;
 
   const latest = snapshots[0];
+
+  // YoY query — only fetched when latest snapshot exists
+  const { data: yoy } = useQuery({
+    queryKey: ['employee-yoy', agent, latest?.year, latest?.month],
+    queryFn: () => api.get(`/admin/snapshots/yoy/${encodeURIComponent(agent)}`, {
+      params: { year: latest.year, month: latest.month },
+    }).then(r => r.data),
+    enabled: !!agent && !!latest,
+  });
   const sparkData = useMemo(() =>
     [...snapshots].reverse().slice(-12).map(s => ({
       name: monthShortAr(s.year, s.month),
@@ -730,7 +747,47 @@ function EmployeeDrawer({ agent, onClose, onOpenNotes }) {
             <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-xl">
               <X size={18} />
             </button>
-            <h2 className="font-black text-gray-700 text-sm">تفاصيل الموظف</h2>
+            <div className="flex items-center gap-2">
+              {/* Single-employee PDF button */}
+              <button
+                onClick={async () => {
+                  if (!latest) return;
+                  setPdfBusy(true);
+                  try {
+                    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+                    await new Promise(r => setTimeout(r, 100));
+                    const node = document.getElementById('single-employee-pdf-canvas');
+                    if (!node) throw new Error('PDF render node missing');
+                    const canvas = await html2canvas(node, { scale: 2, backgroundColor: '#fff', useCORS: true, logging: false });
+                    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+                    const pageWidth  = pdf.internal.pageSize.getWidth();
+                    const pageHeight = pdf.internal.pageSize.getHeight();
+                    const imgWidth   = pageWidth;
+                    const imgHeight  = (canvas.height * imgWidth) / canvas.width;
+                    const imgData = canvas.toDataURL('image/jpeg', 0.93);
+                    if (imgHeight <= pageHeight) {
+                      pdf.addImage(imgData, 'JPEG', 0, 0, imgWidth, imgHeight);
+                    } else {
+                      let position = 0, heightLeft = imgHeight;
+                      while (heightLeft > 0) {
+                        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+                        heightLeft -= pageHeight;
+                        if (heightLeft > 0) { position -= pageHeight; pdf.addPage(); }
+                      }
+                    }
+                    pdf.save(`${agent}-${new Date().toISOString().slice(0, 10)}.pdf`);
+                  } catch (e) {
+                    alert('تعذّر إنشاء PDF: ' + e.message);
+                  } finally {
+                    setPdfBusy(false);
+                  }
+                }}
+                disabled={pdfBusy || !latest}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-500 hover:bg-rose-600 disabled:opacity-50 text-white rounded-lg text-xs font-black"
+              >
+                <FileText size={12} /> {pdfBusy ? '...' : 'PDF'}
+              </button>
+            </div>
           </div>
           <div className="flex items-center gap-3">
             <Avatar name={agent} size="lg" />
@@ -739,6 +796,16 @@ function EmployeeDrawer({ agent, onClose, onOpenNotes }) {
               <p className="text-xs text-gray-500 font-bold mt-0.5">
                 {latest?.department} · {snapshots.length} شهر مجمّد
               </p>
+              {yoy?.delta != null && (
+                <span className={`inline-flex items-center gap-1 mt-2 px-2 py-0.5 rounded-lg text-[10px] font-black ${
+                  yoy.delta.overall > 0 ? 'bg-emerald-100 text-emerald-700' :
+                  yoy.delta.overall < 0 ? 'bg-rose-100 text-rose-700' :
+                  'bg-gray-100 text-gray-600'
+                }`}>
+                  {trendIcon(yoy.delta.overall)}
+                  vs YoY: {yoy.delta.overall > 0 ? '+' : ''}{yoy.delta.overall}%
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -880,6 +947,108 @@ function EmployeeDrawer({ agent, onClose, onOpenNotes }) {
           </div>
         )}
       </div>
+
+      {/* Hidden render — single-employee PDF target */}
+      {pdfBusy && latest && (
+        <div style={{ position: 'fixed', left: -10000, top: 0, zIndex: -1, pointerEvents: 'none' }}>
+          <div id="single-employee-pdf-canvas" dir="rtl" style={{
+            fontFamily: 'Arial, "Segoe UI", Tahoma, sans-serif',
+            width: 794, padding: 32, background: '#fff', color: '#111827',
+          }}>
+            {/* Header */}
+            <div style={{
+              background: 'linear-gradient(135deg, #1e3a5f 0%, #3b5fa0 100%)',
+              color: '#fff', padding: '20px 24px', borderRadius: 16, marginBottom: 20, textAlign: 'center',
+            }}>
+              <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: 2, opacity: 0.85, margin: 0 }}>AHMED HASSAN ACADEMY</p>
+              <h1 style={{ fontSize: 22, fontWeight: 900, margin: '6px 0 4px 0' }}>تقرير شخصي — {agent}</h1>
+              <p style={{ fontSize: 12, fontWeight: 700, opacity: 0.85, margin: 0 }}>
+                {latest.department} · {MONTH_NAMES_AR[latest.month]} {latest.year} · {new Date().toLocaleDateString('ar-EG')}
+              </p>
+            </div>
+
+            {/* KPI grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10, marginBottom: 18 }}>
+              {[
+                { label: 'الأداء العام', v: latest.overall_score,    color: '#6366F1' },
+                { label: 'الإنجاز',      v: latest.completion_rate,  color: '#10B981' },
+                { label: 'SLA',          v: latest.sla_rate,         color: '#06B6D4' },
+                { label: 'متابعة',       v: latest.followup_rate,    color: '#F59E0B' },
+                { label: 'أعطال',        v: latest.fix_rate,         color: '#EC4899' },
+              ].map((k, i) => (
+                <div key={i} style={{
+                  background: '#F9FAFB', border: '1px solid #E5E7EB',
+                  borderRadius: 12, padding: '12px 10px', textAlign: 'center',
+                }}>
+                  <p style={{ fontSize: 10, fontWeight: 800, color: '#9CA3AF', margin: '0 0 4px 0', textTransform: 'uppercase', letterSpacing: 1 }}>{k.label}</p>
+                  <p style={{ fontSize: 22, fontWeight: 900, color: k.color, margin: 0 }}>{k.v}<span style={{ fontSize: 12 }}>%</span></p>
+                </div>
+              ))}
+            </div>
+
+            {/* Achievements */}
+            {(latest.achievements || []).length > 0 && (
+              <div style={{ background: '#FEF3C7', border: '1px solid #FCD34D', borderRadius: 12, padding: 14, marginBottom: 18 }}>
+                <p style={{ fontSize: 13, fontWeight: 900, color: '#92400E', margin: '0 0 8px 0' }}>🏆 الإنجازات</p>
+                <p style={{ fontSize: 11, color: '#78350F', fontWeight: 700, lineHeight: 1.6, margin: 0 }}>
+                  {(latest.achievements || []).map(b => {
+                    const map = {
+                      top_performer: '🥇 بطل القسم',
+                      top_3_performer: '🥈 ضمن أعلى 3',
+                      rising_star: '🚀 النجم الصاعد',
+                      streak_3: '🔥 3 شهور متتالية',
+                      streak_6: '🔥🔥 6 شهور متتالية',
+                      perfect_sla: '💎 التزام مثالي',
+                      perfect_completion: '🎯 إنجاز كامل',
+                      consistent: '🛡️ الثابت',
+                      target_master: '🏆 محقق الأهداف',
+                      excellence: '🎓 تميّز',
+                    };
+                    return map[b] || b;
+                  }).join(' · ')}
+                </p>
+              </div>
+            )}
+
+            {/* History table */}
+            {snapshots.length > 0 && (
+              <div>
+                <h3 style={{ fontSize: 14, fontWeight: 900, color: '#1e3a5f', margin: '0 0 8px 0', borderRight: '4px solid #1e3a5f', paddingRight: 10 }}>
+                  السجل الشهري ({snapshots.length})
+                </h3>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                  <thead>
+                    <tr style={{ background: '#1e3a5f', color: '#fff' }}>
+                      {['الشهر', 'إنجاز', 'SLA', 'متابعة', 'أعطال', 'العام', 'المركز'].map(h => (
+                        <th key={h} style={{ padding: '8px', textAlign: 'center', fontSize: 10, fontWeight: 800 }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {snapshots.map((s, i) => (
+                      <tr key={s.id} style={{ background: i % 2 === 0 ? '#F9FAFB' : '#fff' }}>
+                        <td style={{ padding: '7px 8px', fontWeight: 800, color: '#111827' }}>{s.period_label}</td>
+                        <td style={{ padding: '7px 8px', textAlign: 'center', color: '#10B981', fontWeight: 800 }}>{s.completion_rate}%</td>
+                        <td style={{ padding: '7px 8px', textAlign: 'center', color: '#06B6D4', fontWeight: 800 }}>{s.sla_rate}%</td>
+                        <td style={{ padding: '7px 8px', textAlign: 'center', color: '#F59E0B', fontWeight: 800 }}>{s.followup_rate}%</td>
+                        <td style={{ padding: '7px 8px', textAlign: 'center', color: '#EC4899', fontWeight: 800 }}>{s.fix_rate}%</td>
+                        <td style={{ padding: '7px 8px', textAlign: 'center', color: '#6366F1', fontWeight: 900, fontSize: 12 }}>{s.overall_score}%</td>
+                        <td style={{ padding: '7px 8px', textAlign: 'center', color: '#6B7280', fontWeight: 700 }}>
+                          {s.rank_in_dept ? `${s.rank_in_dept}/${s.total_in_dept}` : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div style={{ marginTop: 24, paddingTop: 12, borderTop: '2px solid #E5E7EB', textAlign: 'center', color: '#9CA3AF', fontSize: 10, fontWeight: 700 }}>
+              تم إنشاء التقرير تلقائياً · {new Date().toLocaleString('ar-EG')}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1592,12 +1761,39 @@ export default function EmployeeProgression() {
     URL.revokeObjectURL(url);
   }
 
+  // Excel export — calls backend, downloads .xlsx
+  async function exportExcel() {
+    if (!latestPeriod) {
+      alert('لا يوجد شهر مجمّد بعد. ابدأ بتجميد شهر أولاً.');
+      return;
+    }
+    try {
+      const r = await api.get('/admin/snapshots/export-excel', {
+        params: {
+          year: latestPeriod.year,
+          month: latestPeriod.month,
+          department: department || undefined,
+        },
+        responseType: 'blob',
+      });
+      const url = URL.createObjectURL(r.data);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `snapshots-${latestPeriod.year}-${pad2(latestPeriod.month)}.xlsx`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert('تعذّر تحميل ملف Excel: ' + (e.response?.data?.error || e.message));
+    }
+  }
+
   return (
     <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
       <HeroBanner
         summary={summary}
         onFreezeClick={() => setFreezeOpen(true)}
         onExport={exportCSV}
+        onExportExcel={exportExcel}
         onExportPdf={exportPDF}
         pdfBusy={pdfBusy}
         onCompare={() => setCompareOpen(true)}

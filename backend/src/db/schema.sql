@@ -459,6 +459,25 @@ CREATE TABLE IF NOT EXISTS kpi_weights (
 );
 
 -- =============================================
+-- NOTIFICATIONS — in-app notifications for users
+-- =============================================
+CREATE TABLE IF NOT EXISTS notifications (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  type       TEXT NOT NULL CHECK(type IN ('snapshot_frozen','target_changed','achievement_earned','system','custom')),
+  title      TEXT NOT NULL,
+  body       TEXT,
+  link       TEXT,                                -- optional deep link (e.g. /agent/my-progression)
+  meta       TEXT,                                -- JSON
+  is_read    INTEGER NOT NULL DEFAULT 0,
+  read_at    TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_user    ON notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_read    ON notifications(user_id, is_read);
+CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at);
+
+-- =============================================
 -- JWT REFRESH TOKENS
 -- =============================================
 CREATE TABLE IF NOT EXISTS refresh_tokens (
