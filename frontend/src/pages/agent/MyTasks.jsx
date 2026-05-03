@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Plus, Download } from 'lucide-react';
+import { Plus, Download, ClipboardList, Search } from 'lucide-react';
 import api from '../../api/axios';
 import DataTable from '../../components/ui/DataTable';
 import Badge from '../../components/ui/Badge';
-import SearchBar from '../../components/ui/SearchBar';
 import RemarkForm from '../../components/remarks/RemarkForm';
+import PageHero from '../../components/ui/PageHero';
+import SectionCard from '../../components/ui/SectionCard';
+import ModernButton from '../../components/ui/ModernButton';
 
 export default function MyTasks() {
   const { t } = useTranslation();
@@ -40,30 +42,46 @@ export default function MyTasks() {
     { key: 'added_at',   label: t('tasks.addedAt'),   render: v => v ? v.slice(0, 10) : '—' },
   ];
 
+  const inputCls = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30';
+
   return (
-    <div className="space-y-5 animate-fadeIn">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-text-primary">{t('nav.myTasks')}</h1>
-        <div className="flex gap-2">
-          <button onClick={handleExport} className="btn-outline flex items-center gap-2 text-sm">
-            <Download size={15} /> {t('common.export')}
-          </button>
-          <button onClick={() => { setSelected(null); setShowForm(true); }} className="btn-primary flex items-center gap-2 text-sm">
-            <Plus size={15} /> {t('tasks.addTask')}
-          </button>
-        </div>
-      </div>
+    <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
+      <PageHero
+        title={t('nav.myTasks')}
+        subtitle="عرض وإدارة كل المهام المسندة إليك"
+        icon={ClipboardList}
+        gradient="navy"
+        actions={
+          <>
+            <ModernButton variant="glass" icon={Download} onClick={handleExport}>
+              {t('common.export')}
+            </ModernButton>
+            <ModernButton variant="amber" icon={Plus} onClick={() => { setSelected(null); setShowForm(true); }}>
+              {t('tasks.addTask')}
+            </ModernButton>
+          </>
+        }
+      />
 
       {/* Filters */}
-      <div className="card p-3">
-        <div className="flex flex-wrap gap-3">
-          <SearchBar value={q} onChange={setQ} className="flex-1 min-w-48" />
-          <select className="input w-36" value={status} onChange={e => { setStatus(e.target.value); setPage(1); }}>
+      <div className="bg-white/80 backdrop-blur-md border border-gray-100 rounded-2xl p-4 shadow-sm">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-1.5 bg-white border border-gray-200 rounded-xl px-3 py-2 flex-1 min-w-[200px]">
+            <Search size={14} className="text-gray-400" />
+            <input
+              type="text"
+              value={q}
+              onChange={e => { setQ(e.target.value); setPage(1); }}
+              placeholder="بحث..."
+              className="bg-transparent text-sm font-bold text-gray-700 focus:outline-none flex-1"
+            />
+          </div>
+          <select className={inputCls} value={status} onChange={e => { setStatus(e.target.value); setPage(1); }}>
             <option value="">{t('common.all')}</option>
             <option value="pending">{t('tasks.pending')}</option>
             <option value="done">{t('tasks.done')}</option>
           </select>
-          <select className="input w-36" value={priority} onChange={e => { setPriority(e.target.value); setPage(1); }}>
+          <select className={inputCls} value={priority} onChange={e => { setPriority(e.target.value); setPage(1); }}>
             <option value="">{t('common.all')}</option>
             <option value="عاجلة">{t('tasks.urgent')}</option>
             <option value="هامة">{t('tasks.important')}</option>
@@ -73,7 +91,7 @@ export default function MyTasks() {
       </div>
 
       {/* Table */}
-      <div className="card p-0 overflow-hidden">
+      <SectionCard title="المهام" subtitle={`${data?.total || 0} مهمة`} icon={ClipboardList} accent="indigo" noBodyPad>
         <DataTable
           columns={columns}
           data={data?.data}
@@ -85,7 +103,7 @@ export default function MyTasks() {
           emptyMsg={t('tasks.noTasks')}
           onRowClick={row => { setSelected(row); setShowForm(true); }}
         />
-      </div>
+      </SectionCard>
 
       <RemarkForm
         open={showForm}

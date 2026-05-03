@@ -4,7 +4,9 @@ import { useTranslation } from 'react-i18next';
 import { format } from 'date-fns';
 import api from '../../api/axios';
 import Badge from '../../components/ui/Badge';
-import { Clock, User, MapPin, Timer, Search, RefreshCw, X } from 'lucide-react';
+import { Clock, User, MapPin, Timer, Search, RefreshCw, X, Calendar } from 'lucide-react';
+import PageHero from '../../components/ui/PageHero';
+import EmptyState from '../../components/ui/EmptyState';
 
 // ─── SessionCard (main lectures) ─────────────────────────────────────────────
 function SessionCard({ session: s }) {
@@ -209,78 +211,84 @@ export default function TodaySchedule() {
   const main     = sessions?.filter(s => s.session_type === 'main')  || [];
   const sideSch  = sessions?.filter(s => s.session_type !== 'main')  || [];
 
-  return (
-    <div className="space-y-5 animate-fadeIn">
+  const dateEl = (
+    <div className="flex items-center gap-1.5 bg-white/10 backdrop-blur-md border border-white/20 rounded-xl px-3 py-1.5">
+      <Calendar size={13} className="text-white/70" />
+      <input type="date" value={date} onChange={e => setDate(e.target.value)}
+        className="bg-transparent text-white text-xs font-bold focus:outline-none border-0 p-0" />
+    </div>
+  );
 
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-bold text-gray-900">{t('nav.todaySchedule')}</h1>
-        <input type="date" value={date} onChange={e => setDate(e.target.value)}
-          className="input w-44" />
-      </div>
+  return (
+    <div className="space-y-5 animate-fadeIn pb-12" dir={isAr ? 'rtl' : 'ltr'}>
+      <PageHero
+        title={t('nav.todaySchedule')}
+        subtitle={isAr ? 'كل جلساتك الأساسية والجانبية لليوم' : 'All your main and side sessions for the day'}
+        icon={Calendar}
+        gradient="navy"
+        actions={dateEl}
+      />
 
       {/* Tabs */}
-      <div className="flex gap-3 flex-wrap">
-
-        {/* Tab 1 — زووم كول */}
+      <div className="flex gap-2 flex-wrap">
         <button
           onClick={() => setActiveTab('side')}
-          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all border-2
-            ${activeTab === 'side'
-              ? 'bg-primary text-white border-primary shadow-md'
-              : 'bg-white text-gray-600 border-gray-200 hover:border-primary hover:text-primary'}`}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-black text-sm transition-all border ${
+            activeTab === 'side'
+              ? 'bg-[#1e3a5f] text-white border-[#1e3a5f] shadow-lg shadow-[#1e3a5f]/30'
+              : 'bg-white text-gray-600 border-gray-200 hover:border-[#1e3a5f] hover:text-[#1e3a5f]'
+          }`}
         >
           {isAr ? 'زووم كول' : 'Zoom Call'}
         </button>
 
-        {/* Tab 2 — الجلسات الجانبية */}
         <button
           onClick={() => setActiveTab('side-schedule')}
-          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all border-2
-            ${activeTab === 'side-schedule'
-              ? 'bg-purple-600 text-white border-purple-600 shadow-md'
-              : 'bg-white text-gray-600 border-gray-200 hover:border-purple-500 hover:text-purple-600'}`}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-black text-sm transition-all border ${
+            activeTab === 'side-schedule'
+              ? 'bg-purple-600 text-white border-purple-600 shadow-lg shadow-purple-500/30'
+              : 'bg-white text-gray-600 border-gray-200 hover:border-purple-500 hover:text-purple-600'
+          }`}
         >
           {isAr ? 'الجلسات الجانبية' : 'Side Sessions'}
           {sessions && (
-            <span className={`px-2 py-0.5 rounded-full text-xs font-bold
-              ${activeTab === 'side-schedule' ? 'bg-white/20 text-white' : 'bg-purple-100 text-purple-600'}`}>
+            <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
+              activeTab === 'side-schedule' ? 'bg-white/20 text-white' : 'bg-purple-100 text-purple-600'
+            }`}>
               {sideSch.length}
             </span>
           )}
         </button>
 
-        {/* Tab 3 — رئيسية */}
         <button
           onClick={() => setActiveTab('main')}
-          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all border-2
-            ${activeTab === 'main'
-              ? 'bg-accent text-white border-accent shadow-md'
-              : 'bg-white text-gray-600 border-gray-200 hover:border-accent hover:text-accent'}`}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-black text-sm transition-all border ${
+            activeTab === 'main'
+              ? 'bg-amber-500 text-white border-amber-500 shadow-lg shadow-amber-500/30'
+              : 'bg-white text-gray-600 border-gray-200 hover:border-amber-500 hover:text-amber-600'
+          }`}
         >
           {isAr ? 'رئيسية' : 'Main'}
           {sessions && (
-            <span className={`px-2 py-0.5 rounded-full text-xs font-bold
-              ${activeTab === 'main' ? 'bg-white/20 text-white' : 'bg-accent/10 text-accent'}`}>
+            <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
+              activeTab === 'main' ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-600'
+            }`}>
               {main.length}
             </span>
           )}
         </button>
       </div>
 
-      {/* ── Zoom tab: full table with filters ── */}
       {activeTab === 'side' && <ZoomTable key={date} date={date} />}
 
-      {/* ── Side Sessions tab: cards for selected date ── */}
       {activeTab === 'side-schedule' && (
         <>
           {isLoading && (
-            <div className="text-center py-16 text-gray-400">{t('common.loading')}</div>
+            <div className="bg-white rounded-3xl border border-gray-100 py-12 text-center text-gray-400 text-sm font-bold">{t('common.loading')}</div>
           )}
           {!isLoading && sideSch.length === 0 && (
-            <div className="text-center py-16 text-gray-400">
-              <p className="text-4xl mb-3">📋</p>
-              <p>لا توجد جلسات جانبية في هذا اليوم</p>
+            <div className="bg-white rounded-3xl border border-gray-100">
+              <EmptyState icon={Calendar} accent="violet" title="لا توجد جلسات" message="لا توجد جلسات جانبية في هذا اليوم" />
             </div>
           )}
           {!isLoading && sideSch.length > 0 && (
@@ -291,16 +299,14 @@ export default function TodaySchedule() {
         </>
       )}
 
-      {/* ── Main tab: cards for selected date ── */}
       {activeTab === 'main' && (
         <>
           {isLoading && (
-            <div className="text-center py-16 text-gray-400">{t('common.loading')}</div>
+            <div className="bg-white rounded-3xl border border-gray-100 py-12 text-center text-gray-400 text-sm font-bold">{t('common.loading')}</div>
           )}
           {!isLoading && main.length === 0 && (
-            <div className="text-center py-16 text-gray-400">
-              <p className="text-4xl mb-3">📅</p>
-              <p>{t('schedule.noSchedule')}</p>
+            <div className="bg-white rounded-3xl border border-gray-100">
+              <EmptyState icon={Calendar} accent="amber" title="جدول فاضي" message={t('schedule.noSchedule')} />
             </div>
           )}
           {!isLoading && main.length > 0 && (

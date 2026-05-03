@@ -2,9 +2,12 @@ import { useState, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { format } from 'date-fns';
-import { Download, CheckCircle, BookOpen, Monitor, Clock, Save, SearchCheck } from 'lucide-react';
+import { Download, CheckCircle, BookOpen, Monitor, Clock, Save, SearchCheck, Video, Calendar } from 'lucide-react';
 import api from '../../api/axios';
 import Badge from '../../components/ui/Badge';
+import PageHero from '../../components/ui/PageHero';
+import EmptyState from '../../components/ui/EmptyState';
+import ModernButton from '../../components/ui/ModernButton';
 
 // ─── Time helpers ──────────────────────────────────────────────────────────────
 
@@ -266,24 +269,32 @@ export default function SideSessionCheck() {
   const total        = sessions?.length || 0;
   const allChecked   = total > 0 && checkedCount === total;
 
-  return (
-    <div className="space-y-4 animate-fadeIn">
-
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-bold text-text-primary">{t('nav.sideSessionCheck')}</h1>
-        <div className="flex gap-2">
-          <input
-            type="date"
-            value={date}
-            onChange={e => { setDate(e.target.value); setBulkDone(false); }}
-            className="input w-44"
-          />
-          <button onClick={handleExport} className="btn-outline flex items-center gap-2 text-sm">
-            <Download size={15} /> {t('common.export')}
-          </button>
-        </div>
+  const headerActions = (
+    <>
+      <div className="flex items-center gap-1.5 bg-white/10 backdrop-blur-md border border-white/20 rounded-xl px-3 py-1.5">
+        <Calendar size={13} className="text-white/70" />
+        <input
+          type="date"
+          value={date}
+          onChange={e => { setDate(e.target.value); setBulkDone(false); }}
+          className="bg-transparent text-white text-xs font-bold focus:outline-none border-0 p-0"
+        />
       </div>
+      <ModernButton variant="glass" icon={Download} onClick={handleExport}>
+        {t('common.export')}
+      </ModernButton>
+    </>
+  );
+
+  return (
+    <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
+      <PageHero
+        title={t('nav.sideSessionCheck')}
+        subtitle="التحقق من الجلسات وتسجيل الحضور"
+        icon={Video}
+        gradient="violet"
+        actions={headerActions}
+      />
 
       {/* Session type tabs */}
       <div className="flex gap-2">
@@ -355,12 +366,13 @@ export default function SideSessionCheck() {
         </div>
       )}
 
-      {isLoading && <p className="text-center py-8 text-text-secondary">{t('common.loading')}</p>}
+      {isLoading && (
+        <div className="bg-white rounded-3xl border border-gray-100 py-12 text-center text-gray-400 text-sm font-bold">{t('common.loading')}</div>
+      )}
 
       {!isLoading && !total && (
-        <div className="text-center py-16 text-text-secondary">
-          <p className="text-4xl mb-3">📋</p>
-          <p>{t('sideSession.noSessions')}</p>
+        <div className="bg-white rounded-3xl border border-gray-100">
+          <EmptyState icon={Video} accent="violet" title="لا توجد جلسات" message={t('sideSession.noSessions')} />
         </div>
       )}
 
