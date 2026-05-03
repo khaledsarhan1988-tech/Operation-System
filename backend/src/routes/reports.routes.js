@@ -618,6 +618,11 @@ router.get('/dashboard', (req, res) => {
     const absentDeptB2 = buildDeptFilter('b2', department);
     const absentEmpB   = buildCoordFilter('b', employee);
     const absentEmpB2  = buildCoordFilter('b2', employee);
+    // KPI must match the row count returned by /absent-list exactly.
+    // Previous version used `LEFT JOIN clients c_lu` to validate phones,
+    // which double-counted absent rows when the same phone appeared more than
+    // once in the clients table. Switched to `EXISTS` (correlated subquery)
+    // to mirror /absent-list and stay row-stable. (Fix mirrors Fix 4 pattern.)
     const absentMainRow = db.prepare(
       `SELECT COUNT(*) as cnt FROM (
          SELECT group_name FROM (
@@ -625,8 +630,6 @@ router.get('/dashboard', (req, res) => {
              COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS resolved_date
            FROM absent_students a
            LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
-           LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
-             AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone${line ? ' AND c_lu.line = a.line' : ''}
            LEFT JOIN (
              SELECT group_name, date, line,
                ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
@@ -637,7 +640,7 @@ router.get('/dashboard', (req, res) => {
              AND lec_inf.lec_num = a.lecture_no${line ? ' AND lec_inf.line = a.line' : ''}
            WHERE (
              (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
-             OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+             OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND EXISTS (SELECT 1 FROM clients c WHERE c.phone = a.phone${line ? ' AND c.line = a.line' : ''}))
            )
            ${absentDeptB}${absentEmpB}${lineA}
          ) p1_inner
