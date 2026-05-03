@@ -459,6 +459,21 @@ CREATE TABLE IF NOT EXISTS kpi_weights (
 );
 
 -- =============================================
+-- PERSONAL GOALS — agent-defined motivational goals (NOT used for met_target)
+-- =============================================
+CREATE TABLE IF NOT EXISTS personal_goals (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id         INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  goal_completion INTEGER NOT NULL DEFAULT 90,
+  goal_followup   INTEGER NOT NULL DEFAULT 85,
+  goal_fix        INTEGER NOT NULL DEFAULT 95,
+  goal_overall    INTEGER NOT NULL DEFAULT 90,
+  notes           TEXT,
+  updated_at      TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+);
+CREATE INDEX IF NOT EXISTS idx_personal_goals_user ON personal_goals(user_id);
+
+-- =============================================
 -- NOTIFICATIONS — in-app notifications for users
 -- =============================================
 CREATE TABLE IF NOT EXISTS notifications (

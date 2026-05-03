@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMemo, useState, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   TrendingUp, Trophy, Target, Sparkles, Award, Calendar,
   CheckCircle2, Zap, ShieldAlert, Users, ArrowUp, ArrowDown, Minus,
-  Crown, Flame, Gem,
+  Crown, Flame, Gem, Edit2, Save, X, Heart, Lightbulb, Trash2,
 } from 'lucide-react';
 import {
   LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -81,10 +81,230 @@ function KpiCard({ label, value, target, deptAvg, color, icon: Icon }) {
   );
 }
 
+// ─── PERSONAL GOALS CARD ──────────────────────────────────────────────────────
+
+function PersonalGoalsCard({ personalGoals, latest, onEdit, onClear, deleting }) {
+  const hasGoals = !!personalGoals;
+  const goal = personalGoals || { goal_completion: 90, goal_followup: 85, goal_fix: 95, goal_overall: 90 };
+
+  const rows = [
+    { label: 'الإنجاز',       value: latest?.completion_rate, goal: goal.goal_completion, color: '#10B981' },
+    { label: 'متابعة الغياب', value: latest?.followup_rate,   goal: goal.goal_followup,   color: '#F59E0B' },
+    { label: 'حل الأعطال',    value: latest?.fix_rate,        goal: goal.goal_fix,        color: '#EC4899' },
+    { label: 'الأداء العام',  value: latest?.overall_score,   goal: goal.goal_overall,    color: '#8B5CF6' },
+  ];
+
+  return (
+    <div className="bg-gradient-to-br from-violet-50 via-white to-fuchsia-50 border-2 border-violet-200 rounded-3xl p-6 relative overflow-hidden">
+      <div className="absolute -top-10 -left-10 w-40 h-40 rounded-full opacity-10 blur-3xl"
+           style={{ background: 'radial-gradient(circle, #8B5CF6 0%, transparent 70%)' }} />
+
+      <div className="relative z-10">
+        <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-violet-100 rounded-2xl">
+              <Heart size={20} className="text-violet-600" strokeWidth={2.5} />
+            </div>
+            <div>
+              <h3 className="text-base font-black text-gray-800">أهدافي الشخصية</h3>
+              <p className="text-[11px] text-gray-500 font-bold mt-0.5">
+                {hasGoals
+                  ? '💪 تحدي شخصي يساعدك على تحقيق أداء أفضل'
+                  : '✨ حدد أهدافك الخاصة لتحفيز نفسك'}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {hasGoals && (
+              <button onClick={onClear} disabled={deleting}
+                      className="p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-500 disabled:opacity-50">
+                <Trash2 size={14} />
+              </button>
+            )}
+            <button onClick={onEdit}
+                    className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 shadow-lg shadow-violet-500/30">
+              {hasGoals ? <Edit2 size={13} /> : <Sparkles size={13} />}
+              {hasGoals ? 'تعديل' : 'حدد أهدافك'}
+            </button>
+          </div>
+        </div>
+
+        {hasGoals ? (
+          <div className="space-y-3.5">
+            {rows.map((r, i) => {
+              const v = r.value ?? 0;
+              const pct = Math.min(100, (v / r.goal) * 100);
+              const reached = v >= r.goal;
+              return (
+                <div key={i} className="bg-white border border-violet-100 rounded-2xl p-3">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-black text-gray-700">{r.label}</span>
+                    <div className="flex items-center gap-2 text-xs font-black">
+                      <span className="text-gray-500">{v}%</span>
+                      <span className="text-gray-300">/</span>
+                      <span style={{ color: r.color }}>هدفك: {r.goal}%</span>
+                      {reached && <span className="text-emerald-500">✓</span>}
+                    </div>
+                  </div>
+                  <div className="relative h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div className="absolute inset-y-0 right-0 rounded-full transition-all"
+                         style={{ width: `${pct}%`, background: r.color }} />
+                  </div>
+                  {!reached && r.goal > 0 && (
+                    <p className="text-[10px] text-gray-400 font-bold mt-1.5 text-left">
+                      تبقّى {Math.max(0, r.goal - v)}% للوصول لهدفك
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+
+            {personalGoals.notes && (
+              <div className="bg-violet-100/50 border border-violet-200 rounded-2xl p-3 flex items-start gap-2">
+                <Lightbulb size={14} className="text-violet-600 mt-0.5 flex-shrink-0" />
+                <p className="text-xs font-bold text-violet-900 italic leading-relaxed">{personalGoals.notes}</p>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="text-center py-6 bg-white/60 rounded-2xl border border-dashed border-violet-300">
+            <Sparkles size={28} className="mx-auto text-violet-400 mb-2" />
+            <p className="text-sm font-black text-violet-900">حدد أهدافك الشخصية الآن</p>
+            <p className="text-[11px] text-gray-500 font-bold mt-1 max-w-md mx-auto leading-relaxed">
+              أهدافك الشخصية ما تأثرش على تقييم الإدارة — هي حافز شخصي ليك تتحدى نفسك وتوصل لأعلى أداء
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── EDIT MODAL ───────────────────────────────────────────────────────────────
+
+function EditGoalsModal({ open, current, onClose, onSaved }) {
+  const qc = useQueryClient();
+  const [gc, setGc] = useState(90);
+  const [gf, setGf] = useState(85);
+  const [gx, setGx] = useState(95);
+  const [go, setGo] = useState(90);
+  const [notes, setNotes] = useState('');
+
+  useEffect(() => {
+    if (open) {
+      setGc(current?.goal_completion ?? 90);
+      setGf(current?.goal_followup   ?? 85);
+      setGx(current?.goal_fix        ?? 95);
+      setGo(current?.goal_overall    ?? 90);
+      setNotes(current?.notes || '');
+    }
+  }, [open, current]);
+
+  const saveM = useMutation({
+    mutationFn: () => api.put('/agent/my-goals', {
+      goal_completion: gc, goal_followup: gf, goal_fix: gx, goal_overall: go, notes,
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['my-progression'] });
+      onSaved?.();
+    },
+  });
+
+  if (!open) return null;
+
+  const sliders = [
+    { v: gc, set: setGc, label: 'الإنجاز',       color: '#10B981', icon: '✓' },
+    { v: gf, set: setGf, label: 'متابعة الغياب', color: '#F59E0B', icon: '👥' },
+    { v: gx, set: setGx, label: 'حل الأعطال',    color: '#EC4899', icon: '🔧' },
+    { v: go, set: setGo, label: 'الأداء العام',  color: '#8B5CF6', icon: '🏆' },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" dir="rtl">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden">
+        <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 bg-violet-100 rounded-xl">
+              <Heart size={18} className="text-violet-600" />
+            </div>
+            <div>
+              <h2 className="text-base font-black text-gray-900">أهدافي الشخصية</h2>
+              <p className="text-[11px] text-gray-400 font-bold">حدّد التحدّي اللي تطمح ليه</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg"><X size={16} /></button>
+        </div>
+
+        <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
+          <div className="space-y-3">
+            {sliders.map((s, i) => (
+              <div key={i} className="bg-gray-50 rounded-2xl p-3 border border-gray-100">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-black text-gray-700">
+                    <span className="ml-1">{s.icon}</span>
+                    {s.label}
+                  </span>
+                  <span className="text-lg font-black" style={{ color: s.color }}>{s.v}%</span>
+                </div>
+                <input
+                  type="range" min="0" max="100" value={s.v}
+                  onChange={e => s.set(+e.target.value)}
+                  className="w-full"
+                  style={{ accentColor: s.color }}
+                />
+              </div>
+            ))}
+          </div>
+
+          <div>
+            <label className="text-xs font-black text-gray-500 mb-1.5 block flex items-center gap-1.5">
+              <Lightbulb size={12} /> ملاحظات تحفيزية (اختياري)
+            </label>
+            <textarea
+              value={notes}
+              onChange={e => setNotes(e.target.value.slice(0, 300))}
+              rows={2}
+              maxLength={300}
+              placeholder="مثال: عايز أوصل للمركز الأول هذا الشهر..."
+              className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-violet-500/30"
+            />
+            <p className="text-[10px] text-gray-400 font-bold text-left mt-1">{notes.length}/300</p>
+          </div>
+
+          {saveM.isError && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs font-bold text-red-800">
+              {saveM.error?.response?.data?.error || 'حدث خطأ'}
+            </div>
+          )}
+
+          <div className="flex gap-2 pt-2">
+            <button onClick={onClose}
+                    className="flex-1 px-4 py-2.5 bg-gray-50 hover:bg-gray-100 rounded-xl font-black text-sm text-gray-700">
+              إلغاء
+            </button>
+            <button onClick={() => saveM.mutate()} disabled={saveM.isPending}
+                    className="flex-1 px-4 py-2.5 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 rounded-xl font-black text-sm text-white flex items-center justify-center gap-2">
+              <Save size={14} /> {saveM.isPending ? '...جاري' : 'حفظ التحدي'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function MyProgression() {
+  const qc = useQueryClient();
+  const [editGoalsOpen, setEditGoalsOpen] = useState(false);
+
   const { data, isLoading } = useQuery({
     queryKey: ['my-progression'],
     queryFn: () => api.get('/agent/my-progression').then(r => r.data),
+  });
+
+  const clearM = useMutation({
+    mutationFn: () => api.delete('/agent/my-goals'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['my-progression'] }),
   });
 
   const snapshots = data?.snapshots || [];
@@ -198,6 +418,17 @@ export default function MyProgression() {
             <KpiCard label="متابعة الغياب"  value={latest.followup_rate}   target={latest.target_followup}   deptAvg={latest.dept_avg_followup}   color="#F59E0B" icon={Users} />
             <KpiCard label="حل الأعطال"    value={latest.fix_rate}        target={latest.target_fix}        deptAvg={latest.dept_avg_fix}        color="#EC4899" icon={ShieldAlert} />
           </div>
+
+          {/* Personal goals — set by the employee themselves (motivational, not used for met_target) */}
+          <PersonalGoalsCard
+            personalGoals={data?.personal_goals}
+            latest={latest}
+            onEdit={() => setEditGoalsOpen(true)}
+            onClear={() => {
+              if (confirm('هل تريد مسح أهدافك الشخصية؟')) clearM.mutate();
+            }}
+            deleting={clearM.isPending}
+          />
 
           {/* Chart */}
           {chartData.length > 1 && (
@@ -325,6 +556,13 @@ export default function MyProgression() {
           </div>
         </>
       )}
+
+      <EditGoalsModal
+        open={editGoalsOpen}
+        current={data?.personal_goals}
+        onClose={() => setEditGoalsOpen(false)}
+        onSaved={() => setEditGoalsOpen(false)}
+      />
     </div>
   );
 }

@@ -1,6 +1,7 @@
 'use strict';
 const express = require('express');
 const db = require('../config/database');
+const { saveNow } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { lineClause, lineFilter } = require('../utils/lineFilter');
@@ -1099,13 +1100,83 @@ router.get('/my-progression', (req, res) => {
     };
   }
 
+  // Agent's personal goals (motivational, separate from admin-set targets)
+  let personalGoals = null;
+  try {
+    personalGoals = db.prepare(`
+      SELECT goal_completion, goal_followup, goal_fix, goal_overall, notes, updated_at
+      FROM personal_goals WHERE user_id = ?
+    `).get(req.user?.id);
+  } catch (_) {}
+
   return res.json({
     agent_name: req.user?.full_name,
     department: req.user?.department,
     snapshots: mySnaps,
     lifetime_badges: lifetimeBadges,
     latest_target: latestTarget,
+    personal_goals: personalGoals,
   });
+});
+
+// ─── PERSONAL GOALS ───────────────────────────────────────────────────────────
+// Each agent can set motivational goals for themselves. These are NOT used to
+// compute met_target on snapshots — admin-set targets in employee_targets are
+// what counts officially. Personal goals just give the agent a personal stretch
+// goal to display alongside the official numbers.
+
+// GET /api/agent/my-goals
+router.get('/my-goals', (req, res) => {
+  const row = db.prepare(`
+    SELECT goal_completion, goal_followup, goal_fix, goal_overall, notes, updated_at
+    FROM personal_goals WHERE user_id = ?
+  `).get(req.user?.id);
+  return res.json(row || null);
+});
+
+// PUT /api/agent/my-goals
+// Body: { goal_completion, goal_followup, goal_fix, goal_overall, notes? }
+router.put('/my-goals', (req, res) => {
+  const userId = req.user?.id;
+  if (!userId) return res.status(401).json({ error: 'Unauthenticated' });
+
+  const gc = parseInt(req.body?.goal_completion, 10);
+  const gf = parseInt(req.body?.goal_followup,   10);
+  const gx = parseInt(req.body?.goal_fix,        10);
+  const go = parseInt(req.body?.goal_overall,    10);
+  if ([gc, gf, gx, go].some(v => !Number.isFinite(v) || v < 0 || v > 100)) {
+    return res.status(400).json({ error: 'كل الأهداف لازم تكون بين 0 و 100' });
+  }
+  const notes = (req.body?.notes || '').toString().slice(0, 300) || null;
+
+  // Upsert (single row per user — UNIQUE constraint on user_id)
+  db.prepare(`
+    INSERT INTO personal_goals (user_id, goal_completion, goal_followup, goal_fix, goal_overall, notes, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now', '+2 hours'))
+    ON CONFLICT(user_id) DO UPDATE SET
+      goal_completion = excluded.goal_completion,
+      goal_followup   = excluded.goal_followup,
+      goal_fix        = excluded.goal_fix,
+      goal_overall    = excluded.goal_overall,
+      notes           = excluded.notes,
+      updated_at      = excluded.updated_at
+  `).run(userId, gc, gf, gx, go, notes);
+  saveNow();
+
+  const saved = db.prepare(`
+    SELECT goal_completion, goal_followup, goal_fix, goal_overall, notes, updated_at
+    FROM personal_goals WHERE user_id = ?
+  `).get(userId);
+  return res.json(saved);
+});
+
+// DELETE /api/agent/my-goals
+router.delete('/my-goals', (req, res) => {
+  const userId = req.user?.id;
+  if (!userId) return res.status(401).json({ error: 'Unauthenticated' });
+  db.prepare(`DELETE FROM personal_goals WHERE user_id = ?`).run(userId);
+  saveNow();
+  return res.json({ deleted: 1 });
 });
 
 module.exports = router;

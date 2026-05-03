@@ -645,6 +645,19 @@ initDb().then(db => {
     db._raw.prepare(`INSERT OR IGNORE INTO kpi_weights (id, weight_completion, weight_followup, weight_fix, weight_sla)
                      VALUES (1, 50, 25, 25, 0)`).run();
 
+    // Personal goals — motivational targets set by the agent themselves
+    db._raw.run(`CREATE TABLE IF NOT EXISTS personal_goals (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id         INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+      goal_completion INTEGER NOT NULL DEFAULT 90,
+      goal_followup   INTEGER NOT NULL DEFAULT 85,
+      goal_fix        INTEGER NOT NULL DEFAULT 95,
+      goal_overall    INTEGER NOT NULL DEFAULT 90,
+      notes           TEXT,
+      updated_at      TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+    )`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_personal_goals_user ON personal_goals(user_id)`);
+
     // Notifications
     db._raw.run(`CREATE TABLE IF NOT EXISTS notifications (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
