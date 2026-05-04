@@ -45,7 +45,8 @@
     "fixReports": "Fix Reports",
     "attendanceReports": "Attendance & Absence Reports",
     "educationReports": "Education Reports",
-    "qualityReports": "Quality Reports"
+    "qualityReports": "Quality Reports",
+    "qualityDiagnostic": "Quality Diagnostic"
   },
   "auth": {
     "login": "Login",

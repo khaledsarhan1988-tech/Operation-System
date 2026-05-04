@@ -31,6 +31,7 @@ import ExcelUpload from './pages/admin/ExcelUpload';
 import SystemReports from './pages/admin/SystemReports';
 import EducationReports from './pages/admin/EducationReports';
 import QualityReports from './pages/admin/QualityReports';
+import QualityDiagnostic from './pages/admin/QualityDiagnostic';
 import TeamPage from './pages/admin/TeamPage';
 import DashboardDetail from './pages/admin/DashboardDetail';
 import ClientDistribution from './pages/admin/ClientDistribution';
@@ -112,6 +113,7 @@ const router = createBrowserRouter([
       { path: 'reports/customer-services',    element: <SystemReports /> },
       { path: 'reports/education',            element: <EducationReports /> },
       { path: 'reports/quality',              element: <QualityReports /> },
+      { path: 'reports/quality-diagnostic',   element: <QualityDiagnostic /> },
       { path: 'reports/fix-report',           element: <FixReport /> },
       { path: 'reports/attendance-absence',   element: <AttendanceAbsenceReport /> },
       { path: 'distribution',                  element: <ClientDistribution /> },

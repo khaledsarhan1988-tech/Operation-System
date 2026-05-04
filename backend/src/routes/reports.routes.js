@@ -3229,4 +3229,184 @@ router.get('/quality-employee/details', (req, res) => {
   return res.status(400).json({ error: 'Invalid type' });
 });
 
+// ─── GET /api/reports/quality-diagnostic ──────────────────────────────────────
+// Forensic breakdown of how Solve Mistakes + Main Absent are being computed RIGHT
+// NOW. Use this when totals drift after re-uploading lectures/batches/remarks
+// — it shows WHICH records contribute and WHICH coordinators they're attributed
+// to, so you can pinpoint exactly what changed in the data.
+//
+// Query params:
+//   from, to        — required (YYYY-MM-DD)
+//   department      — optional (General/Private/Semi)
+router.get('/quality-diagnostic', (req, res) => {
+  const { from, to, department } = req.query;
+  const line = lineFilter(req);
+
+  if (!isValidISODate(from) || !isValidISODate(to) || !from || !to) {
+    return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD)' });
+  }
+
+  const lineL  = line ? ` AND l.line = '${line.replace(/'/g, "''")}'` : '';
+  const lineB  = line ? ` AND b.line = '${line.replace(/'/g, "''")}'` : '';
+  const lineC  = line ? ` AND c.line = '${line.replace(/'/g, "''")}'` : '';
+  const lineA  = line ? ` AND a.line = '${line.replace(/'/g, "''")}'` : '';
+  const lineCps= line ? ` AND cps.line = '${line.replace(/'/g, "''")}'` : '';
+  const lineLec= line ? ` AND line = '${line.replace(/'/g, "''")}'` : '';
+
+  const deptFilterB = department && department !== 'All'
+    ? ` AND b.dept_type = '${department.replace(/'/g, "''")}'`
+    : '';
+
+  try {
+    // ═══════════════════════════════════════════════════════════════
+    // SOLVE MISTAKES — every CPS record contributing to the total,
+    //                  with the coordinator currently assigned to its
+    //                  group (so reassignments are visible)
+    // ═══════════════════════════════════════════════════════════════
+    const solveMistakesAll = db.prepare(`
+      SELECT cps.id, cps.group_name, cps.problem_type, cps.status,
+             cps.updated_at, b.coordinators AS current_coordinator,
+             b.dept_type
+      FROM code_problem_status cps
+      LEFT JOIN batches b ON b.group_name = cps.group_name${lineB}
+      WHERE cps.status IN ('resolved','wont_repeat','exception')
+        AND date(cps.updated_at) BETWEEN '${from}' AND '${to}'${lineCps}${deptFilterB}
+      ORDER BY cps.updated_at DESC
+    `).all();
+
+    // CPS records that have NO matching batch (orphaned / coordinator removed)
+    const solveMistakesOrphans = solveMistakesAll.filter(r => !r.current_coordinator);
+
+    // CPS records grouped by coordinator currently assigned
+    const solveMistakesByCoord = {};
+    solveMistakesAll.forEach(r => {
+      const k = r.current_coordinator || '(NO COORDINATOR — orphan)';
+      solveMistakesByCoord[k] = (solveMistakesByCoord[k] || 0) + 1;
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // MAIN ABSENT — Part 1 + Part 2 broken down by coordinator
+    // ═══════════════════════════════════════════════════════════════
+
+    // Part 1: absent_students records (manual upload of الغيابات)
+    const part1All = db.prepare(`
+      SELECT * FROM (
+        SELECT a.id,
+               COALESCE(c_lu.name, NULLIF(TRIM(a.student_name),'')) AS student_name,
+               a.phone, a.group_name,
+               COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS resolved_date,
+               a.date AS raw_date, a.lecture_no,
+               b.coordinators AS current_coordinator, b.dept_type
+        FROM absent_students a
+        LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
+        LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
+          AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone${line ? ' AND c_lu.line = a.line' : ''}
+        LEFT JOIN (
+          SELECT group_name, date, line,
+            ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
+          FROM lectures WHERE session_type='main' AND status != 'غير مؤكدة'${lineLec}
+        ) lec_inf ON (a.date IS NULL OR TRIM(a.date)='')
+          AND lec_inf.group_name = a.group_name
+          AND a.lecture_no IS NOT NULL
+          AND lec_inf.lec_num = a.lecture_no${line ? ' AND lec_inf.line = a.line' : ''}
+        WHERE (
+          (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
+          OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+        )${lineA}${deptFilterB}
+      ) p1
+      WHERE resolved_date BETWEEN '${from}' AND '${to}'
+      ORDER BY resolved_date DESC
+    `).all();
+
+    const part1ByCoord = {};
+    part1All.forEach(r => {
+      const k = r.current_coordinator || '(NO COORDINATOR — orphan)';
+      part1ByCoord[k] = (part1ByCoord[k] || 0) + 1;
+    });
+
+    // Part 2: confirmed main lectures with empty attendance, × clients in group
+    const part2All = db.prepare(`
+      SELECT l.group_name, l.date, l.line, l.status, l.attendance,
+             c.name AS client_name, c.phone AS client_phone,
+             b.coordinators AS current_coordinator, b.dept_type
+      FROM lectures l
+      INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}${deptFilterB}
+      INNER JOIN clients c ON c.group_name = l.group_name${line ? ' AND c.line = l.line' : ''}
+      WHERE l.session_type = 'main' AND l.status = 'مؤكدة'
+        AND (l.attendance IS NULL OR TRIM(l.attendance) = '')
+        AND c.name IS NOT NULL AND TRIM(c.name) != ''
+        AND c.phone IS NOT NULL AND TRIM(c.phone) != ''
+        AND NOT EXISTS (
+          SELECT 1 FROM absent_students a2
+          WHERE a2.group_name = l.group_name AND a2.date = l.date${line ? ' AND a2.line = l.line' : ''}
+        )
+        AND l.date BETWEEN '${from}' AND '${to}'${lineL}
+      ORDER BY l.date DESC
+    `).all();
+
+    const part2ByCoord = {};
+    part2All.forEach(r => {
+      const k = r.current_coordinator || '(NO COORDINATOR — orphan)';
+      part2ByCoord[k] = (part2ByCoord[k] || 0) + 1;
+    });
+
+    // Aggregated dept-level totals
+    const deptTotals = {};
+    [...solveMistakesAll].forEach(r => {
+      const d = r.dept_type || '(NULL DEPT)';
+      if (!deptTotals[d]) deptTotals[d] = { solve_mistakes: 0, main_absent_p1: 0, main_absent_p2: 0 };
+      deptTotals[d].solve_mistakes++;
+    });
+    part1All.forEach(r => {
+      const d = r.dept_type || '(NULL DEPT)';
+      if (!deptTotals[d]) deptTotals[d] = { solve_mistakes: 0, main_absent_p1: 0, main_absent_p2: 0 };
+      deptTotals[d].main_absent_p1++;
+    });
+    part2All.forEach(r => {
+      const d = r.dept_type || '(NULL DEPT)';
+      if (!deptTotals[d]) deptTotals[d] = { solve_mistakes: 0, main_absent_p1: 0, main_absent_p2: 0 };
+      deptTotals[d].main_absent_p2++;
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // FILE FRESHNESS — when was each table last touched?
+    // ═══════════════════════════════════════════════════════════════
+    const fileFreshness = db.prepare(`
+      SELECT file_type, last_synced_at, records_imported
+      FROM excel_sync_log
+      WHERE id IN (SELECT MAX(id) FROM excel_sync_log GROUP BY file_type)
+      ORDER BY last_synced_at DESC
+    `).all();
+
+    return res.json({
+      filters: { from, to, department: department || 'All', line: line || 'All' },
+
+      solve_mistakes: {
+        total: solveMistakesAll.length,
+        orphans_count: solveMistakesOrphans.length,
+        by_coordinator: solveMistakesByCoord,
+        records: solveMistakesAll,
+        orphan_records: solveMistakesOrphans, // CPS where batch has no coordinator
+      },
+
+      main_absent: {
+        total: part1All.length + part2All.length,
+        part1_count: part1All.length,
+        part2_count: part2All.length,
+        part1_by_coordinator: part1ByCoord,
+        part2_by_coordinator: part2ByCoord,
+        part1_records: part1All,
+        part2_records: part2All.slice(0, 500), // cap at 500 for response size
+        part2_truncated: part2All.length > 500,
+      },
+
+      dept_totals: deptTotals,
+      file_freshness: fileFreshness,
+    });
+  } catch (err) {
+    console.error('[reports] quality-diagnostic:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

@@ -45,7 +45,8 @@
     "fixReports": "تقارير الإصلاح",
     "attendanceReports": "تقارير الحضور والغياب",
     "educationReports": "تقارير الإدارة التعليمية",
-    "qualityReports": "تقارير الجودة"
+    "qualityReports": "تقارير الجودة",
+    "qualityDiagnostic": "تشخيص الجودة"
   },
   "auth": {
     "login": "تسجيل الدخول",
