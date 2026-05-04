@@ -597,8 +597,27 @@ export default function QualityReports() {
               { label: 'غياب أساسي',     value: summary.total_main_absent  || 0, bg: '#fff1f2', fg: '#9f1239' },
               { label: 'غياب زووم',      value: summary.total_zoom_absent  || 0, bg: '#f5f3ff', fg: '#5b21b6' },
             ].map((c, i) => (
-              <div key={i} style={{ background: c.bg, color: c.fg, padding: '8px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 700 }}>
-                {c.label}: <span style={{ fontWeight: 800, fontSize: '14px' }}>{c.value}</span>
+              <div
+                key={i}
+                style={{
+                  background: c.bg,
+                  color: c.fg,
+                  padding: '10px 16px',
+                  borderRadius: '10px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  textAlign: 'center',
+                  minWidth: '120px',
+                }}
+              >
+                <div style={{ fontSize: '11px', fontWeight: 700, marginBottom: '4px', opacity: 0.85 }}>
+                  {c.label}
+                </div>
+                <div style={{ fontSize: '20px', fontWeight: 800, lineHeight: 1 }}>
+                  {c.value}
+                </div>
               </div>
             ))}
           </div>
@@ -614,8 +633,9 @@ export default function QualityReports() {
               <tr style={{ background: '#f3f4f6' }}>
                 {['الموظف','القسم','Solve Mistakes','Attendance Main','Attendance Side','Attendance Task','ريمارك مفتوحة','نسبة غياب الأساسية','نسبة غياب الزووم'].map((h, i) => (
                   <th key={i} style={{
-                    padding: '10px 8px',
-                    textAlign: 'right',
+                    padding: '10px 6px',
+                    textAlign: 'center',
+                    verticalAlign: 'middle',
                     fontWeight: 700,
                     color: '#374151',
                     border: '1px solid #e5e7eb',
@@ -625,34 +645,43 @@ export default function QualityReports() {
               </tr>
             </thead>
             <tbody>
-              {filteredRows.map((r, i) => (
-                <tr key={r.agent_id || i} style={{ background: i % 2 === 0 ? '#ffffff' : '#fafafa' }}>
-                  <td style={{ padding: '8px', border: '1px solid #e5e7eb', fontWeight: 700 }}>{r.agent_name}</td>
-                  <td style={{ padding: '8px', border: '1px solid #e5e7eb' }}>{r.department}</td>
-                  <td style={{ padding: '8px', border: '1px solid #e5e7eb', textAlign: 'center', color: '#9d174d', fontWeight: 700 }}>{r.code_problems_fixed}</td>
-                  <td style={{ padding: '8px', border: '1px solid #e5e7eb', textAlign: 'center', color: '#1e40af', fontWeight: 700 }}>{r.attendance_main_count}</td>
-                  <td style={{ padding: '8px', border: '1px solid #e5e7eb', textAlign: 'center', color: '#6b21a8', fontWeight: 700 }}>{r.attendance_side_count}</td>
-                  <td style={{ padding: '8px', border: '1px solid #e5e7eb', textAlign: 'center', color: '#155e75', fontWeight: 700 }}>{r.attendance_task_count}</td>
-                  <td style={{ padding: '8px', border: '1px solid #e5e7eb', textAlign: 'center', color: '#92400e', fontWeight: 700 }}>{r.open_remarks_count}</td>
-                  <td style={{ padding: '8px', border: '1px solid #e5e7eb', textAlign: 'center', color: '#9f1239', fontWeight: 700 }}>
-                    {r.main_absent_rate}% <span style={{ color: '#6b7280', fontWeight: 500 }}>({r.main_absent_count}/{r.main_expected_count})</span>
-                  </td>
-                  <td style={{ padding: '8px', border: '1px solid #e5e7eb', textAlign: 'center', color: '#5b21b6', fontWeight: 700 }}>
-                    {r.zoom_absent_rate}% <span style={{ color: '#6b7280', fontWeight: 500 }}>({r.zoom_absent_count}/{r.zoom_expected_count})</span>
-                  </td>
-                </tr>
-              ))}
+              {filteredRows.map((r, i) => {
+                const cellBase = {
+                  padding: '8px 6px',
+                  border: '1px solid #e5e7eb',
+                  textAlign: 'center',
+                  verticalAlign: 'middle',
+                  fontWeight: 700,
+                };
+                return (
+                  <tr key={r.agent_id || i} style={{ background: i % 2 === 0 ? '#ffffff' : '#fafafa' }}>
+                    <td style={{ ...cellBase, fontWeight: 700, color: '#111827' }}>{r.agent_name}</td>
+                    <td style={{ ...cellBase, fontWeight: 600, color: '#374151' }}>{r.department}</td>
+                    <td style={{ ...cellBase, color: '#9d174d' }}>{r.code_problems_fixed}</td>
+                    <td style={{ ...cellBase, color: '#1e40af' }}>{r.attendance_main_count}</td>
+                    <td style={{ ...cellBase, color: '#6b21a8' }}>{r.attendance_side_count}</td>
+                    <td style={{ ...cellBase, color: '#155e75' }}>{r.attendance_task_count}</td>
+                    <td style={{ ...cellBase, color: '#92400e' }}>{r.open_remarks_count}</td>
+                    <td style={{ ...cellBase, color: '#9f1239' }}>
+                      {r.main_absent_rate}% <span style={{ color: '#6b7280', fontWeight: 500 }}>({r.main_absent_count}/{r.main_expected_count})</span>
+                    </td>
+                    <td style={{ ...cellBase, color: '#5b21b6' }}>
+                      {r.zoom_absent_rate}% <span style={{ color: '#6b7280', fontWeight: 500 }}>({r.zoom_absent_count}/{r.zoom_expected_count})</span>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
             <tfoot>
               <tr style={{ background: '#ecfdf5', borderTop: '2px solid #10b981' }}>
-                <td colSpan={2} style={{ padding: '10px 8px', border: '1px solid #d1fae5', fontWeight: 800 }}>الإجمالي</td>
-                <td style={{ padding: '10px 8px', border: '1px solid #d1fae5', textAlign: 'center', fontWeight: 800, color: '#9d174d' }}>{summary.total_code_fixed || 0}</td>
-                <td style={{ padding: '10px 8px', border: '1px solid #d1fae5', textAlign: 'center', fontWeight: 800, color: '#1e40af' }}>{summary.total_main || 0}</td>
-                <td style={{ padding: '10px 8px', border: '1px solid #d1fae5', textAlign: 'center', fontWeight: 800, color: '#6b21a8' }}>{summary.total_side || 0}</td>
-                <td style={{ padding: '10px 8px', border: '1px solid #d1fae5', textAlign: 'center', fontWeight: 800, color: '#155e75' }}>{summary.total_task || 0}</td>
-                <td style={{ padding: '10px 8px', border: '1px solid #d1fae5', textAlign: 'center', fontWeight: 800, color: '#92400e' }}>{summary.total_open || 0}</td>
-                <td style={{ padding: '10px 8px', border: '1px solid #d1fae5', textAlign: 'center', fontWeight: 800, color: '#9f1239' }}>{summary.total_main_absent || 0}</td>
-                <td style={{ padding: '10px 8px', border: '1px solid #d1fae5', textAlign: 'center', fontWeight: 800, color: '#5b21b6' }}>{summary.total_zoom_absent || 0}</td>
+                <td colSpan={2} style={{ padding: '10px 6px', border: '1px solid #d1fae5', textAlign: 'center', verticalAlign: 'middle', fontWeight: 800 }}>الإجمالي</td>
+                <td style={{ padding: '10px 6px', border: '1px solid #d1fae5', textAlign: 'center', verticalAlign: 'middle', fontWeight: 800, color: '#9d174d' }}>{summary.total_code_fixed || 0}</td>
+                <td style={{ padding: '10px 6px', border: '1px solid #d1fae5', textAlign: 'center', verticalAlign: 'middle', fontWeight: 800, color: '#1e40af' }}>{summary.total_main || 0}</td>
+                <td style={{ padding: '10px 6px', border: '1px solid #d1fae5', textAlign: 'center', verticalAlign: 'middle', fontWeight: 800, color: '#6b21a8' }}>{summary.total_side || 0}</td>
+                <td style={{ padding: '10px 6px', border: '1px solid #d1fae5', textAlign: 'center', verticalAlign: 'middle', fontWeight: 800, color: '#155e75' }}>{summary.total_task || 0}</td>
+                <td style={{ padding: '10px 6px', border: '1px solid #d1fae5', textAlign: 'center', verticalAlign: 'middle', fontWeight: 800, color: '#92400e' }}>{summary.total_open || 0}</td>
+                <td style={{ padding: '10px 6px', border: '1px solid #d1fae5', textAlign: 'center', verticalAlign: 'middle', fontWeight: 800, color: '#9f1239' }}>{summary.total_main_absent || 0}</td>
+                <td style={{ padding: '10px 6px', border: '1px solid #d1fae5', textAlign: 'center', verticalAlign: 'middle', fontWeight: 800, color: '#5b21b6' }}>{summary.total_zoom_absent || 0}</td>
               </tr>
             </tfoot>
           </table>
