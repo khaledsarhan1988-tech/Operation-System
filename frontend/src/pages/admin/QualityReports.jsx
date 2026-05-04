@@ -542,47 +542,50 @@ export default function QualityReports() {
             direction: 'rtl',
           }}
         >
-          {/* Title — Arabic + English on separate lines with explicit dir to
-              keep html2canvas from breaking the bidirectional layout. */}
+          {/* Title — English only (Arabic rendering broken under html2canvas).
+              Filter dates shown below in clean LTR format. */}
           <div style={{ borderBottom: '3px solid #10b981', paddingBottom: '12px', marginBottom: '16px' }}>
-            <h1
-              dir="rtl"
-              lang="ar"
-              style={{
-                fontSize: '24px',
-                fontWeight: 700,
-                margin: 0,
-                color: '#065f46',
-                fontFamily: 'Tahoma, "Segoe UI", Arial, sans-serif',
-                lineHeight: 1.4,
-              }}
-            >
-              تقرير الجودة لكل موظف
-            </h1>
             <div
               dir="ltr"
               style={{
-                fontSize: '14px',
-                fontWeight: 600,
-                color: '#10b981',
-                marginTop: '4px',
+                fontSize: '22px',
+                fontWeight: 700,
+                color: '#065f46',
                 letterSpacing: '0.5px',
               }}
             >
               Quality Report — Per Employee
             </div>
-            <p
-              dir="rtl"
+            <div
+              dir="ltr"
               style={{
+                display: 'flex',
+                gap: '20px',
+                marginTop: '8px',
                 fontSize: '13px',
                 color: '#374151',
-                margin: '8px 0 0 0',
-                fontFamily: 'Tahoma, "Segoe UI", Arial, sans-serif',
+                fontWeight: 600,
               }}
             >
-              {filteredRows.length} موظف · من {applied.from} إلى {applied.to}
-              {applied.department && applied.department !== 'All' ? ` · القسم: ${applied.department}` : ''}
-            </p>
+              <span>
+                <span style={{ color: '#6b7280' }}>From:</span>{' '}
+                <span style={{ color: '#065f46', fontWeight: 700 }}>{applied.from || '—'}</span>
+              </span>
+              <span>
+                <span style={{ color: '#6b7280' }}>To:</span>{' '}
+                <span style={{ color: '#065f46', fontWeight: 700 }}>{applied.to || '—'}</span>
+              </span>
+              <span>
+                <span style={{ color: '#6b7280' }}>Employees:</span>{' '}
+                <span style={{ color: '#065f46', fontWeight: 700 }}>{filteredRows.length}</span>
+              </span>
+              {applied.department && applied.department !== 'All' && (
+                <span>
+                  <span style={{ color: '#6b7280' }}>Department:</span>{' '}
+                  <span style={{ color: '#065f46', fontWeight: 700 }}>{applied.department}</span>
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Summary chips */}
