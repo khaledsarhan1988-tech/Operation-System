@@ -766,27 +766,29 @@ export default function QualityReports() {
             ))}
           </div>
 
-          {/* Department averages — same data as the on-screen sidebar */}
+          {/* Department averages — vertical centered layout that looks balanced
+              regardless of card width (avoids huge gap from space-between). */}
           {deptAverages.length > 0 && (
             <div style={{
               background: '#fafafa',
               border: '1px solid #e5e7eb',
               borderRadius: '10px',
-              padding: '14px',
+              padding: '16px',
               marginBottom: '14px',
             }}>
               <div style={{
-                fontSize: '14px',
+                fontSize: '15px',
                 fontWeight: 700,
                 color: '#5b21b6',
-                marginBottom: '10px',
-                paddingBottom: '8px',
+                marginBottom: '14px',
+                paddingBottom: '10px',
                 borderBottom: '2px solid #ddd6fe',
+                textAlign: 'center',
               }}>
                 متوسط النسب لكل قسم — Department Averages
-                <span style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', marginRight: '8px' }}>
+                <div style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', marginTop: '3px' }}>
                   (نسبة موزّونة: مجموع الغياب ÷ مجموع المتوقع)
-                </span>
+                </div>
               </div>
               <div style={{
                 display: 'grid',
@@ -809,76 +811,78 @@ export default function QualityReports() {
                     <div key={d.department} style={{
                       background: colors.bg,
                       border: `1px solid ${colors.bd}`,
-                      borderRadius: '8px',
-                      padding: '12px',
+                      borderRadius: '10px',
+                      padding: '14px',
+                      textAlign: 'center',
                     }}>
+                      {/* Header: department name + employee count, both centered */}
                       <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        marginBottom: '10px',
-                        paddingBottom: '8px',
+                        marginBottom: '12px',
+                        paddingBottom: '10px',
                         borderBottom: `1px solid ${colors.bd}`,
                       }}>
-                        <span style={{ fontSize: '14px', fontWeight: 800, color: colors.fg }}>
+                        <div style={{ fontSize: '16px', fontWeight: 800, color: colors.fg, marginBottom: '2px' }}>
                           {d.department}
-                        </span>
-                        <span style={{ fontSize: '11px', fontWeight: 600, color: '#6b7280' }}>
+                        </div>
+                        <div style={{ fontSize: '11px', fontWeight: 600, color: '#6b7280' }}>
                           {d.employees} موظف
-                        </span>
+                        </div>
                       </div>
 
-                      {/* Main absence */}
-                      <div style={{ marginBottom: '8px' }}>
+                      {/* Two metrics side by side, each centered in its half */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                        {/* Main absence */}
                         <div style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          marginBottom: '3px',
+                          background: '#ffffff',
+                          border: `1px solid ${colors.bd}`,
+                          borderRadius: '8px',
+                          padding: '10px 6px',
                         }}>
-                          <span style={{ fontSize: '11px', fontWeight: 700, color: '#374151' }}>
+                          <div style={{ fontSize: '11px', fontWeight: 700, color: '#374151', marginBottom: '6px' }}>
                             غياب أساسى
-                          </span>
-                          <span style={{
-                            fontSize: '13px',
+                          </div>
+                          <div style={{
+                            display: 'inline-block',
+                            fontSize: '18px',
                             fontWeight: 800,
                             background: rateBg(d.mainRate),
                             color: rateFg(d.mainRate),
-                            padding: '2px 8px',
-                            borderRadius: '6px',
+                            padding: '4px 12px',
+                            borderRadius: '8px',
+                            marginBottom: '4px',
                           }}>
                             {d.mainRate}%
-                          </span>
+                          </div>
+                          <div style={{ fontSize: '10px', color: '#6b7280', fontFamily: 'monospace' }}>
+                            {d.mainAbsent} / {d.mainExpected}
+                          </div>
                         </div>
-                        <div style={{ fontSize: '10px', color: '#6b7280', fontFamily: 'monospace' }}>
-                          {d.mainAbsent} / {d.mainExpected}
-                        </div>
-                      </div>
 
-                      {/* Zoom absence */}
-                      <div>
+                        {/* Zoom absence */}
                         <div style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          marginBottom: '3px',
+                          background: '#ffffff',
+                          border: `1px solid ${colors.bd}`,
+                          borderRadius: '8px',
+                          padding: '10px 6px',
                         }}>
-                          <span style={{ fontSize: '11px', fontWeight: 700, color: '#374151' }}>
+                          <div style={{ fontSize: '11px', fontWeight: 700, color: '#374151', marginBottom: '6px' }}>
                             غياب زووم
-                          </span>
-                          <span style={{
-                            fontSize: '13px',
+                          </div>
+                          <div style={{
+                            display: 'inline-block',
+                            fontSize: '18px',
                             fontWeight: 800,
                             background: rateBg(d.zoomRate),
                             color: rateFg(d.zoomRate),
-                            padding: '2px 8px',
-                            borderRadius: '6px',
+                            padding: '4px 12px',
+                            borderRadius: '8px',
+                            marginBottom: '4px',
                           }}>
                             {d.zoomRate}%
-                          </span>
-                        </div>
-                        <div style={{ fontSize: '10px', color: '#6b7280', fontFamily: 'monospace' }}>
-                          {d.zoomAbsent} / {d.zoomExpected}
+                          </div>
+                          <div style={{ fontSize: '10px', color: '#6b7280', fontFamily: 'monospace' }}>
+                            {d.zoomAbsent} / {d.zoomExpected}
+                          </div>
                         </div>
                       </div>
                     </div>
