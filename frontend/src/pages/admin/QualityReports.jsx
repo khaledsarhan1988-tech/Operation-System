@@ -217,7 +217,42 @@ export default function QualityReports() {
     return rows.filter(r => r.agent_name?.toLowerCase().includes(q));
   }, [rows, search]);
 
-  const handleApply = () => setApplied({ from, to, department });
+  // Validate that an ISO date string ("YYYY-MM-DD") is a real calendar date.
+  // Catches "April 31", "Feb 30", "13/45/2026", etc. — the HTML date input
+  // accepts these in some browsers when typed directly.
+  function isValidISODate(s) {
+    if (!s) return true; // empty is allowed
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+    const [y, m, day] = s.split('-').map(Number);
+    const d = new Date(Date.UTC(y, m - 1, day));
+    return d.getUTCFullYear() === y && d.getUTCMonth() + 1 === m && d.getUTCDate() === day;
+  }
+
+  const handleApply = () => {
+    // Catch case where browser silently emptied the field after invalid input
+    // (e.g. user typed "04/31/2026" → some browsers set value to "").
+    if (!from) {
+      alert('"من تاريخ" مطلوب. لو كنت كاتب تاريخ غير صحيح (زي 31 ابريل) المتصفح بيمسحه — اختار تاريخ موجود فعلاً.');
+      return;
+    }
+    if (!to) {
+      alert('"إلى تاريخ" مطلوب. لو كنت كاتب تاريخ غير صحيح (زي 31 ابريل) المتصفح بيمسحه — اختار تاريخ موجود فعلاً.');
+      return;
+    }
+    if (!isValidISODate(from)) {
+      alert('"من تاريخ" غير صحيح. يرجى اختيار تاريخ موجود فعلاً (مثلاً 30 ابريل، مش 31 ابريل).');
+      return;
+    }
+    if (!isValidISODate(to)) {
+      alert('"إلى تاريخ" غير صحيح. يرجى اختيار تاريخ موجود فعلاً (مثلاً 30 ابريل، مش 31 ابريل).');
+      return;
+    }
+    if (from > to) {
+      alert('"من تاريخ" لازم يكون قبل أو يساوي "إلى تاريخ".');
+      return;
+    }
+    setApplied({ from, to, department });
+  };
   const handleReset = () => {
     setFrom(monthAgo); setTo(today); setDepartment('All'); setSearch('');
     setApplied({ from: monthAgo, to: today, department: 'All' });

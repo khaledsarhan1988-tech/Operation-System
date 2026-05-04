@@ -2784,9 +2784,28 @@ router.get('/attendance-absence', (req, res) => {
 //   - open_remarks_count    = open remarks (status not in completed/closed set)
 //                              assigned to the agent in the date range
 // Filters: from, to (YYYY-MM-DD), department (All|General|Private|Semi)
+// Strict ISO date validator — rejects "2026-04-31", "Feb 30", "13/45/2026" etc.
+// Returns true for empty (caller decides if empty is OK).
+function isValidISODate(s) {
+  if (!s) return true;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const [y, m, day] = s.split('-').map(Number);
+  const d = new Date(Date.UTC(y, m - 1, day));
+  return d.getUTCFullYear() === y && d.getUTCMonth() + 1 === m && d.getUTCDate() === day;
+}
+
 router.get('/quality-employee', (req, res) => {
   const { from, to, department } = req.query;
   const line = lineFilter(req);
+
+  // Reject impossible dates (April 31, Feb 30, etc.) before they hit the SQL
+  // and silently include data outside the requested range.
+  if (!isValidISODate(from)) {
+    return res.status(400).json({ error: `Invalid 'from' date: ${from}` });
+  }
+  if (!isValidISODate(to)) {
+    return res.status(400).json({ error: `Invalid 'to' date: ${to}` });
+  }
 
   // Build user (agent) list — admin sees all; leader scoped to their dept.
   const userConds = ["u.role = 'agent'", 'u.is_active = 1'];
