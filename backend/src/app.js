@@ -738,6 +738,35 @@ initDb().then(db => {
     console.error('users enrollment migration error:', e.message);
   }
 
+  // ── Quality Report Snapshots ─────────────────────────────────────────────
+  // Frozen snapshots of the Quality Report page. Once a snapshot is saved,
+  // its numbers are immutable — even if Excel files are re-uploaded later,
+  // the saved snapshot's data stays exactly as it was at freeze time.
+  try {
+    db._raw.run(`CREATE TABLE IF NOT EXISTS quality_report_snapshots (
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      snapshot_label      TEXT NOT NULL,
+      from_date           TEXT,
+      to_date             TEXT,
+      department_filter   TEXT,
+      line                TEXT NOT NULL DEFAULT 'Ahmed Hassan',
+      summary_json        TEXT NOT NULL,
+      rows_json           TEXT NOT NULL,
+      dept_averages_json  TEXT NOT NULL,
+      notes               TEXT,
+      frozen_by           INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      frozen_by_name      TEXT,
+      frozen_at           TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+    )`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_qrs_frozen_at ON quality_report_snapshots(frozen_at)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_qrs_dates     ON quality_report_snapshots(from_date, to_date)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_qrs_line      ON quality_report_snapshots(line)`);
+    saveNow();
+    console.log('✅ Migration: quality_report_snapshots ready');
+  } catch (e) {
+    console.error('quality_report_snapshots migration error:', e.message);
+  }
+
   // ── Auto-upsert admin user on every startup ───────────────────────────────
   // Ensures admin always exists even after DB reset (e.g. Railway redeploy).
   try {

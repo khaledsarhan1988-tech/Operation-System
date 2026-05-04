@@ -46,7 +46,8 @@
     "attendanceReports": "تقارير الحضور والغياب",
     "educationReports": "تقارير الإدارة التعليمية",
     "qualityReports": "تقارير الجودة",
-    "qualityDiagnostic": "تشخيص الجودة"
+    "qualityDiagnostic": "تشخيص الجودة",
+    "qualitySnapshots": "النسخ المحفوظة"
   },
   "auth": {
     "login": "تسجيل الدخول",

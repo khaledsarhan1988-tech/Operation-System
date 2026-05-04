@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ShieldCheck, Calendar, Filter, Search, X, Download, Wrench,
   ClipboardCheck, AlertCircle, Video, BookOpen, Layers, FileText, Users,
-  TrendingDown, Phone, UserX, FileDown,
+  TrendingDown, Phone, UserX, FileDown, Snowflake, Save,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import api from '../../api/axios';
@@ -195,6 +196,10 @@ export default function QualityReports() {
   const [drill, setDrill]           = useState({ open: false, agent: null, type: null });
   const [pdfBusy, setPdfBusy]       = useState(false);
   const [pdfRendering, setPdfRendering] = useState(false);
+  const [freezeOpen, setFreezeOpen] = useState(false);
+
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
     queryKey: ['quality-employee', applied],
@@ -421,7 +426,11 @@ export default function QualityReports() {
         icon={ShieldCheck}
         gradient="emerald"
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <ModernButton variant="glass" icon={Snowflake} onClick={() => setFreezeOpen(true)}
+                          disabled={!filteredRows.length}>
+              حفظ نسخة دائمة
+            </ModernButton>
             <ModernButton variant="glass" icon={FileDown} onClick={exportPDF}
                           disabled={!filteredRows.length || pdfBusy}>
               {pdfBusy ? 'جاري التحضير...' : 'تنزيل PDF'}
@@ -981,6 +990,145 @@ export default function QualityReports() {
         to={applied.to}
         onClose={() => setDrill({ open: false, agent: null, type: null })}
       />
+
+      <FreezeSnapshotModal
+        open={freezeOpen}
+        onClose={() => setFreezeOpen(false)}
+        applied={applied}
+        summary={summary}
+        rows={filteredRows}
+        deptAverages={deptAverages}
+        onSaved={() => {
+          queryClient.invalidateQueries({ queryKey: ['quality-snapshots'] });
+          setFreezeOpen(false);
+          if (window.confirm('تم حفظ النسخة بنجاح. هل تريد فتح صفحة النسخ المحفوظة الآن؟')) {
+            navigate('/admin/reports/quality-snapshots');
+          }
+        }}
+      />
+    </div>
+  );
+}
+
+// ─── FREEZE SNAPSHOT MODAL ───────────────────────────────────────────────────
+function FreezeSnapshotModal({ open, onClose, applied, summary, rows, deptAverages, onSaved }) {
+  const defaultLabel = applied.from && applied.to
+    ? `Quality Report ${applied.from} → ${applied.to}`
+    : `Quality Report Snapshot`;
+  const [label, setLabel] = useState(defaultLabel);
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  // Reset label when modal opens with new context
+  useMemo(() => {
+    if (open) {
+      setLabel(defaultLabel);
+      setNotes('');
+      setError('');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, defaultLabel]);
+
+  if (!open) return null;
+
+  const handleSave = async () => {
+    if (!label.trim()) { setError('يرجى إدخال اسم للنسخة'); return; }
+    setSaving(true);
+    setError('');
+    try {
+      await api.post('/reports/quality-snapshot', {
+        label: label.trim(),
+        from: applied.from || null,
+        to:   applied.to   || null,
+        department: applied.department || 'All',
+        notes: notes.trim() || null,
+        summary,
+        rows,
+        dept_averages: deptAverages,
+      });
+      onSaved && onSaved();
+    } catch (e) {
+      setError(e?.response?.data?.error || e?.message || 'فشل الحفظ');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" dir="rtl">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden">
+        {/* Header */}
+        <div className="bg-gradient-to-l from-cyan-600 to-blue-600 text-white px-6 py-4 flex items-center gap-3">
+          <Snowflake size={20} />
+          <div className="flex-1">
+            <h2 className="text-base font-black">حفظ نسخة دائمة من التقرير</h2>
+            <p className="text-xs font-bold opacity-90 mt-0.5">
+              الأرقام هتتسجل دلوقتى ومتتغيرش حتى لو رفعت ملفات Excel جديدة
+            </p>
+          </div>
+          <button onClick={onClose} className="p-2 bg-white/15 hover:bg-white/25 rounded-xl backdrop-blur">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-6 space-y-4">
+          {/* Snapshot details summary */}
+          <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-xs">
+            <div className="grid grid-cols-2 gap-2 text-gray-700 font-bold">
+              <div><span className="text-gray-500">من تاريخ:</span> {applied.from || '—'}</div>
+              <div><span className="text-gray-500">إلى تاريخ:</span> {applied.to || '—'}</div>
+              <div><span className="text-gray-500">القسم:</span> {applied.department || 'All'}</div>
+              <div><span className="text-gray-500">الموظفين:</span> {rows.length}</div>
+            </div>
+          </div>
+
+          {/* Label */}
+          <div>
+            <label className="text-xs font-black text-gray-600 mb-1 block">
+              اسم النسخة <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={label}
+              onChange={e => setLabel(e.target.value)}
+              placeholder="مثال: Quality Report - April 2026 Final"
+              className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-cyan-500/30 focus:border-cyan-500"
+              maxLength={200}
+            />
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label className="text-xs font-black text-gray-600 mb-1 block">ملاحظات (اختياري)</label>
+            <textarea
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              placeholder="مثال: نسخة نهاية أبريل قبل اجتماع الإدارة"
+              rows={3}
+              className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-cyan-500/30 focus:border-cyan-500 resize-none"
+              maxLength={500}
+            />
+          </div>
+
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-bold px-3 py-2 rounded-lg">
+              {error}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="bg-gray-50 border-t border-gray-200 px-6 py-3 flex justify-end gap-2">
+          <ModernButton variant="ghost" onClick={onClose} disabled={saving}>
+            إلغاء
+          </ModernButton>
+          <ModernButton variant="primary" icon={Save} onClick={handleSave} disabled={saving || !label.trim()}>
+            {saving ? 'جارى الحفظ...' : 'حفظ النسخة'}
+          </ModernButton>
+        </div>
+      </div>
     </div>
   );
 }

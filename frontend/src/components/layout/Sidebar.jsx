@@ -5,7 +5,7 @@ import {
   LayoutDashboard, ClipboardList, Search, UserX, Calendar,
   Video, Users, BarChart2, Globe, UserCog, Upload, FileText,
   LogOut, Headphones, GraduationCap, ShieldCheck, AlertTriangle, Activity, Shuffle, Kanban,
-  TrendingUp, Target, Settings, Award
+  TrendingUp, Target, Settings, Award, Snowflake
 } from 'lucide-react';
 
 // ─── COLOR PALETTE ─────────────────────────────────────────────────────────
@@ -76,6 +76,7 @@ const REPORT_LINKS = [
   { to: '/admin/reports/education',             label: 'nav.educationReports',   icon: GraduationCap, color: 'violet',  management: 'Education' },
   { to: '/admin/reports/quality',               label: 'nav.qualityReports',     icon: ShieldCheck,   color: 'green',   management: 'Quality' },
   { to: '/admin/reports/quality-diagnostic',    label: 'nav.qualityDiagnostic',  icon: Activity,      color: 'amber',   management: 'Quality', sub: true },
+  { to: '/admin/reports/quality-snapshots',     label: 'nav.qualitySnapshots',   icon: Snowflake,     color: 'cyan',    management: 'Quality', sub: true },
 ];
 
 const managementMap = {

@@ -1,6 +1,7 @@
 'use strict';
 const express = require('express');
 const db = require('../config/database');
+const { saveNow } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { lineFilter } = require('../utils/lineFilter');
@@ -3227,6 +3228,133 @@ router.get('/quality-employee/details', (req, res) => {
   }
 
   return res.status(400).json({ error: 'Invalid type' });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// QUALITY REPORT SNAPSHOTS — frozen, immutable copies of the report
+// ═══════════════════════════════════════════════════════════════════════════════
+// Once saved, a snapshot's numbers do NOT change even when Excel files are
+// re-uploaded. Useful for end-of-month reviews, audits, sharing with managers.
+
+// POST /api/reports/quality-snapshot — freeze the report data the user is
+// currently viewing. Frontend sends the already-computed summary/rows/dept
+// averages so the snapshot is exactly what the user saw on screen.
+//   body: { label, from, to, department, notes, summary, rows, dept_averages }
+router.post('/quality-snapshot', (req, res) => {
+  if (!['admin', 'leader'].includes(req.user?.role)) {
+    return res.status(403).json({ error: 'Admin or leader role required' });
+  }
+
+  const { label, from, to, department, notes,
+          summary, rows, dept_averages } = req.body || {};
+
+  if (!label || !label.trim()) {
+    return res.status(400).json({ error: 'label is required' });
+  }
+  if (from && !isValidISODate(from)) {
+    return res.status(400).json({ error: `Invalid 'from' date: ${from}` });
+  }
+  if (to && !isValidISODate(to)) {
+    return res.status(400).json({ error: `Invalid 'to' date: ${to}` });
+  }
+  if (!summary || !Array.isArray(rows)) {
+    return res.status(400).json({ error: 'summary + rows are required' });
+  }
+
+  const line = lineFilter(req);
+
+  try {
+    const result = db.prepare(`
+      INSERT INTO quality_report_snapshots
+        (snapshot_label, from_date, to_date, department_filter, line,
+         summary_json, rows_json, dept_averages_json, notes,
+         frozen_by, frozen_by_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      label.trim(),
+      from || null, to || null,
+      department || 'All',
+      line || 'Ahmed Hassan',
+      JSON.stringify(summary),
+      JSON.stringify(rows),
+      JSON.stringify(dept_averages || []),
+      (notes && notes.trim()) || null,
+      req.user?.id || null,
+      req.user?.full_name || req.user?.username || null,
+    );
+    if (typeof saveNow === 'function') saveNow();
+
+    return res.json({
+      success: true,
+      id: result.lastInsertRowid,
+      rows_count: rows.length,
+    });
+  } catch (err) {
+    console.error('[reports] quality-snapshot freeze error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/quality-snapshots — list all snapshots (header info only)
+router.get('/quality-snapshots', (req, res) => {
+  if (!['admin', 'leader'].includes(req.user?.role)) {
+    return res.status(403).json({ error: 'Admin or leader role required' });
+  }
+  const line = lineFilter(req);
+  const lineFilt = line ? ' WHERE line = ?' : '';
+  const params = line ? [line] : [];
+
+  const rows = db.prepare(`
+    SELECT id, snapshot_label, from_date, to_date, department_filter, line,
+           notes, frozen_by, frozen_by_name, frozen_at
+    FROM quality_report_snapshots${lineFilt}
+    ORDER BY frozen_at DESC LIMIT 500
+  `).all(...params);
+
+  return res.json(rows);
+});
+
+// GET /api/reports/quality-snapshot/:id — full data for one snapshot
+router.get('/quality-snapshot/:id', (req, res) => {
+  if (!['admin', 'leader'].includes(req.user?.role)) {
+    return res.status(403).json({ error: 'Admin or leader role required' });
+  }
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id' });
+
+  const row = db.prepare(`SELECT * FROM quality_report_snapshots WHERE id = ?`).get(id);
+  if (!row) return res.status(404).json({ error: 'Snapshot not found' });
+
+  return res.json({
+    id: row.id,
+    snapshot_label: row.snapshot_label,
+    from_date: row.from_date,
+    to_date: row.to_date,
+    department_filter: row.department_filter,
+    line: row.line,
+    notes: row.notes,
+    frozen_by: row.frozen_by,
+    frozen_by_name: row.frozen_by_name,
+    frozen_at: row.frozen_at,
+    summary: JSON.parse(row.summary_json || '{}'),
+    rows: JSON.parse(row.rows_json || '[]'),
+    dept_averages: JSON.parse(row.dept_averages_json || '[]'),
+  });
+});
+
+// DELETE /api/reports/quality-snapshot/:id — admin only
+router.delete('/quality-snapshot/:id', (req, res) => {
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin role required' });
+  }
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id' });
+
+  const result = db.prepare(`DELETE FROM quality_report_snapshots WHERE id = ?`).run(id);
+  if (result.changes === 0) return res.status(404).json({ error: 'Snapshot not found' });
+  saveNow && saveNow();
+
+  return res.json({ success: true });
 });
 
 // ─── GET /api/reports/quality-diagnostic ──────────────────────────────────────

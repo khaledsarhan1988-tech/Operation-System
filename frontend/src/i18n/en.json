@@ -46,7 +46,8 @@
     "attendanceReports": "Attendance & Absence Reports",
     "educationReports": "Education Reports",
     "qualityReports": "Quality Reports",
-    "qualityDiagnostic": "Quality Diagnostic"
+    "qualityDiagnostic": "Quality Diagnostic",
+    "qualitySnapshots": "Saved Snapshots"
   },
   "auth": {
     "login": "Login",
