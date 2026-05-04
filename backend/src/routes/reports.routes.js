@@ -2890,10 +2890,14 @@ router.get('/quality-employee', (req, res) => {
        ${cpsWhere}`
     ).get(...cpsParams)?.c || 0;
 
-    // 6. Main absence rate — for groups coordinated by this agent in the date range
-    //    main_absent  = rows in absent_students table for agent's groups (date in range)
-    //    main_expected = sum of trainee_count over confirmed main lectures (in range)
-    //    rate = absent / expected * 100
+    // 6. Main absence — formula must match /attendance-absence exactly so both
+    //    pages show the same numbers. The formula has TWO parts:
+    //      Part 1: rows in absent_students table for the agent's groups
+    //      Part 2: confirmed main lectures with empty attendance, where clients
+    //              exist in that group and no absent record covers the lecture
+    //              (treated as "everyone in the group is absent")
+    //    main_absent = part1 + part2
+    //    main_expected = SUM(trainee_count) across confirmed main lectures
     const lineLA = line ? ` AND l.line = ?` : '';
     const lineAA = line ? ` AND a.line = ?` : '';
     const dateMainAbs = from && to ? ` AND a.date BETWEEN ? AND ?` : from ? ` AND a.date >= ?` : to ? ` AND a.date <= ?` : '';
@@ -2901,42 +2905,69 @@ router.get('/quality-employee', (req, res) => {
     const dateMainLec = from && to ? ` AND l.date BETWEEN ? AND ?` : from ? ` AND l.date >= ?` : to ? ` AND l.date <= ?` : '';
     const dateMainLecParams = from && to ? [from, to] : from ? [from] : to ? [to] : [];
 
-    const mainAbsentRow = db.prepare(`
+    // Part 1: absent_students count
+    const mainAbsentPart1 = db.prepare(`
       SELECT COUNT(*) AS cnt FROM absent_students a
       INNER JOIN batches b ON b.group_name = a.group_name${line ? ' AND b.line = a.line' : ''}
       WHERE 1=1${lineAA}${dateMainAbs} AND ${coordMatch}
-    `).get(...(line ? [line] : []), ...dateMainAbsParams);
+    `).get(...(line ? [line] : []), ...dateMainAbsParams)?.cnt || 0;
+
+    // Part 2: empty-attendance lectures × clients in group, NOT already in absent_students
+    const mainAbsentPart2 = db.prepare(`
+      SELECT COUNT(*) AS cnt FROM lectures l
+      INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
+      INNER JOIN clients c ON c.group_name = l.group_name${line ? ' AND c.line = l.line' : ''}
+      WHERE l.session_type = 'main' AND l.status = 'مؤكدة'
+        AND (l.attendance IS NULL OR TRIM(l.attendance) = '')
+        AND c.name IS NOT NULL AND TRIM(c.name) != ''
+        AND c.phone IS NOT NULL AND TRIM(c.phone) != ''
+        AND NOT EXISTS (
+          SELECT 1 FROM absent_students a2
+          WHERE a2.group_name = l.group_name AND a2.date = l.date${line ? ' AND a2.line = l.line' : ''}
+        )
+      ${lineLA}${dateMainLec} AND ${coordMatch}
+    `).get(...(line ? [line] : []), ...dateMainLecParams)?.cnt || 0;
+
+    const main_absent_count = mainAbsentPart1 + mainAbsentPart2;
+
     const mainExpectedRow = db.prepare(`
       SELECT COALESCE(SUM(b.trainee_count), 0) AS cnt FROM lectures l
       INNER JOIN batches b ON b.group_name = l.group_name${line ? ' AND b.line = l.line' : ''}
-      WHERE l.session_type = 'main' AND l.status = 'مؤكدة'${lineLA}${dateMainLec}
+      WHERE l.session_type = 'main' AND l.status != 'غير مؤكدة'${lineLA}${dateMainLec}
         AND ${coordMatch}
     `).get(...(line ? [line] : []), ...dateMainLecParams);
-    const main_absent_count   = mainAbsentRow?.cnt || 0;
     const main_expected_count = mainExpectedRow?.cnt || 0;
-    const main_absent_rate    = main_expected_count > 0
+    const main_absent_rate = main_expected_count > 0
       ? Math.round((main_absent_count / main_expected_count) * 100) : 0;
 
-    // 7. Zoom (side) absence rate — same shape using absent_zoom_students
-    const dateZoomAbs = from && to ? ` AND a.date BETWEEN ? AND ?` : from ? ` AND a.date >= ?` : to ? ` AND a.date <= ?` : '';
-    const dateZoomAbsParams = from && to ? [from, to] : from ? [from] : to ? [to] : [];
-
-    const zoomAbsentRow = db.prepare(`
-      SELECT COUNT(*) AS cnt FROM absent_zoom_students a
-      INNER JOIN batches b ON b.group_name = a.group_name${line ? ' AND b.line = a.line' : ''}
-      WHERE 1=1${lineAA}${dateZoomAbs} AND ${coordMatch}
-    `).get(...(line ? [line] : []), ...dateZoomAbsParams);
-    // Expected: count side sessions per (group, date), each side row = 1 expected slot
+    // 7. Zoom absence — must also match /attendance-absence:
+    //    expected = COUNT side sessions (each side row = 1 student slot)
+    //    absent   = SUM (slots - present) per (group,date) where session is confirmed
     const zoomExpectedRow = db.prepare(`
       SELECT COUNT(*) AS cnt FROM lectures l
       INNER JOIN batches b ON b.group_name = l.group_name${line ? ' AND b.line = l.line' : ''}
-      WHERE l.session_type = 'side' AND l.status != 'غير مؤكدة'
+      WHERE l.session_type = 'side' AND l.status = 'مؤكدة'
         AND (l.duration IS NULL OR l.duration <= '00:15')${lineLA}${dateMainLec}
         AND ${coordMatch}
     `).get(...(line ? [line] : []), ...dateMainLecParams);
-    const zoom_absent_count   = zoomAbsentRow?.cnt || 0;
     const zoom_expected_count = zoomExpectedRow?.cnt || 0;
-    const zoom_absent_rate    = zoom_expected_count > 0
+
+    const zoomAbsentRow = db.prepare(`
+      SELECT COALESCE(SUM(absent_count), 0) AS cnt FROM (
+        SELECT COUNT(*) - SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != ''
+                                     AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END)
+                 AS absent_count
+        FROM lectures l
+        INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
+        WHERE l.session_type = 'side' AND l.status = 'مؤكدة'
+          AND (l.duration IS NULL OR l.duration <= '00:15')${lineLA}${dateMainLec}
+          AND ${coordMatch}
+        GROUP BY l.group_name, l.date
+        HAVING absent_count > 0
+      ) sub
+    `).get(...(line ? [line] : []), ...dateMainLecParams);
+    const zoom_absent_count = zoomAbsentRow?.cnt || 0;
+    const zoom_absent_rate = zoom_expected_count > 0
       ? Math.round((zoom_absent_count / zoom_expected_count) * 100) : 0;
 
     return {
@@ -3051,44 +3082,75 @@ router.get('/quality-employee/details', (req, res) => {
   }
 
   if (type === 'main_absent') {
-    const params = [];
-    if (line) params.push(line);
-    let where = `WHERE 1=1 AND ${coordMatch}`;
-    if (line) where += ` AND a.line = ?`;
-    if (from) { where += ` AND a.date >= ?`; params.push(from); }
-    if (to)   { where += ` AND a.date <= ?`; params.push(to); }
-    const rows = db.prepare(`
-      SELECT a.id,
+    // Part 1: rows from absent_students table
+    const part1Params = [];
+    if (line) part1Params.push(line);
+    let part1Where = `WHERE 1=1 AND ${coordMatch}`;
+    if (line) part1Where += ` AND a.line = ?`;
+    if (from) { part1Where += ` AND a.date >= ?`; part1Params.push(from); }
+    if (to)   { part1Where += ` AND a.date <= ?`; part1Params.push(to); }
+    const part1Rows = db.prepare(`
+      SELECT a.id, 'manual' AS source,
              COALESCE((SELECT c.name FROM clients c WHERE c.phone = a.phone LIMIT 1),
                       NULLIF(TRIM(a.student_name),'')) AS student_name,
              a.phone, a.group_name, a.date, a.time, a.lecture_no,
              a.follow_up_status, a.follow_up_note
       FROM absent_students a
       INNER JOIN batches b ON b.group_name = a.group_name${line ? ' AND b.line = a.line' : ''}
-      ${where}
-      ORDER BY a.date DESC LIMIT 500
-    `).all(...params);
-    return res.json(rows);
+      ${part1Where}
+      ORDER BY a.date DESC LIMIT 250
+    `).all(...part1Params);
+
+    // Part 2: clients in groups whose main lecture had empty attendance
+    //         (treated as everyone-absent), and not already in absent_students
+    const part2Params = [];
+    if (line) part2Params.push(line);
+    let part2Where = `WHERE l.session_type = 'main' AND l.status = 'مؤكدة'
+                      AND (l.attendance IS NULL OR TRIM(l.attendance) = '')
+                      AND c.name IS NOT NULL AND TRIM(c.name) != ''
+                      AND c.phone IS NOT NULL AND TRIM(c.phone) != ''
+                      AND NOT EXISTS (
+                        SELECT 1 FROM absent_students a2
+                        WHERE a2.group_name = l.group_name AND a2.date = l.date${line ? ' AND a2.line = l.line' : ''}
+                      )
+                      AND ${coordMatch}`;
+    if (line) part2Where += ` AND l.line = ?`;
+    if (from) { part2Where += ` AND l.date >= ?`; part2Params.push(from); }
+    if (to)   { part2Where += ` AND l.date <= ?`; part2Params.push(to); }
+    const part2Rows = db.prepare(`
+      SELECT NULL AS id, 'auto' AS source,
+             c.name AS student_name, c.phone, l.group_name, l.date, l.time,
+             NULL AS lecture_no, 'pending' AS follow_up_status, NULL AS follow_up_note
+      FROM lectures l
+      INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
+      INNER JOIN clients c ON c.group_name = l.group_name${line ? ' AND c.line = l.line' : ''}
+      ${part2Where}
+      ORDER BY l.date DESC LIMIT 250
+    `).all(...part2Params);
+
+    return res.json([...part1Rows, ...part2Rows]);
   }
 
   if (type === 'zoom_absent') {
-    const params = [];
-    if (line) params.push(line);
-    let where = `WHERE 1=1 AND ${coordMatch}`;
-    if (line) where += ` AND a.line = ?`;
-    if (from) { where += ` AND a.date >= ?`; params.push(from); }
-    if (to)   { where += ` AND a.date <= ?`; params.push(to); }
+    // Show absent_zoom_students rows (manual upload) PLUS clients in side
+    // sessions with attendance < expected slots.
+    const part1Params = [];
+    if (line) part1Params.push(line);
+    let part1Where = `WHERE 1=1 AND ${coordMatch}`;
+    if (line) part1Where += ` AND a.line = ?`;
+    if (from) { part1Where += ` AND a.date >= ?`; part1Params.push(from); }
+    if (to)   { part1Where += ` AND a.date <= ?`; part1Params.push(to); }
     const rows = db.prepare(`
-      SELECT a.id,
+      SELECT a.id, 'manual' AS source,
              COALESCE((SELECT c.name FROM clients c WHERE c.phone = a.phone LIMIT 1),
                       NULLIF(TRIM(a.student_name),'')) AS student_name,
              a.phone, a.group_name, a.date, a.time, a.lecture_no,
              a.follow_up_status, a.follow_up_note
       FROM absent_zoom_students a
       INNER JOIN batches b ON b.group_name = a.group_name${line ? ' AND b.line = a.line' : ''}
-      ${where}
+      ${part1Where}
       ORDER BY a.date DESC LIMIT 500
-    `).all(...params);
+    `).all(...part1Params);
     return res.json(rows);
   }
 
