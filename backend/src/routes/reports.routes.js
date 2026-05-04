@@ -2905,12 +2905,41 @@ router.get('/quality-employee', (req, res) => {
     const dateMainLec = from && to ? ` AND l.date BETWEEN ? AND ?` : from ? ` AND l.date >= ?` : to ? ` AND l.date <= ?` : '';
     const dateMainLecParams = from && to ? [from, to] : from ? [from] : to ? [to] : [];
 
-    // Part 1: absent_students count
+    // Part 1: absent_students count — mirrors /attendance-absence Part 1 exactly:
+    //   • resolves missing a.date via lecture_no → ROW_NUMBER over main lectures
+    //   • only counts rows with student_name OR a phone that maps to a real client
+    //   • filters by RESOLVED date (so rows with empty date but valid lecture_no
+    //     can still land in the requested window)
+    const dateResolvedFilter = (from && to)
+      ? ` AND resolved_date BETWEEN '${from}' AND '${to}'`
+      : from ? ` AND resolved_date >= '${from}'`
+      : to   ? ` AND resolved_date <= '${to}'`
+      : '';
+    const lineLec = line ? ` AND line = '${line.replace(/'/g, "''")}'` : '';
+
     const mainAbsentPart1 = db.prepare(`
-      SELECT COUNT(*) AS cnt FROM absent_students a
-      INNER JOIN batches b ON b.group_name = a.group_name${line ? ' AND b.line = a.line' : ''}
-      WHERE 1=1${lineAA}${dateMainAbs} AND ${coordMatch}
-    `).get(...(line ? [line] : []), ...dateMainAbsParams)?.cnt || 0;
+      SELECT COUNT(*) AS cnt FROM (
+        SELECT COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS resolved_date
+        FROM absent_students a
+        LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
+        LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
+          AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone${line ? ' AND c_lu.line = a.line' : ''}
+        LEFT JOIN (
+          SELECT group_name, date, line,
+            ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
+          FROM lectures WHERE session_type='main' AND status != 'غير مؤكدة'${lineLec}
+        ) lec_inf ON (a.date IS NULL OR TRIM(a.date)='')
+          AND lec_inf.group_name = a.group_name
+          AND a.lecture_no IS NOT NULL
+          AND lec_inf.lec_num = a.lecture_no${line ? ' AND lec_inf.line = a.line' : ''}
+        WHERE (
+          (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
+          OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+        )
+        AND ${coordMatch}
+      ) p1
+      WHERE 1=1${dateResolvedFilter}
+    `).get()?.cnt || 0;
 
     // Part 2: empty-attendance lectures × clients in group, NOT already in absent_students
     const mainAbsentPart2 = db.prepare(`
@@ -3082,24 +3111,48 @@ router.get('/quality-employee/details', (req, res) => {
   }
 
   if (type === 'main_absent') {
-    // Part 1: rows from absent_students table
-    const part1Params = [];
-    if (line) part1Params.push(line);
-    let part1Where = `WHERE 1=1 AND ${coordMatch}`;
-    if (line) part1Where += ` AND a.line = ?`;
-    if (from) { part1Where += ` AND a.date >= ?`; part1Params.push(from); }
-    if (to)   { part1Where += ` AND a.date <= ?`; part1Params.push(to); }
+    // Part 1: rows from absent_students table — mirrors /attendance-absence Part 1:
+    //   • resolves missing a.date via lecture_no → ROW_NUMBER over main lectures
+    //   • only includes rows with student_name OR a phone that maps to a real client
+    //   • filters by RESOLVED date so rows with empty date land in the right window
+    const lineLecD = line ? ` AND line = '${line.replace(/'/g, "''")}'` : '';
+    const dateResolvedFilterD = (from && to)
+      ? ` AND resolved_date BETWEEN '${from}' AND '${to}'`
+      : from ? ` AND resolved_date >= '${from}'`
+      : to   ? ` AND resolved_date <= '${to}'`
+      : '';
     const part1Rows = db.prepare(`
-      SELECT a.id, 'manual' AS source,
-             COALESCE((SELECT c.name FROM clients c WHERE c.phone = a.phone LIMIT 1),
-                      NULLIF(TRIM(a.student_name),'')) AS student_name,
-             a.phone, a.group_name, a.date, a.time, a.lecture_no,
-             a.follow_up_status, a.follow_up_note
-      FROM absent_students a
-      INNER JOIN batches b ON b.group_name = a.group_name${line ? ' AND b.line = a.line' : ''}
-      ${part1Where}
-      ORDER BY a.date DESC LIMIT 250
-    `).all(...part1Params);
+      SELECT id, source, student_name, phone, group_name, date, time, lecture_no,
+             follow_up_status, follow_up_note
+      FROM (
+        SELECT a.id, 'manual' AS source,
+               COALESCE(c_lu.name, NULLIF(TRIM(a.student_name),'')) AS student_name,
+               a.phone, a.group_name,
+               COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS date,
+               COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS resolved_date,
+               a.time, a.lecture_no,
+               a.follow_up_status, a.follow_up_note
+        FROM absent_students a
+        INNER JOIN batches b ON b.group_name = a.group_name${line ? ' AND b.line = a.line' : ''}
+        LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
+          AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone${line ? ' AND c_lu.line = a.line' : ''}
+        LEFT JOIN (
+          SELECT group_name, date, line,
+            ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
+          FROM lectures WHERE session_type='main' AND status != 'غير مؤكدة'${lineLecD}
+        ) lec_inf ON (a.date IS NULL OR TRIM(a.date)='')
+          AND lec_inf.group_name = a.group_name
+          AND a.lecture_no IS NOT NULL
+          AND lec_inf.lec_num = a.lecture_no${line ? ' AND lec_inf.line = a.line' : ''}
+        WHERE (
+          (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
+          OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+        )
+        AND ${coordMatch}
+      ) p1
+      WHERE 1=1${dateResolvedFilterD}
+      ORDER BY date DESC LIMIT 250
+    `).all();
 
     // Part 2: clients in groups whose main lecture had empty attendance
     //         (treated as everyone-absent), and not already in absent_students
