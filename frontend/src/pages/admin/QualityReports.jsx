@@ -537,17 +537,49 @@ export default function QualityReports() {
             width: '1400px',
             backgroundColor: '#ffffff',
             padding: '24px',
-            fontFamily: 'Arial, "Segoe UI", Tahoma, sans-serif',
+            fontFamily: 'Tahoma, "Segoe UI", Arial, sans-serif',
             color: '#111827',
             direction: 'rtl',
           }}
         >
-          {/* Title */}
+          {/* Title — Arabic + English on separate lines with explicit dir to
+              keep html2canvas from breaking the bidirectional layout. */}
           <div style={{ borderBottom: '3px solid #10b981', paddingBottom: '12px', marginBottom: '16px' }}>
-            <h1 style={{ fontSize: '22px', fontWeight: 700, margin: 0, color: '#065f46' }}>
-              تقرير الجودة لكل موظف — Quality Report
+            <h1
+              dir="rtl"
+              lang="ar"
+              style={{
+                fontSize: '24px',
+                fontWeight: 700,
+                margin: 0,
+                color: '#065f46',
+                fontFamily: 'Tahoma, "Segoe UI", Arial, sans-serif',
+                lineHeight: 1.4,
+              }}
+            >
+              تقرير الجودة لكل موظف
             </h1>
-            <p style={{ fontSize: '13px', color: '#374151', margin: '6px 0 0 0' }}>
+            <div
+              dir="ltr"
+              style={{
+                fontSize: '14px',
+                fontWeight: 600,
+                color: '#10b981',
+                marginTop: '4px',
+                letterSpacing: '0.5px',
+              }}
+            >
+              Quality Report — Per Employee
+            </div>
+            <p
+              dir="rtl"
+              style={{
+                fontSize: '13px',
+                color: '#374151',
+                margin: '8px 0 0 0',
+                fontFamily: 'Tahoma, "Segoe UI", Arial, sans-serif',
+              }}
+            >
               {filteredRows.length} موظف · من {applied.from} إلى {applied.to}
               {applied.department && applied.department !== 'All' ? ` · القسم: ${applied.department}` : ''}
             </p>
@@ -625,9 +657,19 @@ export default function QualityReports() {
             </tfoot>
           </table>
 
-          {/* Footer */}
-          <div style={{ marginTop: '14px', fontSize: '10px', color: '#6b7280', textAlign: 'left' }}>
-            Generated: {new Date().toLocaleString('ar-EG')} · Ahmed Hassan Academy — Quality Reports
+          {/* Footer — kept fully LTR + English to avoid bidi rendering issues
+              in html2canvas with mixed Arabic/Latin numerals. */}
+          <div
+            dir="ltr"
+            style={{
+              marginTop: '14px',
+              fontSize: '10px',
+              color: '#6b7280',
+              textAlign: 'left',
+              fontFamily: 'Tahoma, "Segoe UI", Arial, sans-serif',
+            }}
+          >
+            Generated: {new Date().toISOString().slice(0, 19).replace('T', ' ')} · Ahmed Hassan Academy — Quality Reports
           </div>
         </div>
       )}
