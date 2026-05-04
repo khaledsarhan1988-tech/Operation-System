@@ -2890,6 +2890,55 @@ router.get('/quality-employee', (req, res) => {
        ${cpsWhere}`
     ).get(...cpsParams)?.c || 0;
 
+    // 6. Main absence rate — for groups coordinated by this agent in the date range
+    //    main_absent  = rows in absent_students table for agent's groups (date in range)
+    //    main_expected = sum of trainee_count over confirmed main lectures (in range)
+    //    rate = absent / expected * 100
+    const lineLA = line ? ` AND l.line = ?` : '';
+    const lineAA = line ? ` AND a.line = ?` : '';
+    const dateMainAbs = from && to ? ` AND a.date BETWEEN ? AND ?` : from ? ` AND a.date >= ?` : to ? ` AND a.date <= ?` : '';
+    const dateMainAbsParams = from && to ? [from, to] : from ? [from] : to ? [to] : [];
+    const dateMainLec = from && to ? ` AND l.date BETWEEN ? AND ?` : from ? ` AND l.date >= ?` : to ? ` AND l.date <= ?` : '';
+    const dateMainLecParams = from && to ? [from, to] : from ? [from] : to ? [to] : [];
+
+    const mainAbsentRow = db.prepare(`
+      SELECT COUNT(*) AS cnt FROM absent_students a
+      INNER JOIN batches b ON b.group_name = a.group_name${line ? ' AND b.line = a.line' : ''}
+      WHERE 1=1${lineAA}${dateMainAbs} AND ${coordMatch}
+    `).get(...(line ? [line] : []), ...dateMainAbsParams);
+    const mainExpectedRow = db.prepare(`
+      SELECT COALESCE(SUM(b.trainee_count), 0) AS cnt FROM lectures l
+      INNER JOIN batches b ON b.group_name = l.group_name${line ? ' AND b.line = l.line' : ''}
+      WHERE l.session_type = 'main' AND l.status = 'مؤكدة'${lineLA}${dateMainLec}
+        AND ${coordMatch}
+    `).get(...(line ? [line] : []), ...dateMainLecParams);
+    const main_absent_count   = mainAbsentRow?.cnt || 0;
+    const main_expected_count = mainExpectedRow?.cnt || 0;
+    const main_absent_rate    = main_expected_count > 0
+      ? Math.round((main_absent_count / main_expected_count) * 100) : 0;
+
+    // 7. Zoom (side) absence rate — same shape using absent_zoom_students
+    const dateZoomAbs = from && to ? ` AND a.date BETWEEN ? AND ?` : from ? ` AND a.date >= ?` : to ? ` AND a.date <= ?` : '';
+    const dateZoomAbsParams = from && to ? [from, to] : from ? [from] : to ? [to] : [];
+
+    const zoomAbsentRow = db.prepare(`
+      SELECT COUNT(*) AS cnt FROM absent_zoom_students a
+      INNER JOIN batches b ON b.group_name = a.group_name${line ? ' AND b.line = a.line' : ''}
+      WHERE 1=1${lineAA}${dateZoomAbs} AND ${coordMatch}
+    `).get(...(line ? [line] : []), ...dateZoomAbsParams);
+    // Expected: count side sessions per (group, date), each side row = 1 expected slot
+    const zoomExpectedRow = db.prepare(`
+      SELECT COUNT(*) AS cnt FROM lectures l
+      INNER JOIN batches b ON b.group_name = l.group_name${line ? ' AND b.line = l.line' : ''}
+      WHERE l.session_type = 'side' AND l.status != 'غير مؤكدة'
+        AND (l.duration IS NULL OR l.duration <= '00:15')${lineLA}${dateMainLec}
+        AND ${coordMatch}
+    `).get(...(line ? [line] : []), ...dateMainLecParams);
+    const zoom_absent_count   = zoomAbsentRow?.cnt || 0;
+    const zoom_expected_count = zoomExpectedRow?.cnt || 0;
+    const zoom_absent_rate    = zoom_expected_count > 0
+      ? Math.round((zoom_absent_count / zoom_expected_count) * 100) : 0;
+
     return {
       agent_id: agent.id,
       agent_name: agentName,
@@ -2900,6 +2949,12 @@ router.get('/quality-employee', (req, res) => {
       attendance_task_count,
       open_remarks_count,
       total_remarks: attendance_main_count + attendance_side_count + attendance_task_count,
+      main_absent_count,
+      main_expected_count,
+      main_absent_rate,
+      zoom_absent_count,
+      zoom_expected_count,
+      zoom_absent_rate,
     };
   });
 
@@ -2911,9 +2966,133 @@ router.get('/quality-employee', (req, res) => {
     total_side:        result.reduce((s, r) => s + r.attendance_side_count, 0),
     total_task:        result.reduce((s, r) => s + r.attendance_task_count, 0),
     total_open:        result.reduce((s, r) => s + r.open_remarks_count, 0),
+    total_main_absent: result.reduce((s, r) => s + r.main_absent_count, 0),
+    total_zoom_absent: result.reduce((s, r) => s + r.zoom_absent_count, 0),
   };
 
   return res.json({ summary, rows: result, filters: { from, to, department: activeDept } });
+});
+
+// ─── GET /api/reports/quality-employee/details ────────────────────────────────
+// Drill-down: returns the actual records (clients/students/groups) for a given
+// agent + metric type. Used by the Quality Reports modal.
+//   agent      — required (full name)
+//   type       — main | side | task | open | fixed | main_absent | zoom_absent
+//   from, to   — date range (YYYY-MM-DD)
+router.get('/quality-employee/details', (req, res) => {
+  const { agent, type, from, to } = req.query;
+  if (!agent || !type) return res.status(400).json({ error: 'agent and type required' });
+
+  const line = lineFilter(req);
+  const coordMatch = nameInListInline('b.coordinators', agent);
+
+  // remarks date filter — handles both DD/MM/YYYY and ISO formats
+  const remarksDateExpr = `CASE
+    WHEN substr(r.added_at, 5, 1) = '-' THEN substr(r.added_at, 1, 10)
+    WHEN substr(r.added_at, 3, 1) = '/' THEN substr(r.added_at, 7, 4) || '-' || substr(r.added_at, 4, 2) || '-' || substr(r.added_at, 1, 2)
+    ELSE NULL
+  END`;
+  const lineRemarks = line ? ` AND r.line = ?` : '';
+
+  function remarksByCategory(categories) {
+    const params = [agent];
+    if (line) params.push(line);
+    let where = `WHERE LOWER(TRIM(r.assigned_to)) = LOWER(TRIM(?))${lineRemarks}
+                 AND r.category IN (${categories.map(() => '?').join(',')})`;
+    params.push(...categories);
+    if (from) { where += ` AND ${remarksDateExpr} >= ?`; params.push(from); }
+    if (to)   { where += ` AND ${remarksDateExpr} <= ?`; params.push(to); }
+    return db.prepare(`
+      SELECT r.id, r.client_name, r.client_phone, r.task_type, r.category, r.status,
+             r.priority, r.added_at, r.last_updated, r.details
+      FROM remarks r ${where}
+      ORDER BY r.id DESC LIMIT 500
+    `).all(...params);
+  }
+
+  if (type === 'main')  return res.json(remarksByCategory(['Attendance Main Session']));
+  if (type === 'side')  return res.json(remarksByCategory(['Attendance Zoom Call', 'Attendance Side Session']));
+  if (type === 'task')  return res.json(remarksByCategory(['Attendance Task']));
+
+  if (type === 'open') {
+    const params = [agent];
+    if (line) params.push(line);
+    let where = `WHERE LOWER(TRIM(r.assigned_to)) = LOWER(TRIM(?))${lineRemarks}
+                 AND LOWER(r.status) NOT IN ('closed','مغلق','resolved','إنتهت')`;
+    if (from) { where += ` AND ${remarksDateExpr} >= ?`; params.push(from); }
+    if (to)   { where += ` AND ${remarksDateExpr} <= ?`; params.push(to); }
+    const rows = db.prepare(`
+      SELECT r.id, r.client_name, r.client_phone, r.task_type, r.category, r.status,
+             r.priority, r.added_at, r.last_updated, r.details
+      FROM remarks r ${where}
+      ORDER BY r.id DESC LIMIT 500
+    `).all(...params);
+    return res.json(rows);
+  }
+
+  if (type === 'fixed') {
+    const params = [];
+    if (line) params.push(line);
+    let where = `WHERE cps.status IN ('resolved','wont_repeat','exception') AND ${coordMatch}`;
+    if (line) where += ` AND cps.line = ?`;
+    if (from) { where += ` AND date(cps.updated_at) >= ?`; params.push(from); }
+    if (to)   { where += ` AND date(cps.updated_at) <= ?`; params.push(to); }
+    const rows = db.prepare(`
+      SELECT cps.id, cps.group_name, cps.problem_type, cps.session_type, cps.status,
+             cps.note, cps.new_group_code, cps.updated_at,
+             u.full_name AS updated_by_name
+      FROM code_problem_status cps
+      INNER JOIN batches b ON b.group_name = cps.group_name${line ? ' AND b.line = cps.line' : ''}
+      LEFT JOIN users u ON u.id = cps.updated_by
+      ${where}
+      ORDER BY cps.updated_at DESC LIMIT 500
+    `).all(...params);
+    return res.json(rows);
+  }
+
+  if (type === 'main_absent') {
+    const params = [];
+    if (line) params.push(line);
+    let where = `WHERE 1=1 AND ${coordMatch}`;
+    if (line) where += ` AND a.line = ?`;
+    if (from) { where += ` AND a.date >= ?`; params.push(from); }
+    if (to)   { where += ` AND a.date <= ?`; params.push(to); }
+    const rows = db.prepare(`
+      SELECT a.id,
+             COALESCE((SELECT c.name FROM clients c WHERE c.phone = a.phone LIMIT 1),
+                      NULLIF(TRIM(a.student_name),'')) AS student_name,
+             a.phone, a.group_name, a.date, a.time, a.lecture_no,
+             a.follow_up_status, a.follow_up_note
+      FROM absent_students a
+      INNER JOIN batches b ON b.group_name = a.group_name${line ? ' AND b.line = a.line' : ''}
+      ${where}
+      ORDER BY a.date DESC LIMIT 500
+    `).all(...params);
+    return res.json(rows);
+  }
+
+  if (type === 'zoom_absent') {
+    const params = [];
+    if (line) params.push(line);
+    let where = `WHERE 1=1 AND ${coordMatch}`;
+    if (line) where += ` AND a.line = ?`;
+    if (from) { where += ` AND a.date >= ?`; params.push(from); }
+    if (to)   { where += ` AND a.date <= ?`; params.push(to); }
+    const rows = db.prepare(`
+      SELECT a.id,
+             COALESCE((SELECT c.name FROM clients c WHERE c.phone = a.phone LIMIT 1),
+                      NULLIF(TRIM(a.student_name),'')) AS student_name,
+             a.phone, a.group_name, a.date, a.time, a.lecture_no,
+             a.follow_up_status, a.follow_up_note
+      FROM absent_zoom_students a
+      INNER JOIN batches b ON b.group_name = a.group_name${line ? ' AND b.line = a.line' : ''}
+      ${where}
+      ORDER BY a.date DESC LIMIT 500
+    `).all(...params);
+    return res.json(rows);
+  }
+
+  return res.status(400).json({ error: 'Invalid type' });
 });
 
 module.exports = router;
