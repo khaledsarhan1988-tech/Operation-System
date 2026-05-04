@@ -1,10 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   ShieldCheck, Calendar, Filter, Search, X, Download, Wrench,
   ClipboardCheck, AlertCircle, Video, BookOpen, Layers, FileText, Users,
-  TrendingDown, Phone, UserX,
+  TrendingDown, Phone, UserX, FileDown,
 } from 'lucide-react';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import SectionCard from '../../components/ui/SectionCard';
@@ -18,7 +20,7 @@ function DetailsModal({ open, agent, type, from, to, onClose }) {
     side:        { label: 'Attendance Side / Zoom Call', kind: 'remarks', color: 'purple' },
     task:        { label: 'Attendance Task', kind: 'remarks', color: 'cyan' },
     open:        { label: 'الريمارك المفتوحة', kind: 'remarks', color: 'amber' },
-    fixed:       { label: 'حل الأعطال (المشاكل المُصلَّحة)', kind: 'cps', color: 'pink' },
+    fixed:       { label: 'Solve Mistakes (المشاكل المُصلَّحة)', kind: 'cps', color: 'pink' },
     main_absent: { label: 'غيابات المحاضرات الأساسية', kind: 'absent', color: 'rose' },
     zoom_absent: { label: 'غيابات الزووم كول', kind: 'absent', color: 'violet' },
   };
@@ -191,6 +193,8 @@ export default function QualityReports() {
   const [search, setSearch]         = useState('');
   const [applied, setApplied]       = useState({ from: monthAgo, to: today, department: 'All' });
   const [drill, setDrill]           = useState({ open: false, agent: null, type: null });
+  const [pdfBusy, setPdfBusy]       = useState(false);
+  const printRef                    = useRef(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['quality-employee', applied],
@@ -221,7 +225,7 @@ export default function QualityReports() {
 
   function exportCSV() {
     if (!filteredRows.length) return;
-    const headers = ['الموظف', 'القسم', 'حل الأعطال', 'Attendance Main', 'Attendance Side', 'Attendance Task', 'الريمارك المفتوحة', 'نسبة غياب الأساسية', 'نسبة غياب الزووم'];
+    const headers = ['الموظف', 'القسم', 'Solve Mistakes', 'Attendance Main', 'Attendance Side', 'Attendance Task', 'الريمارك المفتوحة', 'نسبة غياب الأساسية', 'نسبة غياب الزووم'];
     const csvRows = filteredRows.map(r => [
       r.agent_name, r.department, r.code_problems_fixed,
       r.attendance_main_count, r.attendance_side_count, r.attendance_task_count,
@@ -237,6 +241,59 @@ export default function QualityReports() {
     link.download = `quality-report-${applied.from}-to-${applied.to}.csv`;
     link.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function exportPDF() {
+    if (pdfBusy) return;
+    if (!filteredRows.length) return;
+    setPdfBusy(true);
+    try {
+      // Wait two animation frames so the layout is fully painted
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+      const node = printRef.current;
+      if (!node) throw new Error('PDF area missing');
+
+      const canvas = await html2canvas(node, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+        useCORS: true,
+        logging: false,
+        windowWidth: node.scrollWidth,
+        windowHeight: node.scrollHeight,
+      });
+
+      // Landscape A4 fits the wide table much better
+      const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+      const pageWidth  = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const imgWidth   = pageWidth;
+      const imgHeight  = (canvas.height * imgWidth) / canvas.width;
+
+      const imgData = canvas.toDataURL('image/jpeg', 0.93);
+
+      if (imgHeight <= pageHeight) {
+        pdf.addImage(imgData, 'JPEG', 0, 0, imgWidth, imgHeight);
+      } else {
+        // Multi-page: paint full image but shift y per page so each page shows the next chunk
+        let position = 0;
+        let heightLeft = imgHeight;
+        while (heightLeft > 0) {
+          pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+          heightLeft -= pageHeight;
+          if (heightLeft > 0) {
+            position -= pageHeight;
+            pdf.addPage();
+          }
+        }
+      }
+
+      pdf.save(`quality-report-${applied.from}-to-${applied.to}.pdf`);
+    } catch (e) {
+      alert('تعذّر إنشاء الـ PDF: ' + (e.message || 'خطأ غير معروف'));
+    } finally {
+      setPdfBusy(false);
+    }
   }
 
   const inputCls = 'w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold text-gray-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500';
@@ -293,13 +350,19 @@ export default function QualityReports() {
         icon={ShieldCheck}
         gradient="emerald"
         actions={
-          <ModernButton variant="glass" icon={Download} onClick={exportCSV} disabled={!filteredRows.length}>
-            تنزيل CSV
-          </ModernButton>
+          <div className="flex items-center gap-2">
+            <ModernButton variant="glass" icon={FileDown} onClick={exportPDF}
+                          disabled={!filteredRows.length || pdfBusy}>
+              {pdfBusy ? 'جاري التحضير...' : 'تنزيل PDF'}
+            </ModernButton>
+            <ModernButton variant="glass" icon={Download} onClick={exportCSV} disabled={!filteredRows.length}>
+              تنزيل CSV
+            </ModernButton>
+          </div>
         }
         stats={[
           { label: 'موظفين',          value: summary.total_agents || 0,    icon: Users },
-          { label: 'حل الأعطال',      value: summary.total_code_fixed || 0, icon: Wrench },
+          { label: 'Solve Mistakes',  value: summary.total_code_fixed || 0, icon: Wrench },
           { label: 'Attendance Main', value: summary.total_main || 0,      icon: BookOpen },
           { label: 'Attendance Side', value: summary.total_side || 0,      icon: Video },
           { label: 'ريمارك مفتوحة',  value: summary.total_open || 0,      icon: AlertCircle },
@@ -361,7 +424,8 @@ export default function QualityReports() {
         </div>
       </div>
 
-      {/* Results table */}
+      {/* Results table — wrapped in a ref so the PDF export captures everything (header + table + totals) */}
+      <div ref={printRef} className="bg-white">
       <SectionCard
         title="تقرير الجودة لكل موظف"
         subtitle={`${filteredRows.length} موظف · من ${applied.from} إلى ${applied.to} · اضغط على أي رقم للتفاصيل`}
@@ -386,7 +450,7 @@ export default function QualityReports() {
                   <th className="px-5 py-3 text-xs font-black text-gray-500 whitespace-nowrap">الموظف</th>
                   <th className="px-5 py-3 text-xs font-black text-gray-500 whitespace-nowrap">القسم</th>
                   <th className="px-5 py-3 text-xs font-black text-gray-500 whitespace-nowrap">
-                    <div className="inline-flex items-center gap-1.5"><Wrench size={12} className="text-pink-500" />حل الأعطال</div>
+                    <div className="inline-flex items-center gap-1.5"><Wrench size={12} className="text-pink-500" />Solve Mistakes</div>
                   </th>
                   <th className="px-5 py-3 text-xs font-black text-gray-500 whitespace-nowrap">
                     <div className="inline-flex items-center gap-1.5"><BookOpen size={12} className="text-blue-500" />Attendance Main</div>
@@ -457,6 +521,7 @@ export default function QualityReports() {
           </div>
         )}
       </SectionCard>
+      </div>
 
       <DetailsModal
         open={drill.open}
