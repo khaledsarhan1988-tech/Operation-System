@@ -2772,4 +2772,148 @@ router.get('/attendance-absence', (req, res) => {
   }
 });
 
+// ─── GET /api/reports/quality-employee ────────────────────────────────────────
+// Per-employee Quality summary:
+//   - code_problems_fixed   = problems on agent's groups whose status moved to
+//                              resolved/wont_repeat/exception within [from..to]
+//   - attendance_main_count = remarks count where category = 'Attendance Main Session'
+//                              assigned to the agent within [from..to]
+//   - attendance_side_count = remarks count where category in
+//                              ('Attendance Zoom Call','Attendance Side Session')
+//   - attendance_task_count = remarks count where category = 'Attendance Task'
+//   - open_remarks_count    = open remarks (status not in completed/closed set)
+//                              assigned to the agent in the date range
+// Filters: from, to (YYYY-MM-DD), department (All|General|Private|Semi)
+router.get('/quality-employee', (req, res) => {
+  const { from, to, department } = req.query;
+  const line = lineFilter(req);
+
+  // Build user (agent) list — admin sees all; leader scoped to their dept.
+  const userConds = ["u.role = 'agent'", 'u.is_active = 1'];
+  const userParams = [];
+  let activeDept = (department && department !== 'All') ? department : null;
+
+  // If caller is a leader, hard-scope to their dept
+  if (req.user?.role === 'leader' && req.user?.department && req.user.department !== 'All') {
+    activeDept = req.user.department;
+  }
+
+  if (activeDept) {
+    userConds.push('u.department = ?');
+    userParams.push(activeDept);
+  }
+  if (line) {
+    userConds.push('u.line = ?');
+    userParams.push(line);
+  }
+
+  const agents = db.prepare(
+    `SELECT u.id, u.full_name, u.department FROM users u WHERE ${userConds.join(' AND ')} ORDER BY u.full_name COLLATE NOCASE`
+  ).all(...userParams);
+
+  if (agents.length === 0) return res.json([]);
+
+  // Date filter for remarks.added_at — handles both DD/MM/YYYY and ISO formats
+  const remarksDateExpr = `CASE
+    WHEN substr(added_at, 5, 1) = '-' THEN substr(added_at, 1, 10)
+    WHEN substr(added_at, 3, 1) = '/' THEN substr(added_at, 7, 4) || '-' || substr(added_at, 4, 2) || '-' || substr(added_at, 1, 2)
+    ELSE NULL
+  END`;
+
+  // ─── Calculate metrics for all agents at once (efficient) ─────────────────
+
+  // Build line filter clauses
+  const lineRemarks = line ? ` AND r.line = ?` : '';
+  const lineCps    = line ? ` AND cps.line = ?` : '';
+  const lineB      = line ? ` AND b.line = cps.line` : '';
+
+  // Query template parameters: ?, ?, ? = agent_name, from, to, [line]
+  const result = agents.map(agent => {
+    const agentName = agent.full_name;
+    const coordMatch = nameInListInline('b.coordinators', agentName);
+
+    // 1. Open remarks (date filter optional)
+    let openWhere = `WHERE LOWER(TRIM(r.assigned_to)) = LOWER(TRIM(?))
+                     AND LOWER(r.status) NOT IN ('closed','مغلق','resolved','إنتهت')${lineRemarks}`;
+    const openParams = [agentName];
+    if (line) openParams.push(line);
+    if (from) { openWhere += ` AND ${remarksDateExpr.replaceAll('added_at','r.added_at')} >= ?`; openParams.push(from); }
+    if (to)   { openWhere += ` AND ${remarksDateExpr.replaceAll('added_at','r.added_at')} <= ?`; openParams.push(to); }
+    const open_remarks_count = db.prepare(
+      `SELECT COUNT(*) AS c FROM remarks r ${openWhere}`
+    ).get(...openParams)?.c || 0;
+
+    // 2. Attendance Main category remarks
+    let mainWhere = `WHERE LOWER(TRIM(r.assigned_to)) = LOWER(TRIM(?))
+                     AND r.category = 'Attendance Main Session'${lineRemarks}`;
+    const mainParams = [agentName];
+    if (line) mainParams.push(line);
+    if (from) { mainWhere += ` AND ${remarksDateExpr.replaceAll('added_at','r.added_at')} >= ?`; mainParams.push(from); }
+    if (to)   { mainWhere += ` AND ${remarksDateExpr.replaceAll('added_at','r.added_at')} <= ?`; mainParams.push(to); }
+    const attendance_main_count = db.prepare(
+      `SELECT COUNT(*) AS c FROM remarks r ${mainWhere}`
+    ).get(...mainParams)?.c || 0;
+
+    // 3. Attendance Side / Zoom Call remarks
+    let sideWhere = `WHERE LOWER(TRIM(r.assigned_to)) = LOWER(TRIM(?))
+                     AND r.category IN ('Attendance Zoom Call','Attendance Side Session')${lineRemarks}`;
+    const sideParams = [agentName];
+    if (line) sideParams.push(line);
+    if (from) { sideWhere += ` AND ${remarksDateExpr.replaceAll('added_at','r.added_at')} >= ?`; sideParams.push(from); }
+    if (to)   { sideWhere += ` AND ${remarksDateExpr.replaceAll('added_at','r.added_at')} <= ?`; sideParams.push(to); }
+    const attendance_side_count = db.prepare(
+      `SELECT COUNT(*) AS c FROM remarks r ${sideWhere}`
+    ).get(...sideParams)?.c || 0;
+
+    // 4. Attendance Task remarks (for completeness)
+    let taskWhere = `WHERE LOWER(TRIM(r.assigned_to)) = LOWER(TRIM(?))
+                     AND r.category = 'Attendance Task'${lineRemarks}`;
+    const taskParams = [agentName];
+    if (line) taskParams.push(line);
+    if (from) { taskWhere += ` AND ${remarksDateExpr.replaceAll('added_at','r.added_at')} >= ?`; taskParams.push(from); }
+    if (to)   { taskWhere += ` AND ${remarksDateExpr.replaceAll('added_at','r.added_at')} <= ?`; taskParams.push(to); }
+    const attendance_task_count = db.prepare(
+      `SELECT COUNT(*) AS c FROM remarks r ${taskWhere}`
+    ).get(...taskParams)?.c || 0;
+
+    // 5. Code problems fixed (status changed to resolved/wont_repeat/exception)
+    //    via this agent's groups (matched by coordinator-name in batches.coordinators)
+    let cpsWhere = `WHERE cps.status IN ('resolved','wont_repeat','exception')${lineCps}
+                    AND ${coordMatch}`;
+    const cpsParams = [];
+    if (line) cpsParams.push(line);
+    if (from) { cpsWhere += ` AND date(cps.updated_at) >= ?`; cpsParams.push(from); }
+    if (to)   { cpsWhere += ` AND date(cps.updated_at) <= ?`; cpsParams.push(to); }
+    const code_problems_fixed = db.prepare(
+      `SELECT COUNT(*) AS c FROM code_problem_status cps
+       INNER JOIN batches b ON b.group_name = cps.group_name${lineB}
+       ${cpsWhere}`
+    ).get(...cpsParams)?.c || 0;
+
+    return {
+      agent_id: agent.id,
+      agent_name: agentName,
+      department: agent.department,
+      code_problems_fixed,
+      attendance_main_count,
+      attendance_side_count,
+      attendance_task_count,
+      open_remarks_count,
+      total_remarks: attendance_main_count + attendance_side_count + attendance_task_count,
+    };
+  });
+
+  // Summary across the filtered set
+  const summary = {
+    total_agents: result.length,
+    total_code_fixed:  result.reduce((s, r) => s + r.code_problems_fixed, 0),
+    total_main:        result.reduce((s, r) => s + r.attendance_main_count, 0),
+    total_side:        result.reduce((s, r) => s + r.attendance_side_count, 0),
+    total_task:        result.reduce((s, r) => s + r.attendance_task_count, 0),
+    total_open:        result.reduce((s, r) => s + r.open_remarks_count, 0),
+  };
+
+  return res.json({ summary, rows: result, filters: { from, to, department: activeDept } });
+});
+
 module.exports = router;
