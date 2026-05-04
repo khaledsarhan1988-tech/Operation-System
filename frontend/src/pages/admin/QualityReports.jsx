@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   ShieldCheck, Calendar, Filter, Search, X, Download, Wrench,
@@ -194,7 +194,7 @@ export default function QualityReports() {
   const [applied, setApplied]       = useState({ from: monthAgo, to: today, department: 'All' });
   const [drill, setDrill]           = useState({ open: false, agent: null, type: null });
   const [pdfBusy, setPdfBusy]       = useState(false);
-  const printRef                    = useRef(null);
+  const [pdfRendering, setPdfRendering] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['quality-employee', applied],
@@ -247,11 +247,13 @@ export default function QualityReports() {
     if (pdfBusy) return;
     if (!filteredRows.length) return;
     setPdfBusy(true);
+    setPdfRendering(true);
     try {
-      // Wait two animation frames so the layout is fully painted
+      // Two animation frames + small timeout so the hidden plain table is fully painted
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      await new Promise(r => setTimeout(r, 80));
 
-      const node = printRef.current;
+      const node = document.getElementById('quality-pdf-printable');
       if (!node) throw new Error('PDF area missing');
 
       const canvas = await html2canvas(node, {
@@ -292,6 +294,7 @@ export default function QualityReports() {
     } catch (e) {
       alert('تعذّر إنشاء الـ PDF: ' + (e.message || 'خطأ غير معروف'));
     } finally {
+      setPdfRendering(false);
       setPdfBusy(false);
     }
   }
@@ -424,8 +427,7 @@ export default function QualityReports() {
         </div>
       </div>
 
-      {/* Results table — wrapped in a ref so the PDF export captures everything (header + table + totals) */}
-      <div ref={printRef} className="bg-white">
+      {/* Results table */}
       <SectionCard
         title="تقرير الجودة لكل موظف"
         subtitle={`${filteredRows.length} موظف · من ${applied.from} إلى ${applied.to} · اضغط على أي رقم للتفاصيل`}
@@ -521,7 +523,114 @@ export default function QualityReports() {
           </div>
         )}
       </SectionCard>
-      </div>
+
+      {/* Hidden printable area — rendered only during PDF generation. Plain
+          inline styles only (no Tailwind/oklch/gradients) so html2canvas
+          captures cleanly and reliably. */}
+      {pdfRendering && (
+        <div
+          id="quality-pdf-printable"
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: '-10000px',
+            width: '1400px',
+            backgroundColor: '#ffffff',
+            padding: '24px',
+            fontFamily: 'Arial, "Segoe UI", Tahoma, sans-serif',
+            color: '#111827',
+            direction: 'rtl',
+          }}
+        >
+          {/* Title */}
+          <div style={{ borderBottom: '3px solid #10b981', paddingBottom: '12px', marginBottom: '16px' }}>
+            <h1 style={{ fontSize: '22px', fontWeight: 700, margin: 0, color: '#065f46' }}>
+              تقرير الجودة لكل موظف — Quality Report
+            </h1>
+            <p style={{ fontSize: '13px', color: '#374151', margin: '6px 0 0 0' }}>
+              {filteredRows.length} موظف · من {applied.from} إلى {applied.to}
+              {applied.department && applied.department !== 'All' ? ` · القسم: ${applied.department}` : ''}
+            </p>
+          </div>
+
+          {/* Summary chips */}
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '14px' }}>
+            {[
+              { label: 'موظفين',         value: summary.total_agents       || 0, bg: '#ecfdf5', fg: '#065f46' },
+              { label: 'Solve Mistakes', value: summary.total_code_fixed   || 0, bg: '#fdf2f8', fg: '#9d174d' },
+              { label: 'Attendance Main', value: summary.total_main         || 0, bg: '#eff6ff', fg: '#1e40af' },
+              { label: 'Attendance Side', value: summary.total_side         || 0, bg: '#faf5ff', fg: '#6b21a8' },
+              { label: 'Attendance Task', value: summary.total_task         || 0, bg: '#ecfeff', fg: '#155e75' },
+              { label: 'ريمارك مفتوحة',  value: summary.total_open         || 0, bg: '#fffbeb', fg: '#92400e' },
+              { label: 'غياب أساسي',     value: summary.total_main_absent  || 0, bg: '#fff1f2', fg: '#9f1239' },
+              { label: 'غياب زووم',      value: summary.total_zoom_absent  || 0, bg: '#f5f3ff', fg: '#5b21b6' },
+            ].map((c, i) => (
+              <div key={i} style={{ background: c.bg, color: c.fg, padding: '8px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 700 }}>
+                {c.label}: <span style={{ fontWeight: 800, fontSize: '14px' }}>{c.value}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Plain table */}
+          <table style={{
+            width: '100%',
+            borderCollapse: 'collapse',
+            fontSize: '12px',
+            tableLayout: 'fixed',
+          }}>
+            <thead>
+              <tr style={{ background: '#f3f4f6' }}>
+                {['الموظف','القسم','Solve Mistakes','Attendance Main','Attendance Side','Attendance Task','ريمارك مفتوحة','نسبة غياب الأساسية','نسبة غياب الزووم'].map((h, i) => (
+                  <th key={i} style={{
+                    padding: '10px 8px',
+                    textAlign: 'right',
+                    fontWeight: 700,
+                    color: '#374151',
+                    border: '1px solid #e5e7eb',
+                    fontSize: '11px',
+                  }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filteredRows.map((r, i) => (
+                <tr key={r.agent_id || i} style={{ background: i % 2 === 0 ? '#ffffff' : '#fafafa' }}>
+                  <td style={{ padding: '8px', border: '1px solid #e5e7eb', fontWeight: 700 }}>{r.agent_name}</td>
+                  <td style={{ padding: '8px', border: '1px solid #e5e7eb' }}>{r.department}</td>
+                  <td style={{ padding: '8px', border: '1px solid #e5e7eb', textAlign: 'center', color: '#9d174d', fontWeight: 700 }}>{r.code_problems_fixed}</td>
+                  <td style={{ padding: '8px', border: '1px solid #e5e7eb', textAlign: 'center', color: '#1e40af', fontWeight: 700 }}>{r.attendance_main_count}</td>
+                  <td style={{ padding: '8px', border: '1px solid #e5e7eb', textAlign: 'center', color: '#6b21a8', fontWeight: 700 }}>{r.attendance_side_count}</td>
+                  <td style={{ padding: '8px', border: '1px solid #e5e7eb', textAlign: 'center', color: '#155e75', fontWeight: 700 }}>{r.attendance_task_count}</td>
+                  <td style={{ padding: '8px', border: '1px solid #e5e7eb', textAlign: 'center', color: '#92400e', fontWeight: 700 }}>{r.open_remarks_count}</td>
+                  <td style={{ padding: '8px', border: '1px solid #e5e7eb', textAlign: 'center', color: '#9f1239', fontWeight: 700 }}>
+                    {r.main_absent_rate}% <span style={{ color: '#6b7280', fontWeight: 500 }}>({r.main_absent_count}/{r.main_expected_count})</span>
+                  </td>
+                  <td style={{ padding: '8px', border: '1px solid #e5e7eb', textAlign: 'center', color: '#5b21b6', fontWeight: 700 }}>
+                    {r.zoom_absent_rate}% <span style={{ color: '#6b7280', fontWeight: 500 }}>({r.zoom_absent_count}/{r.zoom_expected_count})</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr style={{ background: '#ecfdf5', borderTop: '2px solid #10b981' }}>
+                <td colSpan={2} style={{ padding: '10px 8px', border: '1px solid #d1fae5', fontWeight: 800 }}>الإجمالي</td>
+                <td style={{ padding: '10px 8px', border: '1px solid #d1fae5', textAlign: 'center', fontWeight: 800, color: '#9d174d' }}>{summary.total_code_fixed || 0}</td>
+                <td style={{ padding: '10px 8px', border: '1px solid #d1fae5', textAlign: 'center', fontWeight: 800, color: '#1e40af' }}>{summary.total_main || 0}</td>
+                <td style={{ padding: '10px 8px', border: '1px solid #d1fae5', textAlign: 'center', fontWeight: 800, color: '#6b21a8' }}>{summary.total_side || 0}</td>
+                <td style={{ padding: '10px 8px', border: '1px solid #d1fae5', textAlign: 'center', fontWeight: 800, color: '#155e75' }}>{summary.total_task || 0}</td>
+                <td style={{ padding: '10px 8px', border: '1px solid #d1fae5', textAlign: 'center', fontWeight: 800, color: '#92400e' }}>{summary.total_open || 0}</td>
+                <td style={{ padding: '10px 8px', border: '1px solid #d1fae5', textAlign: 'center', fontWeight: 800, color: '#9f1239' }}>{summary.total_main_absent || 0}</td>
+                <td style={{ padding: '10px 8px', border: '1px solid #d1fae5', textAlign: 'center', fontWeight: 800, color: '#5b21b6' }}>{summary.total_zoom_absent || 0}</td>
+              </tr>
+            </tfoot>
+          </table>
+
+          {/* Footer */}
+          <div style={{ marginTop: '14px', fontSize: '10px', color: '#6b7280', textAlign: 'left' }}>
+            Generated: {new Date().toLocaleString('ar-EG')} · Ahmed Hassan Academy — Quality Reports
+          </div>
+        </div>
+      )}
 
       <DetailsModal
         open={drill.open}
