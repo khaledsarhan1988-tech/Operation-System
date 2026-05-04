@@ -217,6 +217,39 @@ export default function QualityReports() {
     return rows.filter(r => r.agent_name?.toLowerCase().includes(q));
   }, [rows, search]);
 
+  // Per-department averages — uses true rate = SUM(absent)/SUM(expected),
+  // not a flat average of percentages, so departments with more sessions
+  // are weighted correctly. Calculated from filteredRows so the search
+  // filter is reflected too.
+  const deptAverages = useMemo(() => {
+    const buckets = new Map();
+    filteredRows.forEach(r => {
+      const key = r.department || '—';
+      if (!buckets.has(key)) {
+        buckets.set(key, {
+          department: key,
+          employees: 0,
+          mainAbsent: 0, mainExpected: 0,
+          zoomAbsent: 0, zoomExpected: 0,
+          codeFixed: 0, openRemarks: 0,
+        });
+      }
+      const b = buckets.get(key);
+      b.employees     += 1;
+      b.mainAbsent    += r.main_absent_count    || 0;
+      b.mainExpected  += r.main_expected_count  || 0;
+      b.zoomAbsent    += r.zoom_absent_count    || 0;
+      b.zoomExpected  += r.zoom_expected_count  || 0;
+      b.codeFixed     += r.code_problems_fixed  || 0;
+      b.openRemarks   += r.open_remarks_count   || 0;
+    });
+    return Array.from(buckets.values()).map(b => ({
+      ...b,
+      mainRate: b.mainExpected > 0 ? Math.round((b.mainAbsent / b.mainExpected) * 100) : 0,
+      zoomRate: b.zoomExpected > 0 ? Math.round((b.zoomAbsent / b.zoomExpected) * 100) : 0,
+    })).sort((a, b) => b.employees - a.employees);
+  }, [filteredRows]);
+
   // Validate that an ISO date string ("YYYY-MM-DD") is a real calendar date.
   // Catches "April 31", "Feb 30", "13/45/2026", etc. — the HTML date input
   // accepts these in some browsers when typed directly.
@@ -462,14 +495,86 @@ export default function QualityReports() {
         </div>
       </div>
 
-      {/* Results table */}
-      <SectionCard
-        title="تقرير الجودة لكل موظف"
-        subtitle={`${filteredRows.length} موظف · من ${applied.from} إلى ${applied.to} · اضغط على أي رقم للتفاصيل`}
-        icon={ClipboardCheck}
-        accent="emerald"
-        noBodyPad
-      >
+      {/* Results: table on the right + per-department averages sidebar on
+          the left. Grid switches to single-column on small screens so the
+          sidebar drops below the table on phones / narrow tablets. */}
+      <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-4 items-start">
+
+        {/* ─── Department averages sidebar ──────────────────────────── */}
+        <SectionCard
+          title="متوسط النسب لكل قسم"
+          subtitle="نسبة موزّونة (مجموع الغياب ÷ مجموع المتوقع)"
+          icon={Layers}
+          accent="violet"
+        >
+          {deptAverages.length === 0 ? (
+            <p className="text-center py-8 text-gray-400 text-xs font-bold">لا توجد بيانات</p>
+          ) : (
+            <div className="space-y-3">
+              {deptAverages.map((d) => {
+                const deptCls = {
+                  General: { bg: 'bg-blue-50',    bd: 'border-blue-200',    fg: 'text-blue-700'    },
+                  Private: { bg: 'bg-violet-50',  bd: 'border-violet-200',  fg: 'text-violet-700'  },
+                  Semi:    { bg: 'bg-orange-50',  bd: 'border-orange-200',  fg: 'text-orange-700'  },
+                }[d.department] || { bg: 'bg-gray-50', bd: 'border-gray-200', fg: 'text-gray-700' };
+                const rateColor = (r) => r >= 30 ? 'text-rose-700 bg-rose-100'
+                                       : r >= 15 ? 'text-amber-700 bg-amber-100'
+                                       : r > 0   ? 'text-emerald-700 bg-emerald-100'
+                                       :           'text-gray-500 bg-gray-100';
+                return (
+                  <div key={d.department}
+                       className={`rounded-xl border ${deptCls.bd} ${deptCls.bg} p-3`}>
+                    <div className="flex items-center justify-between mb-2.5">
+                      <span className={`text-xs font-black ${deptCls.fg}`}>{d.department}</span>
+                      <span className="text-[10px] font-bold text-gray-500">
+                        {d.employees} موظف
+                      </span>
+                    </div>
+
+                    {/* Main absence rate */}
+                    <div className="mb-2">
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="text-[10px] font-bold text-gray-600 inline-flex items-center gap-1">
+                          <UserX size={10} className="text-rose-500" /> غياب أساسي
+                        </span>
+                        <span className={`text-[11px] font-black px-1.5 py-0.5 rounded-md ${rateColor(d.mainRate)}`}>
+                          {d.mainRate}%
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-gray-500 font-mono">
+                        {d.mainAbsent} / {d.mainExpected}
+                      </div>
+                    </div>
+
+                    {/* Zoom absence rate */}
+                    <div>
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="text-[10px] font-bold text-gray-600 inline-flex items-center gap-1">
+                          <TrendingDown size={10} className="text-violet-500" /> غياب زووم
+                        </span>
+                        <span className={`text-[11px] font-black px-1.5 py-0.5 rounded-md ${rateColor(d.zoomRate)}`}>
+                          {d.zoomRate}%
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-gray-500 font-mono">
+                        {d.zoomAbsent} / {d.zoomExpected}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </SectionCard>
+
+        {/* ─── Main results table ───────────────────────────────────── */}
+        <SectionCard
+          title="تقرير الجودة لكل موظف"
+          subtitle={`${filteredRows.length} موظف · من ${applied.from} إلى ${applied.to} · اضغط على أي رقم للتفاصيل`}
+          icon={ClipboardCheck}
+          accent="emerald"
+          noBodyPad
+        >
         {isLoading ? (
           <p className="text-center py-12 text-gray-400 text-sm font-bold">جاري التحميل...</p>
         ) : filteredRows.length === 0 ? (
@@ -557,7 +662,8 @@ export default function QualityReports() {
             </table>
           </div>
         )}
-      </SectionCard>
+        </SectionCard>
+      </div>
 
       {/* Hidden printable area — rendered only during PDF generation. Plain
           inline styles only (no Tailwind/oklch/gradients) so html2canvas
