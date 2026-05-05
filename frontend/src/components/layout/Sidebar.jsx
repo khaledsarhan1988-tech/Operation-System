@@ -43,6 +43,7 @@ const AGENT_LINKS = [
   { to: '/agent/pipeline',           label: 'nav.clientPipeline',   icon: Kanban,          color: 'emerald' },
   { to: '/agent/tasks',              label: 'nav.myTasks',          icon: ClipboardList,   color: 'indigo' },
   { to: '/agent/my-progression',     label: 'nav.myProgression',    icon: TrendingUp,      color: 'violet' },
+  { to: '/agent/targets',            label: 'nav.targets',          icon: Target,          color: 'green' },
 ];
 
 const ENROLLMENT_LINKS = [
@@ -67,6 +68,7 @@ const LEADER_LINKS = [
   { type: 'section', label: 'nav.reportsSection' },
   { to: '/leader/reports/fix-report',           label: 'nav.fixReports',          icon: FileText, color: 'orange' },
   { to: '/leader/reports/attendance-absence',   label: 'nav.attendanceReports',   icon: Activity, color: 'teal' },
+  { to: '/leader/targets',                      label: 'nav.targets',             icon: Target,   color: 'green' },
 ];
 
 const REPORT_LINKS = [

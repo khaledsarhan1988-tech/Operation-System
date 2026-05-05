@@ -71,6 +71,7 @@ const router = createBrowserRouter([
       { path: 'code-problems',      element: <AgentCodeProblems /> },
       { path: 'pipeline',           element: <Pipeline /> },
       { path: 'my-progression',     element: <MyProgression /> },
+      { path: 'targets',            element: <TargetsManagement /> },
     ],
   },
 
@@ -97,6 +98,7 @@ const router = createBrowserRouter([
       { path: 'reports/quality',              element: <QualityReports /> },
       { path: 'reports/fix-report',           element: <FixReport /> },
       { path: 'reports/attendance-absence',   element: <AttendanceAbsenceReport /> },
+      { path: 'targets',                      element: <TargetsManagement /> },
     ],
   },
 

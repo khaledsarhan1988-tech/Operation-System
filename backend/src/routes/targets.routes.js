@@ -7,7 +7,24 @@ const { requireRole } = require('../middleware/roles');
 const { lineFilter } = require('../utils/lineFilter');
 
 const router = express.Router();
-router.use(authenticate, requireRole('admin'));
+router.use(authenticate, requireRole('agent')); // base auth — admin gates per write route
+const adminOnly = requireRole('admin');
+
+// Non-admins are scoped to what's relevant to them:
+//   - leader  → only targets for their own department
+//   - agent   → only their personal individual target
+//   - admin   → no extra filter (sees everything)
+function scopedTargetWhere(req) {
+  if (req.user?.role === 'admin') return null;
+  if (req.user?.role === 'leader' && req.user?.department && req.user.department !== 'All') {
+    return { sql: '(t.department = ? AND t.agent_name IS NULL)', params: [req.user.department] };
+  }
+  // agent
+  return {
+    sql: '(t.agent_name IS NOT NULL AND LOWER(TRIM(t.agent_name)) = LOWER(TRIM(?)))',
+    params: [req.user?.full_name || ''],
+  };
+}
 
 // ─── PERIOD HELPERS ────────────────────────────────────────────────────────
 function pad(n) { return String(n).padStart(2, '0'); }
@@ -108,6 +125,12 @@ router.get('/', (req, res) => {
     where += " AND t.status = 'active'";
   } else if (mode === 'history') {
     where += " AND t.status IN ('met','missed','partial')";
+  }
+
+  const scope = scopedTargetWhere(req);
+  if (scope) {
+    where += ` AND ${scope.sql}`;
+    params.push(...scope.params);
   }
 
   const rows = db.prepare(`
@@ -240,7 +263,7 @@ router.get('/baseline', (req, res) => {
 // Body: { agent_name?, department?, target_main_absent_rate, target_zoom_absent_rate,
 //         bonus_points?, effective_from, notes? }
 // Pass NULL for agent_name and department to set a global target.
-router.post('/', (req, res) => {
+router.post('/', adminOnly, (req, res) => {
   const {
     agent_name, department,
     target_main_absent_rate, target_zoom_absent_rate,
@@ -297,7 +320,7 @@ router.post('/', (req, res) => {
 
 // PUT /api/admin/targets/:id
 // Body: any of { target_main_absent_rate, target_zoom_absent_rate, effective_from, notes }
-router.put('/:id', (req, res) => {
+router.put('/:id', adminOnly, (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!id) return res.status(400).json({ error: 'Invalid id' });
   const fields = [];
@@ -359,7 +382,7 @@ router.put('/:id', (req, res) => {
 // Looks up the target's period in the latest matching Official quality
 // snapshot, persists actual_* + status, and (if met) awards bonus points
 // to the agent's monthly_snapshots row via individual_target_bonus.
-router.post('/:id/evaluate', (req, res) => {
+router.post('/:id/evaluate', adminOnly, (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!id) return res.status(400).json({ error: 'Invalid id' });
 
@@ -512,6 +535,13 @@ router.get('/history', (req, res) => {
   if (line)      { conds.push('line = ?');       params.push(line); }
   if (dept_type) { conds.push('department = ?'); params.push(dept_type); }
 
+  // History uses bare column names (no `t.` alias) — translate the scope.
+  const scope = scopedTargetWhere(req);
+  if (scope) {
+    conds.push(scope.sql.replace(/\bt\./g, ''));
+    params.push(...scope.params);
+  }
+
   const rows = db.prepare(`
     SELECT id, agent_name, department, line,
            target_main_absent_rate, target_zoom_absent_rate, bonus_points,
@@ -533,7 +563,7 @@ router.get('/history', (req, res) => {
 });
 
 // DELETE /api/admin/targets/:id
-router.delete('/:id', (req, res) => {
+router.delete('/:id', adminOnly, (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!id) return res.status(400).json({ error: 'Invalid id' });
   const t = db.prepare(`SELECT agent_name, department, line FROM employee_targets WHERE id = ?`).get(id);

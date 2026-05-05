@@ -7,6 +7,7 @@ import {
   CheckCircle, XCircle, Clock,
 } from 'lucide-react';
 import api from '../../api/axios';
+import { useAuth } from '../../auth/AuthContext';
 
 const DEPTS = ['General', 'Private', 'Semi'];
 
@@ -311,8 +312,25 @@ function TargetEditor({ open, onClose, target, onSuccess }) {
 }
 
 export default function TargetsManagement() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [tab, setTab] = useState('active'); // active | set | history
   const [editing, setEditing] = useState(null);
+
+  // Page subtitle adjusts to the viewer:
+  // - admin → set targets
+  // - leader → see their dept's target
+  // - agent → see their own target
+  const subtitle =
+    isAdmin                  ? 'حدّد معايير الأداء الشهرية لكل موظف، قسم، أو عامة' :
+    user?.role === 'leader'  ? 'هدف قسمك للفترة الحالية' :
+                               'هدفك الفردي للفترة الحالية';
+
+  const tabs = [
+    { key: 'active',  label: 'الأهداف الحالية', icon: Activity },
+    isAdmin && { key: 'set', label: 'إضافة هدف جديد', icon: Plus },
+    { key: 'history', label: 'السجل والتطور',   icon: HistoryIcon },
+  ].filter(Boolean);
 
   return (
     <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
@@ -333,18 +351,14 @@ export default function TargetsManagement() {
           </div>
           <div>
             <h1 className="text-2xl font-black tracking-tight">معايير الأداء</h1>
-            <p className="text-white/70 text-sm font-bold mt-0.5">حدّد معايير الأداء الشهرية لكل موظف، قسم، أو عامة</p>
+            <p className="text-white/70 text-sm font-bold mt-0.5">{subtitle}</p>
           </div>
         </div>
       </div>
 
       {/* Tabs */}
       <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-xl p-1 shadow-sm">
-        {[
-          { key: 'active',  label: 'الأهداف الحالية', icon: Activity },
-          { key: 'set',     label: 'إضافة هدف جديد',  icon: Plus },
-          { key: 'history', label: 'السجل والتطور',   icon: HistoryIcon },
-        ].map(t => (
+        {tabs.map(t => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
@@ -357,11 +371,11 @@ export default function TargetsManagement() {
         ))}
       </div>
 
-      {tab === 'active'  && <ActiveTargetsTab onEdit={setEditing} />}
-      {tab === 'set'     && <TargetForm inline onSuccess={() => setTab('active')} />}
-      {tab === 'history' && <HistoryTargetsTab />}
+      {tab === 'active'  && <ActiveTargetsTab onEdit={setEditing} canManage={isAdmin} />}
+      {tab === 'set'     && isAdmin && <TargetForm inline onSuccess={() => setTab('active')} />}
+      {tab === 'history' && <HistoryTargetsTab canFilter={isAdmin} />}
 
-      {/* Edit modal — opens when a row's edit button is clicked */}
+      {/* Edit modal — opens when a row's edit button is clicked (admin only) */}
       <TargetEditor
         open={!!editing}
         target={editing}
@@ -375,7 +389,7 @@ export default function TargetsManagement() {
 // ═════════════════════════════════════════════════════════════════════════════
 // TAB 1: ACTIVE TARGETS — current goals with evaluate/edit/delete
 // ═════════════════════════════════════════════════════════════════════════════
-function ActiveTargetsTab({ onEdit }) {
+function ActiveTargetsTab({ onEdit, canManage }) {
   const qc = useQueryClient();
 
   const { data: targets = [], isLoading } = useQuery({
@@ -414,23 +428,39 @@ function ActiveTargetsTab({ onEdit }) {
     }
   };
 
+  // For non-admins, hide sections that have no data — they don't need to see
+  // empty buckets that aren't relevant to their role.
+  const sections = [
+    { key: 'agent',      title: 'معايير الموظفين', emptyText: 'لا توجد معايير فردية' },
+    { key: 'department', title: 'معايير الأقسام',  emptyText: 'لا توجد معايير على مستوى القسم' },
+    { key: 'global',     title: 'المعايير العامة',  emptyText: 'لا يوجد معيار عام' },
+  ].filter(s => canManage || grouped[s.key].length > 0);
+
   return (
     <div className="space-y-5">
-      <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 flex items-start gap-3">
-        <div className="p-1.5 bg-blue-100 rounded-lg">
-          <Trophy size={14} className="text-blue-600" />
+      {canManage && (
+        <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 flex items-start gap-3">
+          <div className="p-1.5 bg-blue-100 rounded-lg">
+            <Trophy size={14} className="text-blue-600" />
+          </div>
+          <div className="text-xs font-bold text-blue-900 leading-relaxed">
+            <strong className="font-black">قاعدة الأولوية:</strong> هدف الموظف يتقدم على هدف القسم، الذي يتقدم على الهدف العام.
+            تُجمَّد الأهداف المُطبقة وقت تجميد الـ snapshot، فلن تتأثر التقارير القديمة بأي تعديل لاحق.
+          </div>
         </div>
-        <div className="text-xs font-bold text-blue-900 leading-relaxed">
-          <strong className="font-black">قاعدة الأولوية:</strong> هدف الموظف يتقدم على هدف القسم، الذي يتقدم على الهدف العام.
-          تُجمَّد الأهداف المُطبقة وقت تجميد الـ snapshot، فلن تتأثر التقارير القديمة بأي تعديل لاحق.
-        </div>
-      </div>
+      )}
 
-      {[
-        { key: 'agent',      title: 'معايير الموظفين', emptyText: 'لا توجد معايير فردية' },
-        { key: 'department', title: 'معايير الأقسام',  emptyText: 'لا توجد معايير على مستوى القسم' },
-        { key: 'global',     title: 'المعايير العامة',  emptyText: 'لا يوجد معيار عام' },
-      ].map(section => (
+      {sections.length === 0 && (
+        <div className="bg-white border border-gray-100 rounded-3xl p-12 text-center">
+          <div className="inline-flex p-3 bg-gray-100 rounded-2xl mb-3">
+            <Target size={20} className="text-gray-400" />
+          </div>
+          <p className="font-black text-gray-700">لا يوجد هدف معتمد ليك حالياً</p>
+          <p className="text-xs text-gray-500 font-bold mt-1">الإدارة هتحدد هدفك في بداية الشهر</p>
+        </div>
+      )}
+
+      {sections.map(section => (
         <div key={section.key} className="bg-white border border-gray-100 rounded-3xl overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
             <h3 className="text-sm font-black text-gray-700">{section.title}</h3>
@@ -469,24 +499,26 @@ function ActiveTargetsTab({ onEdit }) {
                         </span>
                       </div>
 
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => handleEvaluate(t)}
-                          disabled={evalM.isPending || !periodOver || !t.target_main_absent_rate}
-                          className="p-2 hover:bg-emerald-50 rounded-lg text-emerald-600 disabled:opacity-30 disabled:hover:bg-transparent"
-                          title={periodOver ? 'تقييم نهائي' : 'الفترة لسه فعّالة'}
-                        >
-                          <Award size={14} />
-                        </button>
-                        <button onClick={() => onEdit(t)}
-                                className="p-2 hover:bg-blue-50 rounded-lg text-blue-600">
-                          <Edit2 size={14} />
-                        </button>
-                        <button onClick={() => { if (confirm('حذف هذا الهدف؟')) delM.mutate(t.id); }}
-                                className="p-2 hover:bg-red-50 rounded-lg text-red-500">
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
+                      {canManage && (
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => handleEvaluate(t)}
+                            disabled={evalM.isPending || !periodOver || !t.target_main_absent_rate}
+                            className="p-2 hover:bg-emerald-50 rounded-lg text-emerald-600 disabled:opacity-30 disabled:hover:bg-transparent"
+                            title={periodOver ? 'تقييم نهائي' : 'الفترة لسه فعّالة'}
+                          >
+                            <Award size={14} />
+                          </button>
+                          <button onClick={() => onEdit(t)}
+                                  className="p-2 hover:bg-blue-50 rounded-lg text-blue-600">
+                            <Edit2 size={14} />
+                          </button>
+                          <button onClick={() => { if (confirm('حذف هذا الهدف؟')) delM.mutate(t.id); }}
+                                  className="p-2 hover:bg-red-50 rounded-lg text-red-500">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -502,7 +534,7 @@ function ActiveTargetsTab({ onEdit }) {
 // ═════════════════════════════════════════════════════════════════════════════
 // TAB 3: HISTORY — evaluated targets with summary stats
 // ═════════════════════════════════════════════════════════════════════════════
-function HistoryTargetsTab() {
+function HistoryTargetsTab({ canFilter = true }) {
   const [filterDept, setFilterDept] = useState('All');
 
   const { data: history = [], isLoading } = useQuery({
@@ -525,14 +557,16 @@ function HistoryTargetsTab() {
 
   return (
     <div className="space-y-5">
-      {/* Filter */}
-      <div className="bg-white border border-gray-200 rounded-2xl p-4 flex items-center gap-3 flex-wrap shadow-sm">
-        <span className="text-xs font-black text-gray-700">فلتر:</span>
-        <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className={inputCls}>
-          <option value="All">كل الأقسام</option>
-          {DEPTS.map(d => <option key={d} value={d}>{d}</option>)}
-        </select>
-      </div>
+      {/* Filter (admin only — non-admins are already scoped server-side) */}
+      {canFilter && (
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 flex items-center gap-3 flex-wrap shadow-sm">
+          <span className="text-xs font-black text-gray-700">فلتر:</span>
+          <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className={inputCls}>
+            <option value="All">كل الأقسام</option>
+            {DEPTS.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
