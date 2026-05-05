@@ -10,6 +10,7 @@ import {
   Tooltip, Legend, BarChart, Bar,
 } from 'recharts';
 import api from '../../api/axios';
+import { useAuth } from '../../auth/AuthContext';
 import PageHero from '../../components/ui/PageHero';
 import SectionCard from '../../components/ui/SectionCard';
 import EmptyState from '../../components/ui/EmptyState';
@@ -23,6 +24,17 @@ const DEPT_COLORS = {
 };
 
 export default function DeptGoals() {
+  const { user } = useAuth();
+  // Only admins from the Quality (or All) management can create goals + delete.
+  // Everyone else (CS/Education admins, leaders) gets a view-only experience.
+  const canManage = user?.role === 'admin' && (user?.management === 'Quality' || user?.management === 'All');
+
+  const tabs = [
+    { key: 'active',  label: 'الأهداف الحالية', icon: Activity },
+    canManage && { key: 'set', label: 'وضع هدف جديد', icon: Plus },
+    { key: 'history', label: 'السجل والتطور',  icon: HistoryIcon },
+  ].filter(Boolean);
+
   const [tab, setTab] = useState('active'); // active | set | history
 
   return (
@@ -36,11 +48,7 @@ export default function DeptGoals() {
 
       {/* Tabs */}
       <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-xl p-1 shadow-sm">
-        {[
-          { key: 'active',  label: 'الأهداف الحالية', icon: Activity },
-          { key: 'set',     label: 'وضع هدف جديد',    icon: Plus },
-          { key: 'history', label: 'السجل والتطور',  icon: HistoryIcon },
-        ].map(t => (
+        {tabs.map(t => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
@@ -53,8 +61,8 @@ export default function DeptGoals() {
         ))}
       </div>
 
-      {tab === 'active'  && <ActiveGoalsTab />}
-      {tab === 'set'     && <SetGoalTab />}
+      {tab === 'active'  && <ActiveGoalsTab canManage={canManage} />}
+      {tab === 'set'     && canManage && <SetGoalTab />}
       {tab === 'history' && <HistoryTab />}
     </div>
   );
@@ -63,7 +71,7 @@ export default function DeptGoals() {
 // ═════════════════════════════════════════════════════════════════════════════
 // TAB 1: ACTIVE GOALS — current goals with live progress
 // ═════════════════════════════════════════════════════════════════════════════
-function ActiveGoalsTab() {
+function ActiveGoalsTab({ canManage }) {
   const queryClient = useQueryClient();
   const { data: active = [], isLoading } = useQuery({
     queryKey: ['dept-goals', 'active'],
@@ -118,13 +126,20 @@ function ActiveGoalsTab() {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
       {active.map(g => (
-        <ActiveGoalCard key={g.id} goal={g} onEvaluate={() => handleEvaluate(g)} onDelete={() => handleDelete(g)} busy={evalMu.isPending || delMu.isPending} />
+        <ActiveGoalCard
+          key={g.id}
+          goal={g}
+          onEvaluate={() => handleEvaluate(g)}
+          onDelete={() => handleDelete(g)}
+          busy={evalMu.isPending || delMu.isPending}
+          canManage={canManage}
+        />
       ))}
     </div>
   );
 }
 
-function ActiveGoalCard({ goal, onEvaluate, onDelete, busy }) {
+function ActiveGoalCard({ goal, onEvaluate, onDelete, busy, canManage }) {
   const c = DEPT_COLORS[goal.dept_type] || DEPT_COLORS.General;
   const periodOver = goal.days_remaining < 0;
 
@@ -190,7 +205,9 @@ function ActiveGoalCard({ goal, onEvaluate, onDelete, busy }) {
 
       {/* Footer actions */}
       <div className="bg-gray-50 border-t border-gray-100 px-3 py-2 flex justify-end gap-2">
-        <ModernButton variant="ghost" icon={Trash2} size="sm" onClick={onDelete} disabled={busy}>مسح</ModernButton>
+        {canManage && (
+          <ModernButton variant="ghost" icon={Trash2} size="sm" onClick={onDelete} disabled={busy}>مسح</ModernButton>
+        )}
         <ModernButton variant="primary" icon={Award} size="sm" onClick={onEvaluate} disabled={busy || !periodOver}>
           {periodOver ? 'تقييم نهائى' : 'لسه فعّال'}
         </ModernButton>
