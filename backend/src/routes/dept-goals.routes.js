@@ -104,11 +104,17 @@ function computeDeptAbsenceRates(dept_type, fromDate, toDate, line) {
   `).get()?.cnt || 0;
 
   // Main absent — Part 1 (absent_students with date resolution) + Part 2 (empty-attendance lectures × clients)
+  // NOTE: dept filter MUST be in the inner WHERE clause, not the LEFT JOIN ON clause —
+  // otherwise unmatched rows (b is NULL) survive and we end up counting absent_students
+  // from ALL departments instead of just the requested one.
+  const innerDeptFilter = dept_type
+    ? ` AND b.dept_type = '${dept_type.replace(/'/g, "''")}'`
+    : '';
   const mainAbsentP1 = db.prepare(`
     SELECT COUNT(*) AS cnt FROM (
       SELECT COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS resolved_date
       FROM absent_students a
-      LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}${deptF}
+      LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
       LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
         AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone${line ? ' AND c_lu.line = a.line' : ''}
       LEFT JOIN (
@@ -122,7 +128,7 @@ function computeDeptAbsenceRates(dept_type, fromDate, toDate, line) {
       WHERE (
         (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
         OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
-      )
+      )${innerDeptFilter}
     ) p1
     WHERE resolved_date BETWEEN '${fromDate}' AND '${toDate}'
   `).get()?.cnt || 0;
