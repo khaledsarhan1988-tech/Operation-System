@@ -98,6 +98,7 @@ const router = createBrowserRouter([
       { path: 'reports/quality',              element: <QualityReports /> },
       { path: 'reports/fix-report',           element: <FixReport /> },
       { path: 'reports/attendance-absence',   element: <AttendanceAbsenceReport /> },
+      { path: 'reports/dept-goals',           element: <DeptGoals /> },
     ],
   },
 

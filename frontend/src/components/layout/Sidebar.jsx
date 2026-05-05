@@ -67,6 +67,7 @@ const LEADER_LINKS = [
   { type: 'section', label: 'nav.reportsSection' },
   { to: '/leader/reports/fix-report',           label: 'nav.fixReports',          icon: FileText, color: 'orange' },
   { to: '/leader/reports/attendance-absence',   label: 'nav.attendanceReports',   icon: Activity, color: 'teal' },
+  { to: '/leader/reports/dept-goals',           label: 'nav.deptGoals',           icon: Goal,     color: 'emerald' },
 ];
 
 const REPORT_LINKS = [
@@ -77,7 +78,7 @@ const REPORT_LINKS = [
   { to: '/admin/reports/quality',               label: 'nav.qualityReports',     icon: ShieldCheck,   color: 'green',   management: 'Quality' },
   { to: '/admin/reports/quality-diagnostic',    label: 'nav.qualityDiagnostic',  icon: Activity,      color: 'amber',   management: 'Quality', sub: true },
   { to: '/admin/reports/quality-snapshots',     label: 'nav.qualitySnapshots',   icon: Snowflake,     color: 'cyan',    management: 'Quality', sub: true },
-  { to: '/admin/reports/dept-goals',             label: 'nav.deptGoals',          icon: Goal,          color: 'emerald', management: 'Quality', sub: true },
+  { to: '/admin/reports/dept-goals',             label: 'nav.deptGoals',          icon: Goal,          color: 'emerald', management: 'All', sub: true },
 ];
 
 const managementMap = {
