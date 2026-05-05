@@ -43,6 +43,7 @@ const AGENT_LINKS = [
   { to: '/agent/pipeline',           label: 'nav.clientPipeline',   icon: Kanban,          color: 'emerald' },
   { to: '/agent/tasks',              label: 'nav.myTasks',          icon: ClipboardList,   color: 'indigo' },
   { to: '/agent/my-progression',     label: 'nav.myProgression',    icon: TrendingUp,      color: 'violet' },
+  { to: '/agent/reports/dept-goals', label: 'nav.deptGoals',        icon: Goal,            color: 'emerald' },
 ];
 
 const ENROLLMENT_LINKS = [

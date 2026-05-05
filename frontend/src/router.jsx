@@ -72,6 +72,7 @@ const router = createBrowserRouter([
       { path: 'code-problems',      element: <AgentCodeProblems /> },
       { path: 'pipeline',           element: <Pipeline /> },
       { path: 'my-progression',     element: <MyProgression /> },
+      { path: 'reports/dept-goals', element: <DeptGoals /> },
     ],
   },
 

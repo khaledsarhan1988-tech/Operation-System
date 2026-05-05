@@ -11,11 +11,11 @@ const { nameInListInline } = require('../utils/nameMatch');
 const router = express.Router();
 router.use(authenticate, requireRole('agent')); // base auth — admin gates per route
 
-// Leaders may only see their own department, regardless of what the client
-// passes via ?dept_type=. Admins (and anyone with department='All') are
-// trusted to filter freely.
+// Non-admin users (agents, leaders) may only see their own department,
+// regardless of what the client passes via ?dept_type=. Admins (and anyone
+// with department='All') are trusted to filter freely.
 function leaderScopedDept(req) {
-  if (req.user?.role === 'leader' && req.user?.department && req.user.department !== 'All') {
+  if (req.user?.role !== 'admin' && req.user?.department && req.user.department !== 'All') {
     return req.user.department;
   }
   return null;

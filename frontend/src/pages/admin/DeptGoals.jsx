@@ -63,7 +63,7 @@ export default function DeptGoals() {
 
       {tab === 'active'  && <ActiveGoalsTab canManage={canManage} />}
       {tab === 'set'     && canManage && <SetGoalTab />}
-      {tab === 'history' && <HistoryTab lockedDept={user?.role === 'leader' && DEPTS.includes(user?.department) ? user.department : null} />}
+      {tab === 'history' && <HistoryTab lockedDept={user?.role !== 'admin' && DEPTS.includes(user?.department) ? user.department : null} />}
     </div>
   );
 }
