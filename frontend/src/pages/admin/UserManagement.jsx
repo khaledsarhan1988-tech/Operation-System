@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Plus, Eye, EyeOff, Pencil, Trash2, ToggleLeft, ToggleRight, Download, UserCog } from 'lucide-react';
+import { Plus, Eye, EyeOff, Pencil, Trash2, ToggleLeft, ToggleRight, UserCog } from 'lucide-react';
 import api from '../../api/axios';
 import DataTable from '../../components/ui/DataTable';
 import Modal from '../../components/ui/Modal';
@@ -164,26 +164,6 @@ export default function UserManagement() {
   const [showModal, setShowModal] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
   const [togglingId, setTogglingId] = useState(null);
-  const [downloading, setDownloading] = useState(false);
-
-  const handleBackupDownload = async () => {
-    setDownloading(true);
-    try {
-      const res = await api.get('/admin/backup/download', { responseType: 'blob' });
-      const url = window.URL.createObjectURL(new Blob([res.data]));
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `academy-backup-${new Date().toISOString().slice(0, 10)}.db`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.URL.revokeObjectURL(url);
-    } catch (e) {
-      alert('حدث خطأ أثناء تحميل النسخة الاحتياطية');
-    } finally {
-      setDownloading(false);
-    }
-  };
 
   const { data: users, isLoading } = useQuery({
     queryKey: ['admin-users'],
@@ -271,14 +251,9 @@ export default function UserManagement() {
         icon={UserCog}
         gradient="navy"
         actions={
-          <>
-            <ModernButton variant="glass" icon={Download} onClick={handleBackupDownload} loading={downloading}>
-              {downloading ? 'جارٍ التحميل...' : 'نسخة احتياطية'}
-            </ModernButton>
-            <ModernButton variant="amber" icon={Plus} onClick={() => { setSelected(null); setShowModal(true); }}>
-              {t('admin.addUser')}
-            </ModernButton>
-          </>
+          <ModernButton variant="amber" icon={Plus} onClick={() => { setSelected(null); setShowModal(true); }}>
+            {t('admin.addUser')}
+          </ModernButton>
         }
       />
 

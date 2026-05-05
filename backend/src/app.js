@@ -793,8 +793,8 @@ initDb().then(db => {
 
   // Bonus column on monthly_snapshots (Phase 3 integration)
   try {
-    const cols = db._raw.prepare(`PRAGMA table_info(monthly_snapshots)`).all();
-    const hasBonus = cols.some(c => c.name === 'dept_goal_bonus');
+    const cols = db._raw.exec(`PRAGMA table_info(monthly_snapshots)`)[0]?.values.map(r => r[1]) || [];
+    const hasBonus = cols.includes('dept_goal_bonus');
     if (!hasBonus) {
       db._raw.run(`ALTER TABLE monthly_snapshots ADD COLUMN dept_goal_bonus INTEGER NOT NULL DEFAULT 0`);
       saveNow();
@@ -830,8 +830,8 @@ initDb().then(db => {
 
     // Add is_official toggle — when ON, this snapshot is the authoritative
     // end-of-period record used as baseline source for Dept Goals.
-    const qrsCols = db._raw.prepare(`PRAGMA table_info(quality_report_snapshots)`).all();
-    const hasIsOfficial = qrsCols.some(c => c.name === 'is_official');
+    const qrsCols = db._raw.exec(`PRAGMA table_info(quality_report_snapshots)`)[0]?.values.map(r => r[1]) || [];
+    const hasIsOfficial = qrsCols.includes('is_official');
     if (!hasIsOfficial) {
       db._raw.run(`ALTER TABLE quality_report_snapshots ADD COLUMN is_official INTEGER NOT NULL DEFAULT 0`);
       db._raw.run(`CREATE INDEX IF NOT EXISTS idx_qrs_official ON quality_report_snapshots(is_official, from_date, to_date)`);

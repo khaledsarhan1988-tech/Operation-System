@@ -19,12 +19,14 @@ export default function DbStatus() {
     try {
       const res = await api.get('/admin/backup/download', { responseType: 'blob' });
       const blob = new Blob([res.data], { type: 'application/octet-stream' });
-      const url = URL.createObjectURL(blob);
+      const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = `academy-backup-${new Date().toISOString().slice(0, 10)}.db`;
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      a.remove();
+      setTimeout(() => window.URL.revokeObjectURL(url), 1000);
     } catch (e) {
       alert('فشل التنزيل: ' + (e?.response?.data?.error || e.message));
     }
