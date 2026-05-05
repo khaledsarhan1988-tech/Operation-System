@@ -6,6 +6,7 @@ const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const adminOnly = requireRole('admin');
 const { lineFilter } = require('../utils/lineFilter');
+const { nameInListInline } = require('../utils/nameMatch');
 
 const router = express.Router();
 router.use(authenticate, requireRole('agent')); // base auth — admin gates per route
@@ -84,32 +85,22 @@ function previousPeriod({ period_type, year, month, week, quarter }) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// COMPUTE ABSENCE RATES FOR A (DEPT, DATE-RANGE) — uses the same formula as
-// /reports/quality-employee so numbers stay consistent across the app.
+// COMPUTE ABSENCE RATES FOR ONE AGENT — mirrors /reports/quality-employee
+// EXACTLY (same formulas, same JOINs, same coordinator matching).
+// Used as a building block by computeDeptAbsenceRates so dept totals are
+// guaranteed to equal sum-of-per-agent (which is what the Quality Report
+// page shows in its Department Averages sidebar).
 // ──────────────────────────────────────────────────────────────────────────
-function computeDeptAbsenceRates(dept_type, fromDate, toDate, line) {
+function computeAgentAbsenceRates(agentName, fromDate, toDate, line) {
+  const coordMatch = nameInListInline('b.coordinators', agentName);
+  const lineLA = line ? ` AND l.line = '${line.replace(/'/g, "''")}'` : '';
+  const lineAA = line ? ` AND a.line = '${line.replace(/'/g, "''")}'` : '';
   const lineLec = line ? ` AND line = '${line.replace(/'/g, "''")}'` : '';
-  const lineL   = line ? ` AND l.line = '${line.replace(/'/g, "''")}'` : '';
-  const lineB   = line ? ` AND b.line = '${line.replace(/'/g, "''")}'` : '';
-  const lineC   = line ? ` AND c.line = '${line.replace(/'/g, "''")}'` : '';
-  const deptF   = dept_type ? ` AND b.dept_type = '${dept_type.replace(/'/g, "''")}'` : '';
+  const dateMainLec = ` AND l.date BETWEEN '${fromDate}' AND '${toDate}'`;
 
-  // Main expected (sum of trainee_count for confirmed main lectures)
-  const mainExp = db.prepare(`
-    SELECT COALESCE(SUM(b.trainee_count), 0) AS cnt
-    FROM lectures l
-    INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
-    WHERE l.session_type = 'main' AND l.status != 'غير مؤكدة'
-      AND l.date BETWEEN '${fromDate}' AND '${toDate}'${lineL}${deptF}
-  `).get()?.cnt || 0;
+  // Main absent — Part 1 + Part 2
+  const dateResolvedFilter = ` AND resolved_date BETWEEN '${fromDate}' AND '${toDate}'`;
 
-  // Main absent — Part 1 (absent_students with date resolution) + Part 2 (empty-attendance lectures × clients)
-  // NOTE: dept filter MUST be in the inner WHERE clause, not the LEFT JOIN ON clause —
-  // otherwise unmatched rows (b is NULL) survive and we end up counting absent_students
-  // from ALL departments instead of just the requested one.
-  const innerDeptFilter = dept_type
-    ? ` AND b.dept_type = '${dept_type.replace(/'/g, "''")}'`
-    : '';
   const mainAbsentP1 = db.prepare(`
     SELECT COUNT(*) AS cnt FROM (
       SELECT COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS resolved_date
@@ -128,65 +119,107 @@ function computeDeptAbsenceRates(dept_type, fromDate, toDate, line) {
       WHERE (
         (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
         OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
-      )${innerDeptFilter}
+      )
+      AND ${coordMatch}
     ) p1
-    WHERE resolved_date BETWEEN '${fromDate}' AND '${toDate}'
+    WHERE 1=1${dateResolvedFilter}
   `).get()?.cnt || 0;
 
   const mainAbsentP2 = db.prepare(`
-    SELECT COUNT(*) AS cnt
-    FROM lectures l
-    INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}${deptF}
+    SELECT COUNT(*) AS cnt FROM lectures l
+    INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
     INNER JOIN clients c ON c.group_name = l.group_name${line ? ' AND c.line = l.line' : ''}
     WHERE l.session_type = 'main' AND l.status = 'مؤكدة'
       AND (l.attendance IS NULL OR TRIM(l.attendance) = '')
-      AND c.name IS NOT NULL AND TRIM(c.name)!=''
-      AND c.phone IS NOT NULL AND TRIM(c.phone)!=''
+      AND c.name IS NOT NULL AND TRIM(c.name) != ''
+      AND c.phone IS NOT NULL AND TRIM(c.phone) != ''
       AND NOT EXISTS (
         SELECT 1 FROM absent_students a2
         WHERE a2.group_name = l.group_name AND a2.date = l.date${line ? ' AND a2.line = l.line' : ''}
       )
-      AND l.date BETWEEN '${fromDate}' AND '${toDate}'${lineL}
+      ${lineLA}${dateMainLec} AND ${coordMatch}
   `).get()?.cnt || 0;
 
-  const mainAbs = mainAbsentP1 + mainAbsentP2;
+  const main_absent = mainAbsentP1 + mainAbsentP2;
+
+  const mainExp = db.prepare(`
+    SELECT COALESCE(SUM(b.trainee_count), 0) AS cnt FROM lectures l
+    INNER JOIN batches b ON b.group_name = l.group_name${line ? ' AND b.line = l.line' : ''}
+    WHERE l.session_type = 'main' AND l.status != 'غير مؤكدة'${lineLA}${dateMainLec}
+      AND ${coordMatch}
+  `).get()?.cnt || 0;
 
   // Zoom expected
   const zoomExp = db.prepare(`
-    SELECT COUNT(*) AS cnt
-    FROM lectures l
-    INNER JOIN batches b ON b.group_name = l.group_name${line ? ' AND b.line = l.line' : ''}${deptF}
+    SELECT COUNT(*) AS cnt FROM lectures l
+    INNER JOIN batches b ON b.group_name = l.group_name${line ? ' AND b.line = l.line' : ''}
     WHERE l.session_type = 'side' AND l.status = 'مؤكدة'
-      AND (l.duration IS NULL OR l.duration <= '00:15')
-      AND l.date BETWEEN '${fromDate}' AND '${toDate}'${lineL}
+      AND (l.duration IS NULL OR l.duration <= '00:15')${lineLA}${dateMainLec}
+      AND ${coordMatch}
   `).get()?.cnt || 0;
 
-  // Zoom absent
+  // Zoom absent — slots − present per (group, date)
   const zoomAbs = db.prepare(`
     SELECT COALESCE(SUM(absent_count), 0) AS cnt FROM (
       SELECT COUNT(*) - SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != ''
                                    AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END)
                 AS absent_count
       FROM lectures l
-      INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}${deptF}
+      INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
       WHERE l.session_type = 'side' AND l.status = 'مؤكدة'
-        AND (l.duration IS NULL OR l.duration <= '00:15')
-        AND l.date BETWEEN '${fromDate}' AND '${toDate}'${lineL}
+        AND (l.duration IS NULL OR l.duration <= '00:15')${lineLA}${dateMainLec}
+        AND ${coordMatch}
       GROUP BY l.group_name, l.date
       HAVING absent_count > 0
     ) sub
   `).get()?.cnt || 0;
 
-  const mainRate = mainExp > 0 ? Math.round((mainAbs / mainExp) * 100) : 0;
-  const zoomRate = zoomExp > 0 ? Math.round((zoomAbs / zoomExp) * 100) : 0;
-
   return {
-    main_absent_count: mainAbs,
+    main_absent_count: main_absent,
     main_expected:     mainExp,
-    main_rate:         mainRate,
     zoom_absent_count: zoomAbs,
     zoom_expected:     zoomExp,
+  };
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// COMPUTE ABSENCE RATES FOR A DEPARTMENT — sums per-agent values, exactly
+// matching the Quality Report's "Department Averages" sidebar.
+// ──────────────────────────────────────────────────────────────────────────
+function computeDeptAbsenceRates(dept_type, fromDate, toDate, line) {
+  // Get all active agents in this department
+  const userConds = ["u.role = 'agent'", 'u.is_active = 1', 'u.department = ?'];
+  const userParams = [dept_type];
+  if (line) {
+    userConds.push('u.line = ?');
+    userParams.push(line);
+  }
+  const agents = db.prepare(`
+    SELECT u.id, u.full_name FROM users u
+    WHERE ${userConds.join(' AND ')}
+    ORDER BY u.full_name COLLATE NOCASE
+  `).all(...userParams);
+
+  let main_abs = 0, main_exp = 0, zoom_abs = 0, zoom_exp = 0;
+  for (const agent of agents) {
+    const r = computeAgentAbsenceRates(agent.full_name, fromDate, toDate, line);
+    main_abs += r.main_absent_count;
+    main_exp += r.main_expected;
+    zoom_abs += r.zoom_absent_count;
+    zoom_exp += r.zoom_expected;
+  }
+
+  const mainRate = main_exp > 0 ? Math.round((main_abs / main_exp) * 100) : 0;
+  const zoomRate = zoom_exp > 0 ? Math.round((zoom_abs / zoom_exp) * 100) : 0;
+
+  return {
+    main_absent_count: main_abs,
+    main_expected:     main_exp,
+    main_rate:         mainRate,
+    zoom_absent_count: zoom_abs,
+    zoom_expected:     zoom_exp,
     zoom_rate:         zoomRate,
+    agents_count:      agents.length,
   };
 }
 
