@@ -36,6 +36,7 @@ function TargetEditor({ open, onClose, target, onSuccess }) {
   const [department, setDepartment] = useState(target?.department || '');
   const [tMain, setTMain] = useState(target?.target_main_absent_rate ?? '');
   const [tZoom, setTZoom] = useState(target?.target_zoom_absent_rate ?? '');
+  const [bonus, setBonus] = useState(target?.bonus_points ?? 5);
   const [eff, setEff] = useState(target?.effective_from || new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState(target?.notes || '');
   const [scope, setScope] = useState(
@@ -104,6 +105,7 @@ function TargetEditor({ open, onClose, target, onSuccess }) {
       department: scope === 'department' ? department : null,
       target_main_absent_rate: tMainNum,
       target_zoom_absent_rate: tZoomNum,
+      bonus_points: parseInt(bonus, 10) || 5,
       effective_from: eff,
       notes: notes || null,
     };
@@ -223,6 +225,20 @@ function TargetEditor({ open, onClose, target, onSuccess }) {
               placeholder={baseline?.found ? `أقل من ${baseline.zoom_absent_rate}` : 'مثال: 40'}
               className={inputCls}
             />
+          </div>
+
+          <div>
+            <label className="text-xs font-black text-gray-500 mb-1 block">نقاط مكافأة</label>
+            <input
+              type="number" min="0" max="100"
+              value={bonus}
+              onChange={e => setBonus(e.target.value)}
+              placeholder="5"
+              className={inputCls}
+            />
+            <p className="text-[10px] text-gray-500 font-bold mt-1">
+              تنضاف للـ overall_score لو الموظف حقق هدفي الغياب الأساسي والزووم.
+            </p>
           </div>
 
           <div>
@@ -367,6 +383,9 @@ export default function TargetsManagement() {
                           </span>
                           <span className="px-2.5 py-1 bg-violet-50 border border-violet-200 rounded-lg text-[11px] font-black text-violet-700">
                             غياب زووم ≤ {t.target_zoom_absent_rate ?? '—'}%
+                          </span>
+                          <span className="px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-lg text-[11px] font-black text-amber-700">
+                            🏆 +{t.bonus_points ?? 5} نقطة
                           </span>
                         </div>
 

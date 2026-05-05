@@ -612,6 +612,9 @@ initDb().then(db => {
     if (!etCols.includes('target_zoom_absent_rate')) {
       db._raw.run(`ALTER TABLE employee_targets ADD COLUMN target_zoom_absent_rate INTEGER`);
     }
+    if (!etCols.includes('bonus_points')) {
+      db._raw.run(`ALTER TABLE employee_targets ADD COLUMN bonus_points INTEGER NOT NULL DEFAULT 5`);
+    }
 
     db._raw.run(`CREATE TABLE IF NOT EXISTS snapshot_notes (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -29,7 +29,7 @@ router.get('/', (req, res) => {
   const rows = db.prepare(`
     SELECT t.id, t.agent_name, t.department, t.line,
            t.target_completion, t.target_followup, t.target_fix, t.target_overall,
-           t.target_main_absent_rate, t.target_zoom_absent_rate,
+           t.target_main_absent_rate, t.target_zoom_absent_rate, t.bonus_points,
            t.effective_from, t.set_at, t.notes,
            u.full_name AS set_by_name,
            CASE
@@ -148,12 +148,13 @@ router.get('/baseline', (req, res) => {
 
 // POST /api/admin/targets
 // Body: { agent_name?, department?, target_main_absent_rate, target_zoom_absent_rate,
-//         effective_from, notes? }
+//         bonus_points?, effective_from, notes? }
 // Pass NULL for agent_name and department to set a global target.
 router.post('/', (req, res) => {
   const {
     agent_name, department,
     target_main_absent_rate, target_zoom_absent_rate,
+    bonus_points,
     effective_from, notes,
   } = req.body || {};
 
@@ -168,18 +169,20 @@ router.post('/', (req, res) => {
   if (!Number.isFinite(tZoom) || tZoom < 0 || tZoom > 100) {
     return res.status(400).json({ error: 'target_zoom_absent_rate must be 0-100' });
   }
+  let bonus = bonus_points != null ? parseInt(bonus_points, 10) : 5;
+  if (!Number.isFinite(bonus) || bonus < 0 || bonus > 100) bonus = 5;
 
   const line = lineFilter(req) || 'Ahmed Hassan';
   const r = db.prepare(`
     INSERT INTO employee_targets
       (agent_name, department, line,
-       target_main_absent_rate, target_zoom_absent_rate,
+       target_main_absent_rate, target_zoom_absent_rate, bonus_points,
        effective_from, set_by, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     agent_name || null,
     (department && department !== 'All') ? department : null,
-    line, tMain, tZoom,
+    line, tMain, tZoom, bonus,
     effective_from,
     req.user?.id,
     notes || null
@@ -191,7 +194,7 @@ router.post('/', (req, res) => {
       (action, agent_name, details, user_id, user_name, line)
       VALUES ('target_change', ?, ?, ?, ?, ?)`).run(
       agent_name || department || 'global',
-      JSON.stringify({ op: 'create', id: r.lastInsertRowid, scope: agent_name ? 'agent' : department ? 'department' : 'global', target: { tMain, tZoom, effective_from } }),
+      JSON.stringify({ op: 'create', id: r.lastInsertRowid, scope: agent_name ? 'agent' : department ? 'department' : 'global', target: { tMain, tZoom, bonus, effective_from } }),
       req.user?.id, req.user?.full_name, line
     );
   } catch (_) {}
@@ -208,6 +211,7 @@ router.put('/:id', (req, res) => {
   const map = {
     target_main_absent_rate: 'target_main_absent_rate',
     target_zoom_absent_rate: 'target_zoom_absent_rate',
+    bonus_points:            'bonus_points',
     effective_from:          'effective_from',
     notes:                   'notes',
   };
@@ -218,6 +222,12 @@ router.put('/:id', (req, res) => {
         const n = parseInt(v, 10);
         if (!Number.isFinite(n) || n < 0 || n > 100) {
           return res.status(400).json({ error: `${k} must be 0-100` });
+        }
+        fields.push(`${col} = ?`); params.push(n);
+      } else if (k === 'bonus_points') {
+        const n = parseInt(v, 10);
+        if (!Number.isFinite(n) || n < 0 || n > 100) {
+          return res.status(400).json({ error: 'bonus_points must be 0-100' });
         }
         fields.push(`${col} = ?`); params.push(n);
       } else if (k === 'effective_from') {
