@@ -443,15 +443,34 @@ router.post('/:id/evaluate', (req, res) => {
       id,
     );
 
-    // Award bonus on 'met' (only once per target)
+    // Award bonus on 'met' (only once per target). Distribution depends
+    // on scope:
+    //   - agent  → just that one employee
+    //   - dept   → every employee in that department for the period
+    //   - global → every employee for the period (line-scoped)
     let bonusGiven = 0;
-    if (status === 'met' && !t.bonus_awarded && t.agent_name) {
-      const result = db.prepare(`
-        UPDATE monthly_snapshots
-        SET individual_target_bonus = individual_target_bonus + ?
-        WHERE agent_name = ? AND year = ? AND month = ? AND line = ?
-      `).run(t.bonus_points, t.agent_name, t.period_year, t.period_month, t.line);
-      bonusGiven = result.changes;
+    if (status === 'met' && !t.bonus_awarded) {
+      let result;
+      if (t.agent_name) {
+        result = db.prepare(`
+          UPDATE monthly_snapshots
+          SET individual_target_bonus = individual_target_bonus + ?
+          WHERE agent_name = ? AND year = ? AND month = ? AND line = ?
+        `).run(t.bonus_points, t.agent_name, t.period_year, t.period_month, t.line);
+      } else if (t.department) {
+        result = db.prepare(`
+          UPDATE monthly_snapshots
+          SET individual_target_bonus = individual_target_bonus + ?
+          WHERE department = ? AND year = ? AND month = ? AND line = ?
+        `).run(t.bonus_points, t.department, t.period_year, t.period_month, t.line);
+      } else {
+        result = db.prepare(`
+          UPDATE monthly_snapshots
+          SET individual_target_bonus = individual_target_bonus + ?
+          WHERE year = ? AND month = ? AND line = ?
+        `).run(t.bonus_points, t.period_year, t.period_month, t.line);
+      }
+      bonusGiven = result?.changes || 0;
       db.prepare(`UPDATE employee_targets SET bonus_awarded = 1 WHERE id = ?`).run(id);
     }
 
