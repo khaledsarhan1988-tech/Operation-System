@@ -48,7 +48,8 @@
     "qualityReports": "تقارير الجودة",
     "qualityDiagnostic": "تشخيص الجودة",
     "qualitySnapshots": "النسخ المحفوظة",
-    "deptGoals": "أهداف الأقسام"
+    "deptGoals": "أهداف الأقسام",
+    "dbStatus": "حالة قاعدة البيانات"
   },
   "auth": {
     "login": "تسجيل الدخول",

@@ -5,7 +5,7 @@ import {
   LayoutDashboard, ClipboardList, Search, UserX, Calendar,
   Video, Users, BarChart2, Globe, UserCog, Upload, FileText,
   LogOut, Headphones, GraduationCap, ShieldCheck, AlertTriangle, Activity, Shuffle, Kanban,
-  TrendingUp, Target, Settings, Award, Snowflake, Goal
+  TrendingUp, Target, Settings, Award, Snowflake, Goal, Database
 } from 'lucide-react';
 
 // ─── COLOR PALETTE ─────────────────────────────────────────────────────────
@@ -99,6 +99,7 @@ function getAdminLinks(user) {
     { to: '/admin/employee-progression', label: 'nav.employeeProgression', icon: TrendingUp, color: 'violet' },
     { to: '/admin/targets',      label: 'nav.targets',            icon: Target,          color: 'green' },
     { to: '/admin/settings',     label: 'nav.systemSettings',     icon: Settings,        color: 'slate' },
+    { to: '/admin/db-status',    label: 'nav.dbStatus',           icon: Database,        color: 'blue' },
     { type: 'section', label: 'nav.reportsSection' },
   ];
   const mgmt = user?.management;

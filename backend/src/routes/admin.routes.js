@@ -700,6 +700,83 @@ router.delete('/pipeline/interactions/:id', (req, res) => {
   return res.json({ ok: true });
 });
 
+// GET /api/admin/db-status  — admin only, returns persistence diagnostics
+// Helps verify whether the SQLite file is on a Railway Volume (persistent)
+// or on the container's ephemeral filesystem (wiped on every redeploy).
+router.get('/db-status', (req, res) => {
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin only' });
+  }
+  const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../../data/academy.db');
+
+  // Heuristic: if DB_PATH starts with /data, /mnt, /var, /srv (typical
+  // Railway Volume mount points), or contains 'volume', it's likely
+  // on a persistent volume. If it's inside the project dir or a tmp
+  // path, it's ephemeral.
+  const lc = DB_PATH.toLowerCase();
+  const looksPersistent =
+       lc.startsWith('/data')
+    || lc.startsWith('/mnt')
+    || lc.startsWith('/var/')
+    || lc.startsWith('/srv')
+    || lc.includes('/volume')
+    || !!process.env.RAILWAY_VOLUME_MOUNT_PATH;
+
+  let fileSize = null;
+  let fileMTime = null;
+  let fileExists = false;
+  try {
+    if (fs.existsSync(DB_PATH)) {
+      fileExists = true;
+      const st = fs.statSync(DB_PATH);
+      fileSize = st.size;
+      fileMTime = st.mtime.toISOString();
+    }
+  } catch (_) {}
+
+  // Sample a few key tables to show the user what's currently stored
+  const tableCounts = {};
+  const tables = [
+    'users', 'batches', 'lectures', 'remarks', 'absent_students',
+    'code_problem_status', 'monthly_snapshots', 'quality_report_snapshots',
+    'department_quality_goals', 'employee_targets', 'snapshot_notes',
+  ];
+  for (const t of tables) {
+    try {
+      const r = db.prepare(`SELECT COUNT(*) AS c FROM ${t}`).get();
+      tableCounts[t] = r?.c ?? 0;
+    } catch (_) {
+      tableCounts[t] = null; // table doesn't exist yet
+    }
+  }
+
+  // Recent snapshots metadata (no full data) so user can confirm what's saved
+  let recentSnapshots = [];
+  try {
+    recentSnapshots = db.prepare(`
+      SELECT id, snapshot_label, from_date, to_date, frozen_by_name, frozen_at,
+             COALESCE(is_official, 0) AS is_official
+      FROM quality_report_snapshots
+      ORDER BY frozen_at DESC LIMIT 10
+    `).all();
+  } catch (_) {}
+
+  return res.json({
+    db_path: DB_PATH,
+    file_exists: fileExists,
+    file_size_bytes: fileSize,
+    file_size_human: fileSize != null ? `${(fileSize / 1024 / 1024).toFixed(2)} MB` : null,
+    file_modified_at: fileMTime,
+    looks_persistent: looksPersistent,
+    persistence_warning: looksPersistent
+      ? null
+      : 'الـ SQLite file مش على persistent volume — كل redeploy بيمسح الـ DB. اضبط DB_PATH على Railway Volume.',
+    railway_volume_env: process.env.RAILWAY_VOLUME_MOUNT_PATH || null,
+    table_counts: tableCounts,
+    recent_snapshots: recentSnapshots,
+  });
+});
+
 // GET /api/admin/backup/download  — admin only, downloads full SQLite DB file
 router.get('/backup/download', (req, res) => {
   if (req.user?.role !== 'admin') {
