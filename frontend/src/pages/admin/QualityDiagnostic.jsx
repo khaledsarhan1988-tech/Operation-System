@@ -130,16 +130,19 @@ export default function QualityDiagnostic() {
           {/* Solve Mistakes Breakdown */}
           <SectionCard
             title={`Solve Mistakes — تفصيل الـ ${sm?.total || 0} record`}
-            subtitle={`موزعين على ${Object.keys(sm?.by_coordinator || {}).length} كوارد + ${sm?.orphans_count || 0} يتيم`}
+            subtitle={`موزعين على ${Object.keys(sm?.by_solver || sm?.by_coordinator || {}).length} موظف حلّوا فعلاً + ${sm?.orphans_count || 0} سجل بدون مُعرَّف`}
             icon={Wrench}
             accent="pink"
           >
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 mb-3 text-[11px] font-bold text-emerald-900">
+              ✅ <strong>المنطق الجديد العادل:</strong> الـ Solve Mistakes منسوبة للموظف اللى دوس "تم الحل" فى الواجهة (cps.updated_by)، مش للكوارد الحالى للمجموعة. ده معناه إن لو الكوارد اتغيّر بعد حل المشكلة، الفضل لسه للى حل فعلاً.
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <h4 className="text-xs font-black text-gray-500 mb-2">حسب الكوارد:</h4>
+                <h4 className="text-xs font-black text-gray-500 mb-2">حسب اللى حل المشكلة:</h4>
                 <div className="space-y-1.5">
-                  {Object.entries(sm?.by_coordinator || {}).sort((a,b) => b[1]-a[1]).map(([k, v]) => {
-                    const isOrphan = k.includes('orphan');
+                  {Object.entries(sm?.by_solver || sm?.by_coordinator || {}).sort((a,b) => b[1]-a[1]).map(([k, v]) => {
+                    const isOrphan = k.includes('orphan') || k.includes('NULL') || k.includes('unattributed');
                     return (
                       <div key={k} className={`flex items-center justify-between px-3 py-2 rounded-lg border ${
                         isOrphan ? 'bg-red-50 border-red-200' : 'bg-pink-50 border-pink-200'
@@ -156,17 +159,18 @@ export default function QualityDiagnostic() {
               {sm?.orphans_count > 0 && (
                 <div>
                   <h4 className="text-xs font-black text-red-600 mb-2 inline-flex items-center gap-1">
-                    <AlertTriangle size={12} /> سجلات يتيمة (مفيش كوارد):
+                    <AlertTriangle size={12} /> سجلات بدون مُعرَّف (NULL updated_by):
                   </h4>
                   <div className="bg-red-50 border border-red-200 rounded-lg p-3 max-h-72 overflow-auto">
                     <p className="text-[11px] text-red-800 mb-2 font-bold">
-                      المجموعات دى موجودة فى code_problem_status لكن مش متربطة بأى batch (الكوارد اتشال أو المجموعة اتمسحت من ملف batches).
+                      السجلات دى لها حالة "محلولة" لكن السيستم مش عارف مين دوس عليها (سجلات قديمة قبل تتبّع المُعدِّل). مش بتتنسب لأى موظف.
                     </p>
                     <table className="w-full text-[11px]">
                       <thead className="bg-red-100">
                         <tr>
                           <th className="px-2 py-1 text-right">المجموعة</th>
                           <th className="px-2 py-1">النوع</th>
+                          <th className="px-2 py-1">الكوارد الحالى</th>
                           <th className="px-2 py-1">التاريخ</th>
                         </tr>
                       </thead>
@@ -175,6 +179,7 @@ export default function QualityDiagnostic() {
                           <tr key={i} className="border-t border-red-100">
                             <td className="px-2 py-1 font-mono">{r.group_name}</td>
                             <td className="px-2 py-1">{r.problem_type}</td>
+                            <td className="px-2 py-1 text-gray-600">{r.current_coordinator || '—'}</td>
                             <td className="px-2 py-1 text-gray-600">{r.updated_at?.slice(0, 10)}</td>
                           </tr>
                         ))}

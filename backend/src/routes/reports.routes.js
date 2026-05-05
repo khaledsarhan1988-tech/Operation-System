@@ -2899,17 +2899,20 @@ router.get('/quality-employee', (req, res) => {
     ).get(...taskParams)?.c || 0;
 
     // 5. Code problems fixed (status changed to resolved/wont_repeat/exception)
-    //    via this agent's groups (matched by coordinator-name in batches.coordinators)
+    //    Attribution: the agent who actually clicked "resolve" via the UI gets
+    //    credit (cps.updated_by), NOT the current coordinator of the group.
+    //    This way an agent who fixed a problem on their group keeps credit
+    //    even if the coordinator later changes or the group ends.
+    //    Records with NULL updated_by (legacy/import) don't count for anyone.
     let cpsWhere = `WHERE cps.status IN ('resolved','wont_repeat','exception')${lineCps}
-                    AND ${coordMatch}`;
+                    AND cps.updated_by = ?`;
     const cpsParams = [];
     if (line) cpsParams.push(line);
+    cpsParams.push(agent.id);
     if (from) { cpsWhere += ` AND date(cps.updated_at) >= ?`; cpsParams.push(from); }
     if (to)   { cpsWhere += ` AND date(cps.updated_at) <= ?`; cpsParams.push(to); }
     const code_problems_fixed = db.prepare(
-      `SELECT COUNT(*) AS c FROM code_problem_status cps
-       INNER JOIN batches b ON b.group_name = cps.group_name${lineB}
-       ${cpsWhere}`
+      `SELECT COUNT(*) AS c FROM code_problem_status cps ${cpsWhere}`
     ).get(...cpsParams)?.c || 0;
 
     // 6. Main absence — formula must match /attendance-absence exactly so both
@@ -3113,10 +3116,18 @@ router.get('/quality-employee/details', (req, res) => {
   }
 
   if (type === 'fixed') {
-    const params = [];
-    if (line) params.push(line);
-    let where = `WHERE cps.status IN ('resolved','wont_repeat','exception') AND ${coordMatch}`;
-    if (line) where += ` AND cps.line = ?`;
+    // Drill-down list of records solved by this agent — uses cps.updated_by
+    // (who actually clicked resolve), NOT current coordinator. Stays in sync
+    // with the count shown in the main report.
+    const userRow = db.prepare(
+      `SELECT id FROM users WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?)) LIMIT 1`
+    ).get(agent);
+    const agentId = userRow?.id;
+    if (!agentId) return res.json([]);
+
+    let where = `WHERE cps.status IN ('resolved','wont_repeat','exception') AND cps.updated_by = ?`;
+    const params = [agentId];
+    if (line) { where += ` AND cps.line = ?`; params.push(line); }
     if (from) { where += ` AND date(cps.updated_at) >= ?`; params.push(from); }
     if (to)   { where += ` AND date(cps.updated_at) <= ?`; params.push(to); }
     const rows = db.prepare(`
@@ -3124,7 +3135,6 @@ router.get('/quality-employee/details', (req, res) => {
              cps.note, cps.new_group_code, cps.updated_at,
              u.full_name AS updated_by_name
       FROM code_problem_status cps
-      INNER JOIN batches b ON b.group_name = cps.group_name${line ? ' AND b.line = cps.line' : ''}
       LEFT JOIN users u ON u.id = cps.updated_by
       ${where}
       ORDER BY cps.updated_at DESC LIMIT 500
@@ -3444,29 +3454,38 @@ router.get('/quality-diagnostic', (req, res) => {
 
   try {
     // ═══════════════════════════════════════════════════════════════
-    // SOLVE MISTAKES — every CPS record contributing to the total,
-    //                  with the coordinator currently assigned to its
-    //                  group (so reassignments are visible)
+    // SOLVE MISTAKES — every CPS record in the date range, attributed
+    // to the SOLVER (cps.updated_by), with the current coordinator + the
+    // solver's dept also surfaced for context. Orphans = records with
+    // NULL updated_by (legacy/import without a known solver).
     // ═══════════════════════════════════════════════════════════════
+    const deptFilterSolver = department && department !== 'All'
+      ? ` AND u.department = '${department.replace(/'/g, "''")}'`
+      : '';
+
     const solveMistakesAll = db.prepare(`
       SELECT cps.id, cps.group_name, cps.problem_type, cps.status,
-             cps.updated_at, b.coordinators AS current_coordinator,
-             b.dept_type
+             cps.updated_at, cps.updated_by,
+             u.full_name AS solver_name,
+             u.department AS solver_dept,
+             b.coordinators AS current_coordinator,
+             b.dept_type AS current_batch_dept
       FROM code_problem_status cps
+      LEFT JOIN users u ON u.id = cps.updated_by
       LEFT JOIN batches b ON b.group_name = cps.group_name${lineB}
       WHERE cps.status IN ('resolved','wont_repeat','exception')
-        AND date(cps.updated_at) BETWEEN '${from}' AND '${to}'${lineCps}${deptFilterB}
+        AND date(cps.updated_at) BETWEEN '${from}' AND '${to}'${lineCps}${deptFilterSolver}
       ORDER BY cps.updated_at DESC
     `).all();
 
-    // CPS records that have NO matching batch (orphaned / coordinator removed)
-    const solveMistakesOrphans = solveMistakesAll.filter(r => !r.current_coordinator);
+    // Orphans = NULL updated_by (no known solver)
+    const solveMistakesOrphans = solveMistakesAll.filter(r => !r.updated_by);
 
-    // CPS records grouped by coordinator currently assigned
-    const solveMistakesByCoord = {};
+    // CPS records grouped by SOLVER (the agent who actually clicked resolve)
+    const solveMistakesBySolver = {};
     solveMistakesAll.forEach(r => {
-      const k = r.current_coordinator || '(NO COORDINATOR — orphan)';
-      solveMistakesByCoord[k] = (solveMistakesByCoord[k] || 0) + 1;
+      const k = r.solver_name || '(NULL updated_by — unattributed)';
+      solveMistakesBySolver[k] = (solveMistakesBySolver[k] || 0) + 1;
     });
 
     // ═══════════════════════════════════════════════════════════════
@@ -3535,10 +3554,12 @@ router.get('/quality-diagnostic', (req, res) => {
       part2ByCoord[k] = (part2ByCoord[k] || 0) + 1;
     });
 
-    // Aggregated dept-level totals
+    // Aggregated dept-level totals — for Solve Mistakes, dept comes from the
+    // SOLVER's registered department (not the batch dept_type), since solver
+    // is now the source of truth for attribution.
     const deptTotals = {};
     [...solveMistakesAll].forEach(r => {
-      const d = r.dept_type || '(NULL DEPT)';
+      const d = r.solver_dept || '(NULL DEPT — orphan)';
       if (!deptTotals[d]) deptTotals[d] = { solve_mistakes: 0, main_absent_p1: 0, main_absent_p2: 0 };
       deptTotals[d].solve_mistakes++;
     });
@@ -3569,9 +3590,10 @@ router.get('/quality-diagnostic', (req, res) => {
       solve_mistakes: {
         total: solveMistakesAll.length,
         orphans_count: solveMistakesOrphans.length,
-        by_coordinator: solveMistakesByCoord,
+        by_solver: solveMistakesBySolver,         // ← new: attribution by solver
+        by_coordinator: solveMistakesBySolver,    // ← keep alias for backward-compat with old UI
         records: solveMistakesAll,
-        orphan_records: solveMistakesOrphans, // CPS where batch has no coordinator
+        orphan_records: solveMistakesOrphans,     // CPS with NULL updated_by
       },
 
       main_absent: {
