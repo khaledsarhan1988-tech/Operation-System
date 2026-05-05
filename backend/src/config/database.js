@@ -143,9 +143,14 @@ class PreparedStatement {
 }
 
 function flattenParams(args) {
+  let arr;
   if (args.length === 0) return [];
-  if (args.length === 1 && Array.isArray(args[0])) return args[0];
-  return args;
+  if (args.length === 1 && Array.isArray(args[0])) arr = args[0];
+  else arr = Array.from(args);
+  // sql.js bind() throws on undefined values (its internal switch has no case
+  // for "undefined"). Coerce them to null so callers can safely pass optional
+  // fields straight from req.body without remembering to default each one.
+  return arr.map(v => v === undefined ? null : v);
 }
 
 // ─── DATABASE WRAPPER ─────────────────────────────────────────────────────────
