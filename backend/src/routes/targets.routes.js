@@ -9,10 +9,88 @@ const { lineFilter } = require('../utils/lineFilter');
 const router = express.Router();
 router.use(authenticate, requireRole('admin'));
 
+// ─── PERIOD HELPERS ────────────────────────────────────────────────────────
+function pad(n) { return String(n).padStart(2, '0'); }
+function monthRange(year, month) {
+  const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return {
+    start: `${year}-${pad(month)}-01`,
+    end:   `${year}-${pad(month)}-${pad(last)}`,
+  };
+}
+function monthLabel(year, month) {
+  const names = ['', 'Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${names[month]} ${year}`;
+}
+function periodFromEffectiveFrom(effective_from) {
+  // Treat the target as covering the calendar month that effective_from falls in.
+  const [y, m] = effective_from.split('-').map(Number);
+  const range = monthRange(y, m);
+  return {
+    period_year:  y,
+    period_month: m,
+    period_start: range.start,
+    period_end:   range.end,
+    period_label: monthLabel(y, m),
+  };
+}
+
+function pullActualForAgent(snap, agent_name) {
+  if (!snap) return null;
+  let rows;
+  try { rows = JSON.parse(snap.rows_json || '[]'); }
+  catch { rows = []; }
+  const target = String(agent_name).trim().toLowerCase();
+  const r = rows.find(x => String(x.agent_name || '').trim().toLowerCase() === target);
+  if (!r) return null;
+  return {
+    main_absent_count: r.main_absent_count ?? 0,
+    main_expected:     r.main_expected_count ?? 0,
+    main_rate:         r.main_absent_rate ?? 0,
+    zoom_absent_count: r.zoom_absent_count ?? 0,
+    zoom_expected:     r.zoom_expected_count ?? 0,
+    zoom_rate:         r.zoom_absent_rate ?? 0,
+  };
+}
+function pullActualForDept(snap, dept_type) {
+  if (!snap) return null;
+  let depts;
+  try { depts = JSON.parse(snap.dept_averages_json || '[]'); }
+  catch { depts = []; }
+  const d = depts.find(x => x.department === dept_type);
+  if (!d) return null;
+  return {
+    main_absent_count: d.mainAbsent ?? 0,
+    main_expected:     d.mainExpected ?? 0,
+    main_rate:         d.mainRate ?? 0,
+    zoom_absent_count: d.zoomAbsent ?? 0,
+    zoom_expected:     d.zoomExpected ?? 0,
+    zoom_rate:         d.zoomRate ?? 0,
+  };
+}
+function findOfficialSnapshotForPeriod(line, period_start, period_end) {
+  return db.prepare(`
+    SELECT id, snapshot_label, from_date, to_date, rows_json, dept_averages_json
+    FROM quality_report_snapshots
+    WHERE is_official = 1 AND line = ?
+      AND from_date = ? AND to_date = ?
+    ORDER BY frozen_at DESC LIMIT 1
+  `).get(line, period_start, period_end);
+}
+function computeStatus(actualMain, actualZoom, targetMain, targetZoom) {
+  const mainMet = actualMain <= targetMain;
+  const zoomMet = actualZoom <= targetZoom;
+  if (mainMet && zoomMet) return 'met';
+  if (!mainMet && !zoomMet) return 'missed';
+  return 'partial';
+}
+
+// ─── ROUTES ────────────────────────────────────────────────────────────────
+
 // GET /api/admin/targets
-// Returns all targets, optionally filtered by agent or department.
+// Query: ?agent= ?department= ?mode=active|history (default: all)
 router.get('/', (req, res) => {
-  const { agent, department } = req.query;
+  const { agent, department, mode } = req.query;
   const line = lineFilter(req);
 
   const params = [];
@@ -26,10 +104,22 @@ router.get('/', (req, res) => {
     where += ' AND t.department = ?';
     params.push(department);
   }
+  if (mode === 'active') {
+    where += " AND t.status = 'active'";
+  } else if (mode === 'history') {
+    where += " AND t.status IN ('met','missed','partial')";
+  }
+
   const rows = db.prepare(`
     SELECT t.id, t.agent_name, t.department, t.line,
            t.target_completion, t.target_followup, t.target_fix, t.target_overall,
            t.target_main_absent_rate, t.target_zoom_absent_rate, t.bonus_points,
+           t.period_year, t.period_month, t.period_start, t.period_end, t.period_label,
+           t.status,
+           t.actual_main_absent_rate, t.actual_zoom_absent_rate,
+           t.actual_main_absent_count, t.actual_main_expected,
+           t.actual_zoom_absent_count, t.actual_zoom_expected,
+           t.evaluated_at, t.bonus_awarded,
            t.effective_from, t.set_at, t.notes,
            u.full_name AS set_by_name,
            CASE
@@ -46,7 +136,7 @@ router.get('/', (req, res) => {
         WHEN t.department IS NOT NULL THEN 1
         ELSE 2
       END,
-      t.effective_from DESC, t.set_at DESC
+      t.period_end DESC, t.effective_from DESC, t.set_at DESC
   `).all(...params);
   return res.json(rows);
 });
@@ -173,19 +263,23 @@ router.post('/', (req, res) => {
   if (!Number.isFinite(bonus) || bonus < 0 || bonus > 100) bonus = 5;
 
   const line = lineFilter(req) || 'Ahmed Hassan';
+  const period = periodFromEffectiveFrom(effective_from);
   const r = db.prepare(`
     INSERT INTO employee_targets
       (agent_name, department, line,
        target_main_absent_rate, target_zoom_absent_rate, bonus_points,
-       effective_from, set_by, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       effective_from, set_by, notes,
+       period_year, period_month, period_start, period_end, period_label, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
   `).run(
     agent_name || null,
     (department && department !== 'All') ? department : null,
     line, tMain, tZoom, bonus,
     effective_from,
     req.user?.id,
-    notes || null
+    notes || null,
+    period.period_year, period.period_month,
+    period.period_start, period.period_end, period.period_label,
   );
   saveNow();
   // Audit the target change (fail-soft — don't break parent if audit fails)
@@ -232,7 +326,11 @@ router.put('/:id', (req, res) => {
         fields.push(`${col} = ?`); params.push(n);
       } else if (k === 'effective_from') {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return res.status(400).json({ error: 'effective_from must be YYYY-MM-DD' });
-        fields.push(`${col} = ?`); params.push(v);
+        const p = periodFromEffectiveFrom(v);
+        fields.push('effective_from = ?', 'period_year = ?', 'period_month = ?',
+                    'period_start = ?', 'period_end = ?', 'period_label = ?');
+        params.push(v, p.period_year, p.period_month, p.period_start, p.period_end, p.period_label);
+        continue;
       } else {
         fields.push(`${col} = ?`); params.push(v || null);
       }
@@ -255,6 +353,164 @@ router.put('/:id', (req, res) => {
     );
   } catch (_) {}
   return res.json({ id });
+});
+
+// POST /api/admin/targets/:id/evaluate
+// Looks up the target's period in the latest matching Official quality
+// snapshot, persists actual_* + status, and (if met) awards bonus points
+// to the agent's monthly_snapshots row via individual_target_bonus.
+router.post('/:id/evaluate', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'Invalid id' });
+
+  const t = db.prepare(`SELECT * FROM employee_targets WHERE id = ?`).get(id);
+  if (!t) return res.status(404).json({ error: 'Target not found' });
+  if (!t.period_start || !t.period_end) {
+    return res.status(400).json({ error: 'Target has no period — recreate it via the form.' });
+  }
+  if (t.target_main_absent_rate == null || t.target_zoom_absent_rate == null) {
+    return res.status(400).json({ error: 'Target is missing absence rates — only absence-style targets can be evaluated.' });
+  }
+
+  try {
+    const snap = findOfficialSnapshotForPeriod(t.line, t.period_start, t.period_end);
+    if (!snap) {
+      return res.status(400).json({
+        error: 'snapshot_required',
+        message: `يجب حفظ Snapshot Official من تقارير الجودة يغطي الفترة (${t.period_start} → ${t.period_end}) قبل التقييم.`,
+      });
+    }
+
+    let actual = null;
+    if (t.agent_name) {
+      actual = pullActualForAgent(snap, t.agent_name);
+      if (!actual) {
+        return res.status(400).json({
+          error: 'agent_not_in_snapshot',
+          message: `الموظف "${t.agent_name}" مش موجود في Snapshot ${snap.snapshot_label}.`,
+        });
+      }
+    } else if (t.department) {
+      actual = pullActualForDept(snap, t.department);
+      if (!actual) {
+        return res.status(400).json({
+          error: 'dept_not_in_snapshot',
+          message: `القسم "${t.department}" مش موجود في Snapshot ${snap.snapshot_label}.`,
+        });
+      }
+    } else {
+      // global — sum across all dept_averages
+      let depts;
+      try { depts = JSON.parse(snap.dept_averages_json || '[]'); }
+      catch { depts = []; }
+      const totalMA = depts.reduce((s, d) => s + (d.mainAbsent ?? 0), 0);
+      const totalME = depts.reduce((s, d) => s + (d.mainExpected ?? 0), 0);
+      const totalZA = depts.reduce((s, d) => s + (d.zoomAbsent ?? 0), 0);
+      const totalZE = depts.reduce((s, d) => s + (d.zoomExpected ?? 0), 0);
+      actual = {
+        main_absent_count: totalMA,
+        main_expected:     totalME,
+        main_rate:         totalME > 0 ? Math.round((totalMA / totalME) * 100) : 0,
+        zoom_absent_count: totalZA,
+        zoom_expected:     totalZE,
+        zoom_rate:         totalZE > 0 ? Math.round((totalZA / totalZE) * 100) : 0,
+      };
+    }
+
+    const status = computeStatus(
+      actual.main_rate, actual.zoom_rate,
+      t.target_main_absent_rate, t.target_zoom_absent_rate,
+    );
+
+    db.prepare(`
+      UPDATE employee_targets SET
+        actual_main_absent_rate  = ?,
+        actual_zoom_absent_rate  = ?,
+        actual_main_absent_count = ?,
+        actual_main_expected     = ?,
+        actual_zoom_absent_count = ?,
+        actual_zoom_expected     = ?,
+        status                   = ?,
+        evaluated_at             = datetime('now', '+2 hours'),
+        evaluated_by             = ?
+      WHERE id = ?
+    `).run(
+      actual.main_rate, actual.zoom_rate,
+      actual.main_absent_count, actual.main_expected,
+      actual.zoom_absent_count, actual.zoom_expected,
+      status,
+      req.user?.id || null,
+      id,
+    );
+
+    // Award bonus on 'met' (only once per target)
+    let bonusGiven = 0;
+    if (status === 'met' && !t.bonus_awarded && t.agent_name) {
+      const result = db.prepare(`
+        UPDATE monthly_snapshots
+        SET individual_target_bonus = individual_target_bonus + ?
+        WHERE agent_name = ? AND year = ? AND month = ? AND line = ?
+      `).run(t.bonus_points, t.agent_name, t.period_year, t.period_month, t.line);
+      bonusGiven = result.changes;
+      db.prepare(`UPDATE employee_targets SET bonus_awarded = 1 WHERE id = ?`).run(id);
+    }
+
+    saveNow();
+
+    // Audit
+    try {
+      db.prepare(`INSERT INTO snapshot_audit_log
+        (action, agent_name, details, user_id, user_name, line)
+        VALUES ('target_change', ?, ?, ?, ?, ?)`).run(
+        t.agent_name || t.department || 'global',
+        JSON.stringify({ op: 'evaluate', id, status, actual_main: actual.main_rate, actual_zoom: actual.zoom_rate, bonus_given: bonusGiven }),
+        req.user?.id, req.user?.full_name, t.line,
+      );
+    } catch (_) {}
+
+    return res.json({
+      success: true,
+      status,
+      actual_main_rate: actual.main_rate,
+      actual_zoom_rate: actual.zoom_rate,
+      bonus_given: bonusGiven,
+    });
+  } catch (err) {
+    console.error('[targets/evaluate]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/targets/history
+// Query: ?dept_type= ?period_type=monthly (only monthly supported today)
+// Returns evaluated targets + summary counts for the History tab.
+router.get('/history', (req, res) => {
+  const { dept_type } = req.query;
+  const line = lineFilter(req);
+
+  const conds = ["status IN ('met','missed','partial')"];
+  const params = [];
+  if (line)      { conds.push('line = ?');       params.push(line); }
+  if (dept_type) { conds.push('department = ?'); params.push(dept_type); }
+
+  const rows = db.prepare(`
+    SELECT id, agent_name, department, line,
+           target_main_absent_rate, target_zoom_absent_rate, bonus_points,
+           actual_main_absent_rate, actual_zoom_absent_rate,
+           period_year, period_month, period_start, period_end, period_label,
+           status, evaluated_at, bonus_awarded,
+           CASE
+             WHEN agent_name IS NOT NULL THEN 'agent'
+             WHEN department IS NOT NULL THEN 'department'
+             ELSE 'global'
+           END AS scope
+    FROM employee_targets
+    WHERE ${conds.join(' AND ')}
+    ORDER BY period_end DESC, evaluated_at DESC
+    LIMIT 500
+  `).all(...params);
+
+  return res.json(rows);
 });
 
 // DELETE /api/admin/targets/:id

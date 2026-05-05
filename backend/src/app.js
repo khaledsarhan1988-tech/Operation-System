@@ -615,6 +615,33 @@ initDb().then(db => {
     if (!etCols.includes('bonus_points')) {
       db._raw.run(`ALTER TABLE employee_targets ADD COLUMN bonus_points INTEGER NOT NULL DEFAULT 5`);
     }
+    // Period + evaluation columns — mirror the structure used by
+    // department_quality_goals so the same "evaluate at end of period"
+    // workflow applies to per-employee targets too.
+    const evalCols = [
+      ['period_year',                'INTEGER'],
+      ['period_month',               'INTEGER'],
+      ['period_start',               'TEXT'],
+      ['period_end',                 'TEXT'],
+      ['period_label',               'TEXT'],
+      ['status',                     "TEXT NOT NULL DEFAULT 'active'"],
+      ['actual_main_absent_rate',    'INTEGER'],
+      ['actual_zoom_absent_rate',    'INTEGER'],
+      ['actual_main_absent_count',   'INTEGER'],
+      ['actual_main_expected',       'INTEGER'],
+      ['actual_zoom_absent_count',   'INTEGER'],
+      ['actual_zoom_expected',       'INTEGER'],
+      ['evaluated_at',               'TEXT'],
+      ['evaluated_by',               'INTEGER REFERENCES users(id) ON DELETE SET NULL'],
+      ['bonus_awarded',              'INTEGER NOT NULL DEFAULT 0'],
+    ];
+    for (const [name, def] of evalCols) {
+      if (!etCols.includes(name)) {
+        db._raw.run(`ALTER TABLE employee_targets ADD COLUMN ${name} ${def}`);
+      }
+    }
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_targets_period ON employee_targets(period_year, period_month)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_targets_status ON employee_targets(status)`);
 
     db._raw.run(`CREATE TABLE IF NOT EXISTS snapshot_notes (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -812,6 +839,11 @@ initDb().then(db => {
       db._raw.run(`ALTER TABLE monthly_snapshots ADD COLUMN dept_goal_bonus INTEGER NOT NULL DEFAULT 0`);
       saveNow();
       console.log('✅ Migration: monthly_snapshots.dept_goal_bonus added');
+    }
+    if (!cols.includes('individual_target_bonus')) {
+      db._raw.run(`ALTER TABLE monthly_snapshots ADD COLUMN individual_target_bonus INTEGER NOT NULL DEFAULT 0`);
+      saveNow();
+      console.log('✅ Migration: monthly_snapshots.individual_target_bonus added');
     }
   } catch (e) {
     console.error('monthly_snapshots.dept_goal_bonus migration error:', e.message);
