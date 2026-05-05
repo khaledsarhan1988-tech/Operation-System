@@ -76,7 +76,6 @@ const REPORT_LINKS = [
   { to: '/admin/reports/attendance-absence',    label: 'nav.attendanceReports',  icon: Activity,      color: 'teal',    management: 'Customer Services', sub: true },
   { to: '/admin/reports/education',             label: 'nav.educationReports',   icon: GraduationCap, color: 'violet',  management: 'Education' },
   { to: '/admin/reports/quality',               label: 'nav.qualityReports',     icon: ShieldCheck,   color: 'green',   management: 'Quality' },
-  { to: '/admin/reports/quality-diagnostic',    label: 'nav.qualityDiagnostic',  icon: Activity,      color: 'amber',   management: 'Quality', sub: true },
   { to: '/admin/reports/quality-snapshots',     label: 'nav.qualitySnapshots',   icon: Snowflake,     color: 'cyan',    management: 'Quality', sub: true },
   { to: '/admin/reports/dept-goals',             label: 'nav.deptGoals',          icon: Goal,          color: 'emerald', management: 'All', sub: true },
 ];
