@@ -173,21 +173,30 @@ function TargetEditor({ open, onClose, target, onSuccess }) {
           {/* Baseline banner — shows the source snapshot for this agent/dept */}
           {baselineKey && (
             <div className={`rounded-xl p-3 text-xs font-bold border ${
-              baseline?.found
+              baseline?.found && !baseline?.fallback
                 ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                : baseline?.found && baseline?.fallback
+                ? 'bg-blue-50 border-blue-200 text-blue-800'
                 : 'bg-amber-50 border-amber-200 text-amber-800'
             }`}>
-              {baseline?.found ? (
+              {baseline?.found && !baseline?.fallback ? (
                 <>
                   📊 القاعدي من <strong>{baseline.snapshot_label}</strong> ({baseline.from_date} → {baseline.to_date}):{' '}
                   غياب أساسي <strong>{baseline.main_absent_rate}%</strong> · زووم <strong>{baseline.zoom_absent_rate}%</strong>
                 </>
+              ) : baseline?.found && baseline?.fallback === 'department_average' ? (
+                <>
+                  ℹ️ موظف جديد — لسه مفيش قاعدي فردي ليه. استخدمنا متوسط قسم{' '}
+                  <strong>{baseline.department}</strong> كمرجع من <strong>{baseline.snapshot_label}</strong>:{' '}
+                  غياب أساسي <strong>{baseline.main_absent_rate}%</strong> · زووم <strong>{baseline.zoom_absent_rate}%</strong>.
+                  حدّد أهداف تساعد على تحقيق هدف القسم.
+                </>
               ) : baseline?.reason === 'no_official_snapshot' ? (
-                <>⚠ مفيش Snapshot Official محفوظة. ابعت Snapshot Official من صفحة "تقارير الجودة" الأول.</>
+                <>⚠ مفيش Snapshot Official محفوظة. ممكن تحدد الأهداف يدوياً، أو تحفظ Snapshot Official من تقارير الجودة الأول.</>
               ) : baseline?.reason === 'agent_not_in_snapshot' ? (
-                <>⚠ الموظف ده مش موجود في آخر Snapshot Official ({baseline.snapshot_label}).</>
+                <>ℹ️ موظف جديد — مش موجود في آخر Snapshot Official ولا قسمه فيها. حدّد الأهداف يدوياً.</>
               ) : baseline?.reason === 'dept_not_in_snapshot' ? (
-                <>⚠ القسم ده مش موجود في آخر Snapshot Official ({baseline.snapshot_label}).</>
+                <>⚠ القسم ده مش موجود في آخر Snapshot Official ({baseline.snapshot_label}). حدّد الأهداف يدوياً.</>
               ) : (
                 <>جاري تحميل القاعدي...</>
               )}

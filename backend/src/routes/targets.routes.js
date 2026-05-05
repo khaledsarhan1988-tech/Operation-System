@@ -78,21 +78,48 @@ router.get('/baseline', (req, res) => {
     catch { rows = []; }
     const target = String(agent_name).trim().toLowerCase();
     const row = rows.find(r => String(r.agent_name || '').trim().toLowerCase() === target);
-    if (!row) {
+    if (row) {
       return res.json({
-        found: false,
-        reason: 'agent_not_in_snapshot',
+        found: true,
+        snapshot_id: snap.id,
         snapshot_label: snap.snapshot_label,
+        from_date: snap.from_date,
+        to_date: snap.to_date,
+        main_absent_rate: row.main_absent_rate ?? 0,
+        zoom_absent_rate: row.zoom_absent_rate ?? 0,
       });
     }
+
+    // Agent isn't in the snapshot — likely new hire. Fall back to their
+    // department's average so the admin still has a sensible reference.
+    const u = db.prepare(`
+      SELECT department FROM users
+      WHERE TRIM(LOWER(full_name)) = TRIM(LOWER(?)) AND line = ?
+      LIMIT 1
+    `).get(agent_name, line);
+
+    let depts;
+    try { depts = JSON.parse(snap.dept_averages_json || '[]'); }
+    catch { depts = []; }
+    const d = u?.department ? depts.find(x => x.department === u.department) : null;
+    if (d) {
+      return res.json({
+        found: true,
+        fallback: 'department_average',
+        department: u.department,
+        snapshot_id: snap.id,
+        snapshot_label: snap.snapshot_label,
+        from_date: snap.from_date,
+        to_date: snap.to_date,
+        main_absent_rate: d.mainRate ?? 0,
+        zoom_absent_rate: d.zoomRate ?? 0,
+      });
+    }
+
     return res.json({
-      found: true,
-      snapshot_id: snap.id,
+      found: false,
+      reason: 'agent_not_in_snapshot',
       snapshot_label: snap.snapshot_label,
-      from_date: snap.from_date,
-      to_date: snap.to_date,
-      main_absent_rate: row.main_absent_rate ?? 0,
-      zoom_absent_rate: row.zoom_absent_rate ?? 0,
     });
   }
 
