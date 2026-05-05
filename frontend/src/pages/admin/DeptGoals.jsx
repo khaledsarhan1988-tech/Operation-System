@@ -17,9 +17,9 @@ import ModernButton from '../../components/ui/ModernButton';
 
 const DEPTS = ['General', 'Private', 'Semi'];
 const DEPT_COLORS = {
-  General: { bg: 'bg-blue-50',   bd: 'border-blue-200',   fg: 'text-blue-700',   chip: 'bg-blue-100 text-blue-700' },
-  Private: { bg: 'bg-violet-50', bd: 'border-violet-200', fg: 'text-violet-700', chip: 'bg-violet-100 text-violet-700' },
-  Semi:    { bg: 'bg-orange-50', bd: 'border-orange-200', fg: 'text-orange-700', chip: 'bg-orange-100 text-orange-700' },
+  General: { bg: 'bg-blue-50',   bd: 'border-blue-200',   fg: 'text-blue-700',   chip: 'bg-blue-100 text-blue-700',     header: 'from-sky-500 to-blue-600' },
+  Private: { bg: 'bg-violet-50', bd: 'border-violet-200', fg: 'text-violet-700', chip: 'bg-violet-100 text-violet-700', header: 'from-violet-500 to-fuchsia-600' },
+  Semi:    { bg: 'bg-orange-50', bd: 'border-orange-200', fg: 'text-orange-700', chip: 'bg-orange-100 text-orange-700', header: 'from-orange-500 to-amber-600' },
 };
 
 export default function DeptGoals() {
@@ -127,18 +127,11 @@ function ActiveGoalsTab() {
 function ActiveGoalCard({ goal, onEvaluate, onDelete, busy }) {
   const c = DEPT_COLORS[goal.dept_type] || DEPT_COLORS.General;
   const periodOver = goal.days_remaining < 0;
-  const atRisk     = !periodOver && goal.live_status === 'missed';
-  const onTrack    = goal.live_status === 'met';
-
-  const headerTone = onTrack    ? 'from-emerald-500 to-teal-500'
-                   : atRisk     ? 'from-rose-500 to-red-500'
-                   : periodOver ? 'from-gray-500 to-gray-600'
-                                : 'from-amber-500 to-orange-500';
 
   return (
     <div className={`bg-white border ${c.bd} rounded-2xl shadow-sm overflow-hidden`}>
-      {/* Header */}
-      <div className={`bg-gradient-to-l ${headerTone} text-white px-4 py-3 flex items-center gap-2`}>
+      {/* Header — colored by department for at-a-glance distinction */}
+      <div className={`bg-gradient-to-l ${c.header} text-white px-4 py-3 flex items-center gap-2`}>
         <Target size={16} />
         <div className="flex-1">
           <div className="flex items-center gap-2 text-sm font-black">
