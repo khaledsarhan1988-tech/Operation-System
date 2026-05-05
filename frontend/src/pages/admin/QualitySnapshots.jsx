@@ -40,7 +40,7 @@ export default function QualitySnapshots() {
 
   const handleToggleOfficial = (snap) => {
     const newVal = !snap.is_official;
-    if (newVal && window.confirm('تفعيل "Official" هيخلى النسخة دى المصدر الرسمى لتحديات الأقسام، وأى نسخة رسمية تانية لنفس الفترة هتتحول لمسوّدة. متأكد؟')) {
+    if (newVal && window.confirm('تفعيل "Official" هيخلى النسخة دى المصدر الرسمى لمعايير الأداء، وأى نسخة رسمية تانية لنفس الفترة هتتحول لمسوّدة. متأكد؟')) {
       officialMu.mutate({ id: snap.id, is_official: 1 });
     } else if (!newVal && window.confirm('تحويل النسخة من Official لمسوّدة؟ الأهداف اللى مرتبطة بيها هتفقد مصدر بياناتها.')) {
       officialMu.mutate({ id: snap.id, is_official: 0 });

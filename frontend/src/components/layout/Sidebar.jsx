@@ -43,7 +43,6 @@ const AGENT_LINKS = [
   { to: '/agent/pipeline',           label: 'nav.clientPipeline',   icon: Kanban,          color: 'emerald' },
   { to: '/agent/tasks',              label: 'nav.myTasks',          icon: ClipboardList,   color: 'indigo' },
   { to: '/agent/my-progression',     label: 'nav.myProgression',    icon: TrendingUp,      color: 'violet' },
-  { to: '/agent/reports/dept-goals', label: 'nav.deptGoals',        icon: Goal,            color: 'emerald' },
 ];
 
 const ENROLLMENT_LINKS = [
@@ -68,7 +67,6 @@ const LEADER_LINKS = [
   { type: 'section', label: 'nav.reportsSection' },
   { to: '/leader/reports/fix-report',           label: 'nav.fixReports',          icon: FileText, color: 'orange' },
   { to: '/leader/reports/attendance-absence',   label: 'nav.attendanceReports',   icon: Activity, color: 'teal' },
-  { to: '/leader/reports/dept-goals',           label: 'nav.deptGoals',           icon: Goal,     color: 'emerald' },
 ];
 
 const REPORT_LINKS = [
@@ -78,7 +76,6 @@ const REPORT_LINKS = [
   { to: '/admin/reports/education',             label: 'nav.educationReports',   icon: GraduationCap, color: 'violet',  management: 'Education' },
   { to: '/admin/reports/quality',               label: 'nav.qualityReports',     icon: ShieldCheck,   color: 'green',   management: 'Quality' },
   { to: '/admin/reports/quality-snapshots',     label: 'nav.qualitySnapshots',   icon: Snowflake,     color: 'cyan',    management: 'Quality', sub: true },
-  { to: '/admin/reports/dept-goals',             label: 'nav.deptGoals',          icon: Goal,          color: 'emerald', management: 'All', sub: true },
 ];
 
 const managementMap = {

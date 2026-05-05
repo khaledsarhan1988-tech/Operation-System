@@ -33,7 +33,6 @@ import EducationReports from './pages/admin/EducationReports';
 import QualityReports from './pages/admin/QualityReports';
 import QualityDiagnostic from './pages/admin/QualityDiagnostic';
 import QualitySnapshots from './pages/admin/QualitySnapshots';
-import DeptGoals from './pages/admin/DeptGoals';
 import DbStatus from './pages/admin/DbStatus';
 import TeamPage from './pages/admin/TeamPage';
 import DashboardDetail from './pages/admin/DashboardDetail';
@@ -72,7 +71,6 @@ const router = createBrowserRouter([
       { path: 'code-problems',      element: <AgentCodeProblems /> },
       { path: 'pipeline',           element: <Pipeline /> },
       { path: 'my-progression',     element: <MyProgression /> },
-      { path: 'reports/dept-goals', element: <DeptGoals /> },
     ],
   },
 
@@ -99,7 +97,6 @@ const router = createBrowserRouter([
       { path: 'reports/quality',              element: <QualityReports /> },
       { path: 'reports/fix-report',           element: <FixReport /> },
       { path: 'reports/attendance-absence',   element: <AttendanceAbsenceReport /> },
-      { path: 'reports/dept-goals',           element: <DeptGoals /> },
     ],
   },
 
@@ -120,7 +117,6 @@ const router = createBrowserRouter([
       { path: 'reports/quality',              element: <QualityReports /> },
       { path: 'reports/quality-diagnostic',   element: <QualityDiagnostic /> },
       { path: 'reports/quality-snapshots',    element: <QualitySnapshots /> },
-      { path: 'reports/dept-goals',           element: <DeptGoals /> },
       { path: 'db-status',                     element: <DbStatus /> },
       { path: 'reports/fix-report',           element: <FixReport /> },
       { path: 'reports/attendance-absence',   element: <AttendanceAbsenceReport /> },

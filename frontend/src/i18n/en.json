@@ -48,7 +48,6 @@
     "qualityReports": "Quality Reports",
     "qualityDiagnostic": "Quality Diagnostic",
     "qualitySnapshots": "Saved Snapshots",
-    "deptGoals": "Department Challenges",
     "dbStatus": "Database Status"
   },
   "auth": {
