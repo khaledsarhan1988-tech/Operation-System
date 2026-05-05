@@ -87,7 +87,11 @@ async function exportRemarks({ from, to, agent, status, line }) {
   if (line)   { query += ' AND line = ?'; params.push(line); }
   if (from)   { query += ' AND added_at >= ?'; params.push(from); }
   if (to)     { query += ' AND added_at <= ?'; params.push(to); }
-  if (agent)  { query += ' AND assigned_to LIKE ?'; params.push(`%${agent}%`); }
+  if (agent)  {
+    // Exact-token match so "Alaa" never matches "Alaa wael"
+    query += ` AND (',' || REPLACE(REPLACE(assigned_to, ', ', ','), ' ,', ',') || ',') LIKE ? COLLATE NOCASE`;
+    params.push(`%,${String(agent).trim()},%`);
+  }
   if (status) { query += ' AND status = ?'; params.push(status); }
   query += ' ORDER BY added_at DESC';
 

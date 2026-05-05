@@ -544,7 +544,7 @@ router.get('/dashboard', (req, res) => {
   const deptB       = buildDeptFilter('b', department);
   const empFilter   = buildCoordFilter('batches', employee);
   const empBFilter  = buildCoordFilter('b', employee);
-  const empRemark   = employee ? ` AND remarks.assigned_to LIKE '%${employee.replace(/'/g,"''")}%'` : '';
+  const empRemark   = employee ? ` AND ${nameInListInline('remarks.assigned_to', employee)}` : '';
 
   // Remarks dept filter — coordinator-first (Fix 16) + team_members fallback (Fix 9).
   // Centralized helper ensures dashboard KPIs and /remarks-list match exactly.
@@ -1085,8 +1085,8 @@ router.get('/absent-side-list', (req, res) => {
       : activeFrom ? ` AND a.date >= '${activeFrom}'`
       : activeTo   ? ` AND a.date <= '${activeTo}'` : '';
     const azSearchFilter = search ? ` AND (a.group_name LIKE '%${escapeLike(search)}%' ESCAPE '\\' OR a.student_name LIKE '%${escapeLike(search)}%' ESCAPE '\\' OR a.phone LIKE '%${escapeLike(search)}%' ESCAPE '\\')` : '';
-    const azCoordFilter  = coordinator ? ` AND b.coordinators LIKE '%${coordinator.replace(/'/g, "''")}%'` : '';
-    const azEmpFilter    = employee    ? ` AND b.coordinators LIKE '%${employee.replace(/'/g, "''")}%'`    : '';
+    const azCoordFilter  = coordinator ? ` AND ${nameInListInline('b.coordinators', coordinator)}` : '';
+    const azEmpFilter    = employee    ? ` AND ${nameInListInline('b.coordinators', employee)}`    : '';
     const azDeptFilter   = buildDeptFilter('b', activeDept);
 
     const azBaseFrom = `
@@ -1503,16 +1503,18 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
     deptFilter = buildDeptFilter('b', department);
   }
 
-  // If agent: force filter to their own groups using FULL name as one unit (not split by word)
-  // Splitting by word causes cross-agent leakage: "Shrouk Ali" → LIKE '%Ali%' also matches "Ali Moaatz"
+  // If agent: force filter to their own groups using EXACT TOKEN MATCH.
+  // The previous LIKE '%name%' pattern caused cross-agent leakage when one
+  // agent's name was a substring of another's: e.g. "Alaa" matched
+  // "Alaa wael" because "alaa" appeared inside "alaa wael". The
+  // nameInListInline helper wraps the field in commas and matches a
+  // bare ",name," — so multi-word names never alias each other.
   let empFilter;
   if (user.role === 'agent' || user.role === 'enrollment') {
     const userRow = db.prepare('SELECT full_name FROM users WHERE id = ?').get(user.id);
     const fullName = (userRow?.full_name || '').trim();
     if (fullName) {
-      const safe = fullName.replace(/'/g, "''");
-      // Match full name as a complete unit (handles single and multi-coordinator fields)
-      empFilter = ` AND TRIM(LOWER(b.coordinators)) LIKE LOWER('%${safe}%')`;
+      empFilter = ` AND ${nameInListInline('b.coordinators', fullName)}`;
     } else {
       empFilter = ' AND 1=0';
     }
@@ -1957,7 +1959,7 @@ router.get('/team-summary-detail', (req, res) => {
   const { deptF, dateA, dateL, dateR } = tsFilters(req.query);
   const empFBatches = buildCoordFilter('batches', employee);
   const empFB       = buildCoordFilter('b', employee);
-  const empFRemarks = employee ? ` AND assigned_to LIKE '%${escapeLike(employee.replace(/'/g,"''"))}%' ESCAPE '\\'` : '';
+  const empFRemarks = employee ? ` AND ${nameInListInline('assigned_to', employee)}` : '';
 
   try {
     let rows = [];
