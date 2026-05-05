@@ -827,6 +827,17 @@ initDb().then(db => {
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_qrs_frozen_at ON quality_report_snapshots(frozen_at)`);
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_qrs_dates     ON quality_report_snapshots(from_date, to_date)`);
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_qrs_line      ON quality_report_snapshots(line)`);
+
+    // Add is_official toggle — when ON, this snapshot is the authoritative
+    // end-of-period record used as baseline source for Dept Goals.
+    const qrsCols = db._raw.prepare(`PRAGMA table_info(quality_report_snapshots)`).all();
+    const hasIsOfficial = qrsCols.some(c => c.name === 'is_official');
+    if (!hasIsOfficial) {
+      db._raw.run(`ALTER TABLE quality_report_snapshots ADD COLUMN is_official INTEGER NOT NULL DEFAULT 0`);
+      db._raw.run(`CREATE INDEX IF NOT EXISTS idx_qrs_official ON quality_report_snapshots(is_official, from_date, to_date)`);
+      console.log('✅ Migration: quality_report_snapshots.is_official added');
+    }
+
     saveNow();
     console.log('✅ Migration: quality_report_snapshots ready');
   } catch (e) {

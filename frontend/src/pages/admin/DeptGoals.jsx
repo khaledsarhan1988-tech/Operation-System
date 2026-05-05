@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Target, Calendar, Layers, Plus, Save, Trash2, Award, AlertTriangle,
   CheckCircle, XCircle, Clock, TrendingDown, History as HistoryIcon, BarChart3,
-  Activity, X,
+  Activity, X, Pin, Zap,
 } from 'lucide-react';
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -75,6 +75,14 @@ function ActiveGoalsTab() {
     mutationFn: (id) => api.post(`/dept-goals/${id}/evaluate`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['dept-goals'] });
+    },
+    onError: (err) => {
+      const errorBody = err?.response?.data;
+      if (errorBody?.error === 'snapshot_required') {
+        alert(errorBody.message);
+      } else {
+        alert('فشل التقييم: ' + (errorBody?.error || err?.message || 'خطأ غير معروف'));
+      }
     },
   });
 
@@ -406,14 +414,38 @@ function SetGoalTab() {
         {DEPTS.map((dept, i) => {
           const baseline = baselineQueries[i]?.data;
           const c = DEPT_COLORS[dept];
+          const isFromSnapshot = baseline?.source === 'snapshot';
           return (
             <div key={dept} className={`bg-white border ${c.bd} rounded-2xl shadow-sm overflow-hidden`}>
               <div className={`${c.bg} px-4 py-3 border-b ${c.bd}`}>
-                <h3 className={`text-sm font-black ${c.fg}`}>{dept}</h3>
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <h3 className={`text-sm font-black ${c.fg}`}>{dept}</h3>
+                  {baseline && (
+                    isFromSnapshot
+                      ? <span className="inline-flex items-center gap-1 text-[10px] font-black px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 border border-emerald-200">
+                          <Pin size={10} /> Official
+                        </span>
+                      : <span className="inline-flex items-center gap-1 text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200" title={baseline?.warning}>
+                          <Zap size={10} /> Live
+                        </span>
+                  )}
+                </div>
                 {baseline && (
-                  <p className="text-[10px] text-gray-600 font-bold mt-0.5">
-                    قاعدى ({baseline.period_label}): غياب {baseline.main_rate}% / زووم {baseline.zoom_rate}%
-                  </p>
+                  <>
+                    <p className="text-[10px] text-gray-600 font-bold">
+                      قاعدى ({baseline.period_label}): غياب {baseline.main_rate}% / زووم {baseline.zoom_rate}%
+                    </p>
+                    {isFromSnapshot && baseline.snapshot_label && (
+                      <p className="text-[10px] text-emerald-700 font-bold mt-0.5 truncate" title={baseline.snapshot_label}>
+                        📸 {baseline.snapshot_label}
+                      </p>
+                    )}
+                    {!isFromSnapshot && baseline.warning && (
+                      <p className="text-[10px] text-amber-700 font-bold mt-0.5">
+                        ⚠ بيانات live (مفيش snapshot رسمى)
+                      </p>
+                    )}
+                  </>
                 )}
               </div>
               <div className="p-4 space-y-3">

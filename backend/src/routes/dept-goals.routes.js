@@ -224,6 +224,43 @@ function computeDeptAbsenceRates(dept_type, fromDate, toDate, line) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// FETCH RATES FROM OFFICIAL SNAPSHOT
+// Returns the dept's main/zoom rates from a saved official snapshot whose
+// date range exactly matches the requested period. Returns null if none.
+// ──────────────────────────────────────────────────────────────────────────
+function getRatesFromOfficialSnapshot(dept_type, fromDate, toDate, line) {
+  const snap = db.prepare(`
+    SELECT id, snapshot_label, dept_averages_json
+    FROM quality_report_snapshots
+    WHERE is_official = 1
+      AND from_date = ? AND to_date = ?
+      AND line = ?
+      AND department_filter = 'All'
+    ORDER BY frozen_at DESC LIMIT 1
+  `).get(fromDate, toDate, line || 'Ahmed Hassan');
+
+  if (!snap) return null;
+
+  let deptAverages;
+  try { deptAverages = JSON.parse(snap.dept_averages_json || '[]'); }
+  catch { deptAverages = []; }
+
+  const dept = deptAverages.find(d => d.department === dept_type);
+  if (!dept) return null;
+
+  return {
+    main_absent_count: dept.mainAbsent ?? 0,
+    main_expected:     dept.mainExpected ?? 0,
+    main_rate:         dept.mainRate ?? 0,
+    zoom_absent_count: dept.zoomAbsent ?? 0,
+    zoom_expected:     dept.zoomExpected ?? 0,
+    zoom_rate:         dept.zoomRate ?? 0,
+    snapshot_id:       snap.id,
+    snapshot_label:    snap.snapshot_label,
+  };
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // COMPUTE STATUS based on actual vs target
 // ──────────────────────────────────────────────────────────────────────────
 function computeStatus(actualMain, actualZoom, targetMain, targetZoom) {
@@ -255,8 +292,32 @@ router.get('/baseline', (req, res) => {
     const prev = previousPeriod({ period_type, year, month, week, quarter });
     if (!prev) return res.json(null);
     const range = periodRange(prev);
-    const rates = computeDeptAbsenceRates(dept_type, range.start, range.end, line);
+    const lineKey = line || 'Ahmed Hassan';
+
+    // PREFERRED PATH: pull from the official snapshot for the previous period
+    const fromSnap = getRatesFromOfficialSnapshot(dept_type, range.start, range.end, lineKey);
+    if (fromSnap) {
+      return res.json({
+        source: 'snapshot',
+        snapshot_id: fromSnap.snapshot_id,
+        snapshot_label: fromSnap.snapshot_label,
+        main_absent_count: fromSnap.main_absent_count,
+        main_expected:     fromSnap.main_expected,
+        main_rate:         fromSnap.main_rate,
+        zoom_absent_count: fromSnap.zoom_absent_count,
+        zoom_expected:     fromSnap.zoom_expected,
+        zoom_rate:         fromSnap.zoom_rate,
+        period_label: periodLabel(prev),
+        period_start: range.start,
+        period_end:   range.end,
+      });
+    }
+
+    // FALLBACK PATH: live computation when no official snapshot exists
+    const rates = computeDeptAbsenceRates(dept_type, range.start, range.end, lineKey);
     return res.json({
+      source: 'live',
+      warning: 'لا يوجد snapshot رسمى لهذه الفترة — الأرقام محسوبة مباشرة من البيانات الحالية وممكن تتغير لو رفعت Excel جديد. ينصح بحفظ snapshot رسمى لتثبيت الأرقام.',
       ...rates,
       period_label: periodLabel(prev),
       period_start: range.start,
@@ -483,7 +544,24 @@ router.post('/:id/evaluate', adminOnly, (req, res) => {
   if (!g) return res.status(404).json({ error: 'Goal not found' });
 
   try {
-    const rates = computeDeptAbsenceRates(g.dept_type, g.period_start, g.period_end, g.line);
+    // REQUIRE official snapshot for the period before evaluation
+    const fromSnap = getRatesFromOfficialSnapshot(g.dept_type, g.period_start, g.period_end, g.line);
+    if (!fromSnap) {
+      return res.status(400).json({
+        error: 'snapshot_required',
+        message: `يجب حفظ snapshot رسمى (Official) من Quality Report يغطى الفترة (${g.period_start} → ${g.period_end}) قبل التقييم النهائى. اذهب إلى Quality Reports واضبط الفلتر للفترة ده ثم احفظ snapshot وفعّل Official.`,
+        period_start: g.period_start,
+        period_end:   g.period_end,
+      });
+    }
+    const rates = {
+      main_absent_count: fromSnap.main_absent_count,
+      main_expected:     fromSnap.main_expected,
+      main_rate:         fromSnap.main_rate,
+      zoom_absent_count: fromSnap.zoom_absent_count,
+      zoom_expected:     fromSnap.zoom_expected,
+      zoom_rate:         fromSnap.zoom_rate,
+    };
     const status = computeStatus(rates.main_rate, rates.zoom_rate,
                                  g.target_main_absent_rate, g.target_zoom_absent_rate);
 

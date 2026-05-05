@@ -1017,6 +1017,7 @@ function FreezeSnapshotModal({ open, onClose, applied, summary, rows, deptAverag
     : `Quality Report Snapshot`;
   const [label, setLabel] = useState(defaultLabel);
   const [notes, setNotes] = useState('');
+  const [isOfficial, setIsOfficial] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -1025,6 +1026,7 @@ function FreezeSnapshotModal({ open, onClose, applied, summary, rows, deptAverag
     if (open) {
       setLabel(defaultLabel);
       setNotes('');
+      setIsOfficial(false);
       setError('');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1046,6 +1048,7 @@ function FreezeSnapshotModal({ open, onClose, applied, summary, rows, deptAverag
         summary,
         rows,
         dept_averages: deptAverages,
+        is_official: isOfficial,
       });
       onSaved && onSaved();
     } catch (e) {
@@ -1110,6 +1113,30 @@ function FreezeSnapshotModal({ open, onClose, applied, summary, rows, deptAverag
               className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-cyan-500/30 focus:border-cyan-500 resize-none"
               maxLength={500}
             />
+          </div>
+
+          {/* Official toggle */}
+          <div className={`border-2 rounded-xl p-3 transition ${isOfficial ? 'border-emerald-300 bg-emerald-50' : 'border-gray-200 bg-gray-50'}`}>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isOfficial}
+                onChange={e => setIsOfficial(e.target.checked)}
+                className="mt-0.5 w-5 h-5 accent-emerald-600"
+              />
+              <div className="flex-1">
+                <div className="text-sm font-black text-gray-800 flex items-center gap-1.5">
+                  📌 نسخة رسمية لنهاية الفترة (Official End-of-Period)
+                </div>
+                <p className="text-[11px] text-gray-600 mt-1 leading-relaxed">
+                  لما تفعّل ده، النسخة دى هتبقى المصدر الرسمى للأرقام عند:
+                  <br/>• وضع أهداف الأقسام (Baseline)
+                  <br/>• تقييم الأهداف نهاية الفترة (Actual)
+                  <br/>
+                  <span className="text-amber-700 font-bold">⚠ لو فيه نسخة رسمية تانية لنفس الفترة، هتتحول لمسوّدة تلقائياً.</span>
+                </p>
+              </div>
+            </label>
           </div>
 
           {error && (

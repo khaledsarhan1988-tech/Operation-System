@@ -3246,7 +3246,7 @@ router.post('/quality-snapshot', (req, res) => {
   }
 
   const { label, from, to, department, notes,
-          summary, rows, dept_averages } = req.body || {};
+          summary, rows, dept_averages, is_official } = req.body || {};
 
   if (!label || !label.trim()) {
     return res.status(400).json({ error: 'label is required' });
@@ -3264,12 +3264,14 @@ router.post('/quality-snapshot', (req, res) => {
   const line = lineFilter(req);
 
   try {
+    const officialFlag = is_official ? 1 : 0;
+
     const result = db.prepare(`
       INSERT INTO quality_report_snapshots
         (snapshot_label, from_date, to_date, department_filter, line,
          summary_json, rows_json, dept_averages_json, notes,
-         frozen_by, frozen_by_name)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         frozen_by, frozen_by_name, is_official)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       label.trim(),
       from || null, to || null,
@@ -3281,7 +3283,26 @@ router.post('/quality-snapshot', (req, res) => {
       (notes && notes.trim()) || null,
       req.user?.id || null,
       req.user?.full_name || req.user?.username || null,
+      officialFlag,
     );
+
+    // If marked official, demote any other "official" snapshot covering the
+    // same period+line+dept_filter so we never have two official truths.
+    if (officialFlag && from && to) {
+      db.prepare(`
+        UPDATE quality_report_snapshots
+        SET is_official = 0
+        WHERE id != ? AND is_official = 1
+          AND from_date = ? AND to_date = ?
+          AND line = ? AND department_filter = ?
+      `).run(
+        result.lastInsertRowid,
+        from, to,
+        line || 'Ahmed Hassan',
+        department || 'All',
+      );
+    }
+
     if (typeof saveNow === 'function') saveNow();
 
     return res.json({
@@ -3306,12 +3327,45 @@ router.get('/quality-snapshots', (req, res) => {
 
   const rows = db.prepare(`
     SELECT id, snapshot_label, from_date, to_date, department_filter, line,
-           notes, frozen_by, frozen_by_name, frozen_at
+           notes, frozen_by, frozen_by_name, frozen_at, is_official
     FROM quality_report_snapshots${lineFilt}
-    ORDER BY frozen_at DESC LIMIT 500
+    ORDER BY is_official DESC, frozen_at DESC LIMIT 500
   `).all(...params);
 
   return res.json(rows);
+});
+
+// PATCH /api/reports/quality-snapshot/:id/official — admin only, toggle the
+// "Official End-of-Period" flag. When turning ON, demotes any other official
+// snapshot for the same period+line+dept_filter.
+router.patch('/quality-snapshot/:id/official', (req, res) => {
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin role required' });
+  }
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id' });
+
+  const { is_official } = req.body || {};
+  const flag = is_official ? 1 : 0;
+
+  const snap = db.prepare(`SELECT * FROM quality_report_snapshots WHERE id = ?`).get(id);
+  if (!snap) return res.status(404).json({ error: 'Snapshot not found' });
+
+  db.prepare(`UPDATE quality_report_snapshots SET is_official = ? WHERE id = ?`).run(flag, id);
+
+  if (flag && snap.from_date && snap.to_date) {
+    // Demote others
+    db.prepare(`
+      UPDATE quality_report_snapshots
+      SET is_official = 0
+      WHERE id != ? AND is_official = 1
+        AND from_date = ? AND to_date = ?
+        AND line = ? AND department_filter = ?
+    `).run(id, snap.from_date, snap.to_date, snap.line, snap.department_filter);
+  }
+
+  if (typeof saveNow === 'function') saveNow();
+  return res.json({ success: true, is_official: flag });
 });
 
 // GET /api/reports/quality-snapshot/:id — full data for one snapshot
@@ -3336,6 +3390,7 @@ router.get('/quality-snapshot/:id', (req, res) => {
     frozen_by: row.frozen_by,
     frozen_by_name: row.frozen_by_name,
     frozen_at: row.frozen_at,
+    is_official: row.is_official || 0,
     summary: JSON.parse(row.summary_json || '{}'),
     rows: JSON.parse(row.rows_json || '[]'),
     dept_averages: JSON.parse(row.dept_averages_json || '[]'),

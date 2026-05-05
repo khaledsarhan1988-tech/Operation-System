@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Snowflake, Calendar, Clock, User, FileText, Trash2, Eye, X, Wrench,
-  Users, Layers, BookOpen, Video, AlertCircle, UserX, TrendingDown,
+  Users, Layers, BookOpen, Video, AlertCircle, UserX, TrendingDown, Pin, PinOff,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -27,9 +27,23 @@ export default function QualitySnapshots() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['quality-snapshots'] }),
   });
 
+  const officialMu = useMutation({
+    mutationFn: ({ id, is_official }) => api.patch(`/reports/quality-snapshot/${id}/official`, { is_official }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['quality-snapshots'] }),
+  });
+
   const handleDelete = (snap) => {
     if (window.confirm(`متأكد إنك عاوز تمسح النسخة "${snap.snapshot_label}"؟ ده إجراء لا يمكن التراجع عنه.`)) {
       deleteMu.mutate(snap.id);
+    }
+  };
+
+  const handleToggleOfficial = (snap) => {
+    const newVal = !snap.is_official;
+    if (newVal && window.confirm('تفعيل "Official" هيخلى النسخة دى المصدر الرسمى لأهداف الأقسام، وأى نسخة رسمية تانية لنفس الفترة هتتحول لمسوّدة. متأكد؟')) {
+      officialMu.mutate({ id: snap.id, is_official: 1 });
+    } else if (!newVal && window.confirm('تحويل النسخة من Official لمسوّدة؟ الأهداف اللى مرتبطة بيها هتفقد مصدر بياناتها.')) {
+      officialMu.mutate({ id: snap.id, is_official: 0 });
     }
   };
 
@@ -63,6 +77,8 @@ export default function QualitySnapshots() {
               isAdmin={user?.role === 'admin'}
               onView={() => setView({ open: true, id: s.id })}
               onDelete={() => handleDelete(s)}
+              onToggleOfficial={() => handleToggleOfficial(s)}
+              busyOfficial={officialMu.isPending}
             />
           ))}
         </div>
@@ -78,15 +94,21 @@ export default function QualitySnapshots() {
 }
 
 // ─── SNAPSHOT CARD ───────────────────────────────────────────────────────────
-function SnapshotCard({ snap, isAdmin, onView, onDelete }) {
+function SnapshotCard({ snap, isAdmin, onView, onDelete, onToggleOfficial, busyOfficial }) {
   const date = snap.frozen_at ? new Date(snap.frozen_at).toLocaleString('ar-EG') : '—';
+  const isOfficial = !!snap.is_official;
   return (
-    <div className="bg-white border border-gray-200 rounded-2xl shadow-sm hover:shadow-md transition overflow-hidden">
-      <div className="bg-gradient-to-l from-cyan-50 to-blue-50 px-4 py-3 border-b border-gray-100 flex items-center gap-2">
-        <Snowflake size={16} className="text-cyan-600" />
+    <div className={`bg-white border-2 ${isOfficial ? 'border-emerald-300 ring-2 ring-emerald-100' : 'border-gray-200'} rounded-2xl shadow-sm hover:shadow-md transition overflow-hidden`}>
+      <div className={`${isOfficial ? 'bg-gradient-to-l from-emerald-100 to-emerald-50' : 'bg-gradient-to-l from-cyan-50 to-blue-50'} px-4 py-3 border-b border-gray-100 flex items-center gap-2`}>
+        {isOfficial ? <Pin size={16} className="text-emerald-600" /> : <Snowflake size={16} className="text-cyan-600" />}
         <h3 className="text-sm font-black text-gray-800 truncate flex-1" title={snap.snapshot_label}>
           {snap.snapshot_label}
         </h3>
+        {isOfficial && (
+          <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-600 text-white whitespace-nowrap">
+            Official
+          </span>
+        )}
       </div>
 
       <div className="p-4 space-y-2 text-xs">
@@ -115,8 +137,19 @@ function SnapshotCard({ snap, isAdmin, onView, onDelete }) {
         )}
       </div>
 
-      <div className="bg-gray-50 border-t border-gray-100 px-3 py-2 flex justify-end gap-1.5">
+      <div className="bg-gray-50 border-t border-gray-100 px-3 py-2 flex justify-end gap-1.5 flex-wrap">
         <ModernButton variant="ghost" icon={Eye} onClick={onView} size="sm">عرض</ModernButton>
+        {isAdmin && (
+          <ModernButton
+            variant={isOfficial ? 'primary' : 'ghost'}
+            icon={isOfficial ? PinOff : Pin}
+            onClick={onToggleOfficial}
+            disabled={busyOfficial}
+            size="sm"
+          >
+            {isOfficial ? 'إلغاء Official' : 'Official'}
+          </ModernButton>
+        )}
         {isAdmin && (
           <ModernButton variant="ghost" icon={Trash2} onClick={onDelete} size="sm">مسح</ModernButton>
         )}
