@@ -1130,7 +1130,7 @@ function FreezeSnapshotModal({ open, onClose, applied, summary, rows, deptAverag
                 </div>
                 <p className="text-[11px] text-gray-600 mt-1 leading-relaxed">
                   لما تفعّل ده، النسخة دى هتبقى المصدر الرسمى للأرقام عند:
-                  <br/>• وضع أهداف الأقسام (Baseline)
+                  <br/>• وضع تحديات الأقسام (Baseline)
                   <br/>• تقييم الأهداف نهاية الفترة (Actual)
                   <br/>
                   <span className="text-amber-700 font-bold">⚠ لو فيه نسخة رسمية تانية لنفس الفترة، هتتحول لمسوّدة تلقائياً.</span>

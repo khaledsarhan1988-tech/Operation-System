@@ -236,8 +236,8 @@ export default function TargetsManagement() {
               <Target size={26} />
             </div>
             <div>
-              <h1 className="text-2xl font-black tracking-tight">إدارة الأهداف</h1>
-              <p className="text-white/70 text-sm font-bold mt-0.5">حدّد الأهداف الشهرية لكل موظف، قسم، أو عامة</p>
+              <h1 className="text-2xl font-black tracking-tight">معايير الأداء</h1>
+              <p className="text-white/70 text-sm font-bold mt-0.5">حدّد معايير الأداء الشهرية لكل موظف، قسم، أو عامة</p>
             </div>
           </div>
 
@@ -268,9 +268,9 @@ export default function TargetsManagement() {
       ) : (
         <>
           {[
-            { key: 'agent',      title: 'أهداف الموظفين', emptyText: 'لا توجد أهداف فردية' },
-            { key: 'department', title: 'أهداف الأقسام',  emptyText: 'لا توجد أهداف على مستوى القسم' },
-            { key: 'global',     title: 'الأهداف العامة',   emptyText: 'لا يوجد هدف عام' },
+            { key: 'agent',      title: 'معايير الموظفين', emptyText: 'لا توجد معايير فردية' },
+            { key: 'department', title: 'معايير الأقسام',  emptyText: 'لا توجد معايير على مستوى القسم' },
+            { key: 'global',     title: 'المعايير العامة',  emptyText: 'لا يوجد معيار عام' },
           ].map(section => (
             <div key={section.key} className="bg-white border border-gray-100 rounded-3xl overflow-hidden">
               <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">

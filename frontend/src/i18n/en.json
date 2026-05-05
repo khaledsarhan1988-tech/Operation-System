@@ -35,7 +35,7 @@
     "clientPipeline": "Client Pipeline",
     "codeProblems": "Code Problems",
     "employeeProgression": "Employee Progression",
-    "targets": "Targets",
+    "targets": "Performance Standards",
     "myProgression": "My Progression",
     "teamProgression": "Team Progression",
     "systemSettings": "System Settings",
@@ -48,7 +48,7 @@
     "qualityReports": "Quality Reports",
     "qualityDiagnostic": "Quality Diagnostic",
     "qualitySnapshots": "Saved Snapshots",
-    "deptGoals": "Department Goals",
+    "deptGoals": "Department Challenges",
     "dbStatus": "Database Status"
   },
   "auth": {

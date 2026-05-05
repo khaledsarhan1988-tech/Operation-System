@@ -40,8 +40,8 @@ export default function DeptGoals() {
   return (
     <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
       <PageHero
-        title="أهداف الجودة للأقسام"
-        subtitle="حدد أهداف تقليل الغياب لكل قسم وتابع تنفيذها"
+        title="تحديات الأقسام"
+        subtitle="تحديات شهرية لتقليل الغياب — كل قسم له هدفه ومكافأته"
         icon={Target}
         gradient="emerald"
       />

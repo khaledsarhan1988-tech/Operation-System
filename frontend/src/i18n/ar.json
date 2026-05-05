@@ -35,7 +35,7 @@
     "clientPipeline": "بايبلاين العملاء",
     "codeProblems": "أكواد بها مشكلة",
     "employeeProgression": "تطوّر الموظفين",
-    "targets": "إدارة الأهداف",
+    "targets": "معايير الأداء",
     "myProgression": "تطوّري",
     "teamProgression": "تطوّر فريقي",
     "systemSettings": "إعدادات النظام",
@@ -48,7 +48,7 @@
     "qualityReports": "تقارير الجودة",
     "qualityDiagnostic": "تشخيص الجودة",
     "qualitySnapshots": "النسخ المحفوظة",
-    "deptGoals": "أهداف الأقسام",
+    "deptGoals": "تحديات الأقسام",
     "dbStatus": "حالة قاعدة البيانات"
   },
   "auth": {
