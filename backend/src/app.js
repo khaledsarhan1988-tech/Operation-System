@@ -603,6 +603,16 @@ initDb().then(db => {
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_targets_line       ON employee_targets(line)`);
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_targets_effective  ON employee_targets(effective_from)`);
 
+    // Add absence-target columns — used by the new "معايير الأداء" form to set
+    // per-agent main/zoom absence targets that ladder up to a dept challenge.
+    const etCols = db._raw.exec(`PRAGMA table_info(employee_targets)`)[0]?.values.map(r => r[1]) || [];
+    if (!etCols.includes('target_main_absent_rate')) {
+      db._raw.run(`ALTER TABLE employee_targets ADD COLUMN target_main_absent_rate INTEGER`);
+    }
+    if (!etCols.includes('target_zoom_absent_rate')) {
+      db._raw.run(`ALTER TABLE employee_targets ADD COLUMN target_zoom_absent_rate INTEGER`);
+    }
+
     db._raw.run(`CREATE TABLE IF NOT EXISTS snapshot_notes (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       snapshot_id INTEGER NOT NULL REFERENCES monthly_snapshots(id) ON DELETE CASCADE,

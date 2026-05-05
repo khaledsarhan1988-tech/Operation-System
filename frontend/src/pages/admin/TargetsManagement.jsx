@@ -34,10 +34,8 @@ function TargetEditor({ open, onClose, target, onSuccess }) {
 
   const [agentName, setAgentName] = useState(target?.agent_name || '');
   const [department, setDepartment] = useState(target?.department || '');
-  const [tc, setTc] = useState(target?.target_completion ?? 85);
-  const [tf, setTf] = useState(target?.target_followup ?? 80);
-  const [tx, setTx] = useState(target?.target_fix ?? 90);
-  const [to, setTo] = useState(target?.target_overall ?? 80);
+  const [tMain, setTMain] = useState(target?.target_main_absent_rate ?? '');
+  const [tZoom, setTZoom] = useState(target?.target_zoom_absent_rate ?? '');
   const [eff, setEff] = useState(target?.effective_from || new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState(target?.notes || '');
   const [scope, setScope] = useState(
@@ -51,6 +49,25 @@ function TargetEditor({ open, onClose, target, onSuccess }) {
     enabled: open && scope === 'agent',
   });
 
+  // Pull baseline from latest Official quality snapshot for the selected
+  // agent (or department), so the form can pre-fill placeholders + warn
+  // when the entered target is not actually an improvement.
+  const baselineKey =
+    scope === 'agent'      && agentName  ? { type: 'agent', value: agentName } :
+    scope === 'department' && department ? { type: 'dept',  value: department } :
+    null;
+
+  const { data: baseline } = useQuery({
+    queryKey: ['target-baseline', baselineKey?.type, baselineKey?.value],
+    queryFn: () => api.get('/admin/targets/baseline', {
+      params: baselineKey.type === 'agent'
+        ? { agent_name: baselineKey.value }
+        : { department: baselineKey.value },
+    }).then(r => r.data),
+    enabled: open && !!baselineKey,
+    staleTime: 60_000,
+  });
+
   const saveM = useMutation({
     mutationFn: (body) => isEdit
       ? api.put(`/admin/targets/${target.id}`, body)
@@ -61,13 +78,32 @@ function TargetEditor({ open, onClose, target, onSuccess }) {
   if (!open) return null;
 
   const handleSave = () => {
+    const tMainNum = parseInt(tMain, 10);
+    const tZoomNum = parseInt(tZoom, 10);
+    if (!Number.isFinite(tMainNum) || !Number.isFinite(tZoomNum)) {
+      alert('من فضلك ادخل قيمة صحيحة لهدفي الغياب الأساسي والزووم.');
+      return;
+    }
+
+    // Warning only — don't block. The user explicitly asked for this UX.
+    if (baseline?.found) {
+      const issues = [];
+      if (tMainNum >= baseline.main_absent_rate) {
+        issues.push(`• هدف الغياب الأساسي (${tMainNum}%) ≥ القاعدي (${baseline.main_absent_rate}%) — مش بيمثل تحسن.`);
+      }
+      if (tZoomNum >= baseline.zoom_absent_rate) {
+        issues.push(`• هدف غياب الزووم (${tZoomNum}%) ≥ القاعدي (${baseline.zoom_absent_rate}%) — مش بيمثل تحسن.`);
+      }
+      if (issues.length && !window.confirm(`⚠ تحذير:\n\n${issues.join('\n')}\n\nتأكد إنك عايز تحفظ؟`)) {
+        return;
+      }
+    }
+
     const body = {
       agent_name: scope === 'agent' ? agentName : null,
       department: scope === 'department' ? department : null,
-      target_completion: +tc,
-      target_followup: +tf,
-      target_fix: +tx,
-      target_overall: +to,
+      target_main_absent_rate: tMainNum,
+      target_zoom_absent_rate: tZoomNum,
       effective_from: eff,
       notes: notes || null,
     };
@@ -134,30 +170,50 @@ function TargetEditor({ open, onClose, target, onSuccess }) {
             </div>
           )}
 
-          {/* Targets */}
-          <div>
-            <label className="text-xs font-black text-gray-500 mb-2 block">الأهداف (0-100)</label>
-            <div className="space-y-3">
-              {[
-                { v: tc, set: setTc, label: 'نسبة الإنجاز', color: 'emerald' },
-                { v: tf, set: setTf, label: 'متابعة الغياب', color: 'amber' },
-                { v: tx, set: setTx, label: 'حل الأعطال', color: 'pink' },
-                { v: to, set: setTo, label: 'الأداء العام', color: 'indigo' },
-              ].map((row, i) => (
-                <div key={i} className="space-y-1">
-                  <div className="flex items-center justify-between text-xs font-black">
-                    <span className="text-gray-700">{row.label}</span>
-                    <span className="text-gray-900 text-base">{row.v}%</span>
-                  </div>
-                  <input
-                    type="range" min="0" max="100"
-                    value={row.v}
-                    onChange={e => row.set(+e.target.value)}
-                    className="w-full accent-[#1e3a5f]"
-                  />
-                </div>
-              ))}
+          {/* Baseline banner — shows the source snapshot for this agent/dept */}
+          {baselineKey && (
+            <div className={`rounded-xl p-3 text-xs font-bold border ${
+              baseline?.found
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                : 'bg-amber-50 border-amber-200 text-amber-800'
+            }`}>
+              {baseline?.found ? (
+                <>
+                  📊 القاعدي من <strong>{baseline.snapshot_label}</strong> ({baseline.from_date} → {baseline.to_date}):{' '}
+                  غياب أساسي <strong>{baseline.main_absent_rate}%</strong> · زووم <strong>{baseline.zoom_absent_rate}%</strong>
+                </>
+              ) : baseline?.reason === 'no_official_snapshot' ? (
+                <>⚠ مفيش Snapshot Official محفوظة. ابعت Snapshot Official من صفحة "تقارير الجودة" الأول.</>
+              ) : baseline?.reason === 'agent_not_in_snapshot' ? (
+                <>⚠ الموظف ده مش موجود في آخر Snapshot Official ({baseline.snapshot_label}).</>
+              ) : baseline?.reason === 'dept_not_in_snapshot' ? (
+                <>⚠ القسم ده مش موجود في آخر Snapshot Official ({baseline.snapshot_label}).</>
+              ) : (
+                <>جاري تحميل القاعدي...</>
+              )}
             </div>
+          )}
+
+          <div>
+            <label className="text-xs font-black text-gray-500 mb-1 block">هدف غياب أساسي (%)</label>
+            <input
+              type="number" min="0" max="100"
+              value={tMain}
+              onChange={e => setTMain(e.target.value)}
+              placeholder={baseline?.found ? `أقل من ${baseline.main_absent_rate}` : 'مثال: 20'}
+              className={inputCls}
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-black text-gray-500 mb-1 block">هدف غياب زووم (%)</label>
+            <input
+              type="number" min="0" max="100"
+              value={tZoom}
+              onChange={e => setTZoom(e.target.value)}
+              placeholder={baseline?.found ? `أقل من ${baseline.zoom_absent_rate}` : 'مثال: 40'}
+              className={inputCls}
+            />
           </div>
 
           <div>
@@ -297,17 +353,11 @@ export default function TargetsManagement() {
                         </div>
 
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="px-2.5 py-1 bg-emerald-50 border border-emerald-200 rounded-lg text-[11px] font-black text-emerald-700">
-                            إنجاز ≥ {t.target_completion}%
+                          <span className="px-2.5 py-1 bg-rose-50 border border-rose-200 rounded-lg text-[11px] font-black text-rose-700">
+                            غياب أساسي ≤ {t.target_main_absent_rate ?? '—'}%
                           </span>
-                          <span className="px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-lg text-[11px] font-black text-amber-700">
-                            متابعة ≥ {t.target_followup}%
-                          </span>
-                          <span className="px-2.5 py-1 bg-pink-50 border border-pink-200 rounded-lg text-[11px] font-black text-pink-700">
-                            أعطال ≥ {t.target_fix}%
-                          </span>
-                          <span className="px-2.5 py-1 bg-indigo-50 border border-indigo-200 rounded-lg text-[11px] font-black text-indigo-700">
-                            عام ≥ {t.target_overall}%
+                          <span className="px-2.5 py-1 bg-violet-50 border border-violet-200 rounded-lg text-[11px] font-black text-violet-700">
+                            غياب زووم ≤ {t.target_zoom_absent_rate ?? '—'}%
                           </span>
                         </div>
 
