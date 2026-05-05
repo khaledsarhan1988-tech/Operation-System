@@ -47,7 +47,8 @@
     "educationReports": "تقارير الإدارة التعليمية",
     "qualityReports": "تقارير الجودة",
     "qualityDiagnostic": "تشخيص الجودة",
-    "qualitySnapshots": "النسخ المحفوظة"
+    "qualitySnapshots": "النسخ المحفوظة",
+    "deptGoals": "أهداف الأقسام"
   },
   "auth": {
     "login": "تسجيل الدخول",

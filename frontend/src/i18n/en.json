@@ -47,7 +47,8 @@
     "educationReports": "Education Reports",
     "qualityReports": "Quality Reports",
     "qualityDiagnostic": "Quality Diagnostic",
-    "qualitySnapshots": "Saved Snapshots"
+    "qualitySnapshots": "Saved Snapshots",
+    "deptGoals": "Department Goals"
   },
   "auth": {
     "login": "Login",

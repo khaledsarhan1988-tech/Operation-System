@@ -738,6 +738,72 @@ initDb().then(db => {
     console.error('users enrollment migration error:', e.message);
   }
 
+  // ── Department Quality Goals ─────────────────────────────────────────────
+  // Track per-department absence-rate targets (weekly / monthly / quarterly).
+  // Each row represents one goal for one (dept, period). Once the period
+  // ends, actual rates are computed + the goal is marked met / missed.
+  // When a goal is met, every employee in the department gets a bonus toward
+  // their overall_score in monthly_snapshots (see snapshots integration).
+  try {
+    db._raw.run(`CREATE TABLE IF NOT EXISTS department_quality_goals (
+      id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+      dept_type                   TEXT NOT NULL CHECK(dept_type IN ('General','Private','Semi')),
+      period_type                 TEXT NOT NULL CHECK(period_type IN ('weekly','monthly','quarterly')),
+      year                        INTEGER NOT NULL,
+      month                       INTEGER,
+      week                        INTEGER,
+      quarter                     INTEGER,
+      period_label                TEXT NOT NULL,
+      period_start                TEXT NOT NULL,
+      period_end                  TEXT NOT NULL,
+      line                        TEXT NOT NULL DEFAULT 'Ahmed Hassan',
+      baseline_main_absent_rate   INTEGER NOT NULL DEFAULT 0,
+      baseline_zoom_absent_rate   INTEGER NOT NULL DEFAULT 0,
+      baseline_period_label       TEXT,
+      target_main_absent_rate     INTEGER NOT NULL,
+      target_zoom_absent_rate     INTEGER NOT NULL,
+      actual_main_absent_rate     INTEGER,
+      actual_zoom_absent_rate     INTEGER,
+      actual_main_absent_count    INTEGER,
+      actual_main_expected        INTEGER,
+      actual_zoom_absent_count    INTEGER,
+      actual_zoom_expected        INTEGER,
+      status                      TEXT NOT NULL DEFAULT 'active'
+                                    CHECK(status IN ('active','met','missed','partial','cancelled')),
+      bonus_awarded               INTEGER NOT NULL DEFAULT 0,
+      bonus_points                INTEGER NOT NULL DEFAULT 5,
+      notes                       TEXT,
+      created_by                  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_by_name             TEXT,
+      created_at                  TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+      updated_by                  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      updated_at                  TEXT,
+      evaluated_at                TEXT
+    )`);
+    db._raw.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_dqg_unique
+                 ON department_quality_goals(dept_type, period_type, year, COALESCE(month,0), COALESCE(week,0), COALESCE(quarter,0), line)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_dqg_status     ON department_quality_goals(status)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_dqg_dates      ON department_quality_goals(period_start, period_end)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_dqg_dept       ON department_quality_goals(dept_type, year)`);
+    saveNow();
+    console.log('✅ Migration: department_quality_goals ready');
+  } catch (e) {
+    console.error('department_quality_goals migration error:', e.message);
+  }
+
+  // Bonus column on monthly_snapshots (Phase 3 integration)
+  try {
+    const cols = db._raw.prepare(`PRAGMA table_info(monthly_snapshots)`).all();
+    const hasBonus = cols.some(c => c.name === 'dept_goal_bonus');
+    if (!hasBonus) {
+      db._raw.run(`ALTER TABLE monthly_snapshots ADD COLUMN dept_goal_bonus INTEGER NOT NULL DEFAULT 0`);
+      saveNow();
+      console.log('✅ Migration: monthly_snapshots.dept_goal_bonus added');
+    }
+  } catch (e) {
+    console.error('monthly_snapshots.dept_goal_bonus migration error:', e.message);
+  }
+
   // ── Quality Report Snapshots ─────────────────────────────────────────────
   // Frozen snapshots of the Quality Report page. Once a snapshot is saved,
   // its numbers are immutable — even if Excel files are re-uploaded later,
@@ -835,6 +901,7 @@ initDb().then(db => {
   app.use('/api/custom-goals',    require('./routes/custom-goals.routes'));
   app.use('/api/export',  require('./routes/export.routes'));
   app.use('/api/reports',       require('./routes/reports.routes'));
+  app.use('/api/dept-goals',    require('./routes/dept-goals.routes'));
   app.use('/api/team',          require('./routes/team.routes'));
   app.use('/api/distribution',       require('./routes/distribution.routes'));
   app.use('/api/enrollment',         require('./routes/enrollment.routes'));

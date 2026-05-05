@@ -33,6 +33,7 @@ import EducationReports from './pages/admin/EducationReports';
 import QualityReports from './pages/admin/QualityReports';
 import QualityDiagnostic from './pages/admin/QualityDiagnostic';
 import QualitySnapshots from './pages/admin/QualitySnapshots';
+import DeptGoals from './pages/admin/DeptGoals';
 import TeamPage from './pages/admin/TeamPage';
 import DashboardDetail from './pages/admin/DashboardDetail';
 import ClientDistribution from './pages/admin/ClientDistribution';
@@ -116,6 +117,7 @@ const router = createBrowserRouter([
       { path: 'reports/quality',              element: <QualityReports /> },
       { path: 'reports/quality-diagnostic',   element: <QualityDiagnostic /> },
       { path: 'reports/quality-snapshots',    element: <QualitySnapshots /> },
+      { path: 'reports/dept-goals',           element: <DeptGoals /> },
       { path: 'reports/fix-report',           element: <FixReport /> },
       { path: 'reports/attendance-absence',   element: <AttendanceAbsenceReport /> },
       { path: 'distribution',                  element: <ClientDistribution /> },
