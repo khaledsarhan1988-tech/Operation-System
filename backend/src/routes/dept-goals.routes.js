@@ -11,6 +11,16 @@ const { nameInListInline } = require('../utils/nameMatch');
 const router = express.Router();
 router.use(authenticate, requireRole('agent')); // base auth — admin gates per route
 
+// Leaders may only see their own department, regardless of what the client
+// passes via ?dept_type=. Admins (and anyone with department='All') are
+// trusted to filter freely.
+function leaderScopedDept(req) {
+  if (req.user?.role === 'leader' && req.user?.department && req.user.department !== 'All') {
+    return req.user.department;
+  }
+  return null;
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PERIOD HELPERS
 // ──────────────────────────────────────────────────────────────────────────
@@ -448,9 +458,10 @@ router.post('/', adminOnly, (req, res) => {
 //   query: status, period_type, year, dept_type, mode (active|all|history)
 // ──────────────────────────────────────────────────────────────────────────
 router.get('/', (req, res) => {
-  const { dept_type, period_type, mode } = req.query;
+  const { period_type, mode } = req.query;
   const year = req.query.year ? parseInt(req.query.year, 10) : null;
   const line = lineFilter(req);
+  const dept_type = leaderScopedDept(req) || req.query.dept_type;
 
   const conds = [];
   const params = [];
@@ -665,8 +676,9 @@ router.delete('/:id', adminOnly, (req, res) => {
 // GET /api/dept-goals/history — past goals grouped by dept for charts
 // ──────────────────────────────────────────────────────────────────────────
 router.get('/history', (req, res) => {
-  const { dept_type, period_type } = req.query;
+  const { period_type } = req.query;
   const line = lineFilter(req);
+  const dept_type = leaderScopedDept(req) || req.query.dept_type;
   const conds = ["status IN ('met','missed','partial')"];
   const params = [];
   if (line)        { conds.push('line = ?');        params.push(line); }

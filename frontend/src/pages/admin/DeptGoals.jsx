@@ -63,7 +63,7 @@ export default function DeptGoals() {
 
       {tab === 'active'  && <ActiveGoalsTab canManage={canManage} />}
       {tab === 'set'     && canManage && <SetGoalTab />}
-      {tab === 'history' && <HistoryTab />}
+      {tab === 'history' && <HistoryTab lockedDept={user?.role === 'leader' && DEPTS.includes(user?.department) ? user.department : null} />}
     </div>
   );
 }
@@ -510,8 +510,8 @@ function SetGoalTab() {
 // ═════════════════════════════════════════════════════════════════════════════
 // TAB 3: HISTORY — past goals + month-over-month chart
 // ═════════════════════════════════════════════════════════════════════════════
-function HistoryTab() {
-  const [filterDept, setFilterDept] = useState('All');
+function HistoryTab({ lockedDept }) {
+  const [filterDept, setFilterDept] = useState(lockedDept || 'All');
   const [filterPeriod, setFilterPeriod] = useState('monthly');
 
   const { data: history = [], isLoading } = useQuery({
@@ -554,10 +554,16 @@ function HistoryTab() {
       {/* Filters */}
       <div className="bg-white border border-gray-200 rounded-2xl p-4 flex items-center gap-3 flex-wrap shadow-sm">
         <span className="text-xs font-black text-gray-700">فلتر:</span>
-        <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className={inputCls}>
-          <option value="All">كل الأقسام</option>
-          {DEPTS.map(d => <option key={d} value={d}>{d}</option>)}
-        </select>
+        {lockedDept ? (
+          <span className="px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-sm font-black text-emerald-700">
+            قسم: {lockedDept}
+          </span>
+        ) : (
+          <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className={inputCls}>
+            <option value="All">كل الأقسام</option>
+            {DEPTS.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+        )}
         <select value={filterPeriod} onChange={e => setFilterPeriod(e.target.value)} className={inputCls}>
           <option value="monthly">شهرى</option>
           <option value="weekly">أسبوعى</option>
