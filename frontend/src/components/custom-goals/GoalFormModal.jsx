@@ -13,7 +13,6 @@ const UNIT_OPTIONS = [
   { value: 'جلسة',   label: 'جلسة' },
   { value: 'نقطة',   label: 'نقطة' },
   { value: 'مجموعة', label: 'مجموعة' },
-  { value: 'custom', label: '✏️ وحدة مخصصة...' },
 ];
 
 /**

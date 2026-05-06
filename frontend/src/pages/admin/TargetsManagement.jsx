@@ -9,6 +9,7 @@ import {
 import api from '../../api/axios';
 import { useAuth } from '../../auth/AuthContext';
 import GoalFormModal from '../../components/custom-goals/GoalFormModal';
+import CustomGoalCard from '../../components/custom-goals/CustomGoalCard';
 
 const DEPTS = ['General', 'Private', 'Semi'];
 
@@ -408,6 +409,62 @@ export default function TargetsManagement() {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// Custom goals section — rendered inside ActiveTargetsTab. Pulls from /custom-goals
+// endpoints with role-aware filtering (admin: all, leader: own dept, agent: own only).
+// ═════════════════════════════════════════════════════════════════════════════
+function CustomGoalsSection() {
+  const { user } = useAuth();
+  const isAdmin  = user?.role === 'admin';
+  const isLeader = user?.role === 'leader';
+  const isAgent  = user?.role === 'agent';
+
+  // Reuse the same query keys as the modal/EvaluateGoals/MyProgression so a save
+  // from anywhere invalidates this section's cache automatically.
+  const { data: teamData, isLoading: teamLoading } = useQuery({
+    queryKey: ['team-custom-goals'],
+    queryFn: () => api.get('/custom-goals/team').then(r => r.data),
+    enabled: isAdmin || isLeader,
+  });
+
+  const { data: mineData, isLoading: mineLoading } = useQuery({
+    queryKey: ['my-custom-goals'],
+    queryFn: () => api.get('/custom-goals/mine').then(r => r.data),
+    enabled: isAgent,
+  });
+
+  const isLoading = teamLoading || mineLoading;
+  const goals = isAgent ? (mineData || []) : (teamData?.rows || []);
+
+  // Hide section entirely for non-admin when empty — admin still sees the empty card.
+  if (!isLoading && goals.length === 0 && !isAdmin) return null;
+
+  return (
+    <div className="bg-white border border-gray-100 rounded-3xl overflow-hidden">
+      <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+        <h3 className="text-sm font-black text-gray-700">الأهداف الفردية المخصصة</h3>
+        <span className="text-[11px] text-gray-400 font-black">{goals.length}</span>
+      </div>
+      {isLoading ? (
+        <p className="text-center py-8 text-gray-400 text-sm font-bold">جارٍ التحميل...</p>
+      ) : goals.length === 0 ? (
+        <p className="text-center py-8 text-gray-400 text-sm font-bold">لا توجد أهداف فردية مخصصة</p>
+      ) : (
+        <div className="p-4 space-y-3">
+          {goals.map(g => (
+            <CustomGoalCard
+              key={g.id}
+              goal={g}
+              variant={isAgent ? 'agent' : 'leader'}
+              showAgentName={!isAgent}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // TAB 1: ACTIVE TARGETS — current goals with evaluate/edit/delete
 // ═════════════════════════════════════════════════════════════════════════════
 function ActiveTargetsTab({ onEdit, canManage }) {
@@ -548,6 +605,9 @@ function ActiveTargetsTab({ onEdit, canManage }) {
           )}
         </div>
       ))}
+
+      {/* Custom (non-KPI) goals — appears in the same tab so all role views surface them */}
+      <CustomGoalsSection />
     </div>
   );
 }
