@@ -414,9 +414,13 @@ export default function TargetsManagement() {
 // ═════════════════════════════════════════════════════════════════════════════
 function CustomGoalsSection() {
   const { user } = useAuth();
+  const qc = useQueryClient();
   const isAdmin  = user?.role === 'admin';
   const isLeader = user?.role === 'leader';
   const isAgent  = user?.role === 'agent';
+  const canManage = isAdmin || isLeader;
+
+  const [editGoal, setEditGoal] = useState(null);
 
   // Reuse the same query keys as the modal/EvaluateGoals/MyProgression so a save
   // from anywhere invalidates this section's cache automatically.
@@ -431,6 +435,22 @@ function CustomGoalsSection() {
     queryFn: () => api.get('/custom-goals/mine').then(r => r.data),
     enabled: isAgent,
   });
+
+  const deleteM = useMutation({
+    mutationFn: (goal) => isAgent
+      ? api.delete(`/custom-goals/mine/${goal.id}`)
+      : api.delete(`/custom-goals/team/${goal.id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['team-custom-goals'] });
+      qc.invalidateQueries({ queryKey: ['my-custom-goals'] });
+    },
+  });
+
+  const handleDelete = (goal) => {
+    if (window.confirm(`حذف الهدف "${goal.title}"؟`)) {
+      deleteM.mutate(goal);
+    }
+  };
 
   const isLoading = teamLoading || mineLoading;
   const goals = isAgent ? (mineData || []) : (teamData?.rows || []);
@@ -456,10 +476,21 @@ function CustomGoalsSection() {
               goal={g}
               variant={isAgent ? 'agent' : 'leader'}
               showAgentName={!isAgent}
+              onEdit={canManage ? setEditGoal : undefined}
+              onDelete={canManage ? handleDelete : undefined}
             />
           ))}
         </div>
       )}
+
+      {/* Edit modal — opens when admin/leader clicks edit on a custom goal */}
+      <GoalFormModal
+        open={!!editGoal}
+        goal={editGoal}
+        mode="leader"
+        onClose={() => setEditGoal(null)}
+        onSuccess={() => setEditGoal(null)}
+      />
     </div>
   );
 }
