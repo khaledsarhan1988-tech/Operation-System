@@ -455,9 +455,6 @@ function CustomGoalsSection() {
   const isLoading = teamLoading || mineLoading;
   const goals = isAgent ? (mineData || []) : (teamData?.rows || []);
 
-  // Hide section entirely for non-admin when empty — admin still sees the empty card.
-  if (!isLoading && goals.length === 0 && !isAdmin) return null;
-
   return (
     <div className="bg-white border border-gray-100 rounded-3xl overflow-hidden">
       <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
