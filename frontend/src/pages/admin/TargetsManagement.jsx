@@ -323,7 +323,7 @@ export default function TargetsManagement() {
   // - agent → see their own target
   const subtitle =
     isAdmin                  ? 'حدّد معايير الأداء الشهرية لكل موظف، قسم، أو عامة' :
-    user?.role === 'leader'  ? 'هدف قسمك للفترة الحالية' :
+    user?.role === 'leader'  ? 'هدف قسمك + أهداف موظفي القسم للفترة الحالية' :
                                'هدفك الفردي + هدف قسمك للفترة الحالية';
 
   const tabs = [
