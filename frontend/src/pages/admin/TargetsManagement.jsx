@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import api from '../../api/axios';
 import { useAuth } from '../../auth/AuthContext';
+import GoalFormModal from '../../components/custom-goals/GoalFormModal';
 
 const DEPTS = ['General', 'Private', 'Semi'];
 
@@ -316,6 +317,7 @@ export default function TargetsManagement() {
   const isAdmin = user?.role === 'admin';
   const [tab, setTab] = useState('active'); // active | set | history
   const [editing, setEditing] = useState(null);
+  const [customGoalOpen, setCustomGoalOpen] = useState(false);
 
   // Page subtitle adjusts to the viewer:
   // - admin → set targets
@@ -345,14 +347,25 @@ export default function TargetsManagement() {
         <div className="absolute -top-20 -right-20 w-72 h-72 rounded-full opacity-20 blur-3xl"
              style={{ background: 'radial-gradient(circle, #34d399 0%, transparent 70%)' }} />
 
-        <div className="relative z-10 flex items-center gap-3">
-          <div className="p-3 bg-white/15 backdrop-blur rounded-2xl">
-            <Target size={26} />
+        <div className="relative z-10 flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-3">
+            <div className="p-3 bg-white/15 backdrop-blur rounded-2xl">
+              <Target size={26} />
+            </div>
+            <div>
+              <h1 className="text-2xl font-black tracking-tight">معايير الأداء</h1>
+              <p className="text-white/70 text-sm font-bold mt-0.5">{subtitle}</p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-2xl font-black tracking-tight">معايير الأداء</h1>
-            <p className="text-white/70 text-sm font-bold mt-0.5">{subtitle}</p>
-          </div>
+          {isAdmin && (
+            <button
+              onClick={() => setCustomGoalOpen(true)}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/15 hover:bg-white/25 backdrop-blur border border-white/20 text-white text-sm font-black transition shadow-sm"
+            >
+              <Plus size={16} />
+              هدف فردي مخصص
+            </button>
+          )}
         </div>
       </div>
 
@@ -381,6 +394,14 @@ export default function TargetsManagement() {
         target={editing}
         onClose={() => setEditing(null)}
         onSuccess={() => setEditing(null)}
+      />
+
+      {/* Custom-goal modal — admin assigns a custom goal to any agent */}
+      <GoalFormModal
+        open={customGoalOpen}
+        mode="leader"
+        onClose={() => setCustomGoalOpen(false)}
+        onSuccess={() => setCustomGoalOpen(false)}
       />
     </div>
   );
