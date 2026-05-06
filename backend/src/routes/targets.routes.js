@@ -11,8 +11,10 @@ router.use(authenticate, requireRole('agent')); // base auth — admin gates per
 const adminOnly = requireRole('admin');
 
 // Non-admins are scoped to what's relevant to them:
-//   - leader  → only targets for their own department
-//   - agent   → only their personal individual target
+//   - leader  → only the dept-scope target for their own department
+//   - agent   → their personal individual target + their dept's target
+//               (so they see both their own goal and the team goal they
+//               contribute toward)
 //   - admin   → no extra filter (sees everything)
 function scopedTargetWhere(req) {
   if (req.user?.role === 'admin') return null;
@@ -20,6 +22,13 @@ function scopedTargetWhere(req) {
     return { sql: '(t.department = ? AND t.agent_name IS NULL)', params: [req.user.department] };
   }
   // agent
+  const dept = req.user?.department && req.user.department !== 'All' ? req.user.department : null;
+  if (dept) {
+    return {
+      sql: '((t.agent_name IS NOT NULL AND LOWER(TRIM(t.agent_name)) = LOWER(TRIM(?))) OR (t.department = ? AND t.agent_name IS NULL))',
+      params: [req.user?.full_name || '', dept],
+    };
+  }
   return {
     sql: '(t.agent_name IS NOT NULL AND LOWER(TRIM(t.agent_name)) = LOWER(TRIM(?)))',
     params: [req.user?.full_name || ''],

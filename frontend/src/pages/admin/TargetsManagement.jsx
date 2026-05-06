@@ -324,7 +324,7 @@ export default function TargetsManagement() {
   const subtitle =
     isAdmin                  ? 'حدّد معايير الأداء الشهرية لكل موظف، قسم، أو عامة' :
     user?.role === 'leader'  ? 'هدف قسمك للفترة الحالية' :
-                               'هدفك الفردي للفترة الحالية';
+                               'هدفك الفردي + هدف قسمك للفترة الحالية';
 
   const tabs = [
     { key: 'active',  label: 'الأهداف الحالية', icon: Activity },
