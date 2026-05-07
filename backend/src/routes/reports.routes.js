@@ -189,6 +189,13 @@ function buildRemarksNotesMainInnerQ({ from_date, to_date, department, employee,
       (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
       OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
     )
+    AND EXISTS (
+      SELECT 1 FROM lectures l_chk
+       WHERE l_chk.group_name = a.group_name
+         AND l_chk.session_type = 'main'
+         AND l_chk.status != 'غير مؤكدة'
+         AND l_chk.date = COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)${line ? ' AND l_chk.line = a.line' : ''}
+    )
     ${deptFilter1}${empFilter1}${coord1}${search1}${lineA}`;
 
   const part2 = `
@@ -399,7 +406,8 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
        WHERE l.group_name = a.group_name
          AND l.date       = a.date
          AND l.session_type = 'side'
-         AND l.side_session_category = 'regular'${line ? ' AND l.line = a.line' : ''}
+         AND l.side_session_category = 'regular'
+         AND l.status != 'غير مؤكدة'${line ? ' AND l.line = a.line' : ''}
     )
     ${dept1}${emp1}${coord1}${srchA}${lineA}`;
 
@@ -471,6 +479,13 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
       )
     LEFT JOIN batches b2 ON b2.group_name = c2.group_name${line ? ' AND b2.line = c2.line' : ''}
     WHERE r2.category = 'Attendance Zoom Call'
+      AND EXISTS (
+        SELECT 1 FROM lectures lz
+         WHERE lz.group_name = c2.group_name
+           AND lz.session_type = 'side'
+           AND lz.status != 'غير مؤكدة'
+           AND lz.date = (CASE WHEN strftime('%w', ${rdSQL}) = '6' THEN date(${rdSQL}, '-2 days') ELSE date(${rdSQL}, '-1 day') END)${line ? ' AND lz.line = r2.line' : ''}
+      )
     ${dept2}${emp2}${coord2}${srch2}${lineR2}`;
 
   const remarksSubQ = `
