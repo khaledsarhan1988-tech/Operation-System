@@ -100,12 +100,18 @@ function regenerateAutoAbsents(line) {
     `).run(line);
 
     // 3. zoom calls (side + regular) → absent_zoom_students
+    //
+    // BUGFIX: zoom days often have many 15-min lecture slots (one per student
+    // booking). Previously we inserted one absent_zoom row per (lecture, client),
+    // so a student missing 7 slots on the same day got 7 duplicate auto-rows.
+    // Fix: collapse the lecture set to ONE representative per (group, date) — the
+    // first slot of the day — so each student gets exactly one auto-row per day.
     db.prepare(`
       INSERT INTO absent_zoom_students (
         group_name, student_name, phone, date, time, lecture_no,
         follow_up_status, line, auto_generated, synced_at
       )
-      SELECT DISTINCT
+      SELECT
         l.group_name,
         c.name,
         c.phone,
@@ -137,6 +143,18 @@ function regenerateAutoAbsents(line) {
              AND a.group_name = l.group_name
              AND a.date       = l.date
              AND a.phone      = c.phone
+        )
+        AND l.id = (
+          SELECT l3.id FROM lectures l3
+           WHERE l3.line       = l.line
+             AND l3.group_name = l.group_name
+             AND l3.date       = l.date
+             AND l3.session_type = 'side'
+             AND l3.side_session_category = 'regular'
+             AND l3.status = 'مؤكدة'
+             AND (l3.attendance IS NULL OR TRIM(COALESCE(l3.attendance,'')) IN ('', '0'))
+           ORDER BY COALESCE(l3.time,'') ASC, l3.id ASC
+           LIMIT 1
         )
     `).run(line);
   });

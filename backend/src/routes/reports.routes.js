@@ -366,6 +366,36 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
     )
     ${dept1}${emp1}${coord1}${srchA}${lineA}`;
 
+  // partA_zoom — mirrors partA but reads from absent_zoom_students (the new
+  // dedicated zoom-absent table). When the user uploads the zoom-absent Excel
+  // these rows live HERE, not in absent_students, so the original partA
+  // missed them entirely → students appeared under "غياب الزوم كول" but
+  // were absent from "ملحوظات الريماركات للزوم كول". Outer ROW_NUMBER dedup
+  // handles any overlap between the two tables.
+  const partA_zoom = `
+    SELECT DISTINCT
+      COALESCE(c_lu.name, NULLIF(TRIM(a.student_name),'')) AS client_name,
+      a.phone AS client_phone,
+      a.group_name,
+      a.date AS session_date,
+      b.coordinators,
+      COALESCE(
+        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) AND u.department != 'All' LIMIT 1),
+        b.dept_type
+      ) AS dept_type
+    FROM absent_zoom_students a
+    INNER JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
+    LEFT JOIN (SELECT phone, line, MIN(name) AS name FROM clients${line ? ` WHERE line = '${line.replace(/'/g, "''")}'` : ''} GROUP BY phone, line) c_lu
+      ON (a.student_name IS NULL OR TRIM(a.student_name) = '')
+      AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
+      AND c_lu.phone = a.phone${line ? ' AND c_lu.line = a.line' : ''}
+    WHERE (
+      (a.student_name IS NOT NULL AND TRIM(a.student_name) != '')
+      OR (a.phone IS NOT NULL AND TRIM(a.phone) != '' AND c_lu.name IS NOT NULL)
+    )
+    AND a.date IS NOT NULL AND TRIM(a.date) != ''
+    ${dept1}${emp1}${coord1}${srchA}${lineA}`;
+
   const part1 = `
     SELECT DISTINCT c.name AS client_name, c.phone AS client_phone,
       c.group_name, grp.session_date, b.coordinators,
@@ -475,6 +505,8 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
           ) AS _rn
         FROM (
           SELECT * FROM (${partA}) pA
+          UNION ALL
+          SELECT * FROM (${partA_zoom}) pAz
           UNION ALL
           SELECT * FROM (${part1}) p1
           UNION ALL
