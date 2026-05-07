@@ -68,8 +68,10 @@ const SECTION_COLORS = {
 const emptyForm = {
   name: '', department: 'customer_services', section: 'general',
   shift: '', shift_start: '', shift_end: '', shift_rests: [],
+  shift_start_date: '', shift_end_date: '',
   employment_type: '', work_days: '',
   shift2: '', shift2_start: '', shift2_end: '', shift2_rests: [],
+  shift2_start_date: '', shift2_end_date: '',
   shift2_employment_type: '', shift2_work_days: '',
   job_title: '', phone: '', status: 'active', notes: '',
 };
@@ -101,7 +103,9 @@ function hydrateMember(member) {
 // ─── SHIFT SECTION (reusable for shift 1 and shift 2) ─────────────────────────
 function ShiftSection({
   title, shiftValue, startValue, endValue, restsValue, employmentValue, daysValue,
+  startDateValue, endDateValue,
   onShiftChange, onStartChange, onEndChange, onRestsChange, onEmploymentChange, onDaysChange,
+  onStartDateChange, onEndDateChange,
   onRemove, inputCls, labelCls,
 }) {
   const rests = Array.isArray(restsValue) ? restsValue : [];
@@ -189,6 +193,27 @@ function ShiftSection({
             <label className={labelCls}>الساعة إلى</label>
             <input type="time" className={inputCls} value={endValue || ''}
                    onChange={e => onEndChange(e.target.value)} dir="ltr" />
+          </div>
+        </div>
+      )}
+
+      {/* Shift dates — start_date required, end_date optional (empty = still active) */}
+      {shiftValue && (
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={labelCls}>
+              تاريخ البداية <span className="text-red-500">*</span>
+            </label>
+            <input type="date" className={inputCls} value={startDateValue || ''}
+                   onChange={e => onStartDateChange(e.target.value)} dir="ltr" required />
+          </div>
+          <div>
+            <label className={labelCls}>
+              تاريخ النهاية
+              <span className="text-[10px] text-gray-400 mr-2">(فاضي = لسه على رأس عمله)</span>
+            </label>
+            <input type="date" className={inputCls} value={endDateValue || ''}
+                   onChange={e => onEndDateChange(e.target.value)} dir="ltr" />
           </div>
         </div>
       )}
@@ -281,7 +306,7 @@ function MemberModal({ initial, onSave, onClose, loading }) {
 
   const clearShift2 = () => {
     setShowShift2(false);
-    setForm(f => ({ ...f, shift2: '', shift2_start: '', shift2_end: '', shift2_rests: [], shift2_employment_type: '', shift2_work_days: '' }));
+    setForm(f => ({ ...f, shift2: '', shift2_start: '', shift2_end: '', shift2_rests: [], shift2_start_date: '', shift2_end_date: '', shift2_employment_type: '', shift2_work_days: '' }));
   };
 
   // Reset section when dept changes if invalid; clear shift fields if leaving education
@@ -292,8 +317,8 @@ function MemberModal({ initial, onSave, onClose, loading }) {
     if (form.department !== 'education') {
       setForm(f => ({
         ...f,
-        shift: '', shift_start: '', shift_end: '', shift_rests: [], employment_type: '', work_days: '',
-        shift2: '', shift2_start: '', shift2_end: '', shift2_rests: [], shift2_employment_type: '', shift2_work_days: '',
+        shift: '', shift_start: '', shift_end: '', shift_rests: [], shift_start_date: '', shift_end_date: '', employment_type: '', work_days: '',
+        shift2: '', shift2_start: '', shift2_end: '', shift2_rests: [], shift2_start_date: '', shift2_end_date: '', shift2_employment_type: '', shift2_work_days: '',
       }));
       setShowShift2(false);
     }
@@ -301,6 +326,23 @@ function MemberModal({ initial, onSave, onClose, loading }) {
 
   // Convert rests arrays back to JSON strings before sending to backend
   const handleSave = () => {
+    // Required-date check — start_date must be provided whenever a shift is set
+    if (form.shift && !form.shift_start_date) {
+      alert('من فضلك أدخل تاريخ بداية الشيفت الأول');
+      return;
+    }
+    if (form.shift2 && !form.shift2_start_date) {
+      alert('من فضلك أدخل تاريخ بداية الشيفت الثاني');
+      return;
+    }
+    if (form.shift_start_date && form.shift_end_date && form.shift_end_date < form.shift_start_date) {
+      alert('تاريخ نهاية الشيفت الأول يجب أن يكون بعد تاريخ البداية');
+      return;
+    }
+    if (form.shift2_start_date && form.shift2_end_date && form.shift2_end_date < form.shift2_start_date) {
+      alert('تاريخ نهاية الشيفت الثاني يجب أن يكون بعد تاريخ البداية');
+      return;
+    }
     onSave({
       ...form,
       shift_rests:  JSON.stringify(form.shift_rests  || []),
@@ -354,12 +396,16 @@ function MemberModal({ initial, onSave, onClose, loading }) {
               restsValue={form.shift_rests}
               employmentValue={form.employment_type}
               daysValue={form.work_days}
+              startDateValue={form.shift_start_date}
+              endDateValue={form.shift_end_date}
               onShiftChange={(v) => set('shift', v)}
               onStartChange={(v) => set('shift_start', v)}
               onEndChange={(v) => set('shift_end', v)}
               onRestsChange={(v) => set('shift_rests', v)}
               onEmploymentChange={(v) => set('employment_type', v)}
               onDaysChange={(v) => set('work_days', v)}
+              onStartDateChange={(v) => set('shift_start_date', v)}
+              onEndDateChange={(v) => set('shift_end_date', v)}
               inputCls={inputCls} labelCls={labelCls}
             />
           )}
@@ -382,12 +428,16 @@ function MemberModal({ initial, onSave, onClose, loading }) {
               restsValue={form.shift2_rests}
               employmentValue={form.shift2_employment_type}
               daysValue={form.shift2_work_days}
+              startDateValue={form.shift2_start_date}
+              endDateValue={form.shift2_end_date}
               onShiftChange={(v) => set('shift2', v)}
               onStartChange={(v) => set('shift2_start', v)}
               onEndChange={(v) => set('shift2_end', v)}
               onRestsChange={(v) => set('shift2_rests', v)}
               onEmploymentChange={(v) => set('shift2_employment_type', v)}
               onDaysChange={(v) => set('shift2_work_days', v)}
+              onStartDateChange={(v) => set('shift2_start_date', v)}
+              onEndDateChange={(v) => set('shift2_end_date', v)}
               onRemove={clearShift2}
               inputCls={inputCls} labelCls={labelCls}
             />

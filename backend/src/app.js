@@ -134,9 +134,13 @@ initDb().then(db => {
   });
 
   // 4a. TEAM MEMBERS: add shift1 + shift2 columns (start/end/employment/work_days)
+  // shift_start_date / shift_end_date track when each shift was active.
+  // end_date NULL = trainer is still on the job; non-null = shift has ended.
   [
     'shift_start', 'shift_end', 'shift_rests', 'employment_type', 'work_days',
+    'shift_start_date', 'shift_end_date',
     'shift2', 'shift2_start', 'shift2_end', 'shift2_rests', 'shift2_employment_type', 'shift2_work_days',
+    'shift2_start_date', 'shift2_end_date',
   ].forEach(col => {
     try {
       const info = db._raw.exec(`PRAGMA table_info(team_members)`);
