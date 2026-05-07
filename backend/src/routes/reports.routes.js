@@ -394,6 +394,13 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
       OR (a.phone IS NOT NULL AND TRIM(a.phone) != '' AND c_lu.name IS NOT NULL)
     )
     AND a.date IS NOT NULL AND TRIM(a.date) != ''
+    AND EXISTS (
+      SELECT 1 FROM lectures l
+       WHERE l.group_name = a.group_name
+         AND l.date       = a.date
+         AND l.session_type = 'side'
+         AND l.side_session_category = 'regular'${line ? ' AND l.line = a.line' : ''}
+    )
     ${dept1}${emp1}${coord1}${srchA}${lineA}`;
 
   const part1 = `
@@ -734,6 +741,13 @@ router.get('/dashboard', (req, res) => {
          WHERE (
            (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
            OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+         )
+         AND EXISTS (
+           SELECT 1 FROM lectures l
+            WHERE l.group_name = a.group_name
+              AND l.date       = a.date
+              AND l.session_type = 'side'
+              AND l.side_session_category = 'regular'${line ? ' AND l.line = a.line' : ''}
          )
          ${deptB}${empBFilter}${lineAZ}${azDateF}`
       ).get();
@@ -1121,6 +1135,10 @@ router.get('/absent-side-list', (req, res) => {
     const azEmpFilter    = employee    ? ` AND ${nameInListInline('b.coordinators', employee)}`    : '';
     const azDeptFilter   = buildDeptFilter('b', activeDept);
 
+    // Restrict zoom-absent rows to absences against REGULAR (≤15-min) zoom
+    // sessions only. Onboarding/Offboarding/Compensatory rows live in the
+    // same table when uploaded from Excel, but business rule says only the
+    // 15-min slot counts as a zoom call.
     const azBaseFrom = `
       FROM absent_zoom_students a
       LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
@@ -1129,6 +1147,13 @@ router.get('/absent-side-list', (req, res) => {
       WHERE (
         (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
         OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+      )
+      AND EXISTS (
+        SELECT 1 FROM lectures l
+         WHERE l.group_name = a.group_name
+           AND l.date       = a.date
+           AND l.session_type = 'side'
+           AND l.side_session_category = 'regular'${line ? ' AND l.line = a.line' : ''}
       )
       ${azDateFilter}${azDeptFilter}${azEmpFilter}${azCoordFilter}${azSearchFilter}${lineA}`;
 
@@ -2492,21 +2517,58 @@ router.get('/fix-report', (req, res) => {
   } else if (period === 'month') {
     fixedDateCond = ` AND cps.updated_at>=datetime('now','-29 days','+2 hours')`;
   }
+  // Universe of coordinators we want to show:
+  //   1. Every active agent (even those with zero issues recorded)
+  //   2. Every active leader who appears as a coordinator on at least one batch
+  //      ("a leader who is also a group coordinator")
+  //   3. Coordinator names already present in batches.coordinators (handles
+  //      multi-coord strings like "Mostafa, fouad" + unregistered coordinators)
+  //   4. The '--' bucket for code-problem rows whose batch has no coordinator
+  const lineUsers = line ? ` AND (line = '${line.replace(/'/g, "''")}' OR line = 'All')` : '';
+  const lineBatches = line ? ` AND b.line = '${line.replace(/'/g, "''")}'` : '';
+
   try {
     const rows = db.prepare(`
+      WITH all_coords AS (
+        SELECT full_name AS coordinator FROM users
+         WHERE role = 'agent' AND is_active = 1${lineUsers}
+        UNION
+        SELECT u.full_name AS coordinator FROM users u
+         WHERE u.role = 'leader' AND u.is_active = 1${line ? ` AND (u.line = '${line.replace(/'/g, "''")}' OR u.line = 'All')` : ''}
+           AND EXISTS (
+             SELECT 1 FROM batches b
+             WHERE LOWER(TRIM(b.coordinators)) LIKE '%' || LOWER(TRIM(u.full_name)) || '%'${lineBatches}
+           )
+        UNION
+        SELECT DISTINCT TRIM(b.coordinators) AS coordinator FROM batches b
+         WHERE b.coordinators IS NOT NULL AND TRIM(b.coordinators) != ''${lineBatches}
+        UNION
+        SELECT '--' AS coordinator
+      ),
+      counts AS (
+        SELECT
+          COALESCE(b.coordinators, '--') AS coordinator,
+          COUNT(*) AS all_count,
+          SUM(CASE WHEN cps.status NOT IN ('wont_repeat','exception','resolved') THEN 1 ELSE 0 END) AS remaining,
+          SUM(CASE WHEN cps.status IN ('wont_repeat','exception','resolved')${deptCond} THEN 1 ELSE 0 END) AS fixed,
+          SUM(CASE WHEN cps.status IN ('wont_repeat','exception','resolved')${deptCond}${fixedDateCond} THEN 1 ELSE 0 END) AS fixed_period,
+          SUM(CASE WHEN cps.status IN ('wont_repeat','exception','resolved')${deptCond}
+                AND date(cps.updated_at)=date('now','+2 hours') THEN 1 ELSE 0 END) AS fixed_today
+        FROM code_problem_status cps
+        LEFT JOIN batches b ON TRIM(LOWER(b.group_name))=TRIM(LOWER(cps.group_name))${line ? ' AND b.line = cps.line' : ''}
+        WHERE 1=1${lineCps}
+        GROUP BY COALESCE(b.coordinators, '--')
+      )
       SELECT
-        COALESCE(b.coordinators, '--') AS coordinator,
-        COUNT(*) AS all_count,
-        SUM(CASE WHEN cps.status NOT IN ('wont_repeat','exception','resolved') THEN 1 ELSE 0 END) AS remaining,
-        SUM(CASE WHEN cps.status IN ('wont_repeat','exception','resolved')${deptCond} THEN 1 ELSE 0 END) AS fixed,
-        SUM(CASE WHEN cps.status IN ('wont_repeat','exception','resolved')${deptCond}${fixedDateCond} THEN 1 ELSE 0 END) AS fixed_period,
-        SUM(CASE WHEN cps.status IN ('wont_repeat','exception','resolved')${deptCond}
-              AND date(cps.updated_at)=date('now','+2 hours') THEN 1 ELSE 0 END) AS fixed_today
-      FROM code_problem_status cps
-      LEFT JOIN batches b ON TRIM(LOWER(b.group_name))=TRIM(LOWER(cps.group_name))${line ? ' AND b.line = cps.line' : ''}
-      WHERE 1=1${lineCps}
-      GROUP BY COALESCE(b.coordinators, '--')
-      ORDER BY remaining DESC, fixed DESC
+        ac.coordinator,
+        COALESCE(c.all_count, 0) AS all_count,
+        COALESCE(c.remaining, 0) AS remaining,
+        COALESCE(c.fixed, 0) AS fixed,
+        COALESCE(c.fixed_period, 0) AS fixed_period,
+        COALESCE(c.fixed_today, 0) AS fixed_today
+      FROM all_coords ac
+      LEFT JOIN counts c ON ac.coordinator = c.coordinator
+      ORDER BY remaining DESC, fixed DESC, ac.coordinator ASC
     `).all();
     return res.json(rows);
   } catch (err) {

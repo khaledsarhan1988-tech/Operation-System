@@ -286,6 +286,24 @@ function parseLectures(buffer) {
     }));
 }
 
+// Convert "HH:MM AM/PM" or "HH:MM" or "PM HH:MM" to minutes-since-midnight
+// for stable chronological ordering inside a single day. Returns 0 on failure
+// so unparseable rows fall to the front of the day rather than crashing.
+function timeToMinutes(timeStr) {
+  if (!timeStr) return 0;
+  const s = String(timeStr).trim().toUpperCase();
+  const isPM = /PM/.test(s);
+  const isAM = /AM/.test(s);
+  const numStr = s.replace(/PM|AM/g, '').trim();
+  const m = numStr.match(/^(\d{1,2})\s*:\s*(\d{1,2})/);
+  if (!m) return 0;
+  let hh = parseInt(m[1], 10);
+  const mm = parseInt(m[2], 10);
+  if (isPM && hh !== 12) hh += 12;
+  if (isAM && hh === 12) hh = 0;
+  return hh * 60 + mm;
+}
+
 /** Lectures of Side Session.xlsx → lectures (session_type='side') */
 function parseSideSessions(buffer) {
   const wb = XLSX.read(buffer, { type: 'buffer' });
@@ -303,8 +321,18 @@ function parseSideSessions(buffer) {
 
   const result = [];
   for (const [groupName, groupRows] of Object.entries(grouped)) {
-    const total = groupRows.length;
-    groupRows.forEach((r, idx) => {
+    // BUGFIX: classifySideSession uses position-in-group (1=onboarding) but the
+    // Excel rows aren't always ordered by date — sort them chronologically first
+    // so the FIRST session by (date, time) gets position 1 regardless of how the
+    // user laid out the file.
+    const sorted = [...groupRows].sort((a, b) => {
+      const dateA = normalizeDate(a[1]) || '';
+      const dateB = normalizeDate(b[1]) || '';
+      if (dateA !== dateB) return dateA.localeCompare(dateB);
+      return timeToMinutes(a[2]) - timeToMinutes(b[2]);
+    });
+    const total = sorted.length;
+    sorted.forEach((r, idx) => {
       const duration = r[3] ? String(r[3]).trim() : null;
       result.push({
         group_name: groupName,
