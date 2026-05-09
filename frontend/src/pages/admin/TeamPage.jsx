@@ -354,16 +354,16 @@ function MemberModal({ initial, onSave, onClose, loading }) {
   const labelCls = 'block text-xs font-semibold text-gray-600 mb-1';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" dir="rtl">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto" dir="rtl">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col max-h-[calc(100vh-2rem)] my-auto">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0">
           <h3 className="text-base font-bold text-gray-900">{initial ? 'تعديل موظف' : 'إضافة موظف جديد'}</h3>
           <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg transition-all"><X size={16} /></button>
         </div>
 
         {/* Body */}
-        <div className="p-6 space-y-4">
+        <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
           {/* Name */}
           <div>
             <label className={labelCls}>الاسم <span className="text-red-500">*</span></label>
@@ -484,7 +484,7 @@ function MemberModal({ initial, onSave, onClose, loading }) {
         </div>
 
         {/* Footer */}
-        <div className="flex gap-3 px-6 py-4 border-t border-gray-100">
+        <div className="flex gap-3 px-6 py-4 border-t border-gray-100 flex-shrink-0">
           <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-all">إلغاء</button>
           <button
             onClick={handleSave}

@@ -88,6 +88,7 @@ const managementMap = {
 };
 
 function getAdminLinks(user) {
+  const isSuperAdmin = user?.management === 'All';
   const base = [
     { to: '/admin',              label: 'nav.dashboard',     icon: LayoutDashboard, end: true, color: 'blue' },
     { to: '/admin/users',        label: 'nav.users',         icon: UserCog,         color: 'indigo' },
@@ -98,8 +99,12 @@ function getAdminLinks(user) {
     { to: '/admin/pipeline',     label: 'nav.clientPipeline',     icon: Kanban,          color: 'emerald' },
     { to: '/admin/employee-progression', label: 'nav.employeeProgression', icon: TrendingUp, color: 'violet' },
     { to: '/admin/targets',      label: 'nav.targets',            icon: Target,          color: 'green' },
-    { to: '/admin/settings',     label: 'nav.systemSettings',     icon: Settings,        color: 'slate' },
-    { to: '/admin/db-status',    label: 'nav.dbStatus',           icon: Database,        color: 'blue' },
+    // System-wide config — super-admin (management='All') only.
+    // Department-scoped admins (Customer Services / Quality / Education) don't see these.
+    ...(isSuperAdmin ? [
+      { to: '/admin/settings',  label: 'nav.systemSettings', icon: Settings, color: 'slate' },
+      { to: '/admin/db-status', label: 'nav.dbStatus',       icon: Database, color: 'blue'  },
+    ] : []),
     { type: 'section', label: 'nav.reportsSection' },
   ];
   const mgmt = user?.management;

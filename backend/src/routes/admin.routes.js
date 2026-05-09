@@ -6,7 +6,7 @@ const fs = require('fs');
 const db = require('../config/database');
 const { saveNow } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
-const { requireRole } = require('../middleware/roles');
+const { requireRole, requireSuperAdmin } = require('../middleware/roles');
 const { lineFilter } = require('../utils/lineFilter');
 
 const router = express.Router();
@@ -700,13 +700,11 @@ router.delete('/pipeline/interactions/:id', (req, res) => {
   return res.json({ ok: true });
 });
 
-// GET /api/admin/db-status  — admin only, returns persistence diagnostics
+// GET /api/admin/db-status  — super-admin only, returns persistence diagnostics
 // Helps verify whether the SQLite file is on a Railway Volume (persistent)
 // or on the container's ephemeral filesystem (wiped on every redeploy).
-router.get('/db-status', (req, res) => {
-  if (req.user?.role !== 'admin') {
-    return res.status(403).json({ error: 'Admin only' });
-  }
+// Department-scoped admins are blocked because this leaks server-level info.
+router.get('/db-status', requireSuperAdmin, (req, res) => {
   const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../../data/academy.db');
 
   // Heuristic: if DB_PATH starts with /data, /mnt, /var, /srv (typical

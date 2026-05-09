@@ -4,7 +4,7 @@ const ExcelJS = require('exceljs');
 const db = require('../config/database');
 const { saveNow } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
-const { requireRole } = require('../middleware/roles');
+const { requireRole, requireSuperAdmin } = require('../middleware/roles');
 const { lineFilter } = require('../utils/lineFilter');
 const { nameInListInline } = require('../utils/nameMatch');
 
@@ -970,8 +970,8 @@ router.get('/weights', (req, res) => {
   return res.json(w);
 });
 
-// PUT /api/admin/snapshots/weights
-router.put('/weights', adminOnly, (req, res) => {
+// PUT /api/admin/snapshots/weights — super-admin only (system-wide KPI config)
+router.put('/weights', requireSuperAdmin, (req, res) => {
   const wc = parseInt(req.body?.weight_completion, 10);
   const wf = parseInt(req.body?.weight_followup,   10);
   const wx = parseInt(req.body?.weight_fix,        10);
@@ -1001,8 +1001,8 @@ router.put('/weights', adminOnly, (req, res) => {
 
 // ─── AUDIT LOG ────────────────────────────────────────────────────────────────
 
-// GET /api/admin/snapshots/audit?action=&from=&to=&user_id=&limit=
-router.get('/audit', adminOnly, (req, res) => {
+// GET /api/admin/snapshots/audit?action=&from=&to=&user_id=&limit= — super-admin only (system-wide audit trail)
+router.get('/audit', requireSuperAdmin, (req, res) => {
   const { action, from, to, user_id } = req.query;
   const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
   const offset = parseInt(req.query.offset, 10) || 0;
@@ -1355,8 +1355,8 @@ router.get('/yoy/:agentName', (req, res) => {
 });
 
 // ─── AUDIT LOG CSV EXPORT ─────────────────────────────────────────────────────
-// GET /api/admin/snapshots/audit/export
-router.get('/audit/export', adminOnly, (req, res) => {
+// GET /api/admin/snapshots/audit/export — super-admin only (audit log export)
+router.get('/audit/export', requireSuperAdmin, (req, res) => {
   const { action, from, to } = req.query;
   const line = lineFilter(req);
 

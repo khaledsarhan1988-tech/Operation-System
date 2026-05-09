@@ -34,4 +34,17 @@ function requireAnyRole(roles) {
   };
 }
 
-module.exports = { requireRole, requireAnyRole };
+/**
+ * requireSuperAdmin — admin role + management='All'.
+ * Use for global/cross-department ops (system settings, KPI weights,
+ * DB diagnostics, audit logs). Department-scoped admins are blocked.
+ */
+function requireSuperAdmin(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: 'Unauthenticated' });
+  if (req.user.role !== 'admin' || req.user.management !== 'All') {
+    return res.status(403).json({ error: 'Forbidden: super-admin only' });
+  }
+  next();
+}
+
+module.exports = { requireRole, requireAnyRole, requireSuperAdmin };
