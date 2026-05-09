@@ -63,8 +63,6 @@ const LEADER_LINKS = [
   { to: '/leader/tasks',                        label: 'nav.taskDistribution', icon: ClipboardList,   color: 'indigo' },
   { to: '/leader/code-problems',                label: 'nav.codeProblems',     icon: AlertTriangle,   color: 'amber' },
   { to: '/leader/pipeline',                     label: 'nav.clientPipeline',   icon: Kanban,          color: 'emerald' },
-  { to: '/leader/team-progression',             label: 'nav.teamProgression',  icon: TrendingUp,      color: 'violet' },
-  { to: '/leader/evaluate-goals',               label: 'nav.evaluateGoals',    icon: Award,           color: 'emerald' },
   { type: 'section', label: 'nav.reportsSection' },
   { to: '/leader/reports/fix-report',           label: 'nav.fixReports',          icon: FileText, color: 'orange' },
   { to: '/leader/reports/attendance-absence',   label: 'nav.attendanceReports',   icon: Activity, color: 'teal' },

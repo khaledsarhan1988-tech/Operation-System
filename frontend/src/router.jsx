@@ -91,8 +91,6 @@ const router = createBrowserRouter([
       { path: 'code-problems',                element: <LeaderCodeProblems /> },
       { path: 'performance',                  element: <LeaderPerformance /> },
       { path: 'pipeline',                     element: <LeaderPipeline /> },
-      { path: 'team-progression',             element: <TeamProgression /> },
-      { path: 'evaluate-goals',               element: <EvaluateGoals /> },
       { path: 'reports/customer-services',    element: <SystemReports /> },
       { path: 'reports/education',            element: <EducationReports /> },
       { path: 'reports/quality',              element: <QualityReports /> },
