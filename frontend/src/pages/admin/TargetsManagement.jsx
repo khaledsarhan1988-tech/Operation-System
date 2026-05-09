@@ -38,6 +38,10 @@ function ScopeBadge({ scope }) {
 function TargetForm({ target, onSuccess, onCancel, inline = false }) {
   const isEdit = !!target;
   const qc = useQueryClient();
+  const { user } = useAuth();
+  const isLeader = user?.role === 'leader';
+  // Leader is locked to creating individual-employee targets within their own dept.
+  // The backend enforces the same rule — UI restriction is just for clarity.
 
   const [agentName, setAgentName] = useState(target?.agent_name || '');
   const [department, setDepartment] = useState(target?.department || '');
@@ -47,13 +51,20 @@ function TargetForm({ target, onSuccess, onCancel, inline = false }) {
   const [eff, setEff] = useState(target?.effective_from || new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState(target?.notes || '');
   const [scope, setScope] = useState(
+    isLeader ? 'agent' :
     target?.agent_name ? 'agent' :
     target?.department ? 'department' : 'global'
   );
 
   const { data: users = [] } = useQuery({
     queryKey: ['users-agents'],
-    queryFn: () => api.get('/admin/users').then(r => r.data.filter(u => u.role === 'agent' && u.is_active)),
+    queryFn: () => api.get('/admin/users').then(r => {
+      // Leader sees only agents in their own department; admin sees all.
+      return r.data.filter(u =>
+        u.role === 'agent' && u.is_active &&
+        (!isLeader || u.department === user?.department)
+      );
+    }),
     enabled: scope === 'agent',
   });
 
@@ -131,8 +142,9 @@ function TargetForm({ target, onSuccess, onCancel, inline = false }) {
 
   const formBody = (
     <>
-          {/* Scope tabs */}
-          {!isEdit && (
+          {/* Scope tabs — admin can pick agent/department/global; leader is locked
+              to agent-scope (per-employee) and the picker is hidden. */}
+          {!isEdit && !isLeader && (
             <div>
               <label className="text-xs font-black text-gray-500 mb-2 block">نطاق الهدف</label>
               <div className="grid grid-cols-3 gap-2">
@@ -152,6 +164,11 @@ function TargetForm({ target, onSuccess, onCancel, inline = false }) {
                   );
                 })}
               </div>
+            </div>
+          )}
+          {!isEdit && isLeader && (
+            <div className="rounded-xl bg-blue-50 border border-blue-200 px-3 py-2 text-[11px] font-bold text-blue-800">
+              👤 كقائد فريق: تقدر تضيف هدف فردي لأي موظف من قسم <strong>{user?.department}</strong> فقط.
             </div>
           )}
 
@@ -315,23 +332,27 @@ function TargetEditor({ open, onClose, target, onSuccess }) {
 
 export default function TargetsManagement() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin  = user?.role === 'admin';
+  const isLeader = user?.role === 'leader';
+  // Admins and leaders can both add targets; leader scope is restricted
+  // (only agent-scope, only within their dept) — enforced both in UI and backend.
+  const canCreate = isAdmin || isLeader;
   const [tab, setTab] = useState('active'); // active | set | history
   const [editing, setEditing] = useState(null);
   const [customGoalOpen, setCustomGoalOpen] = useState(false);
 
   // Page subtitle adjusts to the viewer:
   // - admin → set targets
-  // - leader → see their dept's target
+  // - leader → see their dept's target + add per-employee targets
   // - agent → see their own target
   const subtitle =
-    isAdmin                  ? 'حدّد معايير الأداء الشهرية لكل موظف، قسم، أو عامة' :
-    user?.role === 'leader'  ? 'هدف قسمك + أهداف موظفي القسم للفترة الحالية' :
-                               'هدفك الفردي + هدف قسمك للفترة الحالية';
+    isAdmin   ? 'حدّد معايير الأداء الشهرية لكل موظف، قسم، أو عامة' :
+    isLeader  ? 'هدف قسمك + أهداف موظفي القسم — تقدر تضيف أهداف لموظفين فريقك' :
+                'هدفك الفردي + هدف قسمك للفترة الحالية';
 
   const tabs = [
     { key: 'active',  label: 'الأهداف الحالية', icon: Activity },
-    isAdmin && { key: 'set', label: 'إضافة هدف جديد', icon: Plus },
+    canCreate && { key: 'set', label: 'إضافة هدف جديد', icon: Plus },
     { key: 'history', label: 'السجل والتطور',   icon: HistoryIcon },
   ].filter(Boolean);
 
@@ -358,7 +379,7 @@ export default function TargetsManagement() {
               <p className="text-white/70 text-sm font-bold mt-0.5">{subtitle}</p>
             </div>
           </div>
-          {isAdmin && (
+          {canCreate && (
             <button
               onClick={() => setCustomGoalOpen(true)}
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/15 hover:bg-white/25 backdrop-blur border border-white/20 text-white text-sm font-black transition shadow-sm"
@@ -385,8 +406,8 @@ export default function TargetsManagement() {
         ))}
       </div>
 
-      {tab === 'active'  && <ActiveTargetsTab onEdit={setEditing} canManage={isAdmin} />}
-      {tab === 'set'     && isAdmin && <TargetForm inline onSuccess={() => setTab('active')} />}
+      {tab === 'active'  && <ActiveTargetsTab onEdit={setEditing} canManage={canCreate} />}
+      {tab === 'set'     && canCreate && <TargetForm inline onSuccess={() => setTab('active')} />}
       {tab === 'history' && <HistoryTargetsTab canFilter={isAdmin} />}
 
       {/* Edit modal — opens when a row's edit button is clicked (admin only) */}

@@ -10,6 +10,45 @@ const router = express.Router();
 router.use(authenticate, requireRole('agent')); // base auth — admin gates per write route
 const adminOnly = requireRole('admin');
 
+// Custom guard: admin OR leader. Leader can manage agent-scoped targets for
+// agents in their own department only. Admin has no restriction.
+// Final-evaluation stays admin-only via `adminOnly`.
+function adminOrLeader(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: 'Unauthenticated' });
+  if (req.user.role === 'admin' || req.user.role === 'leader') return next();
+  return res.status(403).json({ error: 'Forbidden: admin/leader only' });
+}
+
+// Validate that a leader is allowed to act on the given target body/row.
+// Returns { error: '...', status: 4xx } on failure or null when valid.
+// Admin always passes.
+function checkLeaderTargetScope(req, body) {
+  if (req.user.role === 'admin') return null;
+  if (req.user.role !== 'leader') return { status: 403, error: 'Forbidden' };
+  const dept = req.user.department;
+  if (!dept || dept === 'All') {
+    return { status: 403, error: 'Leader must have a specific department to set targets' };
+  }
+  // Leader can only manage agent-scope targets — no department or global.
+  const agentName = body?.agent_name && String(body.agent_name).trim();
+  if (!agentName) {
+    return { status: 403, error: 'القائد يقدر يضيف أهداف فردية فقط (موظف محدد)' };
+  }
+  // The target's department, if provided, must equal the leader's dept.
+  if (body?.department && body.department !== 'All' && body.department !== dept) {
+    return { status: 403, error: 'لا يمكن للقائد تعيين هدف خارج قسمه' };
+  }
+  // The agent must be registered in the leader's department.
+  const agent = db.prepare(
+    `SELECT department FROM users WHERE LOWER(TRIM(full_name))=LOWER(TRIM(?)) AND role='agent' AND is_active=1 LIMIT 1`
+  ).get(agentName);
+  if (!agent) return { status: 404, error: 'الموظف غير موجود' };
+  if (agent.department !== dept) {
+    return { status: 403, error: 'هذا الموظف ليس ضمن فريقك' };
+  }
+  return null;
+}
+
 // Non-admins are scoped to what's relevant to them:
 //   - leader  → dept-scope target for their dept + individual targets for
 //               every agent in their dept
@@ -280,13 +319,17 @@ router.get('/baseline', (req, res) => {
 // Body: { agent_name?, department?, target_main_absent_rate, target_zoom_absent_rate,
 //         bonus_points?, effective_from, notes? }
 // Pass NULL for agent_name and department to set a global target.
-router.post('/', adminOnly, (req, res) => {
+router.post('/', adminOrLeader, (req, res) => {
   const {
     agent_name, department,
     target_main_absent_rate, target_zoom_absent_rate,
     bonus_points,
     effective_from, notes,
   } = req.body || {};
+
+  // Leader: must target a specific agent in their own department
+  const scopeErr = checkLeaderTargetScope(req, { agent_name, department });
+  if (scopeErr) return res.status(scopeErr.status).json({ error: scopeErr.error });
 
   if (!effective_from || !/^\d{4}-\d{2}-\d{2}$/.test(effective_from)) {
     return res.status(400).json({ error: 'effective_from must be YYYY-MM-DD' });
@@ -337,9 +380,16 @@ router.post('/', adminOnly, (req, res) => {
 
 // PUT /api/admin/targets/:id
 // Body: any of { target_main_absent_rate, target_zoom_absent_rate, effective_from, notes }
-router.put('/:id', adminOnly, (req, res) => {
+router.put('/:id', adminOrLeader, (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!id) return res.status(400).json({ error: 'Invalid id' });
+  // Leader: only allowed to edit agent-scope targets within their own dept.
+  if (req.user.role === 'leader') {
+    const existing = db.prepare(`SELECT agent_name, department FROM employee_targets WHERE id = ?`).get(id);
+    if (!existing) return res.status(404).json({ error: 'Target not found' });
+    const scopeErr = checkLeaderTargetScope(req, { agent_name: existing.agent_name, department: existing.department });
+    if (scopeErr) return res.status(scopeErr.status).json({ error: scopeErr.error });
+  }
   const fields = [];
   const params = [];
   const map = {
@@ -580,10 +630,16 @@ router.get('/history', (req, res) => {
 });
 
 // DELETE /api/admin/targets/:id
-router.delete('/:id', adminOnly, (req, res) => {
+router.delete('/:id', adminOrLeader, (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!id) return res.status(400).json({ error: 'Invalid id' });
   const t = db.prepare(`SELECT agent_name, department, line FROM employee_targets WHERE id = ?`).get(id);
+  if (!t) return res.status(404).json({ error: 'Target not found' });
+  // Leader: only allowed to delete agent-scope targets within their own dept.
+  if (req.user.role === 'leader') {
+    const scopeErr = checkLeaderTargetScope(req, { agent_name: t.agent_name, department: t.department });
+    if (scopeErr) return res.status(scopeErr.status).json({ error: scopeErr.error });
+  }
   const r = db.prepare(`DELETE FROM employee_targets WHERE id = ?`).run(id);
   saveNow();
   if (r.changes === 0) return res.status(404).json({ error: 'Target not found' });
