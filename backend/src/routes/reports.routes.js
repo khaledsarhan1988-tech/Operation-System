@@ -2382,15 +2382,58 @@ router.get('/trainer-utilization', (req, res) => {
     if (sh.endDate   && dateStr > sh.endDate)   return false;
     return true;
   }
-  // Available minutes for this shift on this date (0 if day not in work_days).
-  function shiftMinsForDate(sh, dateStr) {
-    if (!shiftActiveOn(sh, dateStr)) return 0;
+  function shiftCoversDay(sh, dateStr) {
+    if (!shiftActiveOn(sh, dateStr)) return false;
     const dow = getDow(dateStr);
     const dayKey = DOW_KEYS[dow] || '';
-    if (!sh.days.includes(dayKey)) return 0;
+    return sh.days.includes(dayKey);
+  }
+  // Available minutes for this shift on this date (0 if day not in work_days).
+  function shiftMinsForDate(sh, dateStr) {
+    if (!shiftCoversDay(sh, dateStr)) return 0;
     let mins = sh.endMin - sh.startMin;
     for (const r of sh.rests) mins -= (r.e - r.s);
     return mins > 0 ? mins : 0;
+  }
+  // Compute free intervals during a date — shift windows minus rests minus lectures.
+  // Returns array of { start_min, end_min, duration_min } sorted by start_min.
+  function computeFreeSlots(shifts, dateStr, lectures) {
+    // 1) Build available intervals from shifts that cover this day
+    let segments = [];
+    for (const sh of shifts) {
+      if (shiftCoversDay(sh, dateStr)) segments.push({ s: sh.startMin, e: sh.endMin });
+    }
+    if (segments.length === 0) return [];
+    // 2) Collect busy intervals (rests from each active shift + lectures)
+    const busy = [];
+    for (const sh of shifts) {
+      if (!shiftCoversDay(sh, dateStr)) continue;
+      for (const r of sh.rests) busy.push({ s: r.s, e: r.e });
+    }
+    for (const l of (lectures || [])) {
+      const start = parseTime12(l.time);
+      if (start < 0) continue;
+      const dur = parseDur(l.duration);
+      if (dur <= 0) continue;
+      busy.push({ s: start, e: start + dur });
+    }
+    // 3) Subtract each busy from segments
+    for (const b of busy) {
+      const next = [];
+      for (const seg of segments) {
+        // No overlap
+        if (b.e <= seg.s || b.s >= seg.e) { next.push(seg); continue; }
+        // Overlap → split into up to 2 leftover segments
+        if (b.s > seg.s) next.push({ s: seg.s, e: b.s });
+        if (b.e < seg.e) next.push({ s: b.e, e: seg.e });
+      }
+      segments = next;
+    }
+    // 4) Drop tiny slivers (< 5 min) — they're useless for booking
+    return segments
+      .filter(s => s.e - s.s >= 5)
+      .sort((a, b) => a.s - b.s)
+      .map(s => ({ start_min: s.s, end_min: s.e, duration_min: s.e - s.s }));
   }
 
   try {
@@ -2475,15 +2518,19 @@ router.get('/trainer-utilization', (req, res) => {
         const utilization = isWorkDay && availMin > 0
           ? Math.round((bookedMin / availMin) * 100)
           : null;
+        const freeSlots = isWorkDay ? computeFreeSlots(shifts, date, lectures) : [];
+        const freeMin = freeSlots.reduce((s, f) => s + f.duration_min, 0);
         days[date] = {
           is_work_day: isWorkDay,
           available_min: availMin,
           booked_min: bookedMin,
+          free_min: freeMin,
           utilization_pct: utilization,
           lectures: lectures.map(l => ({
             group_name: l.group_name, time: l.time, duration: l.duration,
             session_type: l.session_type,
           })),
+          free_slots: freeSlots,
         };
         totalAvailable += availMin;
         totalBooked   += bookedMin;

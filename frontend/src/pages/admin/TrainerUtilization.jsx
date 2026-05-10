@@ -66,13 +66,26 @@ const SECTION_TONE = {
 };
 
 // ─── DAY DETAIL MODAL ─────────────────────────────────────────────────────────
+// Format minutes-since-midnight as "04:15 PM" for the free-slots view.
+function fmtMinsToClock(m) {
+  if (m == null) return '';
+  const mod = ((m % 1440) + 1440) % 1440;
+  const h24 = Math.floor(mod / 60), mm = mod % 60;
+  const ampm = h24 >= 12 ? 'PM' : 'AM';
+  let h12 = h24 % 12; if (h12 === 0) h12 = 12;
+  return `${String(h12).padStart(2,'0')}:${String(mm).padStart(2,'0')} ${ampm}`;
+}
+
 function DayDetailModal({ trainer, date, onClose }) {
   const day = trainer.days[date];
+  const [view, setView] = useState('booked'); // 'booked' | 'free'
   if (!day) return null;
   const dow = DOW_AR[dowFromISO(date)];
   const lectures = (day.lectures || []).slice().sort((a, b) =>
     String(a.time || '').localeCompare(String(b.time || ''))
   );
+  const freeSlots = day.free_slots || [];
+  const freeMin = day.free_min ?? freeSlots.reduce((s, f) => s + (f.duration_min || 0), 0);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" dir="rtl">
@@ -91,17 +104,43 @@ function DayDetailModal({ trainer, date, onClose }) {
 
         {/* Body */}
         <div className="p-6 space-y-4 overflow-y-auto flex-1">
-          {/* Stat row */}
-          <div className="grid grid-cols-3 gap-3">
-            <div className="bg-emerald-50 rounded-xl p-3 text-center border border-emerald-100">
+          {/* Stat row — 4 boxes; "المحجوز" and "المتاح" are clickable to switch view */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            {/* السعة */}
+            <div className="bg-emerald-50 rounded-xl p-2.5 text-center border border-emerald-100">
               <div className="text-[10px] text-emerald-700 font-semibold mb-0.5">السعة</div>
               <div className="text-base font-bold text-emerald-900">{fmtMins(day.available_min)}</div>
             </div>
-            <div className="bg-amber-50 rounded-xl p-3 text-center border border-amber-100">
+            {/* المحجوز — clickable */}
+            <button
+              type="button"
+              onClick={() => day.is_work_day && setView('booked')}
+              disabled={!day.is_work_day}
+              className={`rounded-xl p-2.5 text-center border transition-all ${
+                view === 'booked'
+                  ? 'bg-amber-100 border-amber-400 ring-2 ring-amber-300'
+                  : 'bg-amber-50 border-amber-100 hover:bg-amber-100'
+              } ${!day.is_work_day ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+            >
               <div className="text-[10px] text-amber-700 font-semibold mb-0.5">المحجوز</div>
               <div className="text-base font-bold text-amber-900">{fmtMins(day.booked_min)}</div>
-            </div>
-            <div className="bg-blue-50 rounded-xl p-3 text-center border border-blue-100">
+            </button>
+            {/* المتاح — clickable */}
+            <button
+              type="button"
+              onClick={() => day.is_work_day && setView('free')}
+              disabled={!day.is_work_day}
+              className={`rounded-xl p-2.5 text-center border transition-all ${
+                view === 'free'
+                  ? 'bg-sky-100 border-sky-400 ring-2 ring-sky-300'
+                  : 'bg-sky-50 border-sky-100 hover:bg-sky-100'
+              } ${!day.is_work_day ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+            >
+              <div className="text-[10px] text-sky-700 font-semibold mb-0.5">المتاح</div>
+              <div className="text-base font-bold text-sky-900">{fmtMins(freeMin)}</div>
+            </button>
+            {/* الإشغال */}
+            <div className="bg-blue-50 rounded-xl p-2.5 text-center border border-blue-100">
               <div className="text-[10px] text-blue-700 font-semibold mb-0.5">الإشغال</div>
               <div className="text-base font-bold text-blue-900">
                 {day.utilization_pct != null ? `${day.utilization_pct}%` : '—'}
@@ -109,39 +148,72 @@ function DayDetailModal({ trainer, date, onClose }) {
             </div>
           </div>
 
-          {/* Lectures list */}
+          {/* Content */}
           {!day.is_work_day ? (
             <div className="text-center py-6 text-sm text-slate-400">يوم خارج الشيفت</div>
-          ) : lectures.length === 0 ? (
-            <div className="text-center py-6 text-sm text-emerald-600 font-semibold">
-              ✓ كل اليوم فاضي — مفيش محاضرات محجوزة
-            </div>
-          ) : (
-            <div>
-              <div className="text-xs font-bold text-gray-700 mb-2 flex items-center gap-2">
-                <Clock size={12} /> المحاضرات في اليوم ({lectures.length})
+          ) : view === 'booked' ? (
+            // ── BOOKED VIEW ────────────────────────────────────────────
+            lectures.length === 0 ? (
+              <div className="text-center py-6 text-sm text-emerald-600 font-semibold">
+                ✓ كل اليوم فاضي — مفيش محاضرات محجوزة
               </div>
-              <div className="space-y-2">
-                {lectures.map((l, i) => (
-                  <div key={i} className="flex items-center gap-3 px-3 py-2 rounded-xl bg-gray-50/70 border border-gray-100">
-                    <div className="flex-shrink-0 text-xs font-mono font-bold text-gray-700 min-w-[70px]" dir="ltr">{l.time}</div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-semibold text-gray-900 truncate">{l.group_name}</div>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-[10px] text-gray-500" dir="ltr">{l.duration}</span>
-                        <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold ${
-                          l.session_type === 'main'
-                            ? 'bg-blue-100 text-blue-700'
-                            : 'bg-purple-100 text-purple-700'
-                        }`}>
-                          {l.session_type === 'main' ? 'محاضرة' : 'زوم كول'}
-                        </span>
+            ) : (
+              <div>
+                <div className="text-xs font-bold text-gray-700 mb-2 flex items-center gap-2">
+                  <Clock size={12} /> المحاضرات في اليوم ({lectures.length})
+                </div>
+                <div className="space-y-2">
+                  {lectures.map((l, i) => (
+                    <div key={i} className="flex items-center gap-3 px-3 py-2 rounded-xl bg-gray-50/70 border border-gray-100">
+                      <div className="flex-shrink-0 text-xs font-mono font-bold text-gray-700 min-w-[70px]" dir="ltr">{l.time}</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-semibold text-gray-900 truncate">{l.group_name}</div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-[10px] text-gray-500" dir="ltr">{l.duration}</span>
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold ${
+                            l.session_type === 'main'
+                              ? 'bg-blue-100 text-blue-700'
+                              : 'bg-purple-100 text-purple-700'
+                          }`}>
+                            {l.session_type === 'main' ? 'محاضرة' : 'زوم كول'}
+                          </span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
+            )
+          ) : (
+            // ── FREE VIEW ──────────────────────────────────────────────
+            freeSlots.length === 0 ? (
+              <div className="text-center py-6 text-sm text-amber-600 font-semibold">
+                ⚠ مفيش وقت فاضي — اليوم مكتمل
+              </div>
+            ) : (
+              <div>
+                <div className="text-xs font-bold text-gray-700 mb-2 flex items-center gap-2">
+                  <Clock size={12} /> الأوقات الفاضية ({freeSlots.length})
+                </div>
+                <div className="space-y-2">
+                  {freeSlots.map((f, i) => (
+                    <div key={i} className="flex items-center gap-3 px-3 py-2 rounded-xl bg-sky-50/60 border border-sky-100">
+                      {/* Time range pill */}
+                      <div className="flex-shrink-0 flex items-center gap-1.5 text-xs font-mono font-bold text-sky-900" dir="ltr">
+                        <span>{fmtMinsToClock(f.start_min)}</span>
+                        <span className="text-sky-400">→</span>
+                        <span>{fmtMinsToClock(f.end_min)}</span>
+                      </div>
+                      <div className="flex-1" />
+                      {/* Duration badge */}
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 font-bold whitespace-nowrap">
+                        {fmtMins(f.duration_min)} فاضي
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
           )}
         </div>
 
