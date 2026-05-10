@@ -1783,6 +1783,11 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
       const dow = getDow(lec.date);
       const dayKey = DOW_KEYS[dow] || '';
 
+      // Grace period: lecture may run up to N minutes past shift end without
+      // being flagged. Avoids false positives when a 90-min lecture starts a
+      // few minutes late and bleeds slightly past midnight. Start time and
+      // rest periods remain strict — only the shift-end boundary is relaxed.
+      const SHIFT_END_TOLERANCE_MIN = 5;
       const reasons = [];
       for (const sh of shifts) {
         // Date range
@@ -1795,8 +1800,8 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
           reasons.push(`يوم ${DOW_AR[dow]} مش في أيام العمل`);
           continue;
         }
-        // Time inside shift window (start AND end must fit)
-        if (lecStartMin < sh.startMin || lecEndMin > sh.endMin) {
+        // Time inside shift window. Start is strict; end gets a small grace.
+        if (lecStartMin < sh.startMin || lecEndMin > sh.endMin + SHIFT_END_TOLERANCE_MIN) {
           reasons.push(`خارج الشيفت (${sh.startStr}-${sh.endStr})`);
           continue;
         }
