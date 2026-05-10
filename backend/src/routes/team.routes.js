@@ -78,6 +78,31 @@ function buildShiftBundle(rawShift, rawStart, rawEnd, rawRests, rawEmpType, rawD
   };
 }
 
+// ─── Teachable courses ─────────────────────────────────────────────────────
+//   Coerce the raw body fields into a clamped {starter, general, conversation}
+//   object. Each value is an integer in [0, max] where max is the number of
+//   levels in that course. Anything missing/invalid falls back to max (= all
+//   levels) so the principle "every trainer can teach everything by default"
+//   is enforced server-side too.
+const COURSE_MAX = { starter: 3, general: 5, conversation: 5 };
+function clampLevel(raw, max) {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return max;       // missing / garbage → all
+  if (n < 0) return 0;
+  if (n > max) return max;
+  return Math.floor(n);
+}
+function buildTeachable(body) {
+  let starter      = clampLevel(body.teachable_starter,      COURSE_MAX.starter);
+  let general      = clampLevel(body.teachable_general,      COURSE_MAX.general);
+  let conversation = clampLevel(body.teachable_conversation, COURSE_MAX.conversation);
+  // Cascade rule: if the trainer can teach ANY General level, they can teach
+  // every Starter level. Enforced at save time so the DB is always consistent
+  // even if the client forgot to bump Starter.
+  if (general > 0 && starter < COURSE_MAX.starter) starter = COURSE_MAX.starter;
+  return { starter, general, conversation };
+}
+
 // Validate shift dates: when a shift is set, start_date is required.
 // Returns { error: '...' } on failure or null when valid.
 function validateShiftDates(s1, s2) {
@@ -105,6 +130,7 @@ router.post('/', (req, res) => {
   const phone     = req.body.phone     || null;
   const user_id   = req.body.user_id   || null;
   const notes     = req.body.notes     || null;
+  const teachable = buildTeachable(req.body);
   const validSections = ['all','general','private','semi','phone_call'];
   if (!name || !department || !section || !validSections.includes(section))
     return res.status(400).json({ error: 'name, department, section required' });
@@ -116,13 +142,15 @@ router.post('/', (req, res) => {
          name, department, section,
          shift, shift_start, shift_end, shift_rests, employment_type, work_days, shift_start_date, shift_end_date,
          shift2, shift2_start, shift2_end, shift2_rests, shift2_employment_type, shift2_work_days, shift2_start_date, shift2_end_date,
-         job_title, phone, user_id, status, notes
-       ) VALUES (?, ?, ?,  ?, ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?)`
+         job_title, phone, user_id, status, notes,
+         teachable_starter, teachable_general, teachable_conversation
+       ) VALUES (?, ?, ?,  ?, ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?,  ?, ?, ?)`
     ).run(
       name, department, section,
       s1.shift, s1.start, s1.end, s1.rests, s1.emp_type, s1.days, s1.start_date, s1.end_date,
       s2.shift, s2.start, s2.end, s2.rests, s2.emp_type, s2.days, s2.start_date, s2.end_date,
-      job_title, phone, user_id, status, notes
+      job_title, phone, user_id, status, notes,
+      teachable.starter, teachable.general, teachable.conversation
     );
     const member = db.prepare('SELECT * FROM team_members WHERE id = ?').get(r.lastInsertRowid);
     return res.status(201).json(member);
@@ -141,6 +169,7 @@ router.put('/:id', (req, res) => {
   const phone     = req.body.phone     || null;
   const user_id   = req.body.user_id   || null;
   const notes     = req.body.notes     || null;
+  const teachable = buildTeachable(req.body);
   if (!name || !department || !section) return res.status(400).json({ error: 'name, department, section required' });
   const dateErr = validateShiftDates(s1, s2);
   if (dateErr) return res.status(400).json(dateErr);
@@ -150,13 +179,16 @@ router.put('/:id', (req, res) => {
          name=?, department=?, section=?,
          shift=?, shift_start=?, shift_end=?, shift_rests=?, employment_type=?, work_days=?, shift_start_date=?, shift_end_date=?,
          shift2=?, shift2_start=?, shift2_end=?, shift2_rests=?, shift2_employment_type=?, shift2_work_days=?, shift2_start_date=?, shift2_end_date=?,
-         job_title=?, phone=?, user_id=?, status=?, notes=?
+         job_title=?, phone=?, user_id=?, status=?, notes=?,
+         teachable_starter=?, teachable_general=?, teachable_conversation=?
        WHERE id=?`
     ).run(
       name, department, section,
       s1.shift, s1.start, s1.end, s1.rests, s1.emp_type, s1.days, s1.start_date, s1.end_date,
       s2.shift, s2.start, s2.end, s2.rests, s2.emp_type, s2.days, s2.start_date, s2.end_date,
-      job_title, phone, user_id, status || 'active', notes, id
+      job_title, phone, user_id, status || 'active', notes,
+      teachable.starter, teachable.general, teachable.conversation,
+      id
     );
     const member = db.prepare('SELECT * FROM team_members WHERE id = ?').get(id);
     if (!member) return res.status(404).json({ error: 'Not found' });

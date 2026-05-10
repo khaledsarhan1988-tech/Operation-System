@@ -9,6 +9,7 @@ const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const { initDb, saveNow } = require('./config/database');
+const teamSafety = require('./utils/team-members-safety');
 
 const PORT = process.env.PORT || 3001;
 
@@ -18,6 +19,13 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173')
 
 // ─── INITIALIZE DB THEN START SERVER ─────────────────────────────────────────
 initDb().then(db => {
+  // ── team_members SAFETY: snapshot BEFORE any schema/migrations ───────────
+  // Educational Administration team data must survive any startup path. We
+  // snapshot to /data/team_members_backup.json (same persistent Volume as
+  // the DB) before anything that could conceivably touch the table. Manual
+  // DELETE via DELETE /api/team/:id remains the only way to lose data.
+  try { teamSafety.snapshotIfNonEmpty(db, 'app_startup_pre_schema'); } catch(_) {}
+
   // Run schema if tables don't exist
   const schemaPath = path.join(__dirname, 'db/schema.sql');
   if (fs.existsSync(schemaPath)) {
@@ -154,6 +162,45 @@ initDb().then(db => {
       console.error(`team_members.${col} migration error:`, e.message);
     }
   });
+
+  // 4a-bis. TEAM MEMBERS: teachable courses (Starter / General / Conversation)
+  //   Each column stores the HIGHEST level the trainer can teach.
+  //     teachable_starter      → 0..3   (Starter 1..3,           0 = not capable)
+  //     teachable_general      → 0..5   (General 1..5,           0 = not capable)
+  //     teachable_conversation → 0..5   (Conversation 1..5,      0 = not capable)
+  //   DEFAULT = max level so EVERY existing trainer is automatically able to
+  //   teach all courses — no manual data entry required, zero risk to existing
+  //   data. ALTER ADD COLUMN with DEFAULT is non-destructive in SQLite.
+  [
+    { col: 'teachable_starter',      def: 3 },
+    { col: 'teachable_general',      def: 5 },
+    { col: 'teachable_conversation', def: 5 },
+  ].forEach(({ col, def }) => {
+    try {
+      const info = db._raw.exec(`PRAGMA table_info(team_members)`);
+      const cols = info[0]?.values.map(r => r[1]) || [];
+      if (cols.length > 0 && !cols.includes(col)) {
+        db._raw.run(`ALTER TABLE team_members ADD COLUMN ${col} INTEGER NOT NULL DEFAULT ${def}`);
+        saveNow();
+        console.log(`✅ Migration: added \`${col}\` column to team_members (default ${def} = all levels)`);
+      }
+    } catch (e) {
+      console.error(`team_members.${col} migration error:`, e.message);
+    }
+  });
+
+  // ── team_members SAFETY: restore from snapshot if rows vanished ─────────
+  // Runs after all team_members DDL (step 4a). If anything above wiped or
+  // failed to preserve rows, this brings them back from the JSON snapshot
+  // taken at startup. The integrity log line goes to Railway logs so any
+  // unexpected drop is immediately visible.
+  try {
+    teamSafety.restoreIfMissingOrEmpty(db);
+    teamSafety.logIntegrity(db);
+    saveNow();
+  } catch(e) {
+    console.error('[SAFETY] team_members post-migration check error:', e.message);
+  }
 
   // 4b. AUTO-ABSENT: add `auto_generated` column to absent tables
   //     Tags rows generated from lectures with empty attendance + confirmed status,

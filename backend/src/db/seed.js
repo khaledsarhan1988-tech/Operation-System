@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const { initDb, saveNow } = require('../config/database');
+const teamSafety = require('../utils/team-members-safety');
 
 const schemaPath = path.join(__dirname, 'schema.sql');
 
@@ -75,12 +76,24 @@ initDb().then(db => {
     console.log('dept_type Private migration:', e.message);
   }
 
-  // Create / migrate team_members table
+  // ── team_members SAFETY: snapshot BEFORE any DDL ─────────────────────────
+  // The old "recreate via temp table" pattern below was a known data-loss
+  // vector (column-mismatch INSERT silently skipping rows, then DROP). We
+  // now snapshot to /data/team_members_backup.json first, so even a worst-
+  // case migration failure can be recovered automatically.
+  try { teamSafety.snapshotIfNonEmpty(db, 'seed_pre_migration'); } catch(_) {}
+
+  // Create team_members if it doesn't already exist. Idempotent — never
+  // drops/recreates an existing table. CHECK constraints are ignored at
+  // runtime (PRAGMA ignore_check_constraints=1 in database.js), so we don't
+  // need the destructive recreate dance to "update" them. App.js step 4a
+  // adds shift1/shift2 columns via ALTER if missing.
   try {
-    // Always recreate with updated CHECK (SQLite can't ALTER CHECK constraints)
-    // Use temp table → copy data → drop old → rename
+    // Clean up any leftover temp table from a previous failed migration
+    try { db._raw.run(`DROP TABLE IF EXISTS team_members_new`); } catch(_) {}
+
     db._raw.run(`
-      CREATE TABLE IF NOT EXISTS team_members_new (
+      CREATE TABLE IF NOT EXISTS team_members (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         name        TEXT NOT NULL,
         department  TEXT NOT NULL,
@@ -94,16 +107,18 @@ initDb().then(db => {
         created_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
       )
     `);
-    // Copy existing data if old table exists
-    try {
-      db._raw.run(`INSERT OR IGNORE INTO team_members_new SELECT * FROM team_members`);
-      db._raw.run(`DROP TABLE IF EXISTS team_members`);
-    } catch(_) {}
-    db._raw.run(`ALTER TABLE team_members_new RENAME TO team_members`);
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_team_dept_section ON team_members(department, section)`);
-    console.log('✅ Migration: team_members table ready (section constraint updated)');
+    console.log('✅ Migration: team_members table ready (idempotent — no recreate)');
   } catch(e) {
     console.log('team_members migration:', e.message);
+  }
+
+  // ── team_members SAFETY: restore from snapshot if rows vanished ─────────
+  try {
+    teamSafety.restoreIfMissingOrEmpty(db);
+    teamSafety.logIntegrity(db);
+  } catch(e) {
+    console.error('[SAFETY] post-migration check error:', e.message);
   }
 
   // Create code_problem_status table (persistent problem tracking)

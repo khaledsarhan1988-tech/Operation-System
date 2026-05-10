@@ -51,6 +51,15 @@ const DEPT_SECTIONS = {
   appointments:      ['all', 'general', 'private', 'semi'],
 };
 
+// Teachable courses — three independent tracks. Each value = highest level
+// the trainer can teach (0 = not capable, max = all levels).
+const COURSES = [
+  { key: 'starter',      label: 'Starter',      max: 3 },
+  { key: 'general',      label: 'General',      max: 5 },
+  { key: 'conversation', label: 'Conversation', max: 5 },
+];
+const COURSE_FIELD = (key) => `teachable_${key}`;
+
 const DEPT_COLORS = {
   customer_services: { bg: 'bg-blue-600',    light: 'bg-blue-50',    border: 'border-blue-200',    text: 'text-blue-700',    dot: 'bg-blue-500' },
   education:         { bg: 'bg-emerald-600', light: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700', dot: 'bg-emerald-500' },
@@ -74,6 +83,9 @@ const emptyForm = {
   shift2_start_date: '', shift2_end_date: '',
   shift2_employment_type: '', shift2_work_days: '',
   job_title: '', phone: '', status: 'active', notes: '',
+  // Teachable courses — default = max level (all unlocked) so new trainers
+  // can teach everything until explicitly limited.
+  teachable_starter: 3, teachable_general: 5, teachable_conversation: 5,
 };
 
 // Safely parse a JSON-stored rests array — accepts string, array, or null/garbage.
@@ -297,6 +309,79 @@ function ShiftSection({
   );
 }
 
+// ─── TEACHABLE COURSES SECTION ────────────────────────────────────────────────
+// Three rows of pill buttons — Starter / General / Conversation. Each pill is
+// a highest level. Lower levels visually "lit" to show they're covered.
+// Cascade rule: picking any General level forces Starter to its max (= 3).
+function TeachableCoursesSection({ form, setForm, labelCls }) {
+  const setLevel = (courseKey, value) => {
+    setForm(f => {
+      const next = { ...f, [COURSE_FIELD(courseKey)]: value };
+      // Cascade: any General level >= 1 implies the trainer can teach all Starter
+      if (courseKey === 'general' && value > 0) {
+        next.teachable_starter = 3;
+      }
+      return next;
+    });
+  };
+
+  const Pill = ({ active, covered, onClick, children, tone = 'level' }) => {
+    let cls = 'px-3 py-1.5 rounded-lg text-xs font-bold border transition-all';
+    if (active) {
+      cls += tone === 'all'      ? ' bg-emerald-600 text-white border-emerald-600 shadow-sm'
+          :  tone === 'none'     ? ' bg-gray-700 text-white border-gray-700'
+          :  ' bg-blue-600 text-white border-blue-600 shadow-sm';
+    } else if (covered) {
+      cls += ' bg-blue-50 text-blue-600 border-blue-100';
+    } else {
+      cls += ' bg-white text-gray-500 border-gray-200 hover:bg-gray-50';
+    }
+    return (
+      <button type="button" onClick={onClick} className={cls}>
+        {children}
+      </button>
+    );
+  };
+
+  return (
+    <div className="space-y-3 border border-gray-200 rounded-xl p-3 bg-gray-50/40">
+      <div className="text-xs font-bold text-gray-700">الدورات القابلة للتدريس</div>
+      <p className="text-[11px] text-gray-500 -mt-1">اختار أعلى مستوى يقدر المدرب يدرسه. كل المستويات الأقل تُعتبر مغطاة تلقائياً.</p>
+
+      {COURSES.map(course => {
+        const value = Number(form[COURSE_FIELD(course.key)] ?? course.max);
+        return (
+          <div key={course.key}>
+            <label className={labelCls}>{course.label}</label>
+            <div className="flex flex-wrap gap-2">
+              <Pill tone="none" active={value === 0} onClick={() => setLevel(course.key, 0)}>
+                غير قادر
+              </Pill>
+              {Array.from({ length: course.max }, (_, i) => i + 1).map(level => (
+                <Pill
+                  key={level}
+                  active={value === level}
+                  covered={value > level}
+                  onClick={() => setLevel(course.key, level)}
+                >
+                  {course.label} {level}
+                </Pill>
+              ))}
+              <Pill
+                tone="all"
+                active={value === course.max}
+                onClick={() => setLevel(course.key, course.max)}
+              >
+                كل المستويات
+              </Pill>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── MEMBER MODAL ─────────────────────────────────────────────────────────────
 function MemberModal({ initial, onSave, onClose, loading }) {
   const [form, setForm] = useState(() => hydrateMember(initial));
@@ -441,6 +526,11 @@ function MemberModal({ initial, onSave, onClose, loading }) {
               onRemove={clearShift2}
               inputCls={inputCls} labelCls={labelCls}
             />
+          )}
+
+          {/* Teachable courses — education only */}
+          {form.department === 'education' && (
+            <TeachableCoursesSection form={form} setForm={setForm} labelCls={labelCls} />
           )}
 
           {/* Job title + Phone */}

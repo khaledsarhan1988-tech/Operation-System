@@ -63,6 +63,11 @@ CREATE TABLE IF NOT EXISTS team_members (
   user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
   status      TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','inactive')),
   notes       TEXT,
+  -- Teachable courses (max level per track). Default = max → all trainers
+  -- are capable of every course unless explicitly limited via the UI.
+  teachable_starter      INTEGER NOT NULL DEFAULT 3,  -- 0..3
+  teachable_general      INTEGER NOT NULL DEFAULT 5,  -- 0..5
+  teachable_conversation INTEGER NOT NULL DEFAULT 5,  -- 0..5
   created_at  TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
 );
 CREATE INDEX IF NOT EXISTS idx_team_dept_section ON team_members(department, section);
