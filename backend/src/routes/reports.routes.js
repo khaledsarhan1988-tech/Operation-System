@@ -2280,6 +2280,239 @@ router.get('/code-problems', (req, res) => {
   }
 });
 
+// ─── GET /api/reports/trainer-utilization ────────────────────────────────────
+// Phase 1 of the "إشغال المدربين" feature: returns per-trainer per-day capacity
+// (available minutes from shift) vs booked minutes (from lectures).
+//
+// Query params:
+//   from, to    — YYYY-MM-DD inclusive (default: today through +6 days = 1 week)
+//   section     — optional filter by team_members.section (general/private/semi/all/phone_call)
+//   search      — optional substring of trainer name
+//
+// Response:
+//   {
+//     dates:   ['2026-05-09', '2026-05-10', ...],
+//     trainers: [{
+//       id, name, section, shift_summary,
+//       totals: { available_min, booked_min, utilization_pct, work_days },
+//       days:   { 'YYYY-MM-DD': { is_work_day, available_min, booked_min, utilization_pct, lectures: [...] } }
+//     }]
+//   }
+router.get('/trainer-utilization', (req, res) => {
+  const { from, to, section = '', search = '' } = req.query;
+  const line = lineFilter(req);
+  const lineL = buildLineFilter('l', line);
+  const lineB = buildLineFilter('b', line);
+
+  // Default range: today through +6 days (one week)
+  const today = new Date(); today.setHours(12, 0, 0, 0);
+  const fmt = d => d.toISOString().slice(0, 10);
+  const fromDate = from || fmt(today);
+  const toDateRaw = to;
+  let toDate = toDateRaw;
+  if (!toDate) {
+    const end = new Date(today); end.setDate(end.getDate() + 6);
+    toDate = fmt(end);
+  }
+  // Build inclusive list of dates between from and to
+  const dates = [];
+  {
+    let d = new Date(fromDate + 'T12:00:00');
+    const stop = new Date(toDate + 'T12:00:00');
+    while (d <= stop) { dates.push(fmt(d)); d.setDate(d.getDate() + 1); }
+  }
+
+  // Local helpers (mirror those in computeCodeProblems)
+  const DOW_KEYS = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+  const HHMM = s => {
+    if (!s) return null;
+    const m = String(s).match(/^(\d{1,2}):(\d{2})$/);
+    return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : null;
+  };
+  const HHMM_END = s => { const v = HHMM(s); return v === 0 ? 1440 : v; };
+  const parseRests = raw => {
+    if (!raw) return [];
+    let arr = raw;
+    if (typeof raw === 'string') {
+      try { arr = JSON.parse(raw); } catch { return []; }
+    }
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .map(r => ({ s: HHMM(r?.start), e: HHMM(r?.end) }))
+      .filter(r => r.s != null && r.e != null && r.e > r.s);
+  };
+  const parseTime12 = t => {
+    if (!t) return -1;
+    const m = String(t).match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+    if (!m) return -1;
+    let h = parseInt(m[1]), min = parseInt(m[2]);
+    if (m[3]?.toUpperCase() === 'PM' && h < 12) h += 12;
+    if (m[3]?.toUpperCase() === 'AM' && h === 12) h = 0;
+    return h * 60 + min;
+  };
+  const parseDur = d => {
+    if (!d) return 0;
+    const m = String(d).match(/(\d{1,2}):(\d{2})/);
+    return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : 0;
+  };
+  const getDow = s => { if (!s) return -1; return new Date(s + 'T12:00:00').getDay(); };
+  const stripParens = name => String(name || '').replace(/\([^)]*\)/g, '').trim();
+
+  // Normalize one of a trainer's two shifts. Returns {startMin,endMin,days[],rests[],startDate,endDate} or null.
+  function normalizeShift(t, sfx) {
+    const shift = t['shift' + sfx];
+    if (!shift) return null;
+    const startMin = HHMM(t['shift' + sfx + '_start']);
+    const endMin   = HHMM_END(t['shift' + sfx + '_end']);
+    if (startMin == null || endMin == null) return null;
+    const daysField = sfx === '' ? 'work_days' : 'shift2_work_days';
+    const days = String(t[daysField] || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    return {
+      startMin, endMin, days,
+      rests: parseRests(t['shift' + sfx + '_rests']),
+      startDate: t['shift' + sfx + '_start_date'] || null,
+      endDate:   t['shift' + sfx + '_end_date']   || null,
+      label: t['shift' + sfx],
+      startStr: t['shift' + sfx + '_start'] || '',
+      endStr:   t['shift' + sfx + '_end']   || '',
+    };
+  }
+  function shiftActiveOn(sh, dateStr) {
+    if (sh.startDate && dateStr < sh.startDate) return false;
+    if (sh.endDate   && dateStr > sh.endDate)   return false;
+    return true;
+  }
+  // Available minutes for this shift on this date (0 if day not in work_days).
+  function shiftMinsForDate(sh, dateStr) {
+    if (!shiftActiveOn(sh, dateStr)) return 0;
+    const dow = getDow(dateStr);
+    const dayKey = DOW_KEYS[dow] || '';
+    if (!sh.days.includes(dayKey)) return 0;
+    let mins = sh.endMin - sh.startMin;
+    for (const r of sh.rests) mins -= (r.e - r.s);
+    return mins > 0 ? mins : 0;
+  }
+
+  try {
+    // Trainers — Educational Administration only
+    let trainerWhere = `WHERE department='education' AND status='active'`;
+    if (section && section !== 'all') {
+      const s = String(section).replace(/'/g, "''");
+      trainerWhere += ` AND section='${s}'`;
+    }
+    if (search) {
+      const s = escapeLike(search);
+      trainerWhere += ` AND name LIKE '%${s}%' ESCAPE '\\'`;
+    }
+    const trainers = db.prepare(`SELECT * FROM team_members ${trainerWhere}`).all();
+
+    // Skip trainers with no shift configured at all — they can't have utilization data.
+    const trainerRows = trainers.filter(t => t.shift || t.shift2);
+
+    // Lectures in the date window — main + zoom regular. Dedup zoom by (date,time,trainer)
+    // because zoom side rows are per-student (multiple rows per slot).
+    const lecRaw = db.prepare(
+      `SELECT DISTINCT l.group_name, l.date, l.time, l.duration, l.trainer, l.session_type
+         FROM lectures l
+         INNER JOIN batches b ON l.group_name=b.group_name${line ? ' AND b.line=l.line' : ''}
+         WHERE b.status='نشطة'
+           AND l.date BETWEEN '${fromDate}' AND '${toDate}'
+           AND (l.session_type='main'
+             OR (l.session_type='side' AND LOWER(COALESCE(l.side_session_category,'regular'))='regular'))
+         ${lineL}${lineB}
+         ORDER BY l.date, l.time`
+    ).all();
+
+    // Bucket lectures by trainer-key + date. Inside the bucket, dedupe by (time,duration)
+    // so per-student zoom rows count once.
+    const byTrainerDay = {}; // key='trainer_lc|YYYY-MM-DD' → array
+    for (const l of lecRaw) {
+      const k = stripParens(l.trainer).toLowerCase();
+      if (!k) continue;
+      const bucketKey = `${k}|${l.date}`;
+      const arr = byTrainerDay[bucketKey] = byTrainerDay[bucketKey] || [];
+      // dedupe by (time,duration) for zoom multi-student rows
+      if (!arr.some(x => x.time === l.time && x.duration === l.duration && x.session_type === l.session_type)) {
+        arr.push({
+          group_name: l.group_name, time: l.time, duration: l.duration,
+          session_type: l.session_type,
+        });
+      }
+    }
+
+    // Build response per trainer
+    const out = trainerRows.map(t => {
+      const tKey = stripParens(t.name).toLowerCase();
+      const sh1 = normalizeShift(t, '');
+      const sh2 = normalizeShift(t, '2');
+      const shifts = [sh1, sh2].filter(Boolean);
+
+      // Build a one-line shift summary like "مسائي 04:00 PM-12:00 AM"
+      const SHIFT_AR = { morning: 'صباحي', evening: 'مسائي' };
+      const fmt12 = m => {
+        if (m == null) return '';
+        const mod = ((m % 1440) + 1440) % 1440;
+        const h24 = Math.floor(mod / 60), mm = mod % 60;
+        const ampm = h24 >= 12 ? 'PM' : 'AM';
+        let h12 = h24 % 12; if (h12 === 0) h12 = 12;
+        return `${String(h12).padStart(2,'0')}:${String(mm).padStart(2,'0')} ${ampm}`;
+      };
+      const shiftSummary = shifts
+        .map(sh => `${SHIFT_AR[sh.label] || sh.label} ${fmt12(sh.startMin)}-${fmt12(sh.endMin)}`)
+        .join(' + ');
+
+      const days = {};
+      let totalAvailable = 0, totalBooked = 0, workDayCount = 0;
+      for (const date of dates) {
+        // Sum capacity from BOTH shifts on this date
+        let availMin = 0;
+        for (const sh of shifts) availMin += shiftMinsForDate(sh, date);
+        const isWorkDay = availMin > 0;
+        if (isWorkDay) workDayCount++;
+        // Sum booked
+        const lectures = byTrainerDay[`${tKey}|${date}`] || [];
+        const bookedMin = lectures.reduce((s, l) => s + parseDur(l.duration), 0);
+        const utilization = isWorkDay && availMin > 0
+          ? Math.round((bookedMin / availMin) * 100)
+          : null;
+        days[date] = {
+          is_work_day: isWorkDay,
+          available_min: availMin,
+          booked_min: bookedMin,
+          utilization_pct: utilization,
+          lectures: lectures.map(l => ({
+            group_name: l.group_name, time: l.time, duration: l.duration,
+            session_type: l.session_type,
+          })),
+        };
+        totalAvailable += availMin;
+        totalBooked   += bookedMin;
+      }
+
+      return {
+        id: t.id,
+        name: stripParens(t.name) || t.name,
+        full_name: t.name,
+        section: t.section,
+        shift_summary: shiftSummary,
+        totals: {
+          available_min: totalAvailable,
+          booked_min: totalBooked,
+          utilization_pct: totalAvailable > 0
+            ? Math.round((totalBooked / totalAvailable) * 100) : null,
+          work_days: workDayCount,
+        },
+        days,
+      };
+    }).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+
+    return res.json({ dates, trainers: out });
+  } catch (err) {
+    console.error('[reports] trainer-utilization error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/reports/remarks-notes-options ──────────────────────────────────
 // Returns dropdown options for coordinator, category, assigned_to
 router.get('/remarks-notes-options', (req, res) => {

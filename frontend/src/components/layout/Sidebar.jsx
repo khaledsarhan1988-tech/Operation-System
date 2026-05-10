@@ -92,6 +92,7 @@ function getAdminLinks(user) {
     { to: '/admin/users',        label: 'nav.users',         icon: UserCog,         color: 'indigo' },
     { to: '/admin/upload',       label: 'nav.excelUpload',   icon: Upload,          color: 'orange' },
     { to: '/admin/team',         label: 'nav.team',          icon: Users,           color: 'purple' },
+    { to: '/admin/trainer-utilization', label: 'nav.trainerUtilization', icon: Activity, color: 'teal' },
     { to: '/admin/control',      label: 'nav.controlPanel',       icon: LayoutDashboard, color: 'pink' },
     { to: '/admin/distribution', label: 'nav.clientDistribution', icon: Shuffle,         color: 'cyan' },
     { to: '/admin/pipeline',     label: 'nav.clientPipeline',     icon: Kanban,          color: 'emerald' },
