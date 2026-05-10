@@ -1651,14 +1651,14 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
     ).all();
 
     // ── Trainer capability lookup (Educational Administration only) ────────
-    // Built once per request; used by the "كود غير مطابق لمستوى المدرب" check.
+    // Built once per request; used by the "كود غير مطابق لمستوى المدرب"
+    // and "محاضرة خارج وقت عمل المدرب" checks.
     // CRITICAL: parenthetical suffixes are stripped on BOTH sides of the
     // match. team_members.name often has "(General)" / "(Private)" appended
     // for clarity, while lectures.trainer has "(Group)" / "(Semi)" / "(z.c)"
     // — different parens on each side, so we strip both before keying.
     const teamRows = db.prepare(
-      `SELECT name, teachable_starter, teachable_general, teachable_conversation
-       FROM team_members WHERE department='education'`
+      `SELECT * FROM team_members WHERE department='education'`
     ).all();
     // (defined below — declared up here so we can use it for both keys)
     const _stripParens = (s) => String(s || '').replace(/\([^)]*\)/g, '').trim();
@@ -1688,6 +1688,116 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
     function stripTrainerSuffix(name) {
       if (!name) return '';
       return String(name).replace(/\([^)]*\)/g, '').trim();
+    }
+
+    // ── Schedule helpers (used by "محاضرة خارج وقت عمل المدرب" check) ─────
+    // Lecture times look like "06:00 PM" (12-h with AM/PM); shift times are
+    // "16:00" (24-h); rest periods are JSON-encoded [{start, end}, ...].
+    const DOW_KEYS = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+    const DOW_AR   = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
+    function parseHHMMToMin(s) {
+      if (!s) return null;
+      const m = String(s).match(/^(\d{1,2}):(\d{2})$/);
+      if (!m) return null;
+      return parseInt(m[1]) * 60 + parseInt(m[2]);
+    }
+    // Treat shift end "00:00" as midnight at end-of-day (= 24:00 = 1440 min).
+    function parseShiftEndMin(s) {
+      const v = parseHHMMToMin(s);
+      if (v === 0) return 1440;
+      return v;
+    }
+    function parseRestList(raw) {
+      if (!raw) return [];
+      let arr = raw;
+      if (typeof raw === 'string') {
+        try { arr = JSON.parse(raw); } catch { return []; }
+      }
+      if (!Array.isArray(arr)) return [];
+      return arr
+        .map(r => ({ startMin: parseHHMMToMin(r?.start), endMin: parseHHMMToMin(r?.end) }))
+        .filter(r => r.startMin != null && r.endMin != null && r.endMin > r.startMin);
+    }
+    // Returns null if shift is unconfigured, otherwise a normalized record.
+    // Schema asymmetry: shift 1 stores work-days as `work_days` (no prefix),
+    // while shift 2 stores it as `shift2_work_days`. Other shift fields keep
+    // the `shift_` / `shift2_` prefix consistently.
+    function normalizeShift(t, suffix) {
+      const shift = t['shift' + suffix];
+      if (!shift) return null;
+      const startMin = parseHHMMToMin(t['shift' + suffix + '_start']);
+      const endMin   = parseShiftEndMin(t['shift' + suffix + '_end']);
+      if (startMin == null || endMin == null) return null;
+      const daysField = suffix === '' ? 'work_days' : 'shift2_work_days';
+      const days = String(t[daysField] || '')
+        .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+      return {
+        startMin, endMin,
+        days,
+        startDate: t['shift' + suffix + '_start_date'] || null,
+        endDate:   t['shift' + suffix + '_end_date']   || null,
+        rests:     parseRestList(t['shift' + suffix + '_rests']),
+        startStr:  t['shift' + suffix + '_start'] || '',
+        endStr:    t['shift' + suffix + '_end']   || '',
+      };
+    }
+    function isDateInShiftRange(dateStr, shift) {
+      if (shift.startDate && dateStr < shift.startDate) return false;
+      if (shift.endDate   && dateStr > shift.endDate)   return false;
+      return true;
+    }
+    // Format a "minutes since midnight" value back to "HH:MM AM/PM" for display.
+    function fmt12h(mins) {
+      if (mins == null) return '';
+      const m = mins % 1440;
+      const h24 = Math.floor(m / 60), mm = m % 60;
+      const ampm = h24 >= 12 ? 'PM' : 'AM';
+      let h12 = h24 % 12; if (h12 === 0) h12 = 12;
+      return `${String(h12).padStart(2,'0')}:${String(mm).padStart(2,'0')} ${ampm}`;
+    }
+    // Evaluate one lecture against a trainer. Returns { ok, reason }.
+    // reason is short Arabic text describing why the lecture is out of schedule.
+    function evaluateLectureSchedule(lec, teamRow) {
+      const sh1 = normalizeShift(teamRow, '');
+      const sh2 = normalizeShift(teamRow, '2');
+      const shifts = [sh1, sh2].filter(Boolean);
+      if (shifts.length === 0) return { ok: true, reason: null }; // no shift configured → skip
+      const lecStartMin = parseTimeMins(lec.time);  // existing helper above (12-h aware)
+      if (lecStartMin < 0) return { ok: true, reason: null };     // unparseable time → skip
+      const lecEndMin = lecStartMin + parseDurMins(lec.duration);
+      const dow = getDow(lec.date);
+      const dayKey = DOW_KEYS[dow] || '';
+
+      const reasons = [];
+      for (const sh of shifts) {
+        // Date range
+        if (!isDateInShiftRange(lec.date, sh)) {
+          reasons.push('خارج فترة عمل المدرب');
+          continue;
+        }
+        // Day of week
+        if (!sh.days.includes(dayKey)) {
+          reasons.push(`يوم ${DOW_AR[dow]} مش في أيام العمل`);
+          continue;
+        }
+        // Time inside shift window (start AND end must fit)
+        if (lecStartMin < sh.startMin || lecEndMin > sh.endMin) {
+          reasons.push(`خارج الشيفت (${sh.startStr}-${sh.endStr})`);
+          continue;
+        }
+        // Rest periods
+        const overlapsRest = sh.rests.find(r =>
+          lecStartMin < r.endMin && lecEndMin > r.startMin
+        );
+        if (overlapsRest) {
+          reasons.push(`داخل وقت راحة (${fmt12h(overlapsRest.startMin)}-${fmt12h(overlapsRest.endMin)})`);
+          continue;
+        }
+        // This shift covers the lecture → OK
+        return { ok: true, reason: null };
+      }
+      // None of the shifts covered → report shortest reason (most informative for user)
+      return { ok: false, reason: reasons[0] || 'خارج وقت عمل المدرب' };
     }
 
     // fetch ALL zoom call sessions (regular 15-min) including unconfirmed for zoom-call problem checks
@@ -1952,6 +2062,44 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
             problem_type: 'كود غير مطابق لمستوى المدرب',
             detail: `الدورة: ${fam} ${parsedCourse.level} — ${overcap.join(' / ')}`,
             actual: parsedCourse.level,
+          }, 'main');
+        }
+      }
+
+      // 6. MAIN — lecture outside trainer's working hours
+      //    For each lecture in this batch, evaluate against trainer's shift(s).
+      //    Violations: outside shift date range / day not in work_days /
+      //    time outside shift window / overlapping a rest period.
+      //    Aggregated per (group, trainer): show first 3 violating lectures
+      //    in detail, plus a count of any extras.
+      {
+        const violationsByTrainer = {};  // cleanT → [{date, time, reason}]
+        for (const row of mainRows) {
+          const cleanT = stripTrainerSuffix(row.trainer);
+          if (!cleanT) continue;
+          const key = cleanT.toLowerCase();
+          const teamRow = teamMap[key];
+          if (!teamRow) continue;             // unregistered → skip
+          const evalRes = evaluateLectureSchedule(row, teamRow);
+          if (!evalRes.ok) {
+            (violationsByTrainer[cleanT] = violationsByTrainer[cleanT] || []).push({
+              date: row.date, time: row.time, reason: evalRes.reason,
+            });
+          }
+        }
+        const trainersWithIssues = Object.keys(violationsByTrainer);
+        if (trainersWithIssues.length > 0) {
+          const parts = trainersWithIssues.map(name => {
+            const list = violationsByTrainer[name];
+            const sample = list.slice(0, 3).map(v => `${v.date} ${v.time} (${v.reason})`).join('، ');
+            const extra = list.length > 3 ? ` و${list.length - 3} أخرى` : '';
+            return `${name}: ${sample}${extra}`;
+          });
+          const totalViolations = trainersWithIssues.reduce((s, n) => s + violationsByTrainer[n].length, 0);
+          addProblem(mainProblems, { ...meta, first_date: firstMainDate,
+            problem_type: 'محاضرة خارج وقت عمل المدرب',
+            detail: parts.join(' | '),
+            actual: totalViolations,
           }, 'main');
         }
       }
