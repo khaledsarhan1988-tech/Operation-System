@@ -1801,8 +1801,9 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
     }
 
     // fetch ALL zoom call sessions (regular 15-min) including unconfirmed for zoom-call problem checks
+    // l.trainer is needed for the trainer level + schedule checks (zoom).
     const sideRaw = db.prepare(
-      `SELECT l.group_name, l.date, l.time, l.duration FROM lectures l
+      `SELECT l.group_name, l.date, l.time, l.duration, l.trainer FROM lectures l
        INNER JOIN batches b ON l.group_name=b.group_name${line ? ' AND b.line = l.line' : ''}
        WHERE b.status='نشطة' AND l.session_type='side'
          AND LOWER(COALESCE(l.side_session_category,'regular')) = 'regular'
@@ -2101,6 +2102,68 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
             detail: parts.join(' | '),
             actual: totalViolations,
           }, 'main');
+        }
+      }
+
+      // 7. ZOOM CALL — trainer level mismatch (mirror of #5 for side sessions)
+      if (parsedCourse) {
+        const capCol  = `teachable_${parsedCourse.family}`;
+        const seenT   = new Set();
+        const overcap = [];
+        for (const row of sideRows) {
+          const cleanT = stripTrainerSuffix(row.trainer);
+          if (!cleanT) continue;
+          const key = cleanT.toLowerCase();
+          if (seenT.has(key)) continue;
+          seenT.add(key);
+          const teamRow = teamMap[key];
+          if (!teamRow) continue;
+          const max = Number(teamRow[capCol] ?? 5);
+          if (parsedCourse.level > max) {
+            const fam = COURSE_FAMILY_LABEL[parsedCourse.family];
+            overcap.push(`${cleanT} (قدرته ${fam} ${max})`);
+          }
+        }
+        if (overcap.length > 0) {
+          const fam = COURSE_FAMILY_LABEL[parsedCourse.family];
+          addProblem(zoomProblems, { ...meta, trainee_count: batch.trainee_count, first_date: firstSideDate,
+            problem_type: 'كود غير مطابق لمستوى المدرب',
+            detail: `الدورة: ${fam} ${parsedCourse.level} — ${overcap.join(' / ')}`,
+            actual: parsedCourse.level,
+          }, 'side');
+        }
+      }
+
+      // 8. ZOOM CALL — outside trainer's working hours (mirror of #6 for side sessions)
+      {
+        const violationsByTrainer = {};
+        for (const row of sideRows) {
+          const cleanT = stripTrainerSuffix(row.trainer);
+          if (!cleanT) continue;
+          const key = cleanT.toLowerCase();
+          const teamRow = teamMap[key];
+          if (!teamRow) continue;
+          const evalRes = evaluateLectureSchedule(row, teamRow);
+          if (!evalRes.ok) {
+            (violationsByTrainer[cleanT] = violationsByTrainer[cleanT] || []).push({
+              date: row.date, time: row.time, reason: evalRes.reason,
+            });
+          }
+        }
+        const trainersWithIssues = Object.keys(violationsByTrainer);
+        if (trainersWithIssues.length > 0) {
+          const parts = trainersWithIssues.map(name => {
+            const list = violationsByTrainer[name];
+            const sample = list.slice(0, 3).map(v => `${v.date} ${v.time} (${v.reason})`).join('، ');
+            const extra = list.length > 3 ? ` و${list.length - 3} أخرى` : '';
+            return `${name}: ${sample}${extra}`;
+          });
+          const totalViolations = trainersWithIssues.reduce((s, n) => s + violationsByTrainer[n].length, 0);
+          addProblem(zoomProblems, { ...meta, trainee_count: batch.trainee_count, first_date: firstSideDate,
+            problem_type: 'زووم كول خارج وقت عمل المدرب',
+            detail: parts.join(' | '),
+            actual: totalViolations,
+          }, 'side');
         }
       }
     }
