@@ -1652,15 +1652,19 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
 
     // ── Trainer capability lookup (Educational Administration only) ────────
     // Built once per request; used by the "كود غير مطابق لمستوى المدرب" check.
-    // Keyed by lowercase-trimmed name so trainers like "Menna Fawzy(Semi)" can
-    // be matched after stripping the parenthetical suffix.
+    // CRITICAL: parenthetical suffixes are stripped on BOTH sides of the
+    // match. team_members.name often has "(General)" / "(Private)" appended
+    // for clarity, while lectures.trainer has "(Group)" / "(Semi)" / "(z.c)"
+    // — different parens on each side, so we strip both before keying.
     const teamRows = db.prepare(
       `SELECT name, teachable_starter, teachable_general, teachable_conversation
        FROM team_members WHERE department='education'`
     ).all();
+    // (defined below — declared up here so we can use it for both keys)
+    const _stripParens = (s) => String(s || '').replace(/\([^)]*\)/g, '').trim();
     const teamMap = {};
     for (const t of teamRows) {
-      const k = String(t.name || '').trim().toLowerCase();
+      const k = _stripParens(t.name).toLowerCase();
       if (k) teamMap[k] = t;
     }
     // Parse course strings from the Batches sheet:
