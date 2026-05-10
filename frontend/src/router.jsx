@@ -112,7 +112,7 @@ const router = createBrowserRouter([
       { path: 'users',                        element: <UserManagement /> },
       { path: 'upload',                       element: <ExcelUpload /> },
       { path: 'team',                         element: <TeamPage /> },
-      { path: 'trainer-utilization',          element: <TrainerUtilization /> },
+      { path: 'reports/trainer-utilization',  element: <TrainerUtilization /> },
       { path: 'control',                      element: <LeaderDashboard /> },
       { path: 'reports/customer-services',    element: <SystemReports /> },
       { path: 'reports/education',            element: <EducationReports /> },

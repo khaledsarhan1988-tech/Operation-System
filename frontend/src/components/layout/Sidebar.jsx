@@ -74,6 +74,7 @@ const REPORT_LINKS = [
   { to: '/admin/reports/fix-report',            label: 'nav.fixReports',         icon: FileText,      color: 'orange',  management: 'Customer Services', sub: true },
   { to: '/admin/reports/attendance-absence',    label: 'nav.attendanceReports',  icon: Activity,      color: 'teal',    management: 'Customer Services', sub: true },
   { to: '/admin/reports/education',             label: 'nav.educationReports',   icon: GraduationCap, color: 'violet',  management: 'Education' },
+  { to: '/admin/reports/trainer-utilization',   label: 'nav.trainerUtilization', icon: Activity,      color: 'teal',    management: 'Education', sub: true },
   { to: '/admin/reports/quality',               label: 'nav.qualityReports',     icon: ShieldCheck,   color: 'green',   management: 'Quality' },
   { to: '/admin/reports/quality-snapshots',     label: 'nav.qualitySnapshots',   icon: Snowflake,     color: 'cyan',    management: 'Quality', sub: true },
 ];
@@ -92,7 +93,6 @@ function getAdminLinks(user) {
     { to: '/admin/users',        label: 'nav.users',         icon: UserCog,         color: 'indigo' },
     { to: '/admin/upload',       label: 'nav.excelUpload',   icon: Upload,          color: 'orange' },
     { to: '/admin/team',         label: 'nav.team',          icon: Users,           color: 'purple' },
-    { to: '/admin/trainer-utilization', label: 'nav.trainerUtilization', icon: Activity, color: 'teal' },
     { to: '/admin/control',      label: 'nav.controlPanel',       icon: LayoutDashboard, color: 'pink' },
     { to: '/admin/distribution', label: 'nav.clientDistribution', icon: Shuffle,         color: 'cyan' },
     { to: '/admin/pipeline',     label: 'nav.clientPipeline',     icon: Kanban,          color: 'emerald' },
