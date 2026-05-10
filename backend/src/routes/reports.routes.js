@@ -1627,7 +1627,7 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
   };
 
   const batches = db.prepare(
-    `SELECT b.group_name, b.trainee_count,
+    `SELECT b.group_name, b.trainee_count, b.course,
             COALESCE(
               (SELECT u.department FROM users u
                WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
@@ -1642,12 +1642,49 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
 
     // fetch ALL main sessions (including unconfirmed) for count/date validation
     // Unconfirmed lectures are real lectures — excluding them causes false "missing lectures" errors
+    // l.trainer is needed for the "trainer level mismatch" problem type.
     const mainRaw = db.prepare(
-      `SELECT l.group_name, l.date, l.time, l.duration FROM lectures l
+      `SELECT l.group_name, l.date, l.time, l.duration, l.trainer FROM lectures l
        INNER JOIN batches b ON l.group_name=b.group_name${line ? ' AND b.line = l.line' : ''}
        WHERE b.status='نشطة' AND l.session_type='main'
        ${deptFilter}${empFilter}${lineL} ORDER BY l.group_name, l.date ASC`
     ).all();
+
+    // ── Trainer capability lookup (Educational Administration only) ────────
+    // Built once per request; used by the "كود غير مطابق لمستوى المدرب" check.
+    // Keyed by lowercase-trimmed name so trainers like "Menna Fawzy(Semi)" can
+    // be matched after stripping the parenthetical suffix.
+    const teamRows = db.prepare(
+      `SELECT name, teachable_starter, teachable_general, teachable_conversation
+       FROM team_members WHERE department='education'`
+    ).all();
+    const teamMap = {};
+    for (const t of teamRows) {
+      const k = String(t.name || '').trim().toLowerCase();
+      if (k) teamMap[k] = t;
+    }
+    // Parse course strings from the Batches sheet:
+    //   "Private General 4" / "P General 2" / "General 4"  → general
+    //   "P STARTER 3" / "Private starter 2"                → starter
+    //   "Private conversation 3" / "CON 1" / "CON4"        → conversation
+    const COURSE_FAMILY_LABEL = { starter: 'Starter', general: 'General', conversation: 'Conversation' };
+    function parseCourseString(s) {
+      if (!s) return null;
+      const str = String(s).trim();
+      let m;
+      m = str.match(/(?:conversation|con)\s*0*(\d+)/i);
+      if (m) return { family: 'conversation', level: parseInt(m[1], 10) };
+      m = str.match(/general\s*0*(\d+)/i);
+      if (m) return { family: 'general', level: parseInt(m[1], 10) };
+      m = str.match(/starter\s*0*(\d+)/i);
+      if (m) return { family: 'starter', level: parseInt(m[1], 10) };
+      return null;
+    }
+    // Strip "(...)" from a trainer name. "Menna Fawzy(Semi)" → "Menna Fawzy".
+    function stripTrainerSuffix(name) {
+      if (!name) return '';
+      return String(name).replace(/\([^)]*\)/g, '').trim();
+    }
 
     // fetch ALL zoom call sessions (regular 15-min) including unconfirmed for zoom-call problem checks
     const sideRaw = db.prepare(
@@ -1877,6 +1914,41 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
             detail: `المحسوب: ${calcSideLast} | الفعلي: ${actualSideLast}${midnight ? ' (تعدى منتصف الليل)' : ''}`,
             expected_date: calcSideLast, actual_date: actualSideLast,
           }, 'side');
+        }
+      }
+
+      // 5. MAIN — trainer level mismatch
+      //    Group's course (e.g. "Private General 4") parsed → {family,level}.
+      //    For each unique trainer in this group's main lectures, look up
+      //    teachable_<family> in team_members. If the course level exceeds
+      //    the trainer's max, flag it. Trainers not registered are skipped
+      //    silently (we don't assume they're incapable).
+      const parsedCourse = parseCourseString(batch.course);
+      if (parsedCourse) {
+        const capCol  = `teachable_${parsedCourse.family}`;
+        const seenT   = new Set();
+        const overcap = [];
+        for (const row of mainRows) {
+          const cleanT = stripTrainerSuffix(row.trainer);
+          if (!cleanT) continue;
+          const key = cleanT.toLowerCase();
+          if (seenT.has(key)) continue;
+          seenT.add(key);
+          const teamRow = teamMap[key];
+          if (!teamRow) continue;          // unregistered trainer → skip
+          const max = Number(teamRow[capCol] ?? 5);
+          if (parsedCourse.level > max) {
+            const fam = COURSE_FAMILY_LABEL[parsedCourse.family];
+            overcap.push(`${cleanT} (قدرته ${fam} ${max})`);
+          }
+        }
+        if (overcap.length > 0) {
+          const fam = COURSE_FAMILY_LABEL[parsedCourse.family];
+          addProblem(mainProblems, { ...meta, first_date: firstMainDate,
+            problem_type: 'كود غير مطابق لمستوى المدرب',
+            detail: `الدورة: ${fam} ${parsedCourse.level} — ${overcap.join(' / ')}`,
+            actual: parsedCourse.level,
+          }, 'main');
         }
       }
     }
