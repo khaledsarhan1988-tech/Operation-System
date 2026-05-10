@@ -47,8 +47,8 @@ const fmtMins = mins => {
 // Color mapping — soft modern palette (matches Tailwind tokens used elsewhere)
 function utilCellStyle(util, isWorkDay) {
   if (!isWorkDay) return { bg: 'bg-slate-100/70', text: 'text-slate-300', border: 'border-slate-100' };
-  if (util == null) return { bg: 'bg-slate-50', text: 'text-slate-400', border: 'border-slate-100' };
-  if (util === 0)   return { bg: 'bg-slate-50', text: 'text-slate-400', border: 'border-slate-200' };
+  if (util == null) return { bg: 'bg-sky-100',  text: 'text-sky-700',  border: 'border-sky-200' };
+  if (util === 0)   return { bg: 'bg-sky-100',  text: 'text-sky-700',  border: 'border-sky-200' };
   if (util <= 25)   return { bg: 'bg-emerald-100', text: 'text-emerald-700', border: 'border-emerald-200' };
   if (util <= 50)   return { bg: 'bg-emerald-200', text: 'text-emerald-800', border: 'border-emerald-300' };
   if (util <= 75)   return { bg: 'bg-emerald-400', text: 'text-white',       border: 'border-emerald-500' };
@@ -392,7 +392,7 @@ export default function TrainerUtilization() {
       <div className="bg-white rounded-2xl border border-gray-100 p-4 flex items-center justify-center gap-4 flex-wrap text-xs">
         <span className="text-gray-500 font-semibold">دليل الألوان:</span>
         {[
-          { lbl: 'فاضي', cls: 'bg-slate-50 border-slate-200 text-slate-400' },
+          { lbl: 'فاضي', cls: 'bg-sky-100 border-sky-200 text-sky-700' },
           { lbl: '1-25%', cls: 'bg-emerald-100 border-emerald-200 text-emerald-700' },
           { lbl: '26-50%', cls: 'bg-emerald-200 border-emerald-300 text-emerald-800' },
           { lbl: '51-75%', cls: 'bg-emerald-400 border-emerald-500 text-white' },
