@@ -1,11 +1,12 @@
-import { NavLink, useNavigate } from 'react-router-dom';
+import { useState, useMemo } from 'react';
+import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../auth/AuthContext';
 import {
   LayoutDashboard, ClipboardList, Search, UserX, Calendar,
   Video, Users, BarChart2, Globe, UserCog, Upload, FileText,
   LogOut, Headphones, GraduationCap, ShieldCheck, AlertTriangle, Activity, Shuffle, Kanban,
-  TrendingUp, Target, Settings, Award, Snowflake, Goal, Database
+  TrendingUp, Target, Settings, Award, Snowflake, Goal, Database, ChevronDown
 } from 'lucide-react';
 
 // ─── COLOR PALETTE ─────────────────────────────────────────────────────────
@@ -143,12 +144,55 @@ export default function Sidebar({ mobile, onClose }) {
   const { t } = useTranslation();
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const links = user?.role === 'admin'
     ? getAdminLinks(user)
     : user?.role === 'leader'            ? LEADER_LINKS
     : user?.role === 'enrollment_leader' ? ENROLLMENT_LEADER_LINKS
     : user?.role === 'enrollment'        ? ENROLLMENT_LINKS
     : AGENT_LINKS;
+
+  // Group sub-items under their parent so we can collapse them by default.
+  // A "parent" is any non-sub link that's followed by sub:true links until
+  // the next non-sub link or section header. Sections reset the grouping.
+  const grouped = useMemo(() => {
+    const out = [];
+    let lastParent = null;
+    for (const item of links) {
+      if (item.type === 'section') { out.push(item); lastParent = null; continue; }
+      if (item.sub && lastParent) {
+        lastParent.children.push(item);
+      } else {
+        const node = { ...item, children: [] };
+        out.push(node);
+        lastParent = node;
+      }
+    }
+    return out;
+  }, [links]);
+
+  // Track which parents the user has manually expanded. Sub-items are hidden
+  // by default and only show when the parent has been clicked.
+  const [expanded, setExpanded] = useState(() => new Set());
+
+  // A parent is considered "open" if the user opened it OR if the active
+  // route is the parent itself / any of its children. The route check is
+  // derived (no setState in render) so a child route auto-shows its siblings
+  // without us forcing extra state.
+  const isParentOpen = (node) => {
+    if (expanded.has(node.to)) return true;
+    if (location.pathname === node.to) return true;
+    if (node.children?.some(c => c.to && (location.pathname === c.to || location.pathname.startsWith(c.to + '/')))) return true;
+    return false;
+  };
+
+  const toggleExpand = (key) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
 
   const handleLogout = async () => {
     await logout();
@@ -228,7 +272,7 @@ export default function Sidebar({ mobile, onClose }) {
 
       {/* Navigation */}
       <nav className="relative z-10 flex-1 overflow-y-auto py-4 px-3 space-y-1">
-        {links.map((item, i) => {
+        {grouped.map((item, i) => {
           if (item.type === 'section') {
             return (
               <div key={i} className="px-3 pt-5 pb-2 flex items-center gap-2">
@@ -240,27 +284,75 @@ export default function Sidebar({ mobile, onClose }) {
               </div>
             );
           }
-          const { to, label, icon: Icon, end, sub, color } = item;
+          const { to, label, icon: Icon, end, color, children = [] } = item;
+          const hasChildren = children.length > 0;
+          const isOpen = hasChildren && isParentOpen(item);
+
           return (
-            <NavLink
-              key={to}
-              to={to}
-              end={end}
-              onClick={mobile ? onClose : undefined}
-              style={colorVars(color)}
-              className={({ isActive }) =>
-                sub
-                  ? `sidebar-link-v2 ms-4 ${isActive ? 'active' : ''}`
-                  : `sidebar-link-v2 ${isActive ? 'active' : ''}`
-              }
-            >
-              <span className="si-icon-v2">
-                <Icon size={sub ? 15 : 18} strokeWidth={2.4} />
-              </span>
-              <span className={`flex-1 ${sub ? 'text-xs' : 'text-sm'} truncate font-bold`}>
-                {t(label, label)}
-              </span>
-            </NavLink>
+            <div key={to}>
+              {/* Parent row — clicking the main area navigates AND auto-expands.
+                  A small chevron at the end lets the user toggle without navigating. */}
+              <div className="relative">
+                <NavLink
+                  to={to}
+                  end={end}
+                  onClick={() => {
+                    if (hasChildren) toggleExpand(to);
+                    if (mobile) onClose?.();
+                  }}
+                  style={colorVars(color)}
+                  className={({ isActive }) =>
+                    `sidebar-link-v2 ${isActive ? 'active' : ''} ${hasChildren ? 'pe-10' : ''}`
+                  }
+                >
+                  <span className="si-icon-v2">
+                    <Icon size={18} strokeWidth={2.4} />
+                  </span>
+                  <span className="flex-1 text-sm truncate font-bold">
+                    {t(label, label)}
+                  </span>
+                </NavLink>
+                {hasChildren && (
+                  <button
+                    type="button"
+                    aria-label={isOpen ? 'طي' : 'فتح'}
+                    onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggleExpand(to); }}
+                    className="absolute left-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-all"
+                  >
+                    <ChevronDown
+                      size={14}
+                      strokeWidth={2.6}
+                      className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
+                    />
+                  </button>
+                )}
+              </div>
+
+              {/* Children — only when expanded */}
+              {hasChildren && isOpen && (
+                <div className="mt-1 space-y-1 animate-fadeIn">
+                  {children.map((child) => (
+                    <NavLink
+                      key={child.to}
+                      to={child.to}
+                      end={child.end}
+                      onClick={mobile ? onClose : undefined}
+                      style={colorVars(child.color)}
+                      className={({ isActive }) =>
+                        `sidebar-link-v2 ms-4 ${isActive ? 'active' : ''}`
+                      }
+                    >
+                      <span className="si-icon-v2">
+                        <child.icon size={15} strokeWidth={2.4} />
+                      </span>
+                      <span className="flex-1 text-xs truncate font-bold">
+                        {t(child.label, child.label)}
+                      </span>
+                    </NavLink>
+                  ))}
+                </div>
+              )}
+            </div>
           );
         })}
       </nav>
