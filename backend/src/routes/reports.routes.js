@@ -1762,6 +1762,21 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
       const sh2 = normalizeShift(teamRow, '2');
       const shifts = [sh1, sh2].filter(Boolean);
       if (shifts.length === 0) return { ok: true, reason: null }; // no shift configured → skip
+
+      // Skip lectures that pre-date the trainer's earliest shift_start_date.
+      // The trainer's schedule data only became authoritative starting that
+      // date — anything earlier is outside the audit window (the trainer
+      // might have worked under an unrecorded arrangement before then).
+      // After-end-date lectures ARE still checked → trainer left the job
+      // means they shouldn't have lectures after their end date.
+      const earliestStart = shifts
+        .map(s => s.startDate)
+        .filter(Boolean)
+        .sort()[0];
+      if (earliestStart && lec.date < earliestStart) {
+        return { ok: true, reason: null };
+      }
+
       const lecStartMin = parseTimeMins(lec.time);  // existing helper above (12-h aware)
       if (lecStartMin < 0) return { ok: true, reason: null };     // unparseable time → skip
       const lecEndMin = lecStartMin + parseDurMins(lec.duration);
