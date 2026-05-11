@@ -45,6 +45,10 @@ CREATE TABLE IF NOT EXISTS team_members (
   shift_start TEXT,  -- HH:MM, only meaningful when shift is set
   shift_end   TEXT,  -- HH:MM, only meaningful when shift is set
   shift_rests TEXT,  -- JSON array of {"start":"HH:MM","end":"HH:MM"} for breaks
+  -- Voice Note blocks: dedicated WORK time inside the shift (NOT a break).
+  -- Same JSON shape as shift_rests. Lectures can't overlap these (>5 min);
+  -- they count as "booked" in utilization calculations.
+  voice_notes TEXT,
   shift_start_date TEXT,  -- YYYY-MM-DD: when this shift began (required when shift is set)
   shift_end_date   TEXT,  -- YYYY-MM-DD: when this shift ended; NULL = still on the job
   employment_type TEXT CHECK(employment_type IN ('full_time','part_time') OR employment_type IS NULL),
@@ -54,6 +58,7 @@ CREATE TABLE IF NOT EXISTS team_members (
   shift2_start            TEXT,
   shift2_end              TEXT,
   shift2_rests            TEXT,
+  shift2_voice_notes      TEXT,
   shift2_start_date       TEXT,
   shift2_end_date         TEXT,
   shift2_employment_type  TEXT CHECK(shift2_employment_type IN ('full_time','part_time') OR shift2_employment_type IS NULL),

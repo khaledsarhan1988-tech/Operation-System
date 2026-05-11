@@ -76,10 +76,10 @@ const SECTION_COLORS = {
 // ─── EMPTY FORM ───────────────────────────────────────────────────────────────
 const emptyForm = {
   name: '', department: 'customer_services', section: 'general',
-  shift: '', shift_start: '', shift_end: '', shift_rests: [],
+  shift: '', shift_start: '', shift_end: '', shift_rests: [], voice_notes: [],
   shift_start_date: '', shift_end_date: '',
   employment_type: '', work_days: '',
-  shift2: '', shift2_start: '', shift2_end: '', shift2_rests: [],
+  shift2: '', shift2_start: '', shift2_end: '', shift2_rests: [], shift2_voice_notes: [],
   shift2_start_date: '', shift2_end_date: '',
   shift2_employment_type: '', shift2_work_days: '',
   job_title: '', phone: '', status: 'active', notes: '',
@@ -107,16 +107,18 @@ function hydrateMember(member) {
   return {
     ...emptyForm,
     ...member,
-    shift_rests:  parseRests(member.shift_rests),
-    shift2_rests: parseRests(member.shift2_rests),
+    shift_rests:        parseRests(member.shift_rests),
+    shift2_rests:       parseRests(member.shift2_rests),
+    voice_notes:        parseRests(member.voice_notes),
+    shift2_voice_notes: parseRests(member.shift2_voice_notes),
   };
 }
 
 // ─── SHIFT SECTION (reusable for shift 1 and shift 2) ─────────────────────────
 function ShiftSection({
-  title, shiftValue, startValue, endValue, restsValue, employmentValue, daysValue,
+  title, shiftValue, startValue, endValue, restsValue, voiceNotesValue, employmentValue, daysValue,
   startDateValue, endDateValue,
-  onShiftChange, onStartChange, onEndChange, onRestsChange, onEmploymentChange, onDaysChange,
+  onShiftChange, onStartChange, onEndChange, onRestsChange, onVoiceNotesChange, onEmploymentChange, onDaysChange,
   onStartDateChange, onEndDateChange,
   onRemove, inputCls, labelCls,
 }) {
@@ -127,6 +129,16 @@ function ShiftSection({
   };
   const addRest    = () => onRestsChange([...rests, { start: '', end: '' }]);
   const removeRest = (index) => onRestsChange(rests.filter((_, i) => i !== index));
+
+  // Voice-note blocks: same shape as rests, but a separate list with distinct
+  // visual treatment (purple) so the user can tell them apart at a glance.
+  const voiceNotes = Array.isArray(voiceNotesValue) ? voiceNotesValue : [];
+  const updateVN = (index, key, value) => {
+    const next = voiceNotes.map((r, i) => (i === index ? { ...r, [key]: value } : r));
+    onVoiceNotesChange(next);
+  };
+  const addVN    = () => onVoiceNotesChange([...voiceNotes, { start: '', end: '' }]);
+  const removeVN = (index) => onVoiceNotesChange(voiceNotes.filter((_, i) => i !== index));
 
   // When the user actively changes the shift, apply sensible default times so
   // the AM/PM marker matches the shift kind:
@@ -262,6 +274,45 @@ function ShiftSection({
         </div>
       )}
 
+      {/* Voice Note blocks — dedicated WORK time inside the shift (not break) */}
+      {shiftValue && (
+        <div>
+          <label className={labelCls}>
+            وقت Voice Note
+            <span className="text-[10px] text-gray-400 mr-2">(من ضمن وقت العمل — يحجب المحاضرات)</span>
+          </label>
+          <div className="space-y-2">
+            {voiceNotes.map((vn, i) => (
+              <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
+                <div>
+                  <div className="text-[10px] text-violet-500 mb-0.5">من</div>
+                  <input type="time"
+                         className={`${inputCls} bg-violet-50/50 border-violet-200 focus:border-violet-400 focus:ring-violet-500/30`}
+                         value={vn.start || ''}
+                         onChange={e => updateVN(i, 'start', e.target.value)} dir="ltr" />
+                </div>
+                <div>
+                  <div className="text-[10px] text-violet-500 mb-0.5">إلى</div>
+                  <input type="time"
+                         className={`${inputCls} bg-violet-50/50 border-violet-200 focus:border-violet-400 focus:ring-violet-500/30`}
+                         value={vn.end || ''}
+                         onChange={e => updateVN(i, 'end', e.target.value)} dir="ltr" />
+                </div>
+                <button type="button" onClick={() => removeVN(i)}
+                        title="حذف Voice Note"
+                        className="h-[42px] w-[42px] flex items-center justify-center rounded-xl border border-violet-200 text-violet-500 hover:bg-violet-50 transition-all">
+                  <X size={14} />
+                </button>
+              </div>
+            ))}
+            <button type="button" onClick={addVN}
+                    className="w-full py-2 rounded-xl border-2 border-dashed border-violet-300 text-xs font-semibold text-violet-600 hover:bg-violet-50 hover:border-violet-400 transition-all">
+              + إضافة Voice Note
+            </button>
+          </div>
+        </div>
+      )}
+
       <div>
         <label className={labelCls}>الدوام</label>
         <div className="flex gap-3">
@@ -391,7 +442,7 @@ function MemberModal({ initial, onSave, onClose, loading }) {
 
   const clearShift2 = () => {
     setShowShift2(false);
-    setForm(f => ({ ...f, shift2: '', shift2_start: '', shift2_end: '', shift2_rests: [], shift2_start_date: '', shift2_end_date: '', shift2_employment_type: '', shift2_work_days: '' }));
+    setForm(f => ({ ...f, shift2: '', shift2_start: '', shift2_end: '', shift2_rests: [], shift2_voice_notes: [], shift2_start_date: '', shift2_end_date: '', shift2_employment_type: '', shift2_work_days: '' }));
   };
 
   // Reset section when dept changes if invalid; clear shift fields if leaving education
@@ -402,8 +453,10 @@ function MemberModal({ initial, onSave, onClose, loading }) {
     if (form.department !== 'education') {
       setForm(f => ({
         ...f,
-        shift: '', shift_start: '', shift_end: '', shift_rests: [], shift_start_date: '', shift_end_date: '', employment_type: '', work_days: '',
-        shift2: '', shift2_start: '', shift2_end: '', shift2_rests: [], shift2_start_date: '', shift2_end_date: '', shift2_employment_type: '', shift2_work_days: '',
+        shift: '', shift_start: '', shift_end: '', shift_rests: [], voice_notes: [],
+        shift_start_date: '', shift_end_date: '', employment_type: '', work_days: '',
+        shift2: '', shift2_start: '', shift2_end: '', shift2_rests: [], shift2_voice_notes: [],
+        shift2_start_date: '', shift2_end_date: '', shift2_employment_type: '', shift2_work_days: '',
       }));
       setShowShift2(false);
     }
@@ -430,8 +483,10 @@ function MemberModal({ initial, onSave, onClose, loading }) {
     }
     onSave({
       ...form,
-      shift_rests:  JSON.stringify(form.shift_rests  || []),
-      shift2_rests: JSON.stringify(form.shift2_rests || []),
+      shift_rests:        JSON.stringify(form.shift_rests        || []),
+      shift2_rests:       JSON.stringify(form.shift2_rests       || []),
+      voice_notes:        JSON.stringify(form.voice_notes        || []),
+      shift2_voice_notes: JSON.stringify(form.shift2_voice_notes || []),
     });
   };
 
@@ -479,6 +534,7 @@ function MemberModal({ initial, onSave, onClose, loading }) {
               startValue={form.shift_start}
               endValue={form.shift_end}
               restsValue={form.shift_rests}
+              voiceNotesValue={form.voice_notes}
               employmentValue={form.employment_type}
               daysValue={form.work_days}
               startDateValue={form.shift_start_date}
@@ -487,6 +543,7 @@ function MemberModal({ initial, onSave, onClose, loading }) {
               onStartChange={(v) => set('shift_start', v)}
               onEndChange={(v) => set('shift_end', v)}
               onRestsChange={(v) => set('shift_rests', v)}
+              onVoiceNotesChange={(v) => set('voice_notes', v)}
               onEmploymentChange={(v) => set('employment_type', v)}
               onDaysChange={(v) => set('work_days', v)}
               onStartDateChange={(v) => set('shift_start_date', v)}
@@ -511,6 +568,7 @@ function MemberModal({ initial, onSave, onClose, loading }) {
               startValue={form.shift2_start}
               endValue={form.shift2_end}
               restsValue={form.shift2_rests}
+              voiceNotesValue={form.shift2_voice_notes}
               employmentValue={form.shift2_employment_type}
               daysValue={form.shift2_work_days}
               startDateValue={form.shift2_start_date}
@@ -519,6 +577,7 @@ function MemberModal({ initial, onSave, onClose, loading }) {
               onStartChange={(v) => set('shift2_start', v)}
               onEndChange={(v) => set('shift2_end', v)}
               onRestsChange={(v) => set('shift2_rests', v)}
+              onVoiceNotesChange={(v) => set('shift2_voice_notes', v)}
               onEmploymentChange={(v) => set('shift2_employment_type', v)}
               onDaysChange={(v) => set('shift2_work_days', v)}
               onStartDateChange={(v) => set('shift2_start_date', v)}

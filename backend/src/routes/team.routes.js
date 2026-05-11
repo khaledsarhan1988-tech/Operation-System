@@ -54,13 +54,14 @@ function normalizeRests(raw) {
   return cleaned.length ? JSON.stringify(cleaned) : null;
 }
 
-// Build a normalized shift bundle (start/end/rests/employment_type/work_days/dates) from raw body.
+// Build a normalized shift bundle (start/end/rests/voice_notes/employment_type/work_days/dates) from raw body.
 // Shift fields are only meaningful when the shift itself is set.
 // start_date is required when shift is set; end_date is optional (NULL = still active).
-function buildShiftBundle(rawShift, rawStart, rawEnd, rawRests, rawEmpType, rawDays, rawStartDate, rawEndDate) {
+// voice_notes use the same [{start,end}, ...] shape as rests, normalized via normalizeRests.
+function buildShiftBundle(rawShift, rawStart, rawEnd, rawRests, rawEmpType, rawDays, rawStartDate, rawEndDate, rawVoiceNotes) {
   const shift = rawShift || null;
   if (!shift) {
-    return { shift: null, start: null, end: null, rests: null, emp_type: null, days: null, start_date: null, end_date: null };
+    return { shift: null, start: null, end: null, rests: null, voice_notes: null, emp_type: null, days: null, start_date: null, end_date: null };
   }
   const emp_type = rawEmpType || null;
   const days = emp_type === 'full_time'
@@ -71,6 +72,7 @@ function buildShiftBundle(rawShift, rawStart, rawEnd, rawRests, rawEmpType, rawD
     start: rawStart || null,
     end: rawEnd || null,
     rests: normalizeRests(rawRests),
+    voice_notes: normalizeRests(rawVoiceNotes),
     emp_type,
     days,
     start_date: rawStartDate || null,
@@ -124,8 +126,8 @@ function validateShiftDates(s1, s2) {
 // ─── POST /api/team ───────────────────────────────────────────────────────────
 router.post('/', (req, res) => {
   const { name, department, section, status = 'active' } = req.body;
-  const s1 = buildShiftBundle(req.body.shift,  req.body.shift_start,  req.body.shift_end,  req.body.shift_rests,  req.body.employment_type,        req.body.work_days,        req.body.shift_start_date,  req.body.shift_end_date);
-  const s2 = buildShiftBundle(req.body.shift2, req.body.shift2_start, req.body.shift2_end, req.body.shift2_rests, req.body.shift2_employment_type, req.body.shift2_work_days, req.body.shift2_start_date, req.body.shift2_end_date);
+  const s1 = buildShiftBundle(req.body.shift,  req.body.shift_start,  req.body.shift_end,  req.body.shift_rests,  req.body.employment_type,        req.body.work_days,        req.body.shift_start_date,  req.body.shift_end_date,  req.body.voice_notes);
+  const s2 = buildShiftBundle(req.body.shift2, req.body.shift2_start, req.body.shift2_end, req.body.shift2_rests, req.body.shift2_employment_type, req.body.shift2_work_days, req.body.shift2_start_date, req.body.shift2_end_date, req.body.shift2_voice_notes);
   const job_title = req.body.job_title || null;
   const phone     = req.body.phone     || null;
   const user_id   = req.body.user_id   || null;
@@ -140,15 +142,15 @@ router.post('/', (req, res) => {
     const r = db.prepare(
       `INSERT INTO team_members (
          name, department, section,
-         shift, shift_start, shift_end, shift_rests, employment_type, work_days, shift_start_date, shift_end_date,
-         shift2, shift2_start, shift2_end, shift2_rests, shift2_employment_type, shift2_work_days, shift2_start_date, shift2_end_date,
+         shift, shift_start, shift_end, shift_rests, voice_notes, employment_type, work_days, shift_start_date, shift_end_date,
+         shift2, shift2_start, shift2_end, shift2_rests, shift2_voice_notes, shift2_employment_type, shift2_work_days, shift2_start_date, shift2_end_date,
          job_title, phone, user_id, status, notes,
          teachable_starter, teachable_general, teachable_conversation
-       ) VALUES (?, ?, ?,  ?, ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?,  ?, ?, ?)`
+       ) VALUES (?, ?, ?,  ?, ?, ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?,  ?, ?, ?)`
     ).run(
       name, department, section,
-      s1.shift, s1.start, s1.end, s1.rests, s1.emp_type, s1.days, s1.start_date, s1.end_date,
-      s2.shift, s2.start, s2.end, s2.rests, s2.emp_type, s2.days, s2.start_date, s2.end_date,
+      s1.shift, s1.start, s1.end, s1.rests, s1.voice_notes, s1.emp_type, s1.days, s1.start_date, s1.end_date,
+      s2.shift, s2.start, s2.end, s2.rests, s2.voice_notes, s2.emp_type, s2.days, s2.start_date, s2.end_date,
       job_title, phone, user_id, status, notes,
       teachable.starter, teachable.general, teachable.conversation
     );
@@ -163,8 +165,8 @@ router.post('/', (req, res) => {
 router.put('/:id', (req, res) => {
   const { id } = req.params;
   const { name, department, section, status } = req.body;
-  const s1 = buildShiftBundle(req.body.shift,  req.body.shift_start,  req.body.shift_end,  req.body.shift_rests,  req.body.employment_type,        req.body.work_days,        req.body.shift_start_date,  req.body.shift_end_date);
-  const s2 = buildShiftBundle(req.body.shift2, req.body.shift2_start, req.body.shift2_end, req.body.shift2_rests, req.body.shift2_employment_type, req.body.shift2_work_days, req.body.shift2_start_date, req.body.shift2_end_date);
+  const s1 = buildShiftBundle(req.body.shift,  req.body.shift_start,  req.body.shift_end,  req.body.shift_rests,  req.body.employment_type,        req.body.work_days,        req.body.shift_start_date,  req.body.shift_end_date,  req.body.voice_notes);
+  const s2 = buildShiftBundle(req.body.shift2, req.body.shift2_start, req.body.shift2_end, req.body.shift2_rests, req.body.shift2_employment_type, req.body.shift2_work_days, req.body.shift2_start_date, req.body.shift2_end_date, req.body.shift2_voice_notes);
   const job_title = req.body.job_title || null;
   const phone     = req.body.phone     || null;
   const user_id   = req.body.user_id   || null;
@@ -177,15 +179,15 @@ router.put('/:id', (req, res) => {
     db.prepare(
       `UPDATE team_members SET
          name=?, department=?, section=?,
-         shift=?, shift_start=?, shift_end=?, shift_rests=?, employment_type=?, work_days=?, shift_start_date=?, shift_end_date=?,
-         shift2=?, shift2_start=?, shift2_end=?, shift2_rests=?, shift2_employment_type=?, shift2_work_days=?, shift2_start_date=?, shift2_end_date=?,
+         shift=?, shift_start=?, shift_end=?, shift_rests=?, voice_notes=?, employment_type=?, work_days=?, shift_start_date=?, shift_end_date=?,
+         shift2=?, shift2_start=?, shift2_end=?, shift2_rests=?, shift2_voice_notes=?, shift2_employment_type=?, shift2_work_days=?, shift2_start_date=?, shift2_end_date=?,
          job_title=?, phone=?, user_id=?, status=?, notes=?,
          teachable_starter=?, teachable_general=?, teachable_conversation=?
        WHERE id=?`
     ).run(
       name, department, section,
-      s1.shift, s1.start, s1.end, s1.rests, s1.emp_type, s1.days, s1.start_date, s1.end_date,
-      s2.shift, s2.start, s2.end, s2.rests, s2.emp_type, s2.days, s2.start_date, s2.end_date,
+      s1.shift, s1.start, s1.end, s1.rests, s1.voice_notes, s1.emp_type, s1.days, s1.start_date, s1.end_date,
+      s2.shift, s2.start, s2.end, s2.rests, s2.voice_notes, s2.emp_type, s2.days, s2.start_date, s2.end_date,
       job_title, phone, user_id, status || 'active', notes,
       teachable.starter, teachable.general, teachable.conversation,
       id

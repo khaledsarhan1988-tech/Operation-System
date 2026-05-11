@@ -1719,9 +1719,9 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
         .filter(r => r.startMin != null && r.endMin != null && r.endMin > r.startMin);
     }
     // Returns null if shift is unconfigured, otherwise a normalized record.
-    // Schema asymmetry: shift 1 stores work-days as `work_days` (no prefix),
-    // while shift 2 stores it as `shift2_work_days`. Other shift fields keep
-    // the `shift_` / `shift2_` prefix consistently.
+    // Schema asymmetry: shift 1 stores work-days as `work_days` (no prefix)
+    // and voice-notes as `voice_notes`; shift 2 uses the `shift2_` prefix
+    // for both. Other shift fields keep `shift_` / `shift2_` consistently.
     function normalizeShift(t, suffix) {
       const shift = t['shift' + suffix];
       if (!shift) return null;
@@ -1729,16 +1729,18 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
       const endMin   = parseShiftEndMin(t['shift' + suffix + '_end']);
       if (startMin == null || endMin == null) return null;
       const daysField = suffix === '' ? 'work_days' : 'shift2_work_days';
+      const vnField   = suffix === '' ? 'voice_notes' : 'shift2_voice_notes';
       const days = String(t[daysField] || '')
         .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
       return {
         startMin, endMin,
         days,
-        startDate: t['shift' + suffix + '_start_date'] || null,
-        endDate:   t['shift' + suffix + '_end_date']   || null,
-        rests:     parseRestList(t['shift' + suffix + '_rests']),
-        startStr:  t['shift' + suffix + '_start'] || '',
-        endStr:    t['shift' + suffix + '_end']   || '',
+        startDate:  t['shift' + suffix + '_start_date'] || null,
+        endDate:    t['shift' + suffix + '_end_date']   || null,
+        rests:      parseRestList(t['shift' + suffix + '_rests']),
+        voiceNotes: parseRestList(t[vnField]),
+        startStr:   t['shift' + suffix + '_start'] || '',
+        endStr:     t['shift' + suffix + '_end']   || '',
       };
     }
     function isDateInShiftRange(dateStr, shift) {
@@ -1806,14 +1808,20 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
           reasons.push(`خارج الشيفت (${sh.startStr}-${sh.endStr})`);
           continue;
         }
-        // Rest periods — flag only if the overlap exceeds the tolerance.
-        // Computed as min(lecEnd, restEnd) - max(lecStart, restStart).
-        const offendingRest = sh.rests.find(r => {
-          const overlap = Math.min(lecEndMin, r.endMin) - Math.max(lecStartMin, r.startMin);
+        // Rest periods and voice-note blocks — flag only if the overlap
+        // exceeds the tolerance. Both are "busy" blocks inside the shift;
+        // the only difference is the message label.
+        const blocks = [
+          ...sh.rests.map(r => ({ startMin: r.startMin, endMin: r.endMin, type: 'rest' })),
+          ...(sh.voiceNotes || []).map(v => ({ startMin: v.startMin, endMin: v.endMin, type: 'voice_note' })),
+        ];
+        const offending = blocks.find(b => {
+          const overlap = Math.min(lecEndMin, b.endMin) - Math.max(lecStartMin, b.startMin);
           return overlap > REST_OVERLAP_TOLERANCE_MIN;
         });
-        if (offendingRest) {
-          reasons.push(`داخل وقت راحة (${fmt12h(offendingRest.startMin)}-${fmt12h(offendingRest.endMin)})`);
+        if (offending) {
+          const label = offending.type === 'voice_note' ? 'Voice Note' : 'راحة';
+          reasons.push(`داخل وقت ${label} (${fmt12h(offending.startMin)}-${fmt12h(offending.endMin)})`);
           continue;
         }
         // This shift covers the lecture → OK
@@ -2361,7 +2369,8 @@ router.get('/trainer-utilization', (req, res) => {
   const getDow = s => { if (!s) return -1; return new Date(s + 'T12:00:00').getDay(); };
   const stripParens = name => String(name || '').replace(/\([^)]*\)/g, '').trim();
 
-  // Normalize one of a trainer's two shifts. Returns {startMin,endMin,days[],rests[],startDate,endDate} or null.
+  // Normalize one of a trainer's two shifts. Returns {startMin,endMin,days[],rests[],voiceNotes[],...} or null.
+  // Voice notes (work-time blocks) use the same shape as rests.
   function normalizeShift(t, sfx) {
     const shift = t['shift' + sfx];
     if (!shift) return null;
@@ -2369,15 +2378,17 @@ router.get('/trainer-utilization', (req, res) => {
     const endMin   = HHMM_END(t['shift' + sfx + '_end']);
     if (startMin == null || endMin == null) return null;
     const daysField = sfx === '' ? 'work_days' : 'shift2_work_days';
+    const vnField   = sfx === '' ? 'voice_notes' : 'shift2_voice_notes';
     const days = String(t[daysField] || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
     return {
       startMin, endMin, days,
-      rests: parseRests(t['shift' + sfx + '_rests']),
-      startDate: t['shift' + sfx + '_start_date'] || null,
-      endDate:   t['shift' + sfx + '_end_date']   || null,
-      label: t['shift' + sfx],
-      startStr: t['shift' + sfx + '_start'] || '',
-      endStr:   t['shift' + sfx + '_end']   || '',
+      rests:      parseRests(t['shift' + sfx + '_rests']),
+      voiceNotes: parseRests(t[vnField]),
+      startDate:  t['shift' + sfx + '_start_date'] || null,
+      endDate:    t['shift' + sfx + '_end_date']   || null,
+      label:      t['shift' + sfx],
+      startStr:   t['shift' + sfx + '_start'] || '',
+      endStr:     t['shift' + sfx + '_end']   || '',
     };
   }
   function shiftActiveOn(sh, dateStr) {
@@ -2391,15 +2402,39 @@ router.get('/trainer-utilization', (req, res) => {
     const dayKey = DOW_KEYS[dow] || '';
     return sh.days.includes(dayKey);
   }
-  // Available minutes for this shift on this date (0 if day not in work_days).
+  // Available minutes for this shift on this date. Rests reduce capacity
+  // (breaks are off-work). Voice notes do NOT reduce capacity — they are
+  // work hours; they just block lectures from being scheduled there.
   function shiftMinsForDate(sh, dateStr) {
     if (!shiftCoversDay(sh, dateStr)) return 0;
     let mins = sh.endMin - sh.startMin;
     for (const r of sh.rests) mins -= (r.e - r.s);
     return mins > 0 ? mins : 0;
   }
-  // Compute free intervals during a date — shift windows minus rests minus lectures.
-  // Returns array of { start_min, end_min, duration_min } sorted by start_min.
+  // Total voice-note minutes for the trainer across all active shifts on a date.
+  // Counted as BOOKED time (productive work) in the utilization calc.
+  function voiceNoteMinsForDate(shifts, dateStr) {
+    let total = 0;
+    for (const sh of shifts) {
+      if (!shiftCoversDay(sh, dateStr)) continue;
+      for (const v of (sh.voiceNotes || [])) total += (v.e - v.s);
+    }
+    return total;
+  }
+  // Voice-note intervals (for UI display) on a given date.
+  function voiceNoteIntervalsForDate(shifts, dateStr) {
+    const out = [];
+    for (const sh of shifts) {
+      if (!shiftCoversDay(sh, dateStr)) continue;
+      for (const v of (sh.voiceNotes || [])) {
+        out.push({ start_min: v.s, end_min: v.e, duration_min: v.e - v.s });
+      }
+    }
+    return out.sort((a, b) => a.start_min - b.start_min);
+  }
+  // Compute free intervals during a date — shift windows minus rests, voice
+  // notes, and lectures. Voice notes count as busy (the trainer is occupied
+  // recording voice notes during these blocks).
   function computeFreeSlots(shifts, dateStr, lectures) {
     // 1) Build available intervals from shifts that cover this day
     let segments = [];
@@ -2407,11 +2442,12 @@ router.get('/trainer-utilization', (req, res) => {
       if (shiftCoversDay(sh, dateStr)) segments.push({ s: sh.startMin, e: sh.endMin });
     }
     if (segments.length === 0) return [];
-    // 2) Collect busy intervals (rests from each active shift + lectures)
+    // 2) Collect busy intervals (rests + voice notes + lectures)
     const busy = [];
     for (const sh of shifts) {
       if (!shiftCoversDay(sh, dateStr)) continue;
-      for (const r of sh.rests) busy.push({ s: r.s, e: r.e });
+      for (const r of sh.rests)              busy.push({ s: r.s, e: r.e });
+      for (const v of (sh.voiceNotes || [])) busy.push({ s: v.s, e: v.e });
     }
     for (const l of (lectures || [])) {
       const start = parseTime12(l.time);
@@ -2424,15 +2460,13 @@ router.get('/trainer-utilization', (req, res) => {
     for (const b of busy) {
       const next = [];
       for (const seg of segments) {
-        // No overlap
         if (b.e <= seg.s || b.s >= seg.e) { next.push(seg); continue; }
-        // Overlap → split into up to 2 leftover segments
         if (b.s > seg.s) next.push({ s: seg.s, e: b.s });
         if (b.e < seg.e) next.push({ s: b.e, e: seg.e });
       }
       segments = next;
     }
-    // 4) Drop tiny slivers (< 5 min) — they're useless for booking
+    // 4) Drop tiny slivers (< 5 min) — useless for booking
     return segments
       .filter(s => s.e - s.s >= 5)
       .sort((a, b) => a.s - b.s)
@@ -2518,25 +2552,34 @@ router.get('/trainer-utilization', (req, res) => {
         // Sum booked
         const lectures = byTrainerDay[`${tKey}|${date}`] || [];
         const bookedMin = lectures.reduce((s, l) => s + parseDur(l.duration), 0);
+        // Voice notes are WORK time inside the shift — they count as booked
+        // (the trainer is busy recording voice notes) but don't reduce the
+        // capacity (they're already inside the available shift window).
+        const vnMin = isWorkDay ? voiceNoteMinsForDate(shifts, date) : 0;
+        const voiceNotes = isWorkDay ? voiceNoteIntervalsForDate(shifts, date) : [];
+        const totalBookedMin = bookedMin + vnMin;
         const utilization = isWorkDay && availMin > 0
-          ? Math.round((bookedMin / availMin) * 100)
+          ? Math.round((totalBookedMin / availMin) * 100)
           : null;
         const freeSlots = isWorkDay ? computeFreeSlots(shifts, date, lectures) : [];
         const freeMin = freeSlots.reduce((s, f) => s + f.duration_min, 0);
         days[date] = {
           is_work_day: isWorkDay,
           available_min: availMin,
-          booked_min: bookedMin,
+          booked_min: totalBookedMin,
+          lecture_min: bookedMin,
+          voice_note_min: vnMin,
           free_min: freeMin,
           utilization_pct: utilization,
           lectures: lectures.map(l => ({
             group_name: l.group_name, time: l.time, duration: l.duration,
             session_type: l.session_type,
           })),
+          voice_notes: voiceNotes,
           free_slots: freeSlots,
         };
         totalAvailable += availMin;
-        totalBooked   += bookedMin;
+        totalBooked   += totalBookedMin;
       }
 
       return {
@@ -2622,26 +2665,39 @@ router.get('/trainer-utilization-summary', (req, res) => {
     const endMin   = HHMM_END(t['shift' + sfx + '_end']);
     if (startMin == null || endMin == null) return null;
     const daysField = sfx === '' ? 'work_days' : 'shift2_work_days';
+    const vnField   = sfx === '' ? 'voice_notes' : 'shift2_voice_notes';
     return {
       startMin, endMin,
       days: String(t[daysField] || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
-      rests: parseRests(t['shift' + sfx + '_rests']),
-      startDate: t['shift' + sfx + '_start_date'] || null,
-      endDate:   t['shift' + sfx + '_end_date']   || null,
-      label: t['shift' + sfx],
-      startStr: t['shift' + sfx + '_start'] || '',
-      endStr:   t['shift' + sfx + '_end']   || '',
+      rests:      parseRests(t['shift' + sfx + '_rests']),
+      voiceNotes: parseRests(t[vnField]),
+      startDate:  t['shift' + sfx + '_start_date'] || null,
+      endDate:    t['shift' + sfx + '_end_date']   || null,
+      label:      t['shift' + sfx],
+      startStr:   t['shift' + sfx + '_start'] || '',
+      endStr:     t['shift' + sfx + '_end']   || '',
     };
   }
-  function shiftMinsForDate(sh, dateStr) {
-    if (sh.startDate && dateStr < sh.startDate) return 0;
-    if (sh.endDate   && dateStr > sh.endDate)   return 0;
+  function shiftCoversDay(sh, dateStr) {
+    if (sh.startDate && dateStr < sh.startDate) return false;
+    if (sh.endDate   && dateStr > sh.endDate)   return false;
     const dow = getDow(dateStr);
     const dayKey = DOW_KEYS[dow] || '';
-    if (!sh.days.includes(dayKey)) return 0;
+    return sh.days.includes(dayKey);
+  }
+  function shiftMinsForDate(sh, dateStr) {
+    if (!shiftCoversDay(sh, dateStr)) return 0;
     let mins = sh.endMin - sh.startMin;
     for (const r of sh.rests) mins -= (r.e - r.s);
     return mins > 0 ? mins : 0;
+  }
+  function voiceNoteMinsForDate(shifts, dateStr) {
+    let total = 0;
+    for (const sh of shifts) {
+      if (!shiftCoversDay(sh, dateStr)) continue;
+      for (const v of (sh.voiceNotes || [])) total += (v.e - v.s);
+    }
+    return total;
   }
 
   // Date math: current period = last N weeks, ending today.
@@ -2701,7 +2757,8 @@ router.get('/trainer-utilization-summary', (req, res) => {
       }
     }
 
-    // Helper: compute trainer's totals over a date range
+    // Helper: compute trainer's totals over a date range.
+    // Voice notes count as BOOKED (productive work hours).
     function totalsForRange(trainer, shifts, dates) {
       let available = 0, booked = 0;
       const tKey = stripParens(trainer.name).toLowerCase();
@@ -2710,9 +2767,10 @@ router.get('/trainer-utilization-summary', (req, res) => {
         for (const sh of shifts) avail += shiftMinsForDate(sh, date);
         if (avail === 0) continue;
         const lectures = lectureMap[`${tKey}|${date}`] || [];
-        const bookedDay = lectures.reduce((s, l) => s + parseDur(l.duration), 0);
+        const lectureMin = lectures.reduce((s, l) => s + parseDur(l.duration), 0);
+        const vnMin = voiceNoteMinsForDate(shifts, date);
         available += avail;
-        booked   += Math.min(bookedDay, avail); // clip overbooked to capacity for sane aggregates
+        booked   += Math.min(lectureMin + vnMin, avail);
       }
       return { available_min: available, booked_min: booked };
     }
@@ -3023,15 +3081,17 @@ router.get('/find-available-trainer', (req, res) => {
     const endMin   = HHMM_END(t['shift' + sfx + '_end']);
     if (startMin == null || endMin == null) return null;
     const daysField = sfx === '' ? 'work_days' : 'shift2_work_days';
+    const vnField   = sfx === '' ? 'voice_notes' : 'shift2_voice_notes';
     const dayList = String(t[daysField] || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
     return {
       startMin, endMin, days: dayList,
-      rests: parseRests(t['shift' + sfx + '_rests']),
-      startDate: t['shift' + sfx + '_start_date'] || null,
-      endDate:   t['shift' + sfx + '_end_date']   || null,
-      label: t['shift' + sfx],
-      startStr: t['shift' + sfx + '_start'] || '',
-      endStr:   t['shift' + sfx + '_end']   || '',
+      rests:      parseRests(t['shift' + sfx + '_rests']),
+      voiceNotes: parseRests(t[vnField]),
+      startDate:  t['shift' + sfx + '_start_date'] || null,
+      endDate:    t['shift' + sfx + '_end_date']   || null,
+      label:      t['shift' + sfx],
+      startStr:   t['shift' + sfx + '_start'] || '',
+      endStr:     t['shift' + sfx + '_end']   || '',
     };
   }
   function shiftActiveOn(sh, dateStr) {
@@ -3112,13 +3172,20 @@ router.get('/find-available-trainer', (req, res) => {
             fallbackReason = `الوقت خارج الشيفت (${sh.startStr}-${sh.endStr})`;
             continue;
           }
-          // Rest periods get the same 5-min overlap tolerance as shift end.
-          const restOverlap = sh.rests.find(r => {
-            const overlap = Math.min(toMin, r.e) - Math.max(fromMin, r.s);
+          // Rest periods AND voice-note blocks get the same 5-min overlap
+          // tolerance as shift end. Voice notes are work time but block
+          // teaching slots — they can't host a new lecture.
+          const blocks = [
+            ...sh.rests.map(r => ({ s: r.s, e: r.e, type: 'rest' })),
+            ...(sh.voiceNotes || []).map(v => ({ s: v.s, e: v.e, type: 'voice_note' })),
+          ];
+          const offending = blocks.find(b => {
+            const overlap = Math.min(toMin, b.e) - Math.max(fromMin, b.s);
             return overlap > 5;
           });
-          if (restOverlap) {
-            fallbackReason = `داخل وقت راحة (${fmt12(restOverlap.s)}-${fmt12(restOverlap.e)})`;
+          if (offending) {
+            const label = offending.type === 'voice_note' ? 'Voice Note' : 'راحة';
+            fallbackReason = `داخل وقت ${label} (${fmt12(offending.s)}-${fmt12(offending.e)})`;
             continue;
           }
           suitable = sh;

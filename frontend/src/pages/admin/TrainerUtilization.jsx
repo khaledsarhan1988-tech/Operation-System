@@ -85,8 +85,11 @@ function DayDetailModal({ trainer, date, onClose }) {
   const lectures = (day.lectures || []).slice().sort((a, b) =>
     String(a.time || '').localeCompare(String(b.time || ''))
   );
+  // Voice notes: counted as booked, shown alongside lectures with a distinct badge.
+  const voiceNotes = (day.voice_notes || []);
   const freeSlots = day.free_slots || [];
   const freeMin = day.free_min ?? freeSlots.reduce((s, f) => s + (f.duration_min || 0), 0);
+  const totalBookedItems = lectures.length + voiceNotes.length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" dir="rtl">
@@ -154,16 +157,43 @@ function DayDetailModal({ trainer, date, onClose }) {
             <div className="text-center py-6 text-sm text-slate-400">يوم خارج الشيفت</div>
           ) : view === 'booked' ? (
             // ── BOOKED VIEW ────────────────────────────────────────────
-            lectures.length === 0 ? (
+            // Merges lectures + voice notes sorted by start time. Voice
+            // notes show with a distinct violet badge.
+            totalBookedItems === 0 ? (
               <div className="text-center py-6 text-sm text-emerald-600 font-semibold">
                 ✓ كل اليوم فاضي — مفيش محاضرات محجوزة
               </div>
             ) : (
               <div>
                 <div className="text-xs font-bold text-gray-700 mb-2 flex items-center gap-2">
-                  <Clock size={12} /> المحاضرات في اليوم ({lectures.length})
+                  <Clock size={12} /> المحجوز في اليوم ({totalBookedItems})
                 </div>
                 <div className="space-y-2">
+                  {/* Voice Note blocks first (sorted by start, prefix) */}
+                  {voiceNotes.map((v, i) => (
+                    <div key={`vn-${i}`} className="flex items-center gap-3 px-3 py-2 rounded-xl bg-violet-50/60 border border-violet-200">
+                      <div className="flex-shrink-0 text-xs font-mono font-bold text-violet-900 min-w-[70px]" dir="ltr">
+                        {fmtMinsToClock(v.start_min)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-semibold text-violet-900">
+                          Voice Note
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-[10px] text-violet-600" dir="ltr">
+                            {fmtMinsToClock(v.start_min)} → {fmtMinsToClock(v.end_min)}
+                          </span>
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-violet-200 text-violet-800">
+                            وقت عمل
+                          </span>
+                        </div>
+                      </div>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-violet-100 text-violet-700 font-bold whitespace-nowrap">
+                        {fmtMins(v.duration_min)}
+                      </span>
+                    </div>
+                  ))}
+                  {/* Then lectures */}
                   {lectures.map((l, i) => (
                     <div key={i} className="flex items-center gap-3 px-3 py-2 rounded-xl bg-gray-50/70 border border-gray-100">
                       <div className="flex-shrink-0 text-xs font-mono font-bold text-gray-700 min-w-[70px]" dir="ltr">{l.time}</div>

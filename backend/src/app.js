@@ -144,10 +144,12 @@ initDb().then(db => {
   // 4a. TEAM MEMBERS: add shift1 + shift2 columns (start/end/employment/work_days)
   // shift_start_date / shift_end_date track when each shift was active.
   // end_date NULL = trainer is still on the job; non-null = shift has ended.
+  // voice_notes / shift2_voice_notes: dedicated work blocks inside the shift
+  // (e.g. 30-min slot for recording student voice notes — NOT a break).
   [
-    'shift_start', 'shift_end', 'shift_rests', 'employment_type', 'work_days',
+    'shift_start', 'shift_end', 'shift_rests', 'voice_notes', 'employment_type', 'work_days',
     'shift_start_date', 'shift_end_date',
-    'shift2', 'shift2_start', 'shift2_end', 'shift2_rests', 'shift2_employment_type', 'shift2_work_days',
+    'shift2', 'shift2_start', 'shift2_end', 'shift2_rests', 'shift2_voice_notes', 'shift2_employment_type', 'shift2_work_days',
     'shift2_start_date', 'shift2_end_date',
   ].forEach(col => {
     try {
