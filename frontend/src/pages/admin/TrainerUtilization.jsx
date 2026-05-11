@@ -2,8 +2,8 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  CalendarDays, ChevronLeft, ChevronRight, Search, X,
-  Activity, Sun, Moon, Clock,
+  CalendarDays, ChevronLeft, ChevronRight, X,
+  Activity, Sun, Moon, Clock, User,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -234,8 +234,34 @@ export default function TrainerUtilization() {
   const [weekStart, setWeekStart] = useState(() => fmtISO(startOfWeek(new Date())));
   const [weekCount, setWeekCount] = useState(1); // 1 / 2 / 4 weeks
   const [section, setSection]     = useState('all');
-  const [search, setSearch]       = useState('');
+  const [trainerName, setTrainerName] = useState(''); // '' = all trainers
   const [detail, setDetail]       = useState(null); // { trainer, date }
+
+  // Reset trainer selection when section changes — the dropdown options change
+  // so the previous selection might no longer be visible.
+  const handleSectionChange = (next) => {
+    setSection(next);
+    setTrainerName('');
+  };
+
+  // Fetch the list of active education trainers — used to populate the dropdown.
+  // Filtered client-side by the selected section.
+  const { data: teamList = [] } = useQuery({
+    queryKey: ['team-trainers-education'],
+    queryFn: () => api.get('/team', { params: { department: 'education', status: 'active' } }).then(r => r.data),
+    staleTime: 5 * 60 * 1000,
+  });
+  const trainerOptions = useMemo(() => {
+    return teamList
+      .filter(t => section === 'all' || t.section === section)
+      // only trainers with at least one configured shift can appear in the heatmap
+      .filter(t => t.shift || t.shift2)
+      .map(t => ({
+        value: t.name,
+        label: String(t.name || '').replace(/\([^)]*\)/g, '').trim() || t.name,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'ar'));
+  }, [teamList, section]);
 
   // Compute date range
   const fromDate = weekStart;
@@ -245,9 +271,9 @@ export default function TrainerUtilization() {
   }, [weekStart, weekCount]);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['trainer-utilization', fromDate, toDate, section, search],
+    queryKey: ['trainer-utilization', fromDate, toDate, section, trainerName],
     queryFn: () => api.get('/reports/trainer-utilization', {
-      params: { from: fromDate, to: toDate, section, search },
+      params: { from: fromDate, to: toDate, section, search: trainerName },
     }).then(r => r.data),
     staleTime: 60 * 1000,
   });
@@ -317,22 +343,25 @@ export default function TrainerUtilization() {
         {/* Section */}
         <select
           value={section}
-          onChange={e => setSection(e.target.value)}
+          onChange={e => handleSectionChange(e.target.value)}
           className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/30"
         >
           {Object.entries(SECTIONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </select>
 
-        {/* Search */}
+        {/* Trainer dropdown — only active education trainers, filtered by section */}
         <div className="relative flex-1 min-w-[200px] max-w-xs">
-          <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input
-            type="text"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="بحث باسم المدرب..."
-            className="w-full bg-gray-50 border border-gray-200 rounded-xl pr-9 pl-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:bg-white"
-          />
+          <User className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+          <select
+            value={trainerName}
+            onChange={e => setTrainerName(e.target.value)}
+            className="w-full bg-gray-50 border border-gray-200 rounded-xl pr-9 pl-3 py-2 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:bg-white appearance-none"
+          >
+            <option value="">كل المدربين ({trainerOptions.length})</option>
+            {trainerOptions.map(o => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
         </div>
 
         {/* Today button */}
