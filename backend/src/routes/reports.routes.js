@@ -1783,11 +1783,12 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
       const dow = getDow(lec.date);
       const dayKey = DOW_KEYS[dow] || '';
 
-      // Grace period: lecture may run up to N minutes past shift end without
-      // being flagged. Avoids false positives when a 90-min lecture starts a
-      // few minutes late and bleeds slightly past midnight. Start time and
-      // rest periods remain strict — only the shift-end boundary is relaxed.
+      // Grace period: lecture may run up to N minutes past shift end OR overlap
+      // a rest period by up to N minutes without being flagged. Avoids false
+      // positives when a 60-min lecture starts a couple minutes late and
+      // bleeds slightly into the next rest break (or past midnight).
       const SHIFT_END_TOLERANCE_MIN = 5;
+      const REST_OVERLAP_TOLERANCE_MIN = 5;
       const reasons = [];
       for (const sh of shifts) {
         // Date range
@@ -1805,12 +1806,14 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
           reasons.push(`خارج الشيفت (${sh.startStr}-${sh.endStr})`);
           continue;
         }
-        // Rest periods
-        const overlapsRest = sh.rests.find(r =>
-          lecStartMin < r.endMin && lecEndMin > r.startMin
-        );
-        if (overlapsRest) {
-          reasons.push(`داخل وقت راحة (${fmt12h(overlapsRest.startMin)}-${fmt12h(overlapsRest.endMin)})`);
+        // Rest periods — flag only if the overlap exceeds the tolerance.
+        // Computed as min(lecEnd, restEnd) - max(lecStart, restStart).
+        const offendingRest = sh.rests.find(r => {
+          const overlap = Math.min(lecEndMin, r.endMin) - Math.max(lecStartMin, r.startMin);
+          return overlap > REST_OVERLAP_TOLERANCE_MIN;
+        });
+        if (offendingRest) {
+          reasons.push(`داخل وقت راحة (${fmt12h(offendingRest.startMin)}-${fmt12h(offendingRest.endMin)})`);
           continue;
         }
         // This shift covers the lecture → OK
@@ -3109,7 +3112,11 @@ router.get('/find-available-trainer', (req, res) => {
             fallbackReason = `الوقت خارج الشيفت (${sh.startStr}-${sh.endStr})`;
             continue;
           }
-          const restOverlap = sh.rests.find(r => fromMin < r.e && toMin > r.s);
+          // Rest periods get the same 5-min overlap tolerance as shift end.
+          const restOverlap = sh.rests.find(r => {
+            const overlap = Math.min(toMin, r.e) - Math.max(fromMin, r.s);
+            return overlap > 5;
+          });
           if (restOverlap) {
             fallbackReason = `داخل وقت راحة (${fmt12(restOverlap.s)}-${fmt12(restOverlap.e)})`;
             continue;
