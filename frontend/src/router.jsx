@@ -37,6 +37,7 @@ import DbStatus from './pages/admin/DbStatus';
 import TeamPage from './pages/admin/TeamPage';
 import TrainerUtilization from './pages/admin/TrainerUtilization';
 import TrainerAvailabilityFinder from './pages/admin/TrainerAvailabilityFinder';
+import TrainerUtilizationDashboard from './pages/admin/TrainerUtilizationDashboard';
 import DashboardDetail from './pages/admin/DashboardDetail';
 import ClientDistribution from './pages/admin/ClientDistribution';
 import AdminPipeline from './pages/admin/AdminPipeline';
@@ -115,6 +116,7 @@ const router = createBrowserRouter([
       { path: 'team',                         element: <TeamPage /> },
       { path: 'reports/trainer-utilization',  element: <TrainerUtilization /> },
       { path: 'reports/find-available-trainer', element: <TrainerAvailabilityFinder /> },
+      { path: 'reports/trainer-dashboard',      element: <TrainerUtilizationDashboard /> },
       { path: 'control',                      element: <LeaderDashboard /> },
       { path: 'reports/customer-services',    element: <SystemReports /> },
       { path: 'reports/education',            element: <EducationReports /> },

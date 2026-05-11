@@ -2560,6 +2560,346 @@ router.get('/trainer-utilization', (req, res) => {
   }
 });
 
+// ─── GET /api/reports/trainer-utilization-summary ────────────────────────────
+// Phase 3 — aggregated dashboard:
+//   • KPI summary (avg utilization, wasted hours, low/normal/high counts, trend vs previous period)
+//   • Weekly timeline (12 points by default)
+//   • Section averages (one entry per section)
+//   • Per-trainer totals + status (low/normal/high)
+//   • Smart insights (auto-generated text suggestions)
+//
+// Query params:
+//   weeks    — integer 4..52 (default 12) — period length in weeks ending today
+//   section  — optional section filter (general/private/semi/phone_call/all)
+router.get('/trainer-utilization-summary', (req, res) => {
+  const { weeks = '12', section = 'all' } = req.query;
+  const line = lineFilter(req);
+  const lineL = buildLineFilter('l', line);
+  const lineB = buildLineFilter('b', line);
+
+  const nWeeks = Math.max(4, Math.min(52, parseInt(weeks) || 12));
+  // Reuse the same helpers used by trainer-utilization + find-available-trainer
+  const DOW_KEYS = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+  const HHMM = s => {
+    if (!s) return null;
+    const m = String(s).match(/^(\d{1,2}):(\d{2})$/);
+    return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : null;
+  };
+  const HHMM_END = s => { const v = HHMM(s); return v === 0 ? 1440 : v; };
+  const parseRests = raw => {
+    if (!raw) return [];
+    let arr = raw;
+    if (typeof raw === 'string') { try { arr = JSON.parse(raw); } catch { return []; } }
+    if (!Array.isArray(arr)) return [];
+    return arr.map(r => ({ s: HHMM(r?.start), e: HHMM(r?.end) }))
+      .filter(r => r.s != null && r.e != null && r.e > r.s);
+  };
+  const parseTime12 = t => {
+    if (!t) return -1;
+    const m = String(t).match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+    if (!m) return -1;
+    let h = parseInt(m[1]), min = parseInt(m[2]);
+    if (m[3]?.toUpperCase() === 'PM' && h < 12) h += 12;
+    if (m[3]?.toUpperCase() === 'AM' && h === 12) h = 0;
+    return h * 60 + min;
+  };
+  const parseDur = d => {
+    if (!d) return 0;
+    const m = String(d).match(/(\d{1,2}):(\d{2})/);
+    return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : 0;
+  };
+  const getDow = s => { if (!s) return -1; return new Date(s + 'T12:00:00').getDay(); };
+  const stripParens = name => String(name || '').replace(/\([^)]*\)/g, '').trim();
+  const fmtISO = d => d.toISOString().slice(0, 10);
+
+  function normalizeShift(t, sfx) {
+    const shift = t['shift' + sfx];
+    if (!shift) return null;
+    const startMin = HHMM(t['shift' + sfx + '_start']);
+    const endMin   = HHMM_END(t['shift' + sfx + '_end']);
+    if (startMin == null || endMin == null) return null;
+    const daysField = sfx === '' ? 'work_days' : 'shift2_work_days';
+    return {
+      startMin, endMin,
+      days: String(t[daysField] || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
+      rests: parseRests(t['shift' + sfx + '_rests']),
+      startDate: t['shift' + sfx + '_start_date'] || null,
+      endDate:   t['shift' + sfx + '_end_date']   || null,
+      label: t['shift' + sfx],
+      startStr: t['shift' + sfx + '_start'] || '',
+      endStr:   t['shift' + sfx + '_end']   || '',
+    };
+  }
+  function shiftMinsForDate(sh, dateStr) {
+    if (sh.startDate && dateStr < sh.startDate) return 0;
+    if (sh.endDate   && dateStr > sh.endDate)   return 0;
+    const dow = getDow(dateStr);
+    const dayKey = DOW_KEYS[dow] || '';
+    if (!sh.days.includes(dayKey)) return 0;
+    let mins = sh.endMin - sh.startMin;
+    for (const r of sh.rests) mins -= (r.e - r.s);
+    return mins > 0 ? mins : 0;
+  }
+
+  // Date math: current period = last N weeks, ending today.
+  // Previous period = same N weeks immediately before that.
+  const today = new Date(); today.setHours(12, 0, 0, 0);
+  const dayMs = 24 * 60 * 60 * 1000;
+  const totalDays = nWeeks * 7;
+  const currEnd   = fmtISO(today);
+  const currStart = fmtISO(new Date(today.getTime() - (totalDays - 1) * dayMs));
+  const prevEnd   = fmtISO(new Date(today.getTime() - totalDays * dayMs));
+  const prevStart = fmtISO(new Date(today.getTime() - (2 * totalDays - 1) * dayMs));
+
+  // Build complete list of dates in current period (for per-week aggregation)
+  const currDates = [];
+  for (let i = 0; i < totalDays; i++) {
+    currDates.push(fmtISO(new Date(today.getTime() - (totalDays - 1 - i) * dayMs)));
+  }
+  // Build week buckets: week index = Math.floor(i / 7)
+  // Week label = the Saturday of that week (compact)
+  const SHORT_AR_MONTHS = ['ينا','فبر','مار','أبر','مايو','يون','يول','أغس','سبت','أكت','نوف','ديس'];
+  function weekLabel(iso) {
+    const [, m, d] = iso.split('-');
+    return `${parseInt(d)} ${SHORT_AR_MONTHS[parseInt(m) - 1]}`;
+  }
+
+  try {
+    // ── Fetch trainers + filter by section
+    let trainerWhere = `WHERE department='education' AND status='active'`;
+    if (section && section !== 'all') {
+      const s = String(section).replace(/'/g, "''");
+      trainerWhere += ` AND section='${s}'`;
+    }
+    const trainersRaw = db.prepare(`SELECT * FROM team_members ${trainerWhere}`).all();
+    const trainers = trainersRaw.filter(t => t.shift || t.shift2);
+
+    // ── Fetch all lectures in [prevStart, currEnd] once
+    const lecRaw = db.prepare(
+      `SELECT DISTINCT l.group_name, l.date, l.time, l.duration, l.trainer, l.session_type
+         FROM lectures l
+         INNER JOIN batches b ON l.group_name=b.group_name${line ? ' AND b.line=l.line' : ''}
+         WHERE b.status='نشطة'
+           AND l.date BETWEEN '${prevStart}' AND '${currEnd}'
+           AND (l.session_type='main'
+             OR (l.session_type='side' AND LOWER(COALESCE(l.side_session_category,'regular'))='regular'))
+         ${lineL}${lineB}`
+    ).all();
+
+    // Index by (trainerLower|date) → list (dedup by time+duration+session_type)
+    const lectureMap = {};
+    for (const l of lecRaw) {
+      const k = stripParens(l.trainer).toLowerCase();
+      if (!k) continue;
+      const key = `${k}|${l.date}`;
+      const arr = lectureMap[key] = lectureMap[key] || [];
+      if (!arr.some(x => x.time === l.time && x.duration === l.duration && x.session_type === l.session_type)) {
+        arr.push(l);
+      }
+    }
+
+    // Helper: compute trainer's totals over a date range
+    function totalsForRange(trainer, shifts, dates) {
+      let available = 0, booked = 0;
+      const tKey = stripParens(trainer.name).toLowerCase();
+      for (const date of dates) {
+        let avail = 0;
+        for (const sh of shifts) avail += shiftMinsForDate(sh, date);
+        if (avail === 0) continue;
+        const lectures = lectureMap[`${tKey}|${date}`] || [];
+        const bookedDay = lectures.reduce((s, l) => s + parseDur(l.duration), 0);
+        available += avail;
+        booked   += Math.min(bookedDay, avail); // clip overbooked to capacity for sane aggregates
+      }
+      return { available_min: available, booked_min: booked };
+    }
+
+    // Build previous-period dates for trend comparison
+    const prevDates = [];
+    for (let i = 0; i < totalDays; i++) {
+      prevDates.push(fmtISO(new Date(today.getTime() - (2 * totalDays - 1 - i) * dayMs)));
+    }
+
+    // ── Per-trainer totals over current period
+    const SECTION_AR = { general:'عام', private:'خاص', semi:'شبه خاص', phone_call:'فون كول', all:'الكل' };
+    const trainersOut = trainers.map(t => {
+      const sh1 = normalizeShift(t, '');
+      const sh2 = normalizeShift(t, '2');
+      const shifts = [sh1, sh2].filter(Boolean);
+      const curr = totalsForRange(t, shifts, currDates);
+      const prev = totalsForRange(t, shifts, prevDates);
+      const utilization = curr.available_min > 0
+        ? Math.round((curr.booked_min / curr.available_min) * 100)
+        : null;
+      const status = utilization == null ? 'inactive'
+                   : utilization < 50  ? 'low'
+                   : utilization >= 90 ? 'high'
+                   : 'normal';
+      const freeHours = Math.max(0, Math.round((curr.available_min - curr.booked_min) / 60));
+      const SHIFT_AR = { morning: 'صباحي', evening: 'مسائي' };
+      const fmt12 = m => {
+        if (m == null) return '';
+        const mod = ((m % 1440) + 1440) % 1440;
+        const h24 = Math.floor(mod / 60), mm = mod % 60;
+        const ampm = h24 >= 12 ? 'PM' : 'AM';
+        let h12 = h24 % 12; if (h12 === 0) h12 = 12;
+        return `${String(h12).padStart(2,'0')}:${String(mm).padStart(2,'0')} ${ampm}`;
+      };
+      const shiftSummary = shifts
+        .map(sh => `${SHIFT_AR[sh.label] || sh.label} ${fmt12(sh.startMin)}-${fmt12(sh.endMin)}`)
+        .join(' + ');
+      return {
+        id: t.id,
+        name: stripParens(t.name) || t.name,
+        section: t.section,
+        shift_summary: shiftSummary,
+        utilization_pct: utilization,
+        prev_utilization_pct: prev.available_min > 0 ? Math.round((prev.booked_min / prev.available_min) * 100) : null,
+        available_hours: Math.round(curr.available_min / 60),
+        booked_hours: Math.round(curr.booked_min / 60),
+        free_hours: freeHours,
+        status,
+      };
+    });
+
+    // ── Summary KPIs
+    const totalAvail  = trainersOut.reduce((s, t) => s + (t.available_hours * 60), 0);
+    const totalBooked = trainersOut.reduce((s, t) => s + (t.booked_hours * 60), 0);
+    const totalWasted = Math.max(0, totalAvail - totalBooked);
+    const avgUtil = totalAvail > 0 ? Math.round((totalBooked / totalAvail) * 100) : 0;
+    // Previous period avg
+    let prevTotalAvail = 0, prevTotalBooked = 0;
+    for (const t of trainers) {
+      const sh1 = normalizeShift(t, '');
+      const sh2 = normalizeShift(t, '2');
+      const shifts = [sh1, sh2].filter(Boolean);
+      const prev = totalsForRange(t, shifts, prevDates);
+      prevTotalAvail += prev.available_min;
+      prevTotalBooked += prev.booked_min;
+    }
+    const prevAvgUtil = prevTotalAvail > 0 ? Math.round((prevTotalBooked / prevTotalAvail) * 100) : 0;
+    const trendPct = avgUtil - prevAvgUtil;
+
+    const summary = {
+      avg_utilization: avgUtil,
+      prev_avg_utilization: prevAvgUtil,
+      trend_pct: trendPct,
+      wasted_hours: Math.round(totalWasted / 60),
+      // courses-equivalent: 1 course ≈ 8 lectures × 90 min = 720 min = 12 h
+      wasted_courses_eq: Math.round((totalWasted / 60) / 12),
+      trainers_total: trainersOut.length,
+      low_count: trainersOut.filter(t => t.status === 'low').length,
+      normal_count: trainersOut.filter(t => t.status === 'normal').length,
+      high_count: trainersOut.filter(t => t.status === 'high').length,
+    };
+
+    // ── Weekly timeline (over current period only)
+    const weeklyTimeline = [];
+    for (let w = 0; w < nWeeks; w++) {
+      const wkDates = currDates.slice(w * 7, w * 7 + 7);
+      let wkAvail = 0, wkBooked = 0;
+      for (const t of trainers) {
+        const sh1 = normalizeShift(t, '');
+        const sh2 = normalizeShift(t, '2');
+        const shifts = [sh1, sh2].filter(Boolean);
+        const tot = totalsForRange(t, shifts, wkDates);
+        wkAvail  += tot.available_min;
+        wkBooked += tot.booked_min;
+      }
+      weeklyTimeline.push({
+        week_start: wkDates[0],
+        label: weekLabel(wkDates[0]),
+        avg_utilization: wkAvail > 0 ? Math.round((wkBooked / wkAvail) * 100) : 0,
+        available_hours: Math.round(wkAvail / 60),
+        booked_hours:    Math.round(wkBooked / 60),
+        wasted_hours:    Math.round((wkAvail - wkBooked) / 60),
+      });
+    }
+
+    // ── Section averages
+    const sections = ['general','private','semi','phone_call'];
+    const sectionAverages = sections.map(sec => {
+      const inSec = trainersOut.filter(t => t.section === sec);
+      const secAvail  = inSec.reduce((s, t) => s + (t.available_hours * 60), 0);
+      const secBooked = inSec.reduce((s, t) => s + (t.booked_hours * 60), 0);
+      return {
+        section: sec,
+        label: SECTION_AR[sec],
+        avg_utilization: secAvail > 0 ? Math.round((secBooked / secAvail) * 100) : 0,
+        trainer_count: inSec.length,
+        wasted_hours: Math.max(0, Math.round((secAvail - secBooked) / 60)),
+      };
+    }).filter(s => s.trainer_count > 0);
+
+    // ── Smart Insights — heuristic, no DB writes
+    const insights = [];
+    // Low utilization trainers with significant free time
+    trainersOut
+      .filter(t => t.status === 'low' && t.free_hours >= 10)
+      .sort((a, b) => b.free_hours - a.free_hours)
+      .slice(0, 5)
+      .forEach(t => {
+        const coursesEq = Math.floor(t.free_hours / 12); // 1 course ≈ 12 h
+        insights.push({
+          type: 'low_util',
+          severity: 'warning',
+          trainer_name: t.name,
+          message: coursesEq >= 1
+            ? `${t.name} عنده ${t.free_hours} ساعة فراغ — يكفي لـ ${coursesEq} ${coursesEq === 1 ? 'كورس' : 'كورسات'} جديد`
+            : `${t.name} عنده ${t.free_hours} ساعة فراغ — استغلها`,
+        });
+      });
+    // Overworked trainers
+    trainersOut
+      .filter(t => t.status === 'high')
+      .sort((a, b) => (b.utilization_pct || 0) - (a.utilization_pct || 0))
+      .slice(0, 5)
+      .forEach(t => {
+        insights.push({
+          type: 'high_util',
+          severity: 'critical',
+          trainer_name: t.name,
+          message: `${t.name} مكتمل ${t.utilization_pct}% — احتمال احتراق وظيفي، فكر تخفف عنه`,
+        });
+      });
+    // Trend insight
+    if (Math.abs(trendPct) >= 3) {
+      insights.push({
+        type: trendPct > 0 ? 'trend_up' : 'trend_down',
+        severity: trendPct > 0 ? 'good' : 'warning',
+        message: trendPct > 0
+          ? `متوسط الإشغال زاد ${Math.abs(trendPct)}% مقارنة بالفترة السابقة — تشغيل أفضل`
+          : `متوسط الإشغال انخفض ${Math.abs(trendPct)}% مقارنة بالفترة السابقة — احتمال فقد فرص`,
+      });
+    }
+    // Sort: critical first, then warning, then good
+    const sevOrder = { critical: 0, warning: 1, good: 2 };
+    insights.sort((a, b) => (sevOrder[a.severity] ?? 9) - (sevOrder[b.severity] ?? 9));
+
+    // Sort trainers: low first (most free hours desc), then high (most utilized desc), then normal
+    const statusOrder = { low: 0, high: 1, normal: 2, inactive: 3 };
+    trainersOut.sort((a, b) => {
+      const so = (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9);
+      if (so !== 0) return so;
+      if (a.status === 'low')  return b.free_hours - a.free_hours;
+      if (a.status === 'high') return (b.utilization_pct || 0) - (a.utilization_pct || 0);
+      return (a.name || '').localeCompare(b.name || '', 'ar');
+    });
+
+    return res.json({
+      period: { from: currStart, to: currEnd, weeks: nWeeks, prev_from: prevStart, prev_to: prevEnd },
+      summary,
+      weekly_timeline: weeklyTimeline,
+      section_averages: sectionAverages,
+      trainers: trainersOut,
+      insights,
+    });
+  } catch (err) {
+    console.error('[reports] trainer-utilization-summary error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/reports/find-available-trainer ─────────────────────────────────
 // Phase 2 — Reverse search: given desired days + time window + course
 // requirements, return list of trainers and which slots they're free for.
