@@ -2560,6 +2560,304 @@ router.get('/trainer-utilization', (req, res) => {
   }
 });
 
+// ─── GET /api/reports/find-available-trainer ─────────────────────────────────
+// Phase 2 — Reverse search: given desired days + time window + course
+// requirements, return list of trainers and which slots they're free for.
+//
+// Query params:
+//   section       — 'all' | 'general' | 'private' | 'semi' | 'phone_call'
+//   days          — comma-separated DOW keys, e.g. 'saturday,monday'
+//   from_time     — HH:MM (24h) start of needed window
+//   to_time       — HH:MM (24h) end of needed window
+//   weeks_count   — integer (1..12), how many consecutive weeks to check
+//   start_date    — YYYY-MM-DD optional anchor (default: this week)
+//   course_family — 'starter'|'general'|'conversation' (optional)
+//   course_level  — 1..5 (optional, used with course_family)
+//
+// Returns per-trainer availability across all (day × week) slots.
+router.get('/find-available-trainer', (req, res) => {
+  const {
+    section = 'all',
+    days = '',
+    from_time = '',
+    to_time = '',
+    weeks_count = '1',
+    start_date = '',
+    course_family = '',
+    course_level = '',
+  } = req.query;
+  const line = lineFilter(req);
+  const lineL = buildLineFilter('l', line);
+  const lineB = buildLineFilter('b', line);
+
+  // Local helpers (mirror computeCodeProblems + trainer-utilization helpers)
+  const DOW_KEYS = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+  const DOW_AR   = ['الأحد','الإثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
+  const DOW_TO_OFFSET = { saturday:0, sunday:1, monday:2, tuesday:3, wednesday:4, thursday:5, friday:6 };
+  const HHMM = s => {
+    if (!s) return null;
+    const m = String(s).match(/^(\d{1,2}):(\d{2})$/);
+    return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : null;
+  };
+  const HHMM_END = s => { const v = HHMM(s); return v === 0 ? 1440 : v; };
+  const parseRests = raw => {
+    if (!raw) return [];
+    let arr = raw;
+    if (typeof raw === 'string') { try { arr = JSON.parse(raw); } catch { return []; } }
+    if (!Array.isArray(arr)) return [];
+    return arr.map(r => ({ s: HHMM(r?.start), e: HHMM(r?.end) }))
+      .filter(r => r.s != null && r.e != null && r.e > r.s);
+  };
+  const parseTime12 = t => {
+    if (!t) return -1;
+    const m = String(t).match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+    if (!m) return -1;
+    let h = parseInt(m[1]), min = parseInt(m[2]);
+    if (m[3]?.toUpperCase() === 'PM' && h < 12) h += 12;
+    if (m[3]?.toUpperCase() === 'AM' && h === 12) h = 0;
+    return h * 60 + min;
+  };
+  const parseDur = d => {
+    if (!d) return 0;
+    const m = String(d).match(/(\d{1,2}):(\d{2})/);
+    return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : 0;
+  };
+  const getDow = s => { if (!s) return -1; return new Date(s + 'T12:00:00').getDay(); };
+  const stripParens = name => String(name || '').replace(/\([^)]*\)/g, '').trim();
+  const fmtISO = d => d.toISOString().slice(0, 10);
+
+  // Validate input
+  const selectedDays = String(days).split(',').map(s => s.trim().toLowerCase())
+    .filter(d => DOW_KEYS.includes(d));
+  if (selectedDays.length === 0) {
+    return res.status(400).json({ error: 'يجب اختيار يوم واحد على الأقل من أيام الأسبوع' });
+  }
+  const fromMin = HHMM(from_time);
+  const toMin   = HHMM_END(to_time);
+  if (fromMin == null || toMin == null) {
+    return res.status(400).json({ error: 'الوقت غير صحيح — استخدم HH:MM' });
+  }
+  if (toMin <= fromMin) {
+    return res.status(400).json({ error: 'وقت النهاية يجب أن يكون بعد وقت البداية' });
+  }
+  const nWeeks = Math.max(1, Math.min(12, parseInt(weeks_count) || 1));
+  const courseLevelN = parseInt(course_level);
+  const useCourseFilter = ['starter','general','conversation'].includes(course_family)
+                          && Number.isFinite(courseLevelN) && courseLevelN > 0;
+
+  // Compute week anchor — Saturday of the week containing start_date (or today)
+  const anchorDate = start_date && /^\d{4}-\d{2}-\d{2}$/.test(start_date)
+    ? new Date(start_date + 'T12:00:00')
+    : new Date();
+  anchorDate.setHours(12, 0, 0, 0);
+  const anchorDow = anchorDate.getDay();          // 0=Sun..6=Sat
+  const backToSat = (anchorDow + 1) % 7;          // days to go back to most recent Saturday
+  const weekAnchor = new Date(anchorDate);
+  weekAnchor.setDate(weekAnchor.getDate() - backToSat);
+
+  // Build the list of slots: (date, week, day)
+  const slots = [];
+  for (let w = 0; w < nWeeks; w++) {
+    for (const day of selectedDays) {
+      const offset = DOW_TO_OFFSET[day];
+      const d = new Date(weekAnchor);
+      d.setDate(d.getDate() + w * 7 + offset);
+      slots.push({ date: fmtISO(d), week: w + 1, day });
+    }
+  }
+
+  // Trainer query
+  let trainerWhere = `WHERE department='education' AND status='active'`;
+  if (section && section !== 'all') {
+    const s = String(section).replace(/'/g, "''");
+    trainerWhere += ` AND section='${s}'`;
+  }
+
+  function normalizeShift(t, sfx) {
+    const shift = t['shift' + sfx];
+    if (!shift) return null;
+    const startMin = HHMM(t['shift' + sfx + '_start']);
+    const endMin   = HHMM_END(t['shift' + sfx + '_end']);
+    if (startMin == null || endMin == null) return null;
+    const daysField = sfx === '' ? 'work_days' : 'shift2_work_days';
+    const dayList = String(t[daysField] || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    return {
+      startMin, endMin, days: dayList,
+      rests: parseRests(t['shift' + sfx + '_rests']),
+      startDate: t['shift' + sfx + '_start_date'] || null,
+      endDate:   t['shift' + sfx + '_end_date']   || null,
+      label: t['shift' + sfx],
+      startStr: t['shift' + sfx + '_start'] || '',
+      endStr:   t['shift' + sfx + '_end']   || '',
+    };
+  }
+  function shiftActiveOn(sh, dateStr) {
+    if (sh.startDate && dateStr < sh.startDate) return false;
+    if (sh.endDate   && dateStr > sh.endDate)   return false;
+    return true;
+  }
+  const fmt12 = m => {
+    if (m == null) return '';
+    const mod = ((m % 1440) + 1440) % 1440;
+    const h24 = Math.floor(mod / 60), mm = mod % 60;
+    const ampm = h24 >= 12 ? 'PM' : 'AM';
+    let h12 = h24 % 12; if (h12 === 0) h12 = 12;
+    return `${String(h12).padStart(2,'0')}:${String(mm).padStart(2,'0')} ${ampm}`;
+  };
+  const SHIFT_AR = { morning: 'صباحي', evening: 'مسائي' };
+
+  try {
+    const trainers = db.prepare(`SELECT * FROM team_members ${trainerWhere}`).all();
+    let eligible = trainers.filter(t => t.shift || t.shift2);
+    // Optional: course capability filter
+    if (useCourseFilter) {
+      const col = 'teachable_' + course_family;
+      eligible = eligible.filter(t => {
+        const max = t[col];
+        return typeof max === 'number' && max >= courseLevelN;
+      });
+    }
+
+    // Date range for lecture fetch
+    const allDates = slots.map(s => s.date);
+    const minDate = allDates.reduce((a, b) => a < b ? a : b);
+    const maxDate = allDates.reduce((a, b) => a > b ? a : b);
+
+    // Fetch all relevant lectures once
+    const lecRaw = db.prepare(
+      `SELECT DISTINCT l.group_name, l.date, l.time, l.duration, l.trainer, l.session_type
+         FROM lectures l
+         INNER JOIN batches b ON l.group_name=b.group_name${line ? ' AND b.line=l.line' : ''}
+         WHERE b.status='نشطة'
+           AND l.date BETWEEN '${minDate}' AND '${maxDate}'
+           AND (l.session_type='main'
+             OR (l.session_type='side' AND LOWER(COALESCE(l.side_session_category,'regular'))='regular'))
+         ${lineL}${lineB}`
+    ).all();
+
+    // Index by (trainerLower|date) → list of {time, duration, group_name, session_type}
+    const lectureMap = {};
+    for (const l of lecRaw) {
+      const k = stripParens(l.trainer).toLowerCase();
+      if (!k) continue;
+      const key = `${k}|${l.date}`;
+      (lectureMap[key] = lectureMap[key] || []).push(l);
+    }
+
+    // For each trainer, evaluate every slot
+    const results = eligible.map(t => {
+      const sh1 = normalizeShift(t, '');
+      const sh2 = normalizeShift(t, '2');
+      const shifts = [sh1, sh2].filter(Boolean);
+      const tKey = stripParens(t.name).toLowerCase();
+      const earliestStart = shifts.map(s => s.startDate).filter(Boolean).sort()[0];
+
+      const slotResults = slots.map(slot => {
+        const dow = getDow(slot.date);
+        const dayKey = DOW_KEYS[dow] || '';
+        // Skip if before trainer's earliest shift start
+        if (earliestStart && slot.date < earliestStart) {
+          return { ...slot, available: false, reason: 'قبل بداية شيفت المدرب' };
+        }
+        // Find any shift that covers this date+day AND fits the requested window
+        let suitable = null, fallbackReason = null;
+        for (const sh of shifts) {
+          if (!shiftActiveOn(sh, slot.date)) continue;
+          if (!sh.days.includes(dayKey)) continue;
+          // shift end gets the same 5-min tolerance used in code-problems
+          if (fromMin < sh.startMin || toMin > sh.endMin + 5) {
+            fallbackReason = `الوقت خارج الشيفت (${sh.startStr}-${sh.endStr})`;
+            continue;
+          }
+          const restOverlap = sh.rests.find(r => fromMin < r.e && toMin > r.s);
+          if (restOverlap) {
+            fallbackReason = `داخل وقت راحة (${fmt12(restOverlap.s)}-${fmt12(restOverlap.e)})`;
+            continue;
+          }
+          suitable = sh;
+          break;
+        }
+        if (!suitable) {
+          // None of the trainer's shifts could host this slot
+          if (!fallbackReason) fallbackReason = `${DOW_AR[dow]} مش في أيام عمل المدرب`;
+          return { ...slot, available: false, reason: fallbackReason };
+        }
+        // Check overlap with booked lectures on this date
+        const lectures = lectureMap[`${tKey}|${slot.date}`] || [];
+        for (const l of lectures) {
+          const lStart = parseTime12(l.time);
+          const lDur   = parseDur(l.duration);
+          if (lStart < 0 || lDur <= 0) continue;
+          const lEnd = lStart + lDur;
+          if (fromMin < lEnd && toMin > lStart) {
+            return {
+              ...slot,
+              available: false,
+              reason: `محاضرة محجوزة ${l.time}`,
+              conflict: { group_name: l.group_name, time: l.time, duration: l.duration, session_type: l.session_type },
+            };
+          }
+        }
+        return { ...slot, available: true, reason: null };
+      });
+
+      const availableCount = slotResults.filter(s => s.available).length;
+      const shiftSummary = shifts
+        .map(sh => `${SHIFT_AR[sh.label] || sh.label} ${fmt12(sh.startMin)}-${fmt12(sh.endMin)}`)
+        .join(' + ');
+
+      return {
+        id: t.id,
+        name: stripParens(t.name) || t.name,
+        full_name: t.name,
+        section: t.section,
+        shift_summary: shiftSummary,
+        teachable: {
+          starter:      t.teachable_starter,
+          general:      t.teachable_general,
+          conversation: t.teachable_conversation,
+        },
+        fully_available: availableCount === slotResults.length,
+        partially_available: availableCount > 0 && availableCount < slotResults.length,
+        available_count: availableCount,
+        total_slots: slotResults.length,
+        slots: slotResults,
+      };
+    });
+
+    // Sort: fully available first → partial (most-to-least) → none → name
+    results.sort((a, b) => {
+      const aRank = a.fully_available ? 2 : a.partially_available ? 1 : 0;
+      const bRank = b.fully_available ? 2 : b.partially_available ? 1 : 0;
+      if (aRank !== bRank) return bRank - aRank;
+      if (a.available_count !== b.available_count) return b.available_count - a.available_count;
+      return a.name.localeCompare(b.name, 'ar');
+    });
+
+    return res.json({
+      results,
+      slots,
+      request: {
+        section,
+        days: selectedDays,
+        from_time, to_time,
+        weeks_count: nWeeks,
+        course_family: useCourseFilter ? course_family : null,
+        course_level: useCourseFilter ? courseLevelN : null,
+      },
+      summary: {
+        total_trainers:       results.length,
+        fully_available:      results.filter(r => r.fully_available).length,
+        partially_available:  results.filter(r => r.partially_available).length,
+        not_available:        results.filter(r => r.available_count === 0).length,
+      },
+    });
+  } catch (err) {
+    console.error('[reports] find-available-trainer error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/reports/remarks-notes-options ──────────────────────────────────
 // Returns dropdown options for coordinator, category, assigned_to
 router.get('/remarks-notes-options', (req, res) => {

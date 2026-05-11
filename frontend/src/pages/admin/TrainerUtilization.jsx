@@ -1,9 +1,10 @@
 'use client';
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import {
   CalendarDays, ChevronLeft, ChevronRight, X,
-  Activity, Sun, Moon, Clock, User,
+  Activity, Sun, Moon, Clock, User, Search,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -371,6 +372,15 @@ export default function TrainerUtilization() {
         >
           هذا الأسبوع
         </button>
+
+        {/* Find available trainer — Phase 2 entry point */}
+        <Link
+          to="/admin/reports/find-available-trainer"
+          className="ms-auto inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-l from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-bold transition-all shadow-sm hover:shadow-md"
+        >
+          <Search size={14} />
+          ابحث عن مدرب متاح
+        </Link>
       </div>
 
       {/* ── Heatmap ── */}

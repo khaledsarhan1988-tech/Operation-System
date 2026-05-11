@@ -36,6 +36,7 @@ import QualitySnapshots from './pages/admin/QualitySnapshots';
 import DbStatus from './pages/admin/DbStatus';
 import TeamPage from './pages/admin/TeamPage';
 import TrainerUtilization from './pages/admin/TrainerUtilization';
+import TrainerAvailabilityFinder from './pages/admin/TrainerAvailabilityFinder';
 import DashboardDetail from './pages/admin/DashboardDetail';
 import ClientDistribution from './pages/admin/ClientDistribution';
 import AdminPipeline from './pages/admin/AdminPipeline';
@@ -113,6 +114,7 @@ const router = createBrowserRouter([
       { path: 'upload',                       element: <ExcelUpload /> },
       { path: 'team',                         element: <TeamPage /> },
       { path: 'reports/trainer-utilization',  element: <TrainerUtilization /> },
+      { path: 'reports/find-available-trainer', element: <TrainerAvailabilityFinder /> },
       { path: 'control',                      element: <LeaderDashboard /> },
       { path: 'reports/customer-services',    element: <SystemReports /> },
       { path: 'reports/education',            element: <EducationReports /> },
