@@ -508,6 +508,7 @@ export default function TrainerUtilizationDashboard() {
               type={t.status === 'high' ? 'high' : 'low'}
               trainers={[t]}
               singleMode
+              period={period}
               onClose={() => setDetailModal(null)}
             />
           );
@@ -525,7 +526,55 @@ export default function TrainerUtilizationDashboard() {
 }
 
 // ─── KPI DETAIL MODAL ─────────────────────────────────────────────────────────
-function KpiDetailModal({ type, trainers, onClose, singleMode }) {
+const DOW_AR_LIST = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+function fmtMinsLabel(mins) {
+  if (mins == null || mins <= 0) return '0';
+  const h = Math.floor(mins / 60), m = mins % 60;
+  if (h === 0) return `${m}د`;
+  if (m === 0) return `${h}س`;
+  return `${h}س ${m}د`;
+}
+function fmtClock(min) {
+  if (min == null) return '';
+  const mod = ((min % 1440) + 1440) % 1440;
+  const h24 = Math.floor(mod / 60), mm = mod % 60;
+  const ampm = h24 >= 12 ? 'PM' : 'AM';
+  let h12 = h24 % 12; if (h12 === 0) h12 = 12;
+  return `${String(h12).padStart(2,'0')}:${String(mm).padStart(2,'0')} ${ampm}`;
+}
+
+function KpiDetailModal({ type, trainers, onClose, singleMode, period }) {
+  // For single mode, fetch per-day detail so we can show recurring free slots
+  const trainer = singleMode && trainers.length === 1 ? trainers[0] : null;
+  const { data: detail, isLoading: detailLoading } = useQuery({
+    queryKey: ['trainer-utilization-detail', trainer?.id, period?.from, period?.to],
+    queryFn: () => api.get('/reports/trainer-utilization', {
+      params: { from: period.from, to: period.to, search: trainer?.full_name || trainer?.name },
+    }).then(r => r.data),
+    enabled: !!(trainer && period?.from && period?.to),
+    staleTime: 60 * 1000,
+  });
+
+  // Aggregate free slots by (day-of-week, start, end) — surfaces recurring patterns
+  const slotPatterns = useMemo(() => {
+    const detailTrainer = detail?.trainers?.[0];
+    if (!detailTrainer) return [];
+    const map = {}; // key → { dow, startMin, endMin, weeks, totalMins }
+    for (const [date, day] of Object.entries(detailTrainer.days || {})) {
+      if (!day.is_work_day) continue;
+      const dow = new Date(date + 'T12:00:00').getDay();
+      for (const slot of (day.free_slots || [])) {
+        const key = `${dow}|${slot.start_min}|${slot.end_min}`;
+        if (!map[key]) {
+          map[key] = { dow, startMin: slot.start_min, endMin: slot.end_min, weeks: 0, totalMins: 0 };
+        }
+        map[key].weeks++;
+        map[key].totalMins += slot.duration_min;
+      }
+    }
+    return Object.values(map).sort((a, b) => b.totalMins - a.totalMins);
+  }, [detail]);
+
   const baseCfg = type === 'low'
     ? {
         title: 'مدربين الإشغال المنخفض',
@@ -549,7 +598,7 @@ function KpiDetailModal({ type, trainers, onClose, singleMode }) {
   const IconComp = cfg.icon;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" dir="rtl">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+      <div className={`bg-white rounded-2xl shadow-2xl w-full ${singleMode ? 'max-w-xl' : 'max-w-lg'} overflow-hidden flex flex-col max-h-[90vh]`}>
         {/* Header */}
         <div className={`flex items-center justify-between px-5 py-4 border-b border-gray-100 ${cfg.tone.split(' ')[0]}/50`}>
           <div className="flex items-center gap-3">
@@ -569,7 +618,7 @@ function KpiDetailModal({ type, trainers, onClose, singleMode }) {
         </div>
 
         {/* Body */}
-        <div className="p-4 overflow-y-auto flex-1">
+        <div className="p-4 overflow-y-auto flex-1 space-y-4">
           {trainers.length === 0 ? (
             <div className="text-center py-8 text-sm text-gray-400">مفيش مدربين في الحالة دي</div>
           ) : (
@@ -599,6 +648,62 @@ function KpiDetailModal({ type, trainers, onClose, singleMode }) {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Free slots breakdown — single trainer mode only */}
+          {singleMode && trainer && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between border-t border-gray-100 pt-3">
+                <div className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+                  <Clock size={13} className="text-sky-600" />
+                  أوقات الفراغ في الفترة
+                </div>
+                <span className="text-[10px] text-gray-400" dir="ltr">{period?.from} → {period?.to}</span>
+              </div>
+
+              {detailLoading ? (
+                <div className="space-y-1.5">
+                  {[1,2,3].map(i => <div key={i} className="h-9 bg-gray-100 animate-pulse rounded-lg" />)}
+                </div>
+              ) : slotPatterns.length === 0 ? (
+                <div className="text-center py-4 text-xs text-gray-400 bg-gray-50/60 rounded-xl">
+                  مفيش وقت فراغ ثابت في الفترة — كل الفترات مكتملة بالكامل
+                </div>
+              ) : (
+                <>
+                  <div className="text-[11px] text-gray-500 mb-1">
+                    عرض {slotPatterns.length} فترة مستمرة (مجمعة حسب يوم الأسبوع + الوقت)
+                  </div>
+                  <div className="space-y-1.5">
+                    {slotPatterns.map((p, i) => {
+                      const dur = p.endMin - p.startMin;
+                      return (
+                        <div
+                          key={i}
+                          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-sky-50/60 border border-sky-100"
+                        >
+                          <span className="text-[11px] font-bold text-sky-900 min-w-[55px]">
+                            {DOW_AR_LIST[p.dow]}
+                          </span>
+                          <span className="text-[11px] font-mono font-bold text-sky-900" dir="ltr">
+                            {fmtClock(p.startMin)} → {fmtClock(p.endMin)}
+                          </span>
+                          <span className="text-[10px] text-sky-600 me-auto">
+                            ({fmtMinsLabel(dur)})
+                          </span>
+                          <span className="inline-flex items-center text-[10px] px-2 py-0.5 rounded-full font-bold bg-sky-100 text-sky-700 border border-sky-200 whitespace-nowrap">
+                            {p.weeks} مرة · {fmtMinsLabel(p.totalMins)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-2 text-[11px] text-gray-600 bg-amber-50/50 border border-amber-100 rounded-lg px-3 py-2">
+                    💡 الفترات المستمرة (4 من 4 أسابيع مثلاً) صالحة لفتح كورس جديد عليها مباشرة
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
