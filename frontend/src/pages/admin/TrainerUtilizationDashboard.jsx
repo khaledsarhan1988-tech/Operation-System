@@ -59,8 +59,12 @@ export default function TrainerUtilizationDashboard() {
   const [weeks, setWeeks]     = useState(12);
   const [section, setSection] = useState('all');
   const [trainerName, setTrainerName] = useState('');
-  // KPI detail modal — { type: 'low' | 'high' } when open.
-  const [kpiDetail, setKpiDetail] = useState(null);
+  // Detail modal — either group mode ('low'/'high') or single-trainer mode.
+  //   { kind: 'group',  type: 'low' | 'high' }
+  //   { kind: 'single', trainer: {...} }
+  const [detailModal, setDetailModal] = useState(null);
+  const openGroupModal  = (type)    => setDetailModal({ kind: 'group',  type });
+  const openSingleModal = (trainer) => setDetailModal({ kind: 'single', trainer });
   // Custom date range — overrides `weeks` when both fields are filled.
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate]     = useState('');
@@ -315,7 +319,7 @@ export default function TrainerUtilizationDashboard() {
                 icon={TrendingDown}
                 tone="rose"
                 subtitle={summary.low_count === 0 ? 'الكل مشغول جيداً' : 'تحت 50% — اضغط للتفاصيل'}
-                onClick={summary.low_count > 0 ? () => setKpiDetail('low') : null}
+                onClick={summary.low_count > 0 ? () => openGroupModal('low') : null}
               />
               <KpiCard
                 title="مدربين مكتملين"
@@ -324,7 +328,7 @@ export default function TrainerUtilizationDashboard() {
                 icon={Zap}
                 tone="orange"
                 subtitle={summary.high_count === 0 ? '—' : 'فوق 90% — اضغط للتفاصيل'}
-                onClick={summary.high_count > 0 ? () => setKpiDetail('high') : null}
+                onClick={summary.high_count > 0 ? () => openGroupModal('high') : null}
               />
             </div>
 
@@ -403,7 +407,19 @@ export default function TrainerUtilizationDashboard() {
                   <span className="text-xs text-gray-400 mr-auto">{insights.length}</span>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                  {insights.map((ins, i) => <InsightCard key={i} insight={ins} />)}
+                  {insights.map((ins, i) => {
+                    // Trainer-specific insights become clickable → opens detail modal
+                    const t = ins.trainer_name
+                      ? trainers.find(x => x.name === ins.trainer_name)
+                      : null;
+                    return (
+                      <InsightCard
+                        key={i}
+                        insight={ins}
+                        onClick={t ? () => openSingleModal(t) : null}
+                      />
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -483,21 +499,34 @@ export default function TrainerUtilizationDashboard() {
         )}
       </div>
 
-      {/* ── KPI detail modal ── */}
-      {kpiDetail && (
-        <KpiDetailModal
-          type={kpiDetail}
-          trainers={trainers.filter(t => t.status === kpiDetail)}
-          onClose={() => setKpiDetail(null)}
-        />
-      )}
+      {/* ── Detail modal (group or single trainer) ── */}
+      {detailModal && (() => {
+        if (detailModal.kind === 'single') {
+          const t = detailModal.trainer;
+          return (
+            <KpiDetailModal
+              type={t.status === 'high' ? 'high' : 'low'}
+              trainers={[t]}
+              singleMode
+              onClose={() => setDetailModal(null)}
+            />
+          );
+        }
+        return (
+          <KpiDetailModal
+            type={detailModal.type}
+            trainers={trainers.filter(x => x.status === detailModal.type)}
+            onClose={() => setDetailModal(null)}
+          />
+        );
+      })()}
     </div>
   );
 }
 
 // ─── KPI DETAIL MODAL ─────────────────────────────────────────────────────────
-function KpiDetailModal({ type, trainers, onClose }) {
-  const cfg = type === 'low'
+function KpiDetailModal({ type, trainers, onClose, singleMode }) {
+  const baseCfg = type === 'low'
     ? {
         title: 'مدربين الإشغال المنخفض',
         subtitle: 'تحت 50%',
@@ -514,6 +543,9 @@ function KpiDetailModal({ type, trainers, onClose }) {
         iconBg: 'bg-orange-500',
         utilCls: 'bg-orange-100 text-orange-700 border-orange-200',
       };
+  const cfg = singleMode && trainers.length === 1
+    ? { ...baseCfg, title: 'تفاصيل المدرب', subtitle: trainers[0].name }
+    : baseCfg;
   const IconComp = cfg.icon;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" dir="rtl">
@@ -526,7 +558,9 @@ function KpiDetailModal({ type, trainers, onClose }) {
             </div>
             <div>
               <div className="font-bold text-gray-900 text-sm">{cfg.title}</div>
-              <div className="text-[11px] text-gray-500 mt-0.5">{cfg.subtitle} · {trainers.length} مدرب</div>
+              <div className="text-[11px] text-gray-500 mt-0.5">
+                {cfg.subtitle}{singleMode ? '' : ` · ${trainers.length} مدرب`}
+              </div>
             </div>
           </div>
           <button onClick={onClose} className="p-1.5 hover:bg-white/60 rounded-lg transition-all">
@@ -632,17 +666,25 @@ function KpiCard({ title, value, suffix, icon, tone, subtitle, trend, trendLabel
 }
 
 // ─── INSIGHT CARD ─────────────────────────────────────────────────────────────
-function InsightCard({ insight }) {
+function InsightCard({ insight, onClick }) {
   const { severity, type, message } = insight;
   const config = {
-    critical: { icon: AlertTriangle,  bg: 'bg-rose-50',    border: 'border-rose-200',    text: 'text-rose-900',    accent: 'text-rose-600',  emoji: '🔴' },
-    warning:  { icon: AlertTriangle,  bg: 'bg-amber-50',   border: 'border-amber-200',   text: 'text-amber-900',   accent: 'text-amber-600', emoji: '⚠' },
-    good:     { icon: CheckCircle2,   bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-900', accent: 'text-emerald-600', emoji: '🟢' },
+    critical: { icon: AlertTriangle,  bg: 'bg-rose-50',    border: 'border-rose-200',    hover: 'hover:bg-rose-100',    text: 'text-rose-900',    accent: 'text-rose-600',  emoji: '🔴' },
+    warning:  { icon: AlertTriangle,  bg: 'bg-amber-50',   border: 'border-amber-200',   hover: 'hover:bg-amber-100',   text: 'text-amber-900',   accent: 'text-amber-600', emoji: '⚠' },
+    good:     { icon: CheckCircle2,   bg: 'bg-emerald-50', border: 'border-emerald-200', hover: 'hover:bg-emerald-100', text: 'text-emerald-900', accent: 'text-emerald-600', emoji: '🟢' },
   };
   const c = config[severity] || config.warning;
   const IconComp = type === 'trend_up' || type === 'trend_down' ? Sparkles : c.icon;
+  const Tag = onClick ? 'button' : 'div';
+  const interactiveCls = onClick
+    ? `${c.hover} cursor-pointer hover:shadow-sm transition-all text-right w-full`
+    : '';
   return (
-    <div className={`flex items-start gap-3 px-3 py-2.5 rounded-xl ${c.bg} ${c.border} border`}>
+    <Tag
+      type={onClick ? 'button' : undefined}
+      onClick={onClick || undefined}
+      className={`flex items-start gap-3 px-3 py-2.5 rounded-xl ${c.bg} ${c.border} border ${interactiveCls}`}
+    >
       <div className={`${c.accent} mt-0.5 shrink-0`}>
         <IconComp size={15} />
       </div>
@@ -652,6 +694,6 @@ function InsightCard({ insight }) {
           {message}
         </div>
       </div>
-    </div>
+    </Tag>
   );
 }
