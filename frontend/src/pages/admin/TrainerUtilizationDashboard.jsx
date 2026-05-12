@@ -58,15 +58,23 @@ function utilCellColor(util) {
 export default function TrainerUtilizationDashboard() {
   const [weeks, setWeeks]     = useState(12);
   const [section, setSection] = useState('all');
-  const exportRef             = useRef(null);
+  // Custom date range — overrides `weeks` when both fields are filled.
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate]     = useState('');
+  const exportRef               = useRef(null);
+  const usingCustomRange = !!(fromDate && toDate && fromDate <= toDate);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['trainer-utilization-summary', weeks, section],
+    queryKey: ['trainer-utilization-summary', weeks, section, usingCustomRange ? fromDate : null, usingCustomRange ? toDate : null],
     queryFn: () => api.get('/reports/trainer-utilization-summary', {
-      params: { weeks, section },
+      params: usingCustomRange
+        ? { section, from: fromDate, to: toDate }
+        : { section, weeks },
     }).then(r => r.data),
     staleTime: 2 * 60 * 1000,
   });
+
+  const clearCustomRange = () => { setFromDate(''); setToDate(''); };
 
   const summary           = data?.summary;
   const weeklyTimeline    = data?.weekly_timeline    || [];
@@ -163,13 +171,13 @@ export default function TrainerUtilizationDashboard() {
       {/* ── Filters ── */}
       <div className="bg-white rounded-2xl border border-gray-100 p-4 flex flex-wrap items-center gap-3">
         <span className="text-xs font-bold text-gray-700">الفترة:</span>
-        <div className="flex items-center gap-1 bg-gray-50 rounded-xl p-1 border border-gray-200">
+        <div className={`flex items-center gap-1 bg-gray-50 rounded-xl p-1 border border-gray-200 ${usingCustomRange ? 'opacity-50' : ''}`}>
           {[4, 8, 12, 24].map(n => (
             <button
               key={n}
-              onClick={() => setWeeks(n)}
+              onClick={() => { clearCustomRange(); setWeeks(n); }}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                weeks === n
+                weeks === n && !usingCustomRange
                   ? 'bg-blue-600 text-white shadow-sm'
                   : 'text-gray-600 hover:bg-white'
               }`}
@@ -178,6 +186,37 @@ export default function TrainerUtilizationDashboard() {
             </button>
           ))}
         </div>
+
+        {/* Custom date range — overrides the weeks preset when filled */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-gray-700">من:</span>
+          <input
+            type="date"
+            value={fromDate}
+            onChange={e => setFromDate(e.target.value)}
+            className="border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+            dir="ltr"
+          />
+          <span className="text-xs font-bold text-gray-700">إلى:</span>
+          <input
+            type="date"
+            value={toDate}
+            onChange={e => setToDate(e.target.value)}
+            min={fromDate || undefined}
+            className="border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+            dir="ltr"
+          />
+          {usingCustomRange && (
+            <button
+              onClick={clearCustomRange}
+              title="إلغاء الفترة المخصصة والرجوع للـ preset"
+              className="px-2 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 text-xs font-bold transition-all"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+
         <span className="text-xs font-bold text-gray-700 mr-3">القسم:</span>
         <select
           value={section}
@@ -189,6 +228,7 @@ export default function TrainerUtilizationDashboard() {
         {period && (
           <span className="text-xs text-gray-400 mr-auto">
             {period.from} → {period.to}
+            {usingCustomRange && <span className="text-blue-500 font-semibold mr-1">(مخصص)</span>}
           </span>
         )}
       </div>

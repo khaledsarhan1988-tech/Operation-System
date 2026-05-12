@@ -2620,14 +2620,15 @@ router.get('/trainer-utilization', (req, res) => {
 //
 // Query params:
 //   weeks    — integer 4..52 (default 12) — period length in weeks ending today
+//   from, to — YYYY-MM-DD (optional) — explicit date range overrides `weeks`
 //   section  — optional section filter (general/private/semi/phone_call/all)
 router.get('/trainer-utilization-summary', (req, res) => {
-  const { weeks = '12', section = 'all' } = req.query;
+  const { weeks = '12', section = 'all', from: customFrom = '', to: customTo = '' } = req.query;
   const line = lineFilter(req);
   const lineL = buildLineFilter('l', line);
   const lineB = buildLineFilter('b', line);
 
-  const nWeeks = Math.max(4, Math.min(52, parseInt(weeks) || 12));
+  const nWeeksRequested = Math.max(4, Math.min(52, parseInt(weeks) || 12));
   // Reuse the same helpers used by trainer-utilization + find-available-trainer
   const DOW_KEYS = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
   const HHMM = s => {
@@ -2704,20 +2705,37 @@ router.get('/trainer-utilization-summary', (req, res) => {
     return total;
   }
 
-  // Date math: current period = last N weeks, ending today.
-  // Previous period = same N weeks immediately before that.
+  // Date math: by default, current period = last N weeks ending today.
+  // If `from` + `to` are provided and valid, they override the weeks preset.
+  // Previous period always = same length immediately before current.
   const today = new Date(); today.setHours(12, 0, 0, 0);
   const dayMs = 24 * 60 * 60 * 1000;
-  const totalDays = nWeeks * 7;
-  const currEnd   = fmtISO(today);
-  const currStart = fmtISO(new Date(today.getTime() - (totalDays - 1) * dayMs));
-  const prevEnd   = fmtISO(new Date(today.getTime() - totalDays * dayMs));
-  const prevStart = fmtISO(new Date(today.getTime() - (2 * totalDays - 1) * dayMs));
+  const isValidISODate = s => /^\d{4}-\d{2}-\d{2}$/.test(s);
+  const useCustomRange =
+    customFrom && customTo && isValidISODate(customFrom) && isValidISODate(customTo)
+    && customFrom <= customTo;
+  let currStart, currEnd, totalDays, nWeeks;
+  if (useCustomRange) {
+    currStart = customFrom;
+    currEnd   = customTo;
+    const startMs = new Date(currStart + 'T12:00:00').getTime();
+    const endMs   = new Date(currEnd   + 'T12:00:00').getTime();
+    totalDays = Math.round((endMs - startMs) / dayMs) + 1;
+    nWeeks    = Math.max(1, Math.ceil(totalDays / 7));
+  } else {
+    nWeeks    = nWeeksRequested;
+    totalDays = nWeeks * 7;
+    currEnd   = fmtISO(today);
+    currStart = fmtISO(new Date(today.getTime() - (totalDays - 1) * dayMs));
+  }
+  const currStartMs = new Date(currStart + 'T12:00:00').getTime();
+  const prevEnd   = fmtISO(new Date(currStartMs - dayMs));
+  const prevStart = fmtISO(new Date(currStartMs - totalDays * dayMs));
 
   // Build complete list of dates in current period (for per-week aggregation)
   const currDates = [];
   for (let i = 0; i < totalDays; i++) {
-    currDates.push(fmtISO(new Date(today.getTime() - (totalDays - 1 - i) * dayMs)));
+    currDates.push(fmtISO(new Date(currStartMs + i * dayMs)));
   }
   // Build week buckets: week index = Math.floor(i / 7)
   // Week label = the Saturday of that week (compact)
@@ -2858,10 +2876,13 @@ router.get('/trainer-utilization-summary', (req, res) => {
       high_count: trainersOut.filter(t => t.status === 'high').length,
     };
 
-    // ── Weekly timeline (over current period only)
+    // ── Weekly timeline (over current period only).
+    // Custom date ranges may not be a multiple of 7 — last bucket can be shorter.
     const weeklyTimeline = [];
-    for (let w = 0; w < nWeeks; w++) {
-      const wkDates = currDates.slice(w * 7, w * 7 + 7);
+    const weekChunks = Math.ceil(totalDays / 7);
+    for (let w = 0; w < weekChunks; w++) {
+      const wkDates = currDates.slice(w * 7, Math.min(w * 7 + 7, totalDays));
+      if (wkDates.length === 0) continue;
       let wkAvail = 0, wkBooked = 0;
       for (const t of trainers) {
         const sh1 = normalizeShift(t, '');
