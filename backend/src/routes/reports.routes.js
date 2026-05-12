@@ -1804,8 +1804,10 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
           continue;
         }
         // Time inside shift window. Start is strict; end gets a small grace.
+        // Wrap the time-range in Unicode bidi-isolate marks (LRI...PDI) so the
+        // RTL Arabic context doesn't visually flip the digits.
         if (lecStartMin < sh.startMin || lecEndMin > sh.endMin + SHIFT_END_TOLERANCE_MIN) {
-          reasons.push(`خارج الشيفت (${sh.startStr}-${sh.endStr})`);
+          reasons.push(`خارج الشيفت ⁦(${sh.startStr} → ${sh.endStr})⁩`);
           continue;
         }
         // Rest periods and voice-note blocks — flag only if the overlap
@@ -1821,7 +1823,7 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
         });
         if (offending) {
           const label = offending.type === 'voice_note' ? 'Voice Note' : 'راحة';
-          reasons.push(`داخل وقت ${label} (${fmt12h(offending.startMin)}-${fmt12h(offending.endMin)})`);
+          reasons.push(`داخل وقت ${label} ⁦(${fmt12h(offending.startMin)} → ${fmt12h(offending.endMin)})⁩`);
           continue;
         }
         // This shift covers the lecture → OK
@@ -2123,7 +2125,7 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
         if (trainersWithIssues.length > 0) {
           const parts = trainersWithIssues.map(name => {
             const list = violationsByTrainer[name];
-            const sample = list.slice(0, 3).map(v => `${v.date} ${v.time} (${v.reason})`).join('، ');
+            const sample = list.slice(0, 3).map(v => `⁦${v.date} ${v.time}⁩ (${v.reason})`).join('، ');
             const extra = list.length > 3 ? ` و${list.length - 3} أخرى` : '';
             return `${name}: ${sample}${extra}`;
           });
@@ -2185,7 +2187,7 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
         if (trainersWithIssues.length > 0) {
           const parts = trainersWithIssues.map(name => {
             const list = violationsByTrainer[name];
-            const sample = list.slice(0, 3).map(v => `${v.date} ${v.time} (${v.reason})`).join('، ');
+            const sample = list.slice(0, 3).map(v => `⁦${v.date} ${v.time}⁩ (${v.reason})`).join('، ');
             const extra = list.length > 3 ? ` و${list.length - 3} أخرى` : '';
             return `${name}: ${sample}${extra}`;
           });
@@ -3199,7 +3201,7 @@ router.get('/find-available-trainer', (req, res) => {
           if (!sh.days.includes(dayKey)) continue;
           // shift end gets the same 5-min tolerance used in code-problems
           if (fromMin < sh.startMin || toMin > sh.endMin + 5) {
-            fallbackReason = `الوقت خارج الشيفت (${sh.startStr}-${sh.endStr})`;
+            fallbackReason = `الوقت خارج الشيفت ⁦(${sh.startStr} → ${sh.endStr})⁩`;
             continue;
           }
           // Rest periods AND voice-note blocks get the same 5-min overlap
@@ -3215,7 +3217,7 @@ router.get('/find-available-trainer', (req, res) => {
           });
           if (offending) {
             const label = offending.type === 'voice_note' ? 'Voice Note' : 'راحة';
-            fallbackReason = `داخل وقت ${label} (${fmt12(offending.s)}-${fmt12(offending.e)})`;
+            fallbackReason = `داخل وقت ${label} ⁦(${fmt12(offending.s)} → ${fmt12(offending.e)})⁩`;
             continue;
           }
           suitable = sh;
