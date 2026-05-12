@@ -415,15 +415,21 @@ export default function TrainerUtilization() {
       </div>
 
       {/* ── Voice Notes audit banner ── */}
+      {/* Phone-call trainers are excluded — they don't teach lectures, so
+          they don't need Voice Note blocks. The audit only covers
+          teaching sections: عام / خاص / شبه خاص. */}
       {!isLoading && trainers.length > 0 && (() => {
-        const missing = trainers.filter(t => t.has_voice_notes === false);
-        const total = trainers.length;
+        const auditPool = trainers.filter(t => t.section !== 'phone_call');
+        const missing = auditPool.filter(t => t.has_voice_notes === false);
+        const total = auditPool.length;
+        if (total === 0) return null; // current view shows only phone_call → no audit needed
         if (missing.length === 0) {
           return (
             <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 flex items-center gap-3" dir="rtl">
               <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
               <div className="text-xs font-bold text-emerald-900">
                 ✓ كل الـ {total} مدرب الظاهرين مسجلين Voice Notes
+                <span className="text-[10px] font-normal text-emerald-700 mr-2">(مدربو الفون كول مستثنيين — لا يحتاجون Voice Notes)</span>
               </div>
             </div>
           );
