@@ -1,10 +1,10 @@
 'use client';
-import { useState, useRef } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   BarChart3, TrendingUp, TrendingDown, Activity, AlertTriangle,
   CheckCircle2, Lightbulb, Users, Download, FileSpreadsheet,
-  FileText, Clock, Zap, Sparkles, Sun, Moon,
+  FileText, Clock, Zap, Sparkles, Sun, Moon, User,
 } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -58,18 +58,42 @@ function utilCellColor(util) {
 export default function TrainerUtilizationDashboard() {
   const [weeks, setWeeks]     = useState(12);
   const [section, setSection] = useState('all');
+  const [trainerName, setTrainerName] = useState('');
   // Custom date range — overrides `weeks` when both fields are filled.
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate]     = useState('');
   const exportRef               = useRef(null);
   const usingCustomRange = !!(fromDate && toDate && fromDate <= toDate);
 
+  // Reset trainer selection when section changes — the dropdown options shift.
+  const handleSectionChange = (next) => {
+    setSection(next);
+    setTrainerName('');
+  };
+
+  // Fetch the trainer list (used to populate the dropdown).
+  const { data: teamList = [] } = useQuery({
+    queryKey: ['team-trainers-education'],
+    queryFn: () => api.get('/team', { params: { department: 'education', status: 'active' } }).then(r => r.data),
+    staleTime: 5 * 60 * 1000,
+  });
+  const trainerOptions = useMemo(() => {
+    return teamList
+      .filter(t => section === 'all' || t.section === section)
+      .filter(t => t.shift || t.shift2)
+      .map(t => ({
+        value: t.name,
+        label: String(t.name || '').replace(/\([^)]*\)/g, '').trim() || t.name,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'ar'));
+  }, [teamList, section]);
+
   const { data, isLoading } = useQuery({
-    queryKey: ['trainer-utilization-summary', weeks, section, usingCustomRange ? fromDate : null, usingCustomRange ? toDate : null],
+    queryKey: ['trainer-utilization-summary', weeks, section, usingCustomRange ? fromDate : null, usingCustomRange ? toDate : null, trainerName],
     queryFn: () => api.get('/reports/trainer-utilization-summary', {
       params: usingCustomRange
-        ? { section, from: fromDate, to: toDate }
-        : { section, weeks },
+        ? { section, from: fromDate, to: toDate, search: trainerName || undefined }
+        : { section, weeks, search: trainerName || undefined },
     }).then(r => r.data),
     staleTime: 2 * 60 * 1000,
   });
@@ -220,11 +244,27 @@ export default function TrainerUtilizationDashboard() {
         <span className="text-xs font-bold text-gray-700 mr-3">القسم:</span>
         <select
           value={section}
-          onChange={e => setSection(e.target.value)}
+          onChange={e => handleSectionChange(e.target.value)}
           className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/30"
         >
           {Object.entries(SECTIONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </select>
+
+        {/* Trainer dropdown — filtered by selected section */}
+        <div className="relative min-w-[200px] max-w-xs">
+          <User className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+          <select
+            value={trainerName}
+            onChange={e => setTrainerName(e.target.value)}
+            className="w-full bg-gray-50 border border-gray-200 rounded-xl pr-9 pl-3 py-2 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:bg-white appearance-none"
+          >
+            <option value="">كل المدربين ({trainerOptions.length})</option>
+            {trainerOptions.map(o => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </div>
+
         {period && (
           <span className="text-xs text-gray-400 mr-auto">
             {period.from} → {period.to}

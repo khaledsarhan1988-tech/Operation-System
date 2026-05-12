@@ -2622,8 +2622,9 @@ router.get('/trainer-utilization', (req, res) => {
 //   weeks    — integer 4..52 (default 12) — period length in weeks ending today
 //   from, to — YYYY-MM-DD (optional) — explicit date range overrides `weeks`
 //   section  — optional section filter (general/private/semi/phone_call/all)
+//   search   — optional substring/exact name filter (matches team_members.name)
 router.get('/trainer-utilization-summary', (req, res) => {
-  const { weeks = '12', section = 'all', from: customFrom = '', to: customTo = '' } = req.query;
+  const { weeks = '12', section = 'all', from: customFrom = '', to: customTo = '', search = '' } = req.query;
   const line = lineFilter(req);
   const lineL = buildLineFilter('l', line);
   const lineB = buildLineFilter('b', line);
@@ -2746,11 +2747,15 @@ router.get('/trainer-utilization-summary', (req, res) => {
   }
 
   try {
-    // ── Fetch trainers + filter by section
+    // ── Fetch trainers + filter by section + optional name search
     let trainerWhere = `WHERE department='education' AND status='active'`;
     if (section && section !== 'all') {
       const s = String(section).replace(/'/g, "''");
       trainerWhere += ` AND section='${s}'`;
+    }
+    if (search) {
+      const s = escapeLike(search);
+      trainerWhere += ` AND name LIKE '%${s}%' ESCAPE '\\'`;
     }
     const trainersRaw = db.prepare(`SELECT * FROM team_members ${trainerWhere}`).all();
     const trainers = trainersRaw.filter(t => t.shift || t.shift2);
