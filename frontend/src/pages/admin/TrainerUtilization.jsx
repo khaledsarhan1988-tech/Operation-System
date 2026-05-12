@@ -268,6 +268,11 @@ export default function TrainerUtilization() {
   const [section, setSection]     = useState('all');
   const [trainerName, setTrainerName] = useState(''); // '' = all trainers
   const [detail, setDetail]       = useState(null); // { trainer, date }
+  // Custom date range — overrides week navigation when both filled.
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo]     = useState('');
+  const usingCustomRange = !!(customFrom && customTo && customFrom <= customTo);
+  const clearCustomRange = () => { setCustomFrom(''); setCustomTo(''); };
 
   // Reset trainer selection when section changes — the dropdown options change
   // so the previous selection might no longer be visible.
@@ -295,12 +300,13 @@ export default function TrainerUtilization() {
       .sort((a, b) => a.label.localeCompare(b.label, 'ar'));
   }, [teamList, section]);
 
-  // Compute date range
-  const fromDate = weekStart;
+  // Compute date range. Custom range (from/to) takes priority.
+  const fromDate = usingCustomRange ? customFrom : weekStart;
   const toDate   = useMemo(() => {
+    if (usingCustomRange) return customTo;
     const start = new Date(weekStart + 'T12:00:00');
     return fmtISO(addDays(start, weekCount * 7 - 1));
-  }, [weekStart, weekCount]);
+  }, [weekStart, weekCount, usingCustomRange, customTo]);
 
   const { data, isLoading } = useQuery({
     queryKey: ['trainer-utilization', fromDate, toDate, section, trainerName],
@@ -318,17 +324,19 @@ export default function TrainerUtilization() {
     setWeekStart(fmtISO(addDays(start, delta * 7)));
   };
 
-  // Build week-grouped column structure for header row
+  // Build week-grouped column structure for header row.
+  // Custom range may not be a multiple of 7 — last group can be shorter.
   const weekGroups = useMemo(() => {
     const groups = [];
-    for (let w = 0; w < weekCount; w++) {
-      groups.push({
-        label: `أسبوع ${w + 1}`,
-        days: dates.slice(w * 7, w * 7 + 7),
-      });
+    const total = dates.length;
+    const numGroups = Math.max(1, Math.ceil(total / 7));
+    for (let w = 0; w < numGroups; w++) {
+      const slice = dates.slice(w * 7, Math.min(w * 7 + 7, total));
+      if (slice.length === 0) continue;
+      groups.push({ label: `أسبوع ${w + 1}`, days: slice });
     }
     return groups;
-  }, [dates, weekCount]);
+  }, [dates]);
 
   return (
     <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
@@ -341,8 +349,8 @@ export default function TrainerUtilization() {
 
       {/* ── Filters ── */}
       <div className="bg-white rounded-2xl border border-gray-100 p-4 flex flex-wrap items-center gap-3">
-        {/* Week navigator */}
-        <div className="flex items-center gap-1 bg-gray-50 rounded-xl p-1 border border-gray-200">
+        {/* Week navigator — disabled when custom range is active */}
+        <div className={`flex items-center gap-1 bg-gray-50 rounded-xl p-1 border border-gray-200 ${usingCustomRange ? 'opacity-50 pointer-events-none' : ''}`}>
           <button onClick={() => shiftWeek(-1)} className="p-2 rounded-lg hover:bg-white text-gray-600 transition-all" title="الأسبوع السابق">
             <ChevronRight size={16} />
           </button>
@@ -355,14 +363,14 @@ export default function TrainerUtilization() {
           </button>
         </div>
 
-        {/* Week count */}
-        <div className="flex items-center gap-1 bg-gray-50 rounded-xl p-1 border border-gray-200">
+        {/* Week count — disabled when custom range is active */}
+        <div className={`flex items-center gap-1 bg-gray-50 rounded-xl p-1 border border-gray-200 ${usingCustomRange ? 'opacity-50' : ''}`}>
           {[1, 2, 4].map(n => (
             <button
               key={n}
-              onClick={() => setWeekCount(n)}
+              onClick={() => { clearCustomRange(); setWeekCount(n); }}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                weekCount === n
+                weekCount === n && !usingCustomRange
                   ? 'bg-blue-600 text-white shadow-sm'
                   : 'text-gray-600 hover:bg-white'
               }`}
@@ -370,6 +378,36 @@ export default function TrainerUtilization() {
               {n} أسبوع
             </button>
           ))}
+        </div>
+
+        {/* Custom date range — overrides week navigation when filled */}
+        <div className="flex items-center gap-1.5 bg-gray-50 rounded-xl p-1 border border-gray-200">
+          <span className="text-[11px] font-bold text-gray-600 px-1">من:</span>
+          <input
+            type="date"
+            value={customFrom}
+            onChange={e => setCustomFrom(e.target.value)}
+            className="border-0 bg-transparent rounded-lg px-1.5 py-1 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:bg-white"
+            dir="ltr"
+          />
+          <span className="text-[11px] font-bold text-gray-600 px-1">إلى:</span>
+          <input
+            type="date"
+            value={customTo}
+            onChange={e => setCustomTo(e.target.value)}
+            min={customFrom || undefined}
+            className="border-0 bg-transparent rounded-lg px-1.5 py-1 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:bg-white"
+            dir="ltr"
+          />
+          {usingCustomRange && (
+            <button
+              onClick={clearCustomRange}
+              title="إلغاء الفترة المخصصة"
+              className="px-1.5 py-1 rounded-md bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-bold transition-all"
+            >
+              ✕
+            </button>
+          )}
         </div>
 
         {/* Section */}
@@ -398,7 +436,7 @@ export default function TrainerUtilization() {
 
         {/* Today button */}
         <button
-          onClick={() => setWeekStart(fmtISO(startOfWeek(new Date())))}
+          onClick={() => { clearCustomRange(); setWeekStart(fmtISO(startOfWeek(new Date()))); }}
           className="px-3 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold border border-blue-200 transition-all"
         >
           هذا الأسبوع
