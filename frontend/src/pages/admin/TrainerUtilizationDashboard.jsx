@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   BarChart3, TrendingUp, TrendingDown, Activity, AlertTriangle,
   CheckCircle2, Lightbulb, Users, Download, FileSpreadsheet,
-  FileText, Clock, Zap, Sparkles, Sun, Moon, User,
+  FileText, Clock, Zap, Sparkles, Sun, Moon, User, X,
 } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -59,6 +59,8 @@ export default function TrainerUtilizationDashboard() {
   const [weeks, setWeeks]     = useState(12);
   const [section, setSection] = useState('all');
   const [trainerName, setTrainerName] = useState('');
+  // KPI detail modal — { type: 'low' | 'high' } when open.
+  const [kpiDetail, setKpiDetail] = useState(null);
   // Custom date range — overrides `weeks` when both fields are filled.
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate]     = useState('');
@@ -312,7 +314,8 @@ export default function TrainerUtilizationDashboard() {
                 suffix={`من ${summary.trainers_total}`}
                 icon={TrendingDown}
                 tone="rose"
-                subtitle={summary.low_count === 0 ? 'الكل مشغول جيداً' : 'تحت 50%'}
+                subtitle={summary.low_count === 0 ? 'الكل مشغول جيداً' : 'تحت 50% — اضغط للتفاصيل'}
+                onClick={summary.low_count > 0 ? () => setKpiDetail('low') : null}
               />
               <KpiCard
                 title="مدربين مكتملين"
@@ -320,7 +323,8 @@ export default function TrainerUtilizationDashboard() {
                 suffix={`من ${summary.trainers_total}`}
                 icon={Zap}
                 tone="orange"
-                subtitle={summary.high_count === 0 ? '—' : 'فوق 90%'}
+                subtitle={summary.high_count === 0 ? '—' : 'فوق 90% — اضغط للتفاصيل'}
+                onClick={summary.high_count > 0 ? () => setKpiDetail('high') : null}
               />
             </div>
 
@@ -478,12 +482,109 @@ export default function TrainerUtilizationDashboard() {
           </>
         )}
       </div>
+
+      {/* ── KPI detail modal ── */}
+      {kpiDetail && (
+        <KpiDetailModal
+          type={kpiDetail}
+          trainers={trainers.filter(t => t.status === kpiDetail)}
+          onClose={() => setKpiDetail(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── KPI DETAIL MODAL ─────────────────────────────────────────────────────────
+function KpiDetailModal({ type, trainers, onClose }) {
+  const cfg = type === 'low'
+    ? {
+        title: 'مدربين الإشغال المنخفض',
+        subtitle: 'تحت 50%',
+        icon: TrendingDown,
+        tone: 'bg-rose-50 text-rose-700 border-rose-200',
+        iconBg: 'bg-rose-500',
+        utilCls: 'bg-rose-100 text-rose-700 border-rose-200',
+      }
+    : {
+        title: 'مدربين مكتملين',
+        subtitle: 'فوق 90% — احتمال احتراق وظيفي',
+        icon: Zap,
+        tone: 'bg-orange-50 text-orange-700 border-orange-200',
+        iconBg: 'bg-orange-500',
+        utilCls: 'bg-orange-100 text-orange-700 border-orange-200',
+      };
+  const IconComp = cfg.icon;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" dir="rtl">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+        {/* Header */}
+        <div className={`flex items-center justify-between px-5 py-4 border-b border-gray-100 ${cfg.tone.split(' ')[0]}/50`}>
+          <div className="flex items-center gap-3">
+            <div className={`${cfg.iconBg} w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm`}>
+              <IconComp size={18} />
+            </div>
+            <div>
+              <div className="font-bold text-gray-900 text-sm">{cfg.title}</div>
+              <div className="text-[11px] text-gray-500 mt-0.5">{cfg.subtitle} · {trainers.length} مدرب</div>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-white/60 rounded-lg transition-all">
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-4 overflow-y-auto flex-1">
+          {trainers.length === 0 ? (
+            <div className="text-center py-8 text-sm text-gray-400">مفيش مدربين في الحالة دي</div>
+          ) : (
+            <div className="space-y-2">
+              {trainers.map(t => (
+                <div
+                  key={t.id}
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50/60 border border-slate-100 hover:bg-slate-50 transition-colors"
+                >
+                  <div className={`${cfg.iconBg} w-9 h-9 rounded-xl flex items-center justify-center text-white font-bold text-sm shrink-0`}>
+                    {t.name?.charAt(0) || '?'}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold text-gray-900 text-sm truncate">{t.name}</div>
+                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold border ${SECTION_TONE[t.section] || SECTION_TONE.all}`}>
+                        {SECTIONS[t.section] || t.section}
+                      </span>
+                      {t.shift_summary?.includes('مسائي')
+                        ? <Moon size={10} className="text-indigo-400" />
+                        : t.shift_summary?.includes('صباحي') ? <Sun size={10} className="text-amber-400" /> : null}
+                      <span className="text-[10px] text-gray-500 truncate">{t.shift_summary}</span>
+                    </div>
+                  </div>
+                  <div className={`inline-flex items-center justify-center px-2.5 py-1 rounded-lg text-xs font-extrabold border ${cfg.utilCls} shrink-0`}>
+                    {t.utilization_pct}%
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-3 bg-gray-50 border-t border-gray-100">
+          <button
+            onClick={onClose}
+            className="w-full py-2 rounded-xl bg-gray-200 hover:bg-gray-300 text-sm font-semibold text-gray-700 transition-all"
+          >
+            إغلاق
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
 
 // ─── KPI CARD ─────────────────────────────────────────────────────────────────
-function KpiCard({ title, value, suffix, icon, tone, subtitle, trend, trendLabel }) {
+function KpiCard({ title, value, suffix, icon, tone, subtitle, trend, trendLabel, onClick }) {
   const IconComp = icon;
   const tones = {
     blue:    { bg: 'from-blue-50 to-cyan-50',       text: 'text-blue-900',    iconBg: 'bg-blue-500',    accent: 'text-blue-600',    border: 'border-blue-100' },
@@ -493,8 +594,16 @@ function KpiCard({ title, value, suffix, icon, tone, subtitle, trend, trendLabel
     orange:  { bg: 'from-orange-50 to-amber-50',    text: 'text-orange-900',  iconBg: 'bg-orange-500',  accent: 'text-orange-700',  border: 'border-orange-100' },
   };
   const c = tones[tone] || tones.blue;
+  const Tag = onClick ? 'button' : 'div';
+  const interactiveCls = onClick
+    ? 'cursor-pointer hover:shadow-md hover:scale-[1.02] transition-all text-right w-full'
+    : '';
   return (
-    <div className={`bg-gradient-to-br ${c.bg} rounded-2xl p-4 border ${c.border}`}>
+    <Tag
+      type={onClick ? 'button' : undefined}
+      onClick={onClick || undefined}
+      className={`bg-gradient-to-br ${c.bg} rounded-2xl p-4 border ${c.border} ${interactiveCls}`}
+    >
       <div className="flex items-start justify-between mb-2">
         <div className={`${c.iconBg} w-9 h-9 rounded-xl flex items-center justify-center text-white shadow-sm`}>
           <IconComp size={17} />
@@ -518,7 +627,7 @@ function KpiCard({ title, value, suffix, icon, tone, subtitle, trend, trendLabel
           {subtitle || trendLabel}
         </div>
       )}
-    </div>
+    </Tag>
   );
 }
 
