@@ -2582,12 +2582,16 @@ router.get('/trainer-utilization', (req, res) => {
         totalBooked   += totalBookedMin;
       }
 
+      // Audit flag — used by the "trainers missing voice notes" banner.
+      const hasVoiceNotes = shifts.some(sh => (sh.voiceNotes || []).length > 0);
+
       return {
         id: t.id,
         name: stripParens(t.name) || t.name,
         full_name: t.name,
         section: t.section,
         shift_summary: shiftSummary,
+        has_voice_notes: hasVoiceNotes,
         totals: {
           available_min: totalAvailable,
           booked_min: totalBooked,

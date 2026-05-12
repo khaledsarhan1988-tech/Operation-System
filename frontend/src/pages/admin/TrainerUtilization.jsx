@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom';
 import {
   CalendarDays, ChevronLeft, ChevronRight, X,
   Activity, Sun, Moon, Clock, User, Search,
+  AlertTriangle, CheckCircle2, Mic,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -412,6 +413,51 @@ export default function TrainerUtilization() {
           ابحث عن مدرب متاح
         </Link>
       </div>
+
+      {/* ── Voice Notes audit banner ── */}
+      {!isLoading && trainers.length > 0 && (() => {
+        const missing = trainers.filter(t => t.has_voice_notes === false);
+        const total = trainers.length;
+        if (missing.length === 0) {
+          return (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 flex items-center gap-3" dir="rtl">
+              <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
+              <div className="text-xs font-bold text-emerald-900">
+                ✓ كل الـ {total} مدرب الظاهرين مسجلين Voice Notes
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3" dir="rtl">
+            <div className="bg-amber-100 text-amber-700 w-9 h-9 rounded-xl flex items-center justify-center shrink-0">
+              <Mic size={16} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1.5">
+                <AlertTriangle size={14} className="text-amber-600" />
+                <span className="text-sm font-bold text-amber-900">
+                  {missing.length} مدرب من {total} بدون Voice Note مسجل
+                </span>
+              </div>
+              <div className="text-[11px] text-amber-700 mb-2">
+                ادخل على "تعديل موظف" لكل اسم وأضف وقت Voice Note ضمن الشيفت:
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {missing.map(t => (
+                  <span
+                    key={t.id}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-amber-200 text-xs font-semibold text-amber-900"
+                  >
+                    <span className="text-amber-500">⚠</span>
+                    {t.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Heatmap ── */}
       {isLoading ? (
