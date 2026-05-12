@@ -1999,6 +1999,24 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
       const firstMainDate = mainDates[0] || null;
       const firstSideDate = sideSlotDates[0] || null;
 
+      // ── GROUP-LEVEL CHECK: مجموعة بدون منسق ──────────────────────
+      // The batch is active (status='نشطة' enforced at fetch time) but has
+      // no coordinator assigned. Flag in BOTH main and zoom sections so
+      // it's discoverable from either tab.
+      {
+        const coordVal = String(batch.coordinators || '').trim();
+        const noCoord = !coordVal || coordVal === '--';
+        if (noCoord) {
+          const baseProblem = {
+            ...meta,
+            problem_type: 'مجموعة بدون منسق',
+            detail: 'المجموعة نشطة ولكن مفيش منسق مسجل',
+          };
+          addProblem(mainProblems, { ...baseProblem, first_date: firstMainDate }, 'main');
+          addProblem(zoomProblems, { ...baseProblem, trainee_count: batch.trainee_count, first_date: firstSideDate }, 'side');
+        }
+      }
+
       // ── MAIN CHECKS ──────────────────────────────────────────────
       // 1. Count > 8
       if (mainDates.length > 8) {
