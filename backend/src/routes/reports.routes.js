@@ -1548,7 +1548,13 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
     deptFilter = '';
   } else if (user.role === 'leader' || user.role === 'enrollment_leader') {
     // Leader: coordinator's registered dept is source of truth.
-    // Include group if: coordinator registered in leader's dept, OR (coordinator NOT registered AND batch.dept_type matches).
+    // Include group if:
+    //   (1) coordinator registered in leader's dept (path 1), OR
+    //   (2) coordinator exists but NOT registered AND batch.dept_type matches (path 2), OR
+    //   (3) coordinator is NULL/empty/-- AND batch.dept_type matches (path 3 — NEW)
+    // Path 3 ensures "مجموعة بدون منسق" problems still surface to the
+    // leader of the group's dept_type even though there's no coordinator
+    // to anchor the dept assignment.
     const dept = (!department || department === 'All') ? user.department : department;
     if (dept && dept !== 'All') {
       const s = dept.replace(/'/g, "''");
@@ -1560,14 +1566,18 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
           )
           OR (
             b.dept_type = '${s}'
+            AND b.coordinators IS NOT NULL AND TRIM(b.coordinators) NOT IN ('', '--')
             AND NOT EXISTS (
               SELECT 1 FROM users u
               WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
                 AND u.department IS NOT NULL AND u.department != 'All'
             )
           )
-        )
-        AND b.coordinators IS NOT NULL AND TRIM(b.coordinators) NOT IN ('', '--')`;
+          OR (
+            b.dept_type = '${s}'
+            AND (b.coordinators IS NULL OR TRIM(b.coordinators) IN ('', '--'))
+          )
+        )`;
     } else {
       deptFilter = '';
     }
