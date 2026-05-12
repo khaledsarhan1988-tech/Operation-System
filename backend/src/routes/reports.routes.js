@@ -2000,17 +2000,22 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
       const firstSideDate = sideSlotDates[0] || null;
 
       // ── GROUP-LEVEL CHECK: مجموعة بدون منسق ──────────────────────
-      // The batch is active (status='نشطة' enforced at fetch time) but has
-      // no coordinator assigned. Flag in BOTH main and zoom sections so
-      // it's discoverable from either tab.
+      // Flag only if:
+      //   (1) batch is active (status='نشطة' — enforced at fetch time)
+      //   (2) batch.start_date is set AND in the past (group has STARTED)
+      //   (3) coordinators is NULL / empty / whitespace / "--"
+      // Future-start groups are intentionally skipped (the coordinator might
+      // not be assigned yet — no point flagging until the group actually starts).
       {
         const coordVal = String(batch.coordinators || '').trim();
         const noCoord = !coordVal || coordVal === '--';
-        if (noCoord) {
+        const todayISO = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().slice(0, 10); // Cairo UTC+2
+        const hasStarted = batch.start_date && batch.start_date <= todayISO;
+        if (noCoord && hasStarted) {
           const baseProblem = {
             ...meta,
             problem_type: 'مجموعة بدون منسق',
-            detail: 'المجموعة نشطة ولكن مفيش منسق مسجل',
+            detail: `المجموعة بدأت ${batch.start_date} ومفيش منسق مسجل`,
           };
           addProblem(mainProblems, { ...baseProblem, first_date: firstMainDate }, 'main');
           addProblem(zoomProblems, { ...baseProblem, trainee_count: batch.trainee_count, first_date: firstSideDate }, 'side');
