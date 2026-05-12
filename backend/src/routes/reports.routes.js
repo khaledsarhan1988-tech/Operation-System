@@ -1791,28 +1791,16 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
       // bleeds slightly into the next rest break (or past midnight).
       const SHIFT_END_TOLERANCE_MIN = 5;
       const REST_OVERLAP_TOLERANCE_MIN = 5;
-      const reasons = [];
-      for (const sh of shifts) {
-        // Date range
-        if (!isDateInShiftRange(lec.date, sh)) {
-          reasons.push('خارج فترة عمل المدرب');
-          continue;
-        }
-        // Day of week
+
+      // Per-shift pattern check (day + time + no rest/voice-note conflict).
+      // Does NOT consider date range. Returns null if the pattern matches.
+      function patternConflict(sh) {
         if (!sh.days.includes(dayKey)) {
-          reasons.push(`يوم ${DOW_AR[dow]} مش في أيام العمل`);
-          continue;
+          return { kind: 'day-mismatch', reason: `يوم ${DOW_AR[dow]} مش في أيام العمل` };
         }
-        // Time inside shift window. Start is strict; end gets a small grace.
-        // Wrap the time-range in Unicode bidi-isolate marks (LRI...PDI) so the
-        // RTL Arabic context doesn't visually flip the digits.
         if (lecStartMin < sh.startMin || lecEndMin > sh.endMin + SHIFT_END_TOLERANCE_MIN) {
-          reasons.push(`خارج الشيفت ⁦(${sh.startStr} → ${sh.endStr})⁩`);
-          continue;
+          return { kind: 'time-outside', reason: `خارج الشيفت ⁦(${sh.startStr} → ${sh.endStr})⁩` };
         }
-        // Rest periods and voice-note blocks — flag only if the overlap
-        // exceeds the tolerance. Both are "busy" blocks inside the shift;
-        // the only difference is the message label.
         const blocks = [
           ...sh.rests.map(r => ({ startMin: r.startMin, endMin: r.endMin, type: 'rest' })),
           ...(sh.voiceNotes || []).map(v => ({ startMin: v.startMin, endMin: v.endMin, type: 'voice_note' })),
@@ -1823,14 +1811,63 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
         });
         if (offending) {
           const label = offending.type === 'voice_note' ? 'Voice Note' : 'راحة';
-          reasons.push(`داخل وقت ${label} ⁦(${fmt12h(offending.startMin)} → ${fmt12h(offending.endMin)})⁩`);
-          continue;
+          return {
+            kind: 'block-overlap',
+            reason: `داخل وقت ${label} ⁦(${fmt12h(offending.startMin)} → ${fmt12h(offending.endMin)})⁩`,
+          };
         }
-        // This shift covers the lecture → OK
-        return { ok: true, reason: null };
+        return null; // pattern matches
       }
-      // None of the shifts covered → report shortest reason (most informative for user)
-      return { ok: false, reason: reasons[0] || 'خارج وقت عمل المدرب' };
+
+      // Step 1: if ANY shift fully covers (date range + pattern) → PASS.
+      // Step 2: if no shift covers, decide the reason:
+      //   - If an ENDED shift's pattern matched → "انتهى عمل المدرب في {endDate}"
+      //   - Else prefer the reason from an ACTIVE shift (not date-range failure)
+      //   - Else if all shifts ended → use latest end_date
+      //   - Else generic "خارج فترة عمل المدرب"
+      const activeReasons = [];
+      let endedPatternMatchDate = null;
+      let anyEndedAndAllOutOfRange = true;
+      const endedDates = [];
+
+      for (const sh of shifts) {
+        const inRange = isDateInShiftRange(lec.date, sh);
+        const isEnded = sh.endDate && lec.date > sh.endDate;
+        if (isEnded) endedDates.push(sh.endDate);
+        if (inRange) anyEndedAndAllOutOfRange = false;
+
+        if (inRange) {
+          // Active shift on this date — evaluate pattern
+          const pc = patternConflict(sh);
+          if (pc === null) {
+            return { ok: true, reason: null }; // fully covered
+          }
+          activeReasons.push(pc.reason);
+        } else if (isEnded) {
+          // Shift ended — check if its pattern would have matched
+          if (patternConflict(sh) === null) {
+            // Pattern fits this ended shift → this is the "trainer ended" case
+            if (!endedPatternMatchDate || sh.endDate > endedPatternMatchDate) {
+              endedPatternMatchDate = sh.endDate;
+            }
+          }
+        }
+        // before-start shifts: handled by the earliest-start skip above, but
+        // a between-shifts gap could land here — keep generic for those.
+      }
+
+      // Decision tree
+      if (endedPatternMatchDate) {
+        return { ok: false, reason: `انتهى عمل المدرب في ${endedPatternMatchDate}` };
+      }
+      if (activeReasons.length > 0) {
+        return { ok: false, reason: activeReasons[0] };
+      }
+      if (anyEndedAndAllOutOfRange && endedDates.length > 0) {
+        const latestEnd = endedDates.sort().reverse()[0];
+        return { ok: false, reason: `انتهى عمل المدرب في ${latestEnd}` };
+      }
+      return { ok: false, reason: 'خارج فترة عمل المدرب' };
     }
 
     // fetch ALL zoom call sessions (regular 15-min) including unconfirmed for zoom-call problem checks
