@@ -552,3 +552,119 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_refresh_user    ON refresh_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_refresh_expires ON refresh_tokens(expires_at);
+
+-- =============================================
+-- REMARKS MONITOR — Activity tracking module
+-- Added 2026-05-13 — completely SEPARATE from existing remarks system.
+-- READ-ONLY from `remarks` table. No modifications to existing tables.
+-- Retention: events kept forever, snapshot_rows older than 3 months purged.
+-- =============================================
+
+-- 1. SNAPSHOTS — each manual upload event
+CREATE TABLE IF NOT EXISTS remark_snapshots (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  snapshot_at     TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+  line            TEXT NOT NULL DEFAULT 'Ahmed Hassan',
+  uploaded_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  total_remarks   INTEGER DEFAULT 0,
+  notes           TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+);
+CREATE INDEX IF NOT EXISTS idx_rmsnap_at        ON remark_snapshots(snapshot_at);
+CREATE INDEX IF NOT EXISTS idx_rmsnap_line      ON remark_snapshots(line);
+CREATE INDEX IF NOT EXISTS idx_rmsnap_user      ON remark_snapshots(uploaded_by);
+
+-- 2. SNAPSHOT ROWS — frozen state of each remark per snapshot
+CREATE TABLE IF NOT EXISTS remark_snapshot_rows (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  snapshot_id     INTEGER NOT NULL REFERENCES remark_snapshots(id) ON DELETE CASCADE,
+  external_id     INTEGER NOT NULL,
+  task_type       TEXT,
+  assigned_to     TEXT,
+  details         TEXT,
+  category        TEXT,
+  status          TEXT,
+  client_name     TEXT,
+  client_phone    TEXT,
+  priority        TEXT,
+  assigned_by     TEXT,
+  notes_count     INTEGER DEFAULT 0,
+  notes_hash      TEXT,
+  last_note_at    TEXT,
+  added_at        TEXT,
+  last_updated    TEXT,
+  line            TEXT NOT NULL DEFAULT 'Ahmed Hassan',
+  UNIQUE(snapshot_id, external_id, line)
+);
+CREATE INDEX IF NOT EXISTS idx_rmrow_snap          ON remark_snapshot_rows(snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_rmrow_ext_line      ON remark_snapshot_rows(external_id, line);
+CREATE INDEX IF NOT EXISTS idx_rmrow_assigned      ON remark_snapshot_rows(assigned_to COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_rmrow_status        ON remark_snapshot_rows(status);
+CREATE INDEX IF NOT EXISTS idx_rmrow_task_type     ON remark_snapshot_rows(task_type);
+CREATE INDEX IF NOT EXISTS idx_rmrow_category      ON remark_snapshot_rows(category);
+CREATE INDEX IF NOT EXISTS idx_rmrow_priority      ON remark_snapshot_rows(priority);
+
+-- 3. ACTIVITY EVENTS — diff events detected between snapshots (KEEP FOREVER)
+CREATE TABLE IF NOT EXISTS remark_activity_events (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  external_id       INTEGER NOT NULL,
+  from_snapshot_id  INTEGER REFERENCES remark_snapshots(id) ON DELETE SET NULL,
+  to_snapshot_id    INTEGER NOT NULL REFERENCES remark_snapshots(id) ON DELETE CASCADE,
+  event_type        TEXT NOT NULL CHECK(event_type IN (
+                       'created','note_added','status_changed','reassigned',
+                       'priority_changed','category_changed','resolved'
+                     )),
+  event_data        TEXT,
+  occurred_at       TEXT NOT NULL,
+  line              TEXT NOT NULL DEFAULT 'Ahmed Hassan'
+);
+CREATE INDEX IF NOT EXISTS idx_rmevt_ext_line      ON remark_activity_events(external_id, line);
+CREATE INDEX IF NOT EXISTS idx_rmevt_occurred      ON remark_activity_events(occurred_at);
+CREATE INDEX IF NOT EXISTS idx_rmevt_type          ON remark_activity_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_rmevt_to_snap       ON remark_activity_events(to_snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_rmevt_ext_occurred  ON remark_activity_events(external_id, occurred_at);
+
+-- 4. TASK TYPES dropdown (admin-managed) — filter values only
+CREATE TABLE IF NOT EXISTS remark_monitor_tasks (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL UNIQUE,
+  sort_order  INTEGER DEFAULT 0,
+  is_active   INTEGER DEFAULT 1,
+  created_at  TEXT DEFAULT (datetime('now', '+2 hours')),
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- 5. CATEGORIES dropdown (admin-managed) — filter values only
+CREATE TABLE IF NOT EXISTS remark_monitor_categories (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL UNIQUE,
+  sort_order  INTEGER DEFAULT 0,
+  is_active   INTEGER DEFAULT 1,
+  created_at  TEXT DEFAULT (datetime('now', '+2 hours')),
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- Seed default 17 task types (idempotent)
+INSERT OR IGNORE INTO remark_monitor_tasks (name, sort_order) VALUES
+  ('Attendance Zoom Call', 1),
+  ('important', 2),
+  ('Information', 3),
+  ('Attendance Task', 4),
+  ('Schedule Team', 5),
+  ('Attendance Main Session', 6),
+  ('Announce', 7),
+  ('اعتذرات التيتشر', 8),
+  ('تأكيد المواعيد (Schedule)', 9),
+  ('Compensation', 10),
+  ('upgrade', 11),
+  ('Education – Issues', 12),
+  ('Retention', 13),
+  ('Approved', 14),
+  ('Sales', 15),
+  ('Change time lecture or teacher', 16),
+  ('Follow-up', 17);
+
+-- Seed default 2 categories
+INSERT OR IGNORE INTO remark_monitor_categories (name, sort_order) VALUES
+  ('Inprogress', 1),
+  ('Information', 2);
