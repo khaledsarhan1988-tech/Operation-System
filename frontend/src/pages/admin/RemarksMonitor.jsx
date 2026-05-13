@@ -1,9 +1,17 @@
 import { useState, useRef } from 'react';
-import { Upload, CheckCircle, AlertCircle, FileSpreadsheet, Activity, Clock, Hash, TrendingUp, Camera, Database, ChevronDown, ChevronUp } from 'lucide-react';
+import { Upload, CheckCircle, AlertCircle, FileSpreadsheet, Activity, Clock, Hash, TrendingUp, Camera, Database, ChevronDown, ChevronUp, Globe } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
+import { useAuth } from '../../auth/AuthContext';
+
+const AVAILABLE_LINES = ['Ahmed Hassan', 'Dardasha'];
 
 export default function RemarksMonitor() {
+  const { user } = useAuth();
+  const isAdminAllLines = user?.line === 'All';
+  const [selectedLine, setSelectedLine] = useState(
+    isAdminAllLines ? 'Ahmed Hassan' : (user?.line || 'Ahmed Hassan')
+  );
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [snapshotting, setSnapshotting] = useState(false);
@@ -36,7 +44,7 @@ export default function RemarksMonitor() {
     setResult(null);
 
     try {
-      const { data } = await api.post('/remarks-monitor/snapshot-from-db');
+      const { data } = await api.post('/remarks-monitor/snapshot-from-db', { line: selectedLine });
       setResult(data);
       pushHistory(data, 'db');
     } catch (err) {
@@ -55,6 +63,7 @@ export default function RemarksMonitor() {
 
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('line', selectedLine);
 
     try {
       const { data } = await api.post('/remarks-monitor/upload', formData);
@@ -78,6 +87,30 @@ export default function RemarksMonitor() {
         icon={Activity}
         gradient="from-violet-500 to-fuchsia-500"
       />
+
+      {/* Line Selector — visible only when user can pick (admin with 'All') */}
+      {isAdminAllLines && (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-blue-100">
+              <Globe size={18} className="text-blue-600" />
+            </div>
+            <div className="flex-1">
+              <label className="text-xs font-semibold text-gray-600 block mb-1">اختر الـ Line</label>
+              <select
+                value={selectedLine}
+                onChange={e => setSelectedLine(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 bg-white text-gray-800
+                  focus:ring-2 focus:ring-violet-300 focus:border-violet-400 outline-none font-semibold"
+              >
+                {AVAILABLE_LINES.map(line => (
+                  <option key={line} value={line}>{line}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Primary: Snapshot from current DB */}
       <div className="bg-gradient-to-br from-violet-50 via-fuchsia-50 to-pink-50 rounded-2xl shadow-sm border-2 border-violet-200 p-6">
