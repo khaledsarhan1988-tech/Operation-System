@@ -263,6 +263,11 @@ function _ingestRows({ parsedRows, uploadedBy, line, notesField }) {
   }
 
   return db.transaction(() => {
+    // CRITICAL: Get prev snapshot BEFORE inserting the new one — otherwise
+    // the brand-new snapshot becomes its own "prev" (with empty rows yet)
+    // and every remark gets treated as new → tons of duplicate events.
+    const prev = getPrevSnapshotRows(line);
+
     const snapInsert = db.prepare(
       `INSERT INTO remark_snapshots (snapshot_at, line, uploaded_by, total_remarks, notes)
        VALUES (datetime('now', '+2 hours'), ?, ?, ?, ?)`
@@ -271,8 +276,6 @@ function _ingestRows({ parsedRows, uploadedBy, line, notesField }) {
     const snapshotId = snapInsert.lastInsertRowid;
     const snapAtRow = db.prepare(`SELECT snapshot_at FROM remark_snapshots WHERE id = ?`).get(snapshotId);
     const snapshotAt = snapAtRow ? snapAtRow.snapshot_at : null;
-
-    const prev = getPrevSnapshotRows(line);
 
     const insertRow = db.prepare(
       `INSERT INTO remark_snapshot_rows
@@ -333,6 +336,21 @@ function ingestSnapshotFromDb({ uploadedBy, line, notesField }) {
   return _ingestRows({ parsedRows, uploadedBy, line, notesField });
 }
 
+function deleteSnapshot(snapshotId, line) {
+  return db.transaction(() => {
+    const snap = db.prepare(
+      `SELECT id, line FROM remark_snapshots WHERE id = ? AND line = ?`
+    ).get(snapshotId, line);
+    if (!snap) {
+      throw new Error(`Snapshot #${snapshotId} غير موجود في الـ Line: ${line}`);
+    }
+    // ON DELETE CASCADE handles remark_snapshot_rows + remark_activity_events.to_snapshot_id
+    // from_snapshot_id is SET NULL (keeps events from later snapshots intact).
+    const result = db.prepare(`DELETE FROM remark_snapshots WHERE id = ?`).run(snapshotId);
+    return { deleted_snapshot_id: snapshotId, changes: result.changes };
+  })();
+}
+
 function purgeOldSnapshotRows(monthsToKeep = 3) {
   const result = db.prepare(
     `DELETE FROM remark_snapshot_rows
@@ -349,5 +367,6 @@ module.exports = {
   parseRemarksFromDb,
   ingestSnapshot,
   ingestSnapshotFromDb,
+  deleteSnapshot,
   purgeOldSnapshotRows,
 };

@@ -3,7 +3,7 @@ const express = require('express');
 const multer = require('multer');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
-const { ingestSnapshot, ingestSnapshotFromDb } = require('../services/remarksMonitor.service');
+const { ingestSnapshot, ingestSnapshotFromDb, deleteSnapshot } = require('../services/remarksMonitor.service');
 
 const router = express.Router();
 
@@ -99,6 +99,40 @@ router.post(
       console.error('[remarks-monitor] snapshot-from-db error:', err);
       return res.status(400).json({
         error: 'فشل إنشاء الـ Snapshot',
+        details: err.message,
+      });
+    }
+  }
+);
+
+router.delete(
+  '/snapshots/:id',
+  authenticate,
+  requireRole('leader'),
+  (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({ error: 'رقم Snapshot غير صالح' });
+    }
+
+    const userLine = req.user?.line || 'Ahmed Hassan';
+    let line = (req.body && req.body.line) || req.query.line || userLine;
+    if (userLine !== 'All') line = userLine;
+
+    if (!line || line === 'All') {
+      return res.status(400).json({ error: 'يجب تحديد الـ Line' });
+    }
+
+    try {
+      const result = deleteSnapshot(id, line);
+      return res.json({
+        message: `تم حذف Snapshot #${id} بنجاح`,
+        ...result,
+      });
+    } catch (err) {
+      console.error('[remarks-monitor] delete error:', err);
+      return res.status(400).json({
+        error: 'فشل الحذف',
         details: err.message,
       });
     }
