@@ -209,13 +209,60 @@ function computeDiff(prevRow, currentRow, knownNoteKeys, snapshotAt) {
   return events;
 }
 
-function ingestSnapshot({ buffer, uploadedBy, line, notesField }) {
-  const parsedRows = parseRemarksSheet(buffer);
-  if (parsedRows.length === 0) {
-    throw new Error('الشيت لا يحتوي على بيانات صالحة');
+function parseRemarksFromDb(line) {
+  const rows = db.prepare(
+    `SELECT external_id, task_type, assigned_to, details, category, status,
+            client_name, client_phone, priority, assigned_by, notes,
+            added_at, last_updated
+       FROM remarks
+      WHERE line = ?
+        AND external_id IS NOT NULL`
+  ).all(line);
+
+  const seen = new Set();
+  const parsed = [];
+
+  for (const r of rows) {
+    if (!Number.isFinite(r.external_id)) continue;
+    if (seen.has(r.external_id)) continue;
+    seen.add(r.external_id);
+
+    const notesRaw = r.notes ? String(r.notes).trim() : null;
+    const notesParsed = parseNotes(notesRaw);
+    const lastNoteAt = notesParsed.length > 0
+      ? notesParsed[notesParsed.length - 1].timestamp
+      : null;
+
+    parsed.push({
+      external_id:  r.external_id,
+      task_type:    r.task_type,
+      assigned_to:  r.assigned_to,
+      details:      r.details,
+      category:     r.category,
+      status:       r.status,
+      client_name:  r.client_name,
+      client_phone: r.client_phone,
+      priority:     r.priority,
+      assigned_by:  r.assigned_by,
+      notes_raw:    notesRaw,
+      notes_parsed: notesParsed,
+      notes_count:  notesParsed.length,
+      notes_hash:   hashNotes(notesRaw),
+      last_note_at: lastNoteAt,
+      added_at:     r.added_at,
+      last_updated: r.last_updated,
+    });
   }
 
-  const result = db.transaction(() => {
+  return parsed;
+}
+
+function _ingestRows({ parsedRows, uploadedBy, line, notesField }) {
+  if (parsedRows.length === 0) {
+    throw new Error('لا توجد بيانات صالحة لإنشاء Snapshot');
+  }
+
+  return db.transaction(() => {
     const snapInsert = db.prepare(
       `INSERT INTO remark_snapshots (snapshot_at, line, uploaded_by, total_remarks, notes)
        VALUES (datetime('now', '+2 hours'), ?, ?, ?, ?)`
@@ -271,8 +318,19 @@ function ingestSnapshot({ buffer, uploadedBy, line, notesField }) {
       prev_snapshot_id: prev.id,
     };
   })();
+}
 
-  return result;
+function ingestSnapshot({ buffer, uploadedBy, line, notesField }) {
+  const parsedRows = parseRemarksSheet(buffer);
+  return _ingestRows({ parsedRows, uploadedBy, line, notesField });
+}
+
+function ingestSnapshotFromDb({ uploadedBy, line, notesField }) {
+  const parsedRows = parseRemarksFromDb(line);
+  if (parsedRows.length === 0) {
+    throw new Error(`لا توجد Remarks في قاعدة البيانات للـ Line: ${line}. ارفع Remarks.xlsx أولاً من صفحة "رفع Excel"`);
+  }
+  return _ingestRows({ parsedRows, uploadedBy, line, notesField });
 }
 
 function purgeOldSnapshotRows(monthsToKeep = 3) {
@@ -288,6 +346,8 @@ function purgeOldSnapshotRows(monthsToKeep = 3) {
 
 module.exports = {
   parseRemarksSheet,
+  parseRemarksFromDb,
   ingestSnapshot,
+  ingestSnapshotFromDb,
   purgeOldSnapshotRows,
 };
