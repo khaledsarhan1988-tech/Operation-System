@@ -1,5 +1,5 @@
-import { useState, useRef } from 'react';
-import { Upload, CheckCircle, AlertCircle, FileSpreadsheet, Activity, Clock, Hash, TrendingUp, Camera, Database, ChevronDown, ChevronUp, Globe } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { Upload, CheckCircle, AlertCircle, FileSpreadsheet, Activity, Clock, Hash, TrendingUp, Camera, Database, ChevronDown, ChevronUp, Globe, Trash2, RefreshCw } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import { useAuth } from '../../auth/AuthContext';
@@ -17,9 +17,39 @@ export default function RemarksMonitor() {
   const [snapshotting, setSnapshotting] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
-  const [history, setHistory] = useState([]);
+  const [snapshots, setSnapshots] = useState([]);
+  const [loadingSnapshots, setLoadingSnapshots] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
   const [showUpload, setShowUpload] = useState(false);
   const fileInputRef = useRef(null);
+
+  const loadSnapshots = useCallback(async () => {
+    setLoadingSnapshots(true);
+    try {
+      const { data } = await api.get('/remarks-monitor/snapshots', { params: { line: selectedLine } });
+      setSnapshots(data.snapshots || []);
+    } catch (err) {
+      console.error('Failed to load snapshots:', err);
+    } finally {
+      setLoadingSnapshots(false);
+    }
+  }, [selectedLine]);
+
+  useEffect(() => { loadSnapshots(); }, [loadSnapshots]);
+
+  async function handleDelete(id) {
+    if (!confirm(`هل أنت متأكد من حذف Snapshot #${id}؟ هيمسح كل الـ rows والـ events بتاعته.`)) return;
+    setDeletingId(id);
+    try {
+      await api.delete(`/remarks-monitor/snapshots/${id}`, { data: { line: selectedLine } });
+      await loadSnapshots();
+    } catch (err) {
+      const msg = err.response?.data?.details || err.response?.data?.error || err.message;
+      setError(`فشل الحذف: ${msg}`);
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   function handleFileChange(e) {
     const f = e.target.files?.[0];
@@ -27,15 +57,6 @@ export default function RemarksMonitor() {
     setFile(f);
     setResult(null);
     setError(null);
-  }
-
-  function pushHistory(data, source, fileName) {
-    setHistory(h => [{
-      ...data,
-      source,
-      file_name: fileName || (source === 'db' ? '— البيانات الحالية —' : ''),
-      uploaded_at: new Date().toLocaleString('ar-EG'),
-    }, ...h]);
   }
 
   async function handleSnapshotFromDb() {
@@ -46,7 +67,7 @@ export default function RemarksMonitor() {
     try {
       const { data } = await api.post('/remarks-monitor/snapshot-from-db', { line: selectedLine });
       setResult(data);
-      pushHistory(data, 'db');
+      await loadSnapshots();
     } catch (err) {
       const msg = err.response?.data?.details || err.response?.data?.error || err.message;
       setError(msg);
@@ -68,7 +89,7 @@ export default function RemarksMonitor() {
     try {
       const { data } = await api.post('/remarks-monitor/upload', formData);
       setResult({ ...data, source: 'upload' });
-      pushHistory(data, 'upload', file.name);
+      await loadSnapshots();
       setFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (err) {
@@ -242,52 +263,70 @@ export default function RemarksMonitor() {
         </div>
       )}
 
-      {/* Recent in session */}
-      {history.length > 0 && (
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-          <h3 className="font-bold text-gray-800 mb-3">سجل الجلسة الحالية</h3>
+      {/* All Snapshots — persistent from DB */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-bold text-gray-800">سجل الـ Snapshots — {selectedLine}</h3>
+          <button
+            onClick={loadSnapshots}
+            disabled={loadingSnapshots}
+            className="p-2 rounded-lg hover:bg-gray-100 transition disabled:opacity-40"
+            title="تحديث"
+          >
+            <RefreshCw size={16} className={`text-gray-600 ${loadingSnapshots ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
+        {loadingSnapshots && snapshots.length === 0 ? (
+          <p className="text-sm text-gray-500 text-center py-8">جاري التحميل...</p>
+        ) : snapshots.length === 0 ? (
+          <p className="text-sm text-gray-500 text-center py-8">لا توجد Snapshots بعد — اضغط الزرار البنفسجي عشان تبدأ</p>
+        ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-3 py-2 text-start font-semibold text-gray-700">#</th>
-                  <th className="px-3 py-2 text-start font-semibold text-gray-700">المصدر</th>
-                  <th className="px-3 py-2 text-start font-semibold text-gray-700">وقت الإنشاء</th>
                   <th className="px-3 py-2 text-start font-semibold text-gray-700">Snapshot</th>
+                  <th className="px-3 py-2 text-start font-semibold text-gray-700">وقت الإنشاء</th>
+                  <th className="px-3 py-2 text-start font-semibold text-gray-700">المُنشئ</th>
                   <th className="px-3 py-2 text-start font-semibold text-gray-700">Remarks</th>
                   <th className="px-3 py-2 text-start font-semibold text-gray-700">أحداث</th>
+                  <th className="px-3 py-2 text-start font-semibold text-gray-700">ملاحظات</th>
+                  <th className="px-3 py-2 text-end font-semibold text-gray-700"></th>
                 </tr>
               </thead>
               <tbody>
-                {history.map((h, i) => (
-                  <tr key={i} className="border-t border-gray-100 hover:bg-gray-50">
-                    <td className="px-3 py-2 text-gray-500">{history.length - i}</td>
+                {snapshots.map((s) => (
+                  <tr key={s.id} className="border-t border-gray-100 hover:bg-gray-50">
+                    <td className="px-3 py-2 font-bold text-violet-700">#{s.id}</td>
+                    <td className="px-3 py-2 text-gray-700 text-xs whitespace-nowrap">{s.snapshot_at}</td>
+                    <td className="px-3 py-2 text-gray-700 text-xs">{s.uploaded_by_name || '—'}</td>
+                    <td className="px-3 py-2 text-gray-700">{s.total_remarks}</td>
                     <td className="px-3 py-2">
-                      {h.source === 'db' ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-violet-100 text-violet-700 font-bold">
-                          <Database size={12} /> البيانات الحالية
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-700 font-bold">
-                          <Upload size={12} /> {h.file_name}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 text-gray-600 text-xs">{h.uploaded_at}</td>
-                    <td className="px-3 py-2 font-bold text-violet-700">#{h.snapshot_id}</td>
-                    <td className="px-3 py-2">{h.total_remarks}</td>
-                    <td className="px-3 py-2">
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-violet-100 text-violet-700">
-                        {h.events_generated}
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold
+                        ${s.events_count === 0 ? 'bg-gray-100 text-gray-600' :
+                          s.events_count > 1000 ? 'bg-amber-100 text-amber-700' :
+                          'bg-violet-100 text-violet-700'}`}>
+                        {s.events_count}
                       </span>
+                    </td>
+                    <td className="px-3 py-2 text-gray-500 text-xs max-w-xs truncate" title={s.notes}>{s.notes || '—'}</td>
+                    <td className="px-3 py-2 text-end">
+                      <button
+                        onClick={() => handleDelete(s.id)}
+                        disabled={deletingId === s.id}
+                        className="p-1.5 rounded-lg hover:bg-red-50 disabled:opacity-40 transition"
+                        title="حذف"
+                      >
+                        <Trash2 size={14} className="text-red-500" />
+                      </button>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

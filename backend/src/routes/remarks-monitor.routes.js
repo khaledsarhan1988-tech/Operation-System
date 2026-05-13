@@ -3,6 +3,7 @@ const express = require('express');
 const multer = require('multer');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
+const db = require('../config/database');
 const { ingestSnapshot, ingestSnapshotFromDb, deleteSnapshot } = require('../services/remarksMonitor.service');
 
 const router = express.Router();
@@ -101,6 +102,38 @@ router.post(
         error: 'فشل إنشاء الـ Snapshot',
         details: err.message,
       });
+    }
+  }
+);
+
+router.get(
+  '/snapshots',
+  authenticate,
+  (req, res) => {
+    const userLine = req.user?.line || 'Ahmed Hassan';
+    let line = req.query.line || userLine;
+    if (userLine !== 'All') line = userLine;
+
+    if (!line || line === 'All') {
+      return res.status(400).json({ error: 'يجب تحديد الـ Line' });
+    }
+
+    try {
+      const snapshots = db.prepare(`
+        SELECT s.id, s.snapshot_at, s.line, s.total_remarks, s.notes,
+               s.uploaded_by, u.full_name as uploaded_by_name,
+               (SELECT COUNT(*) FROM remark_activity_events WHERE to_snapshot_id = s.id) as events_count
+          FROM remark_snapshots s
+          LEFT JOIN users u ON s.uploaded_by = u.id
+         WHERE s.line = ?
+         ORDER BY s.id DESC
+         LIMIT 100
+      `).all(line);
+
+      return res.json({ snapshots, line });
+    } catch (err) {
+      console.error('[remarks-monitor] snapshots list error:', err);
+      return res.status(500).json({ error: 'فشل تحميل قائمة الـ Snapshots', details: err.message });
     }
   }
 );
