@@ -3,7 +3,7 @@ import {
   Upload, CheckCircle, AlertCircle, FileSpreadsheet, Activity, Clock, Hash,
   TrendingUp, Camera, Database, ChevronDown, ChevronUp, Globe, Trash2, RefreshCw,
   Search, Filter, X, BarChart3, AlertTriangle, MessageSquare, UserCircle,
-  ArrowLeft, ArrowRight,
+  ArrowLeft, ArrowRight, Copy, Check,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -620,14 +620,22 @@ export default function RemarksMonitor() {
                   />
                 </div>
               </FilterField>
-              <FilterField label="المهمة (الفلتر)">
+              <FilterField
+                label="المهمة (الفلتر)"
+                copyItems={filterOptions.tasks}
+                copyGetValue={(t) => t.name}
+              >
                 <select value={filters.task_type} onChange={e => updateFilter('task_type', e.target.value)}
                   className="w-full px-2 py-1.5 rounded-lg border border-gray-300 text-sm bg-white">
                   <option value="">الكل</option>
                   {filterOptions.tasks.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
                 </select>
               </FilterField>
-              <FilterField label="التصنيف">
+              <FilterField
+                label="التصنيف"
+                copyItems={filterOptions.categories}
+                copyGetValue={(c) => c.name}
+              >
                 <select value={filters.category} onChange={e => updateFilter('category', e.target.value)}
                   className="w-full px-2 py-1.5 rounded-lg border border-gray-300 text-sm bg-white">
                   <option value="">الكل</option>
@@ -800,12 +808,55 @@ export default function RemarksMonitor() {
   );
 }
 
-function FilterField({ label, children }) {
+function FilterField({ label, children, copyItems, copyGetValue }) {
   return (
     <label className="block">
-      <span className="text-xs font-semibold text-gray-600 block mb-1">{label}</span>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs font-semibold text-gray-600">{label}</span>
+        {copyItems && copyItems.length > 0 && (
+          <CopyListButton items={copyItems} getValue={copyGetValue} />
+        )}
+      </div>
       {children}
     </label>
+  );
+}
+
+function CopyListButton({ items, getValue = (i) => i, title = 'نسخ كل القيم' }) {
+  const [copied, setCopied] = useState(false);
+  async function handleCopy(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const text = items.map(getValue).join('\n');
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch (err) {
+      console.error('Copy failed:', err);
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold transition
+        ${copied ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600 hover:bg-violet-100 hover:text-violet-700'}`}
+      title={title}
+    >
+      {copied
+        ? <><Check size={11} /> تم النسخ</>
+        : <><Copy size={11} /> نسخ ({items.length})</>}
+    </button>
   );
 }
 

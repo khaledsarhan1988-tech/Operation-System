@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Activity, Clock, Search, RefreshCw, Globe, X, ArrowLeft, ArrowRight,
   AlertCircle, UserCircle, Layers, TrendingUp, AlertTriangle, MessageSquare,
+  Copy, Check,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -285,6 +286,7 @@ export default function RemarksMonitorCategory() {
             {categoryOptions.length === 0 && <option value={category}>{category}</option>}
             {categoryOptions.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
           </select>
+          {categoryOptions.length > 0 && <CopyListButton items={categoryOptions} getValue={(c) => c.name} />}
         </div>
 
         <div className="flex items-center gap-2">
@@ -458,6 +460,44 @@ export default function RemarksMonitorCategory() {
         />
       )}
     </div>
+  );
+}
+
+function CopyListButton({ items, getValue = (i) => i, title = 'نسخ كل القيم' }) {
+  const [copied, setCopied] = useState(false);
+  async function handleCopy(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const text = items.map(getValue).join('\n');
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch (err) {
+      console.error('Copy failed:', err);
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold transition
+        ${copied ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600 hover:bg-fuchsia-100 hover:text-fuchsia-700'}`}
+      title={title}
+    >
+      {copied
+        ? <><Check size={11} /> تم النسخ</>
+        : <><Copy size={11} /> نسخ ({items.length})</>}
+    </button>
   );
 }
 
