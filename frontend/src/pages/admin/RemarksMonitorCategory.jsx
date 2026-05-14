@@ -3,7 +3,7 @@ import {
   Activity, Clock, Search, RefreshCw, Globe, X, ArrowLeft, ArrowRight,
   AlertCircle, UserCircle, Layers, TrendingUp, AlertTriangle, MessageSquare,
   Copy, Check, Trophy, BarChart3, Download, Zap, ChevronDown, ChevronUp,
-  Settings, Sparkles,
+  Settings, Sparkles, Bell, GitCompare, User, Filter,
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
 import api from '../../api/axios';
@@ -228,7 +228,24 @@ export default function RemarksMonitorCategory() {
   const [dailyEvents, setDailyEvents] = useState([]);
   const [chartDays, setChartDays] = useState(30);
   const [activeQuickView, setActiveQuickView] = useState(null);
-  const [extraFilters, setExtraFilters] = useState({});  // min_events, max_events, min_silence_minutes
+  const [extraFilters, setExtraFilters] = useState({});
+
+  // Iteration 2: notifications, comparison, employee timeline, bottlenecks
+  const [notifyResult, setNotifyResult] = useState(null);
+  const [notifying, setNotifying] = useState(false);
+  const [showCompare, setShowCompare] = useState(false);
+  const [showBottlenecks, setShowBottlenecks] = useState(false);
+  const today = new Date().toISOString().slice(0, 10);
+  const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+  const twoWeeksAgo = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+  const [p1Start, setP1Start] = useState(weekAgo);
+  const [p1End, setP1End] = useState(today);
+  const [p2Start, setP2Start] = useState(twoWeeksAgo);
+  const [p2End, setP2End] = useState(weekAgo);
+  const [compareData, setCompareData] = useState(null);
+  const [loadingCompare, setLoadingCompare] = useState(false);
+  const [bottlenecks, setBottlenecks] = useState([]);
+  const [employeeTimeline, setEmployeeTimeline] = useState(null);  // {assignee, events} when opened
 
   useEffect(() => {
     try { localStorage.setItem(THRESHOLD_STORAGE_KEY, String(thresholdHours)); } catch {}
@@ -317,6 +334,55 @@ export default function RemarksMonitorCategory() {
         setSort('last_event_desc');
         setExtraFilters({});
         break;
+    }
+  }
+
+  const loadBottlenecks = useCallback(async () => {
+    try {
+      const { data } = await api.get('/remarks-monitor/bottlenecks', {
+        params: { line: selectedLine, category },
+      });
+      setBottlenecks(data.bottlenecks || []);
+    } catch (err) { console.error('Bottlenecks error:', err); }
+  }, [selectedLine, category]);
+
+  useEffect(() => { loadBottlenecks(); }, [loadBottlenecks]);
+
+  async function handleNotifyStale() {
+    if (!confirm(`سيتم إرسال تنبيهات للموظفين اللي عندهم Remarks ساكتة أكتر من ${thresholdHours} ساعة. متابعة؟`)) return;
+    setNotifying(true); setNotifyResult(null);
+    try {
+      const { data } = await api.post('/remarks-monitor/notify-stale', {
+        line: selectedLine, category, threshold_hours: thresholdHours,
+      });
+      setNotifyResult(data);
+      setTimeout(() => setNotifyResult(null), 6000);
+    } catch (err) {
+      setNotifyResult({ error: err.response?.data?.details || err.response?.data?.error || err.message });
+    } finally { setNotifying(false); }
+  }
+
+  async function loadComparison() {
+    setLoadingCompare(true);
+    try {
+      const { data } = await api.get('/remarks-monitor/compare-periods', {
+        params: { line: selectedLine, category, p1_start: p1Start, p1_end: p1End, p2_start: p2Start, p2_end: p2End },
+      });
+      setCompareData(data);
+    } catch (err) {
+      setCompareData({ error: err.response?.data?.details || err.response?.data?.error || err.message });
+    } finally { setLoadingCompare(false); }
+  }
+
+  async function openEmployeeTimeline(assignee) {
+    setEmployeeTimeline({ assignee, loading: true, events: [] });
+    try {
+      const { data } = await api.get('/remarks-monitor/employee-timeline', {
+        params: { line: selectedLine, assignee, category, days: 30 },
+      });
+      setEmployeeTimeline({ assignee, loading: false, events: data.events || [], total: data.total });
+    } catch (err) {
+      setEmployeeTimeline({ assignee, loading: false, events: [], error: err.message });
     }
   }
 
@@ -468,6 +534,16 @@ export default function RemarksMonitorCategory() {
         <QuickBtn active={activeQuickView === 'no_events'}        onClick={() => applyQuickView('no_events')}       icon={AlertCircle}   label="بدون أحداث" />
         <QuickBtn active={activeQuickView === 'high_activity'}    onClick={() => applyQuickView('high_activity')}   icon={Sparkles}      label="نشاط عالي (5+)" color="emerald" />
 
+        <button
+          onClick={handleNotifyStale}
+          disabled={notifying}
+          className="px-3 py-1 rounded-lg text-xs font-bold bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white flex items-center gap-1.5"
+          title={`إرسال تنبيهات للموظفين اللي عندهم Remarks ساكتة أكتر من ${thresholdHours} ساعة`}
+        >
+          <Bell size={12} />
+          {notifying ? 'جاري الإرسال...' : `تنبيه السكوت`}
+        </button>
+
         <div className="ml-auto flex items-center gap-2">
           <Settings size={14} className="text-gray-500" />
           <span className="text-xs font-semibold text-gray-600">عتبة السكوت:</span>
@@ -482,6 +558,28 @@ export default function RemarksMonitorCategory() {
           <span className="text-xs text-gray-600">ساعة</span>
         </div>
       </div>
+
+      {/* Notify result */}
+      {notifyResult && (
+        <div className={`rounded-xl p-3 flex items-center justify-between ${
+          notifyResult.error ? 'bg-red-50 border border-red-200' : 'bg-emerald-50 border border-emerald-200'
+        }`}>
+          <div className="flex items-center gap-2 text-sm">
+            {notifyResult.error ? (
+              <><AlertCircle size={16} className="text-red-600" /><span className="text-red-700">{notifyResult.error}</span></>
+            ) : (
+              <><Check size={16} className="text-emerald-600" />
+                <span className="text-emerald-800 font-semibold">{notifyResult.message}</span>
+                <span className="text-emerald-700">
+                  — {notifyResult.stale_count || 0} Remark متجاوزة، تم تنبيه {notifyResult.notifications_sent || 0} موظف ({notifyResult.assignees_notified} مسؤول)
+                </span></>
+            )}
+          </div>
+          <button onClick={() => setNotifyResult(null)} className="p-1 hover:bg-white/50 rounded">
+            <X size={14} />
+          </button>
+        </div>
+      )}
 
       {/* Stats */}
       {stats && (
@@ -520,14 +618,14 @@ export default function RemarksMonitorCategory() {
                       <th className="px-3 py-2 text-start font-semibold text-gray-700">متجاوز العتبة</th>
                       <th className="px-3 py-2 text-start font-semibold text-gray-700">متوسط السكوت</th>
                       <th className="px-3 py-2 text-start font-semibold text-gray-700">أقدم Remark</th>
+                      <th className="px-3 py-2 text-end font-semibold text-gray-700"></th>
                     </tr>
                   </thead>
                   <tbody>
                     {[...leaderboard]
                       .sort((a, b) => (b.remarks_count || 0) - (a.remarks_count || 0))
                       .map((lb, i) => (
-                      <tr key={lb.assigned_to} className="border-t border-gray-100 hover:bg-amber-50/30 cursor-pointer"
-                          onClick={() => { setAssigneeFilter(lb.assigned_to); setPage(0); setActiveQuickView(null); }}>
+                      <tr key={lb.assigned_to} className="border-t border-gray-100 hover:bg-amber-50/30">
                         <td className="px-3 py-2 font-bold text-gray-500">{i + 1}</td>
                         <td className="px-3 py-2 font-semibold">{lb.assigned_to}</td>
                         <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-fuchsia-100 text-fuchsia-700 text-xs font-bold">{lb.remarks_count}</span></td>
@@ -540,6 +638,22 @@ export default function RemarksMonitorCategory() {
                         </td>
                         <td className="px-3 py-2 text-xs">{fmtDurationFromMs((lb.avg_silence_minutes || 0) * 60000)}</td>
                         <td className="px-3 py-2 text-xs text-gray-600">{fmtDurationFromMs((lb.oldest_remark_age_minutes || 0) * 60000)}</td>
+                        <td className="px-3 py-2 text-end flex gap-1 justify-end">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setAssigneeFilter(lb.assigned_to); setPage(0); setActiveQuickView(null); }}
+                            className="text-xs px-2 py-1 rounded bg-fuchsia-100 hover:bg-fuchsia-200 text-fuchsia-700 font-semibold"
+                            title="فلترة الجدول السفلي"
+                          >
+                            <Filter size={12} />
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); openEmployeeTimeline(lb.assigned_to); }}
+                            className="text-xs px-2 py-1 rounded bg-purple-100 hover:bg-purple-200 text-purple-700 font-semibold"
+                            title="عرض Timeline الموظف"
+                          >
+                            <User size={12} />
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -592,6 +706,118 @@ export default function RemarksMonitorCategory() {
                   </BarChart>
                 </ResponsiveContainer>
               </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Bottlenecks */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-200">
+        <button onClick={() => setShowBottlenecks(s => !s)}
+          className="w-full px-5 py-3 flex items-center justify-between hover:bg-gray-50 rounded-t-2xl">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={16} className="text-orange-500" />
+            <span className="font-bold text-gray-800">عنق الزجاجة — أنواع المهام الأكثر إشكالية ({bottlenecks.length})</span>
+          </div>
+          {showBottlenecks ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </button>
+        {showBottlenecks && (
+          <div className="px-5 pb-5 pt-0 border-t border-gray-100">
+            {bottlenecks.length === 0 ? (
+              <p className="text-center text-gray-500 py-6 text-sm">لا توجد بيانات كافية</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-orange-50">
+                    <tr>
+                      <th className="px-3 py-2 text-start font-semibold text-orange-900">#</th>
+                      <th className="px-3 py-2 text-start font-semibold text-orange-900">نوع المهمة</th>
+                      <th className="px-3 py-2 text-start font-semibold text-orange-900">Remarks</th>
+                      <th className="px-3 py-2 text-start font-semibold text-orange-900">إجمالي الأحداث</th>
+                      <th className="px-3 py-2 text-start font-semibold text-orange-900">{'ساكنة >24س'}</th>
+                      <th className="px-3 py-2 text-start font-semibold text-orange-900">{'ساكنة >72س'}</th>
+                      <th className="px-3 py-2 text-start font-semibold text-orange-900">متوسط السكوت</th>
+                      <th className="px-3 py-2 text-start font-semibold text-orange-900">أقصى سكوت</th>
+                      <th className="px-3 py-2 text-start font-semibold text-orange-900">Score</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bottlenecks.slice(0, 10).map((b, i) => (
+                      <tr key={b.task_type} className={`border-t border-gray-100 hover:bg-orange-50/40 ${i < 3 ? 'bg-orange-50/30' : ''}`}>
+                        <td className="px-3 py-2 font-bold text-gray-500">{i + 1}</td>
+                        <td className="px-3 py-2 font-semibold">{b.task_type}</td>
+                        <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-fuchsia-100 text-fuchsia-700 text-xs font-bold">{b.remarks_count}</span></td>
+                        <td className="px-3 py-2">{b.total_events}</td>
+                        <td className="px-3 py-2">{b.stalled_24h > 0 ? <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs font-bold">{b.stalled_24h}</span> : '—'}</td>
+                        <td className="px-3 py-2">{b.stalled_72h > 0 ? <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-xs font-bold">{b.stalled_72h}</span> : '—'}</td>
+                        <td className="px-3 py-2 text-xs">{fmtDurationFromMs((b.avg_silence_minutes || 0) * 60000)}</td>
+                        <td className="px-3 py-2 text-xs text-red-700 font-semibold">{fmtDurationFromMs((b.max_silence || 0) * 60000)}</td>
+                        <td className="px-3 py-2 font-bold text-orange-700">{Math.round(b.bottleneck_score)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="text-xs text-gray-400 mt-2">
+                  💡 الـ Score = (stalled_24h × 2) + (stalled_72h × 5) + متوسط السكوت بالساعات. الأعلى = الأكثر إشكالية.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Period Comparison */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-200">
+        <button onClick={() => setShowCompare(s => !s)}
+          className="w-full px-5 py-3 flex items-center justify-between hover:bg-gray-50 rounded-t-2xl">
+          <div className="flex items-center gap-2">
+            <GitCompare size={16} className="text-purple-500" />
+            <span className="font-bold text-gray-800">مقارنة بين فترتين</span>
+          </div>
+          {showCompare ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </button>
+        {showCompare && (
+          <div className="px-5 pb-5 pt-3 border-t border-gray-100 space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-purple-50 rounded-xl p-3 border border-purple-200">
+                <h4 className="font-bold text-purple-900 text-sm mb-2">الفترة 1 (الأحدث)</h4>
+                <div className="flex gap-2 text-xs">
+                  <input type="date" value={p1Start} onChange={e => setP1Start(e.target.value)}
+                    className="flex-1 px-2 py-1 rounded border border-purple-300" />
+                  <input type="date" value={p1End} onChange={e => setP1End(e.target.value)}
+                    className="flex-1 px-2 py-1 rounded border border-purple-300" />
+                </div>
+              </div>
+              <div className="bg-gray-50 rounded-xl p-3 border border-gray-200">
+                <h4 className="font-bold text-gray-700 text-sm mb-2">الفترة 2 (للمقارنة)</h4>
+                <div className="flex gap-2 text-xs">
+                  <input type="date" value={p2Start} onChange={e => setP2Start(e.target.value)}
+                    className="flex-1 px-2 py-1 rounded border border-gray-300" />
+                  <input type="date" value={p2End} onChange={e => setP2End(e.target.value)}
+                    className="flex-1 px-2 py-1 rounded border border-gray-300" />
+                </div>
+              </div>
+            </div>
+            <button onClick={loadComparison} disabled={loadingCompare}
+              className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm font-bold disabled:opacity-40 flex items-center gap-2">
+              <GitCompare size={14} />
+              {loadingCompare ? 'جاري المقارنة...' : 'قارن الفترتين'}
+            </button>
+
+            {compareData && !compareData.error && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+                <ComparePeriodCard title="الفترة 1 (الأحدث)" data={compareData.period1} accent="purple" />
+                <ComparePeriodCard title="الفترة 2 (للمقارنة)" data={compareData.period2} accent="gray" />
+                <div className="md:col-span-2 bg-blue-50 border border-blue-200 rounded-xl p-3 text-sm">
+                  <strong className="text-blue-900">الفرق:</strong>{' '}
+                  <CompareDiff label="الأحداث" v1={compareData.period1.total_events} v2={compareData.period2.total_events} />{' • '}
+                  <CompareDiff label="Remarks متأثرة" v1={compareData.period1.unique_remarks} v2={compareData.period2.unique_remarks} />{' • '}
+                  <CompareDiff label="أحداث/يوم" v1={compareData.period1.avg_events_per_day} v2={compareData.period2.avg_events_per_day} />
+                </div>
+              </div>
+            )}
+            {compareData?.error && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">{compareData.error}</div>
             )}
           </div>
         )}
@@ -721,7 +947,157 @@ export default function RemarksMonitorCategory() {
           onClose={() => setOpenTimeline(null)}
         />
       )}
+
+      {/* Employee Timeline Modal */}
+      {employeeTimeline && (
+        <EmployeeTimelineModal
+          data={employeeTimeline}
+          onClose={() => setEmployeeTimeline(null)}
+          onOpenRemark={(id) => { setEmployeeTimeline(null); setOpenTimeline(id); }}
+        />
+      )}
     </div>
+  );
+}
+
+function EmployeeTimelineModal({ data, onClose, onOpenRemark }) {
+  const eventsByDay = useMemo(() => {
+    if (!data?.events) return [];
+    const map = new Map();
+    for (const ev of data.events) {
+      const day = ev.occurred_at?.slice(0, 10) || '—';
+      if (!map.has(day)) map.set(day, []);
+      map.get(day).push(ev);
+    }
+    return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [data]);
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[88vh] overflow-hidden flex flex-col"
+           onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-4 bg-gradient-to-r from-purple-50 to-pink-50 border-b flex items-center justify-between">
+          <div>
+            <h3 className="font-bold text-gray-900 flex items-center gap-2">
+              <UserCircle size={20} className="text-purple-600" />
+              Timeline الموظف: {data.assignee}
+            </h3>
+            <p className="text-xs text-gray-600 mt-1">آخر 30 يوم — {data.total || data.events?.length || 0} حدث</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-white rounded-lg">
+            <X size={18} className="text-gray-600" />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto flex-1">
+          {data.loading && <p className="text-center text-gray-500 py-12">جاري التحميل...</p>}
+          {data.error && <div className="m-5 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">{data.error}</div>}
+          {!data.loading && eventsByDay.length === 0 && (
+            <p className="text-center text-gray-500 py-12">لا توجد أحداث في الفترة</p>
+          )}
+          {!data.loading && eventsByDay.length > 0 && (
+            <div className="p-5 space-y-4">
+              {eventsByDay.map(([day, evs]) => (
+                <div key={day}>
+                  <h4 className="font-bold text-gray-800 mb-2 sticky top-0 bg-white py-1 text-sm">
+                    📅 {day} <span className="text-xs text-gray-500 font-normal">({evs.length} حدث)</span>
+                  </h4>
+                  <div className="space-y-1.5">
+                    {evs.map(ev => {
+                      const cfg = EVENT_LABEL[ev.event_type] || { ar: ev.event_type, bg: 'bg-gray-50', text: 'text-gray-700', border: 'border-gray-200', icon: '•' };
+                      return (
+                        <div key={ev.id} className={`rounded-lg border p-2.5 ${cfg.bg} ${cfg.border} flex items-start gap-3`}>
+                          <span className="text-lg">{cfg.icon}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-baseline justify-between gap-2 flex-wrap">
+                              <span className={`font-bold text-xs ${cfg.text}`}>{cfg.ar}</span>
+                              <button onClick={() => onOpenRemark(ev.external_id)}
+                                className="text-xs font-mono font-bold text-fuchsia-700 hover:underline">
+                                #{ev.external_id} • {ev.task_type || '—'}
+                              </button>
+                              <span className="text-xs text-gray-500">{ev.occurred_at?.slice(11, 16)}</span>
+                            </div>
+                            {ev.event_type === 'note_added' && ev.event_data?.text && (
+                              <p className="text-xs mt-1 bg-white/70 rounded p-1.5 line-clamp-2">{ev.event_data.text}</p>
+                            )}
+                            {ev.client_name && (
+                              <p className="text-[10px] text-gray-500 mt-0.5">عميل: {ev.client_name}</p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ComparePeriodCard({ title, data, accent }) {
+  const accentMap = {
+    purple: 'bg-purple-50 border-purple-200 text-purple-900',
+    gray:   'bg-gray-50 border-gray-200 text-gray-800',
+  };
+  return (
+    <div className={`rounded-xl border p-3 ${accentMap[accent]}`}>
+      <h4 className="font-bold text-sm mb-2">{title} <span className="text-xs opacity-60">({data.start} → {data.end})</span></h4>
+      <div className="grid grid-cols-3 gap-2 text-xs">
+        <Metric label="إجمالي الأحداث"   value={data.total_events} />
+        <Metric label="Remarks متأثرة"   value={data.unique_remarks} />
+        <Metric label="متوسط يومي"      value={data.avg_events_per_day} />
+      </div>
+      {data.top_assignees && data.top_assignees.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-current/10">
+          <p className="text-[10px] opacity-70 mb-1">أعلى 5 موظفين:</p>
+          <div className="flex flex-wrap gap-1">
+            {data.top_assignees.map(a => (
+              <span key={a.assigned_to} className="text-[10px] px-1.5 py-0.5 rounded bg-white/50">
+                {a.assigned_to} ({a.events_count})
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {data.by_type && data.by_type.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-current/10">
+          <p className="text-[10px] opacity-70 mb-1">حسب نوع الحدث:</p>
+          <div className="flex flex-wrap gap-1">
+            {data.by_type.map(t => (
+              <span key={t.event_type} className="text-[10px] px-1.5 py-0.5 rounded bg-white/50 font-mono">
+                {t.event_type}: {t.count}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Metric({ label, value }) {
+  return (
+    <div className="bg-white/60 rounded p-1.5">
+      <p className="opacity-70">{label}</p>
+      <p className="font-bold text-lg">{value}</p>
+    </div>
+  );
+}
+
+function CompareDiff({ label, v1, v2 }) {
+  const diff = (v1 || 0) - (v2 || 0);
+  const pct = v2 ? Math.round(((v1 - v2) / v2) * 100) : (v1 ? 100 : 0);
+  const color = diff > 0 ? 'text-emerald-700' : diff < 0 ? 'text-red-700' : 'text-gray-600';
+  const sign = diff > 0 ? '+' : '';
+  return (
+    <span className="text-sm">
+      <strong>{label}:</strong>{' '}
+      <span className={color}>{sign}{diff} ({sign}{pct}%)</span>
+    </span>
   );
 }
 

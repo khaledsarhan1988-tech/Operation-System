@@ -388,6 +388,334 @@ router.get('/dashboard', authenticate, (req, res) => {
   }
 });
 
+// Helper: create a notification (fail-soft, mirrors snapshots.routes pattern)
+function createNotification(userId, type, title, body, link = null, meta = null) {
+  if (!userId) return;
+  try {
+    db.prepare(
+      `INSERT INTO notifications (user_id, type, title, body, link, meta)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(
+      userId, type, title, body || null, link || null,
+      meta ? (typeof meta === 'string' ? meta : JSON.stringify(meta)) : null
+    );
+  } catch (e) { console.error('notify error:', e.message); }
+}
+
+// ─── POST /api/remarks-monitor/notify-stale ───────────────────────────────────
+// Scans for remarks exceeding the silence threshold + sends notifications
+router.post('/notify-stale', authenticate, requireRole('leader'), (req, res) => {
+  const userLine = req.user?.line || 'Ahmed Hassan';
+  let line = (req.body && req.body.line) || req.query.line || userLine;
+  if (userLine !== 'All') line = userLine;
+  if (!line || line === 'All') return res.status(400).json({ error: 'يجب تحديد الـ Line' });
+
+  const category = req.body?.category || req.query.category || 'Inprogress';
+  const thresholdHours = parseInt(req.body?.threshold_hours || req.query.threshold_hours, 10) || 24;
+  const thresholdMinutes = thresholdHours * 60;
+
+  try {
+    const latestSnap = db.prepare(
+      `SELECT id FROM remark_snapshots WHERE line = ? ORDER BY id DESC LIMIT 1`
+    ).get(line);
+    if (!latestSnap) return res.json({ message: 'لا توجد Snapshots', notifications_sent: 0 });
+
+    const stale = db.prepare(
+      `SELECT lr.external_id, lr.assigned_to, lr.task_type, lr.client_name,
+              es.last_event_at
+         FROM remark_snapshot_rows lr
+         LEFT JOIN (
+           SELECT external_id, line, MAX(occurred_at) as last_event_at
+             FROM remark_activity_events
+            WHERE line = ?
+            GROUP BY external_id, line
+         ) es ON lr.external_id = es.external_id AND lr.line = es.line
+        WHERE lr.line = ?
+          AND lr.snapshot_id = ?
+          AND lr.category = ?
+          AND lr.assigned_to IS NOT NULL AND lr.assigned_to != ''
+          AND es.last_event_at IS NOT NULL
+          AND (julianday('now', '+2 hours') - julianday(es.last_event_at)) * 1440 >= ?`
+    ).all(line, line, latestSnap.id, category, thresholdMinutes);
+
+    if (stale.length === 0) {
+      return res.json({ message: 'لا توجد Remarks متجاوزة للعتبة', notifications_sent: 0, stale_count: 0 });
+    }
+
+    // Group by assignee
+    const byAssignee = new Map();
+    for (const r of stale) {
+      if (!byAssignee.has(r.assigned_to)) byAssignee.set(r.assigned_to, []);
+      byAssignee.get(r.assigned_to).push(r);
+    }
+
+    let sent = 0;
+    // Notify each assignee (if their user account exists)
+    for (const [name, remarks] of byAssignee.entries()) {
+      const u = db.prepare(`SELECT id FROM users WHERE full_name = ? LIMIT 1`).get(name);
+      if (!u) continue;
+      const sample = remarks.slice(0, 3).map(r => `#${r.external_id}`).join('، ');
+      const extra = remarks.length > 3 ? ` و${remarks.length - 3} أخرى` : '';
+      createNotification(
+        u.id,
+        'remarks_stale',
+        `⚠️ عندك ${remarks.length} Remark ساكتة أكتر من ${thresholdHours} ساعة`,
+        `${sample}${extra}`,
+        '/admin/remarks-monitor/category',
+        { count: remarks.length, threshold_hours: thresholdHours, category }
+      );
+      sent++;
+    }
+
+    // Summary notification to the requester (leader/admin)
+    createNotification(
+      req.user.id,
+      'remarks_stale_summary',
+      `📊 تم إرسال تنبيهات السكوت — ${stale.length} Remark متجاوزة`,
+      `${byAssignee.size} موظف لديهم Remarks ساكتة. عتبة: ${thresholdHours} ساعة`,
+      '/admin/remarks-monitor/category',
+      { total_stale: stale.length, assignees: byAssignee.size, threshold_hours: thresholdHours }
+    );
+
+    return res.json({
+      message: 'تم إرسال التنبيهات',
+      notifications_sent: sent,
+      stale_count: stale.length,
+      assignees_notified: byAssignee.size,
+      threshold_hours: thresholdHours,
+    });
+  } catch (err) {
+    console.error('[remarks-monitor] notify-stale error:', err);
+    return res.status(500).json({ error: 'فشل إرسال التنبيهات', details: err.message });
+  }
+});
+
+// ─── GET /api/remarks-monitor/compare-periods ─────────────────────────────────
+// Compare two date ranges
+router.get('/compare-periods', authenticate, (req, res) => {
+  const userLine = req.user?.line || 'Ahmed Hassan';
+  let line = req.query.line || userLine;
+  if (userLine !== 'All') line = userLine;
+  if (!line || line === 'All') return res.status(400).json({ error: 'يجب تحديد الـ Line' });
+
+  const category = req.query.category || 'Inprogress';
+  const p1Start = req.query.p1_start;
+  const p1End   = req.query.p1_end;
+  const p2Start = req.query.p2_start;
+  const p2End   = req.query.p2_end;
+
+  if (!p1Start || !p1End || !p2Start || !p2End) {
+    return res.status(400).json({ error: 'يجب تحديد بداية ونهاية الفترتين' });
+  }
+
+  function periodStats(start, end) {
+    const latestSnap = db.prepare(
+      `SELECT id FROM remark_snapshots WHERE line = ? ORDER BY id DESC LIMIT 1`
+    ).get(line);
+    if (!latestSnap) return { total_events: 0, unique_remarks: 0, avg_events_per_day: 0, by_type: [] };
+
+    const stats = db.prepare(
+      `SELECT COUNT(*) as total_events,
+              COUNT(DISTINCT e.external_id) as unique_remarks
+         FROM remark_activity_events e
+         INNER JOIN remark_snapshot_rows lr
+                 ON e.external_id = lr.external_id AND e.line = lr.line
+        WHERE e.line = ?
+          AND lr.snapshot_id = ?
+          AND lr.category = ?
+          AND DATE(e.occurred_at) BETWEEN ? AND ?`
+    ).get(line, latestSnap.id, category, start, end);
+
+    const byType = db.prepare(
+      `SELECT e.event_type, COUNT(*) as count
+         FROM remark_activity_events e
+         INNER JOIN remark_snapshot_rows lr
+                 ON e.external_id = lr.external_id AND e.line = lr.line
+        WHERE e.line = ?
+          AND lr.snapshot_id = ?
+          AND lr.category = ?
+          AND DATE(e.occurred_at) BETWEEN ? AND ?
+        GROUP BY e.event_type
+        ORDER BY count DESC`
+    ).all(line, latestSnap.id, category, start, end);
+
+    const topAssignees = db.prepare(
+      `SELECT lr.assigned_to, COUNT(*) as events_count
+         FROM remark_activity_events e
+         INNER JOIN remark_snapshot_rows lr
+                 ON e.external_id = lr.external_id AND e.line = lr.line
+        WHERE e.line = ?
+          AND lr.snapshot_id = ?
+          AND lr.category = ?
+          AND lr.assigned_to IS NOT NULL AND lr.assigned_to != ''
+          AND DATE(e.occurred_at) BETWEEN ? AND ?
+        GROUP BY lr.assigned_to
+        ORDER BY events_count DESC
+        LIMIT 5`
+    ).all(line, latestSnap.id, category, start, end);
+
+    const dayCount = Math.max(1, (Date.parse(end) - Date.parse(start)) / 86400000 + 1);
+    return {
+      total_events: stats?.total_events || 0,
+      unique_remarks: stats?.unique_remarks || 0,
+      avg_events_per_day: Math.round(((stats?.total_events || 0) / dayCount) * 10) / 10,
+      by_type: byType,
+      top_assignees: topAssignees,
+    };
+  }
+
+  try {
+    return res.json({
+      period1: { start: p1Start, end: p1End, ...periodStats(p1Start, p1End) },
+      period2: { start: p2Start, end: p2End, ...periodStats(p2Start, p2End) },
+      category, line,
+    });
+  } catch (err) {
+    console.error('[remarks-monitor] compare-periods error:', err);
+    return res.status(500).json({ error: 'فشل المقارنة', details: err.message });
+  }
+});
+
+// ─── GET /api/remarks-monitor/employee-timeline ───────────────────────────────
+// All events for remarks currently assigned to a specific person
+router.get('/employee-timeline', authenticate, (req, res) => {
+  const userLine = req.user?.line || 'Ahmed Hassan';
+  let line = req.query.line || userLine;
+  if (userLine !== 'All') line = userLine;
+  if (!line || line === 'All') return res.status(400).json({ error: 'يجب تحديد الـ Line' });
+
+  const assignee = req.query.assignee;
+  const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 180);
+  const category = req.query.category || null;
+
+  if (!assignee) return res.status(400).json({ error: 'يجب تحديد الموظف' });
+
+  try {
+    const latestSnap = db.prepare(
+      `SELECT id FROM remark_snapshots WHERE line = ? ORDER BY id DESC LIMIT 1`
+    ).get(line);
+    if (!latestSnap) return res.json({ events: [], assignee, days });
+
+    const wheres = ['lr.line = ?', 'lr.snapshot_id = ?', 'lr.assigned_to = ?'];
+    const params = [line, latestSnap.id, assignee];
+    if (category) { wheres.push('lr.category = ?'); params.push(category); }
+
+    const events = db.prepare(
+      `SELECT e.id, e.external_id, e.event_type, e.event_data, e.occurred_at,
+              e.to_snapshot_id, lr.task_type, lr.client_name, lr.category, lr.priority
+         FROM remark_activity_events e
+         INNER JOIN remark_snapshot_rows lr
+                 ON e.external_id = lr.external_id AND e.line = lr.line
+        WHERE ${wheres.join(' AND ')}
+          AND DATE(e.occurred_at) >= DATE('now', '+2 hours', ?)
+        ORDER BY e.occurred_at DESC, e.id DESC
+        LIMIT 500`
+    ).all(...params, `-${days} days`);
+
+    const parsed = events.map(ev => {
+      let data = null;
+      try { data = ev.event_data ? JSON.parse(ev.event_data) : null; } catch {}
+      return { ...ev, event_data: data };
+    });
+
+    return res.json({
+      events: parsed,
+      assignee,
+      days,
+      total: parsed.length,
+      line,
+    });
+  } catch (err) {
+    console.error('[remarks-monitor] employee-timeline error:', err);
+    return res.status(500).json({ error: 'فشل التحميل', details: err.message });
+  }
+});
+
+// ─── GET /api/remarks-monitor/bottlenecks ─────────────────────────────────────
+// Group by task_type to find bottlenecks
+router.get('/bottlenecks', authenticate, (req, res) => {
+  const userLine = req.user?.line || 'Ahmed Hassan';
+  let line = req.query.line || userLine;
+  if (userLine !== 'All') line = userLine;
+  if (!line || line === 'All') return res.status(400).json({ error: 'يجب تحديد الـ Line' });
+
+  const category = req.query.category || 'Inprogress';
+
+  try {
+    const latestSnap = db.prepare(
+      `SELECT id FROM remark_snapshots WHERE line = ? ORDER BY id DESC LIMIT 1`
+    ).get(line);
+    if (!latestSnap) return res.json({ bottlenecks: [], category, line });
+
+    const rows = db.prepare(
+      `SELECT lr.external_id, lr.task_type,
+              COALESCE(es.total_events, 0) as total_events,
+              es.last_event_at, es.first_event_at
+         FROM remark_snapshot_rows lr
+         LEFT JOIN (
+           SELECT external_id, line, COUNT(*) as total_events,
+                  MIN(occurred_at) as first_event_at,
+                  MAX(occurred_at) as last_event_at
+             FROM remark_activity_events
+            WHERE line = ?
+            GROUP BY external_id, line
+         ) es ON lr.external_id = es.external_id AND lr.line = es.line
+        WHERE lr.line = ? AND lr.snapshot_id = ? AND lr.category = ?
+          AND lr.task_type IS NOT NULL AND lr.task_type != ''`
+    ).all(line, line, latestSnap.id, category);
+
+    const byType = new Map();
+    const nowMs = Date.now();
+    for (const r of rows) {
+      let agg = byType.get(r.task_type);
+      if (!agg) {
+        agg = {
+          task_type: r.task_type,
+          remarks_count: 0, total_events: 0,
+          stalled_24h: 0, stalled_72h: 0,
+          sum_silence: 0, max_silence: 0, silence_samples: 0,
+          sum_active: 0, active_samples: 0,
+        };
+        byType.set(r.task_type, agg);
+      }
+      agg.remarks_count++;
+      agg.total_events += r.total_events;
+      if (r.last_event_at) {
+        const t = Date.parse(r.last_event_at);
+        if (!isNaN(t)) {
+          const silence = Math.floor((nowMs - t) / 60000);
+          agg.sum_silence += silence;
+          agg.silence_samples++;
+          if (silence > agg.max_silence) agg.max_silence = silence;
+          if (silence > 1440) agg.stalled_24h++;
+          if (silence > 4320) agg.stalled_72h++;
+        }
+      }
+      if (r.first_event_at && r.last_event_at) {
+        const t1 = Date.parse(r.first_event_at);
+        const t2 = Date.parse(r.last_event_at);
+        if (!isNaN(t1) && !isNaN(t2)) {
+          const span = Math.floor((t2 - t1) / 60000);
+          agg.sum_active += span;
+          agg.active_samples++;
+        }
+      }
+    }
+
+    const bottlenecks = Array.from(byType.values()).map(agg => ({
+      ...agg,
+      avg_silence_minutes: agg.silence_samples > 0 ? Math.round(agg.sum_silence / agg.silence_samples) : null,
+      avg_active_minutes:  agg.active_samples > 0 ? Math.round(agg.sum_active / agg.active_samples) : null,
+      bottleneck_score: agg.stalled_24h * 2 + agg.stalled_72h * 5 + (agg.silence_samples > 0 ? (agg.sum_silence / agg.silence_samples / 60) : 0),
+    })).sort((a, b) => b.bottleneck_score - a.bottleneck_score);
+
+    return res.json({ bottlenecks, category, line, total_task_types: bottlenecks.length });
+  } catch (err) {
+    console.error('[remarks-monitor] bottlenecks error:', err);
+    return res.status(500).json({ error: 'فشل التحميل', details: err.message });
+  }
+});
+
 // ─── GET /api/remarks-monitor/leaderboard ─────────────────────────────────────
 // Per-assignee aggregations for a given category
 router.get('/leaderboard', authenticate, (req, res) => {
