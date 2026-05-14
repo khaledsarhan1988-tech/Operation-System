@@ -2,11 +2,24 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Activity, Clock, Search, RefreshCw, Globe, X, ArrowLeft, ArrowRight,
   AlertCircle, UserCircle, Layers, TrendingUp, AlertTriangle, MessageSquare,
-  Copy, Check,
+  Copy, Check, Trophy, BarChart3, Download, Zap, ChevronDown, ChevronUp,
+  Settings, Sparkles,
 } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import { useAuth } from '../../auth/AuthContext';
+
+const THRESHOLD_STORAGE_KEY = 'remarksMonitor.thresholdHours';
+const DEFAULT_THRESHOLD_HOURS = 24;
+
+function getStoredThreshold() {
+  try {
+    const v = localStorage.getItem(THRESHOLD_STORAGE_KEY);
+    const n = v ? parseInt(v, 10) : DEFAULT_THRESHOLD_HOURS;
+    return Number.isFinite(n) && n > 0 ? n : DEFAULT_THRESHOLD_HOURS;
+  } catch { return DEFAULT_THRESHOLD_HOURS; }
+}
 
 const AVAILABLE_LINES = ['Ahmed Hassan', 'Dardasha'];
 const PAGE_SIZE = 50;
@@ -207,6 +220,20 @@ export default function RemarksMonitorCategory() {
   const [error, setError] = useState(null);
   const [openTimeline, setOpenTimeline] = useState(null);
 
+  // New: thresholds, leaderboard, daily events, quick views
+  const [thresholdHours, setThresholdHours] = useState(getStoredThreshold());
+  const [showLeaderboard, setShowLeaderboard] = useState(true);
+  const [showChart, setShowChart] = useState(true);
+  const [leaderboard, setLeaderboard] = useState([]);
+  const [dailyEvents, setDailyEvents] = useState([]);
+  const [chartDays, setChartDays] = useState(30);
+  const [activeQuickView, setActiveQuickView] = useState(null);
+  const [extraFilters, setExtraFilters] = useState({});  // min_events, max_events, min_silence_minutes
+
+  useEffect(() => {
+    try { localStorage.setItem(THRESHOLD_STORAGE_KEY, String(thresholdHours)); } catch {}
+  }, [thresholdHours]);
+
   const loadFilters = useCallback(async () => {
     try {
       const { data } = await api.get('/remarks-monitor/filters', { params: { line: selectedLine } });
@@ -224,6 +251,7 @@ export default function RemarksMonitorCategory() {
         limit: PAGE_SIZE,
         offset: page * PAGE_SIZE,
         sort,
+        ...extraFilters,
       };
       if (assigneeFilter) params.assigned_to = assigneeFilter;
       if (search.trim())  params.search = search.trim();
@@ -233,10 +261,94 @@ export default function RemarksMonitorCategory() {
       setError(err.response?.data?.error || err.message);
       setData(null);
     } finally { setLoading(false); }
-  }, [selectedLine, category, page, sort, assigneeFilter, search]);
+  }, [selectedLine, category, page, sort, assigneeFilter, search, extraFilters]);
+
+  const loadLeaderboard = useCallback(async () => {
+    try {
+      const { data } = await api.get('/remarks-monitor/leaderboard', {
+        params: { line: selectedLine, category, stalled_minutes: thresholdHours * 60 },
+      });
+      setLeaderboard(data.leaderboard || []);
+    } catch (err) { console.error('Leaderboard error:', err); }
+  }, [selectedLine, category, thresholdHours]);
+
+  const loadDailyEvents = useCallback(async () => {
+    try {
+      const { data } = await api.get('/remarks-monitor/daily-events', {
+        params: { line: selectedLine, category, days: chartDays },
+      });
+      setDailyEvents(data.daily || []);
+    } catch (err) { console.error('Daily events error:', err); }
+  }, [selectedLine, category, chartDays]);
 
   useEffect(() => { loadFilters(); }, [loadFilters]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { loadLeaderboard(); }, [loadLeaderboard]);
+  useEffect(() => { loadDailyEvents(); }, [loadDailyEvents]);
+
+  function applyQuickView(view) {
+    setActiveQuickView(view);
+    setPage(0);
+    setAssigneeFilter('');
+    setSearch('');
+    switch (view) {
+      case 'oldest':
+        setSort('first_event_asc');
+        setExtraFilters({});
+        break;
+      case 'most_silent':
+        setSort('time_since_last_desc');
+        setExtraFilters({});
+        break;
+      case 'no_events':
+        setSort('first_event_asc');
+        setExtraFilters({ max_events: 0 });
+        break;
+      case 'stalled_threshold':
+        setSort('time_since_last_desc');
+        setExtraFilters({ min_silence_minutes: thresholdHours * 60 });
+        break;
+      case 'high_activity':
+        setSort('events_desc');
+        setExtraFilters({ min_events: 5 });
+        break;
+      case 'all':
+      default:
+        setSort('last_event_desc');
+        setExtraFilters({});
+        break;
+    }
+  }
+
+  function exportCsv() {
+    if (!data?.remarks?.length) return;
+    const headers = ['#', 'المهمة', 'العميل', 'رقم الهاتف', 'الأهمية', 'الحالة', 'التصنيف',
+                     'معينة لـ', 'عدد الأحداث', 'أول حدث', 'آخر حدث', 'قعد عنده مدة (دقيقة)', 'المدى الفعّال (دقيقة)'];
+    const rows = data.remarks.map(r => [
+      r.external_id, r.task_type || '', r.client_name || '', r.client_phone || '',
+      r.priority || '', r.status || '', r.category || '', r.assigned_to || '',
+      r.total_events || 0,
+      r.first_event_at || '', r.last_event_at || '',
+      r.time_since_last?.total_minutes ?? '',
+      r.active_span?.total_minutes ?? '',
+    ]);
+    const escape = (v) => {
+      const s = String(v ?? '');
+      if (s.includes(',') || s.includes('"') || s.includes('\n')) return `"${s.replace(/"/g, '""')}"`;
+      return s;
+    };
+    const csv = [headers, ...rows].map(row => row.map(escape).join(',')).join('\r\n');
+    const bom = '﻿';
+    const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `remarks-monitor-${category}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
 
   const stats = useMemo(() => {
     if (!data?.remarks) return null;
@@ -334,6 +446,41 @@ export default function RemarksMonitorCategory() {
           <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
           تحديث
         </button>
+
+        <button
+          onClick={exportCsv}
+          disabled={!data?.remarks?.length}
+          className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white text-sm flex items-center gap-2 font-bold"
+          title="تصدير الجدول الحالي لـ Excel"
+        >
+          <Download size={14} />
+          Export
+        </button>
+      </div>
+
+      {/* Quick View buttons */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-3 flex flex-wrap items-center gap-2">
+        <span className="text-xs font-bold text-gray-500 px-2">Quick Views:</span>
+        <QuickBtn active={activeQuickView === 'all'}              onClick={() => applyQuickView('all')}             icon={Layers}        label="الكل" />
+        <QuickBtn active={activeQuickView === 'oldest'}           onClick={() => applyQuickView('oldest')}          icon={Clock}         label="الأقدم" />
+        <QuickBtn active={activeQuickView === 'most_silent'}      onClick={() => applyQuickView('most_silent')}     icon={AlertTriangle} label="الأكثر سكوتاً" />
+        <QuickBtn active={activeQuickView === 'stalled_threshold'} onClick={() => applyQuickView('stalled_threshold')} icon={Zap}        label={`تجاوز ${thresholdHours}س`} color="red" />
+        <QuickBtn active={activeQuickView === 'no_events'}        onClick={() => applyQuickView('no_events')}       icon={AlertCircle}   label="بدون أحداث" />
+        <QuickBtn active={activeQuickView === 'high_activity'}    onClick={() => applyQuickView('high_activity')}   icon={Sparkles}      label="نشاط عالي (5+)" color="emerald" />
+
+        <div className="ml-auto flex items-center gap-2">
+          <Settings size={14} className="text-gray-500" />
+          <span className="text-xs font-semibold text-gray-600">عتبة السكوت:</span>
+          <input
+            type="number"
+            min="1"
+            max="720"
+            value={thresholdHours}
+            onChange={e => setThresholdHours(Math.max(1, parseInt(e.target.value) || 1))}
+            className="w-16 px-2 py-1 rounded-lg border border-gray-300 text-sm text-center"
+          />
+          <span className="text-xs text-gray-600">ساعة</span>
+        </div>
       </div>
 
       {/* Stats */}
@@ -346,6 +493,110 @@ export default function RemarksMonitorCategory() {
         </div>
       )}
 
+      {/* Leaderboard */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-200">
+        <button onClick={() => setShowLeaderboard(s => !s)}
+          className="w-full px-5 py-3 flex items-center justify-between hover:bg-gray-50 rounded-t-2xl">
+          <div className="flex items-center gap-2">
+            <Trophy size={16} className="text-amber-500" />
+            <span className="font-bold text-gray-800">Leaderboard — أداء الموظفين ({leaderboard.length})</span>
+          </div>
+          {showLeaderboard ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </button>
+        {showLeaderboard && (
+          <div className="px-5 pb-5 pt-0 border-t border-gray-100">
+            {leaderboard.length === 0 ? (
+              <p className="text-center text-gray-500 py-6 text-sm">لا توجد بيانات للموظفين</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-3 py-2 text-start font-semibold text-gray-700">#</th>
+                      <th className="px-3 py-2 text-start font-semibold text-gray-700">الموظف</th>
+                      <th className="px-3 py-2 text-start font-semibold text-gray-700">Remarks</th>
+                      <th className="px-3 py-2 text-start font-semibold text-gray-700">إجمالي الأحداث</th>
+                      <th className="px-3 py-2 text-start font-semibold text-gray-700">نشط الآن</th>
+                      <th className="px-3 py-2 text-start font-semibold text-gray-700">متجاوز العتبة</th>
+                      <th className="px-3 py-2 text-start font-semibold text-gray-700">متوسط السكوت</th>
+                      <th className="px-3 py-2 text-start font-semibold text-gray-700">أقدم Remark</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...leaderboard]
+                      .sort((a, b) => (b.remarks_count || 0) - (a.remarks_count || 0))
+                      .map((lb, i) => (
+                      <tr key={lb.assigned_to} className="border-t border-gray-100 hover:bg-amber-50/30 cursor-pointer"
+                          onClick={() => { setAssigneeFilter(lb.assigned_to); setPage(0); setActiveQuickView(null); }}>
+                        <td className="px-3 py-2 font-bold text-gray-500">{i + 1}</td>
+                        <td className="px-3 py-2 font-semibold">{lb.assigned_to}</td>
+                        <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-fuchsia-100 text-fuchsia-700 text-xs font-bold">{lb.remarks_count}</span></td>
+                        <td className="px-3 py-2 text-violet-700 font-semibold">{lb.total_events}</td>
+                        <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-xs font-bold">{lb.active_count}</span></td>
+                        <td className="px-3 py-2">
+                          {lb.stalled_count > 0
+                            ? <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-xs font-bold">{lb.stalled_count}</span>
+                            : <span className="text-gray-400">—</span>}
+                        </td>
+                        <td className="px-3 py-2 text-xs">{fmtDurationFromMs((lb.avg_silence_minutes || 0) * 60000)}</td>
+                        <td className="px-3 py-2 text-xs text-gray-600">{fmtDurationFromMs((lb.oldest_remark_age_minutes || 0) * 60000)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="text-xs text-gray-400 mt-2">💡 اضغط على صف الموظف لفلترة الجدول السفلي على بياناته</p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Daily Events Chart */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-200">
+        <button onClick={() => setShowChart(s => !s)}
+          className="w-full px-5 py-3 flex items-center justify-between hover:bg-gray-50 rounded-t-2xl">
+          <div className="flex items-center gap-2">
+            <BarChart3 size={16} className="text-blue-500" />
+            <span className="font-bold text-gray-800">الأحداث على مدار الأيام (آخر {chartDays} يوم)</span>
+          </div>
+          <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+            <select value={chartDays} onChange={e => setChartDays(parseInt(e.target.value))}
+              className="px-2 py-0.5 rounded border border-gray-300 text-xs">
+              <option value={7}>7 أيام</option>
+              <option value={14}>14 يوم</option>
+              <option value={30}>30 يوم</option>
+              <option value={60}>60 يوم</option>
+              <option value={90}>90 يوم</option>
+            </select>
+            {showChart ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          </div>
+        </button>
+        {showChart && (
+          <div className="px-5 pb-5 pt-0 border-t border-gray-100">
+            {dailyEvents.length === 0 ? (
+              <p className="text-center text-gray-500 py-8 text-sm">لا توجد أحداث في الفترة المحددة</p>
+            ) : (
+              <div style={{ width: '100%', height: 280 }}>
+                <ResponsiveContainer>
+                  <BarChart data={dailyEvents} margin={{ top: 10, right: 20, left: 0, bottom: 20 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                    <XAxis dataKey="day" tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <Tooltip
+                      contentStyle={{ borderRadius: 8, fontSize: 12 }}
+                      labelStyle={{ fontWeight: 'bold' }}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                    <Bar dataKey="events_count"    name="عدد الأحداث"     fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="remarks_touched" name="Remarks متأثرة" fill="#ec4899" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Table */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
         <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
@@ -354,6 +605,12 @@ export default function RemarksMonitorCategory() {
             Remarks بتصنيف "{category}"
             {data && <span className="text-xs text-gray-500 font-normal">({data.total.toLocaleString('ar-EG')})</span>}
           </h3>
+          {activeQuickView && activeQuickView !== 'all' && (
+            <button onClick={() => applyQuickView('all')}
+              className="text-xs text-violet-600 hover:underline">
+              مسح Quick View
+            </button>
+          )}
         </div>
 
         {error && (
@@ -382,8 +639,13 @@ export default function RemarksMonitorCategory() {
                 <tr><td colSpan={9} className="px-3 py-12 text-center text-gray-400">
                   لا توجد Remarks في هذا التصنيف
                 </td></tr>
-              ) : data.remarks.map(r => (
-                <tr key={r.external_id} className="border-t border-gray-100 hover:bg-fuchsia-50/30">
+              ) : data.remarks.map(r => {
+                const isStalled = r.time_since_last?.total_minutes != null
+                  && r.time_since_last.total_minutes >= thresholdHours * 60;
+                return (
+                <tr key={r.external_id} className={`border-t border-gray-100 hover:bg-fuchsia-50/30 ${
+                  isStalled ? 'bg-red-50/40' : ''
+                }`}>
                   <td className="px-3 py-2 font-mono text-xs font-bold text-fuchsia-700">
                     <button onClick={() => setOpenTimeline(r.external_id)} className="hover:underline">
                       #{r.external_id}
@@ -425,7 +687,7 @@ export default function RemarksMonitorCategory() {
                     </button>
                   </td>
                 </tr>
-              ))}
+              );})}
             </tbody>
           </table>
         </div>
@@ -460,6 +722,24 @@ export default function RemarksMonitorCategory() {
         />
       )}
     </div>
+  );
+}
+
+function QuickBtn({ active, onClick, icon: Icon, label, color = 'violet' }) {
+  const colorMap = {
+    violet:  { active: 'bg-violet-600 text-white',  idle: 'bg-violet-50 text-violet-700 hover:bg-violet-100' },
+    red:     { active: 'bg-red-600 text-white',     idle: 'bg-red-50 text-red-700 hover:bg-red-100' },
+    emerald: { active: 'bg-emerald-600 text-white', idle: 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' },
+  };
+  const c = colorMap[color] || colorMap.violet;
+  return (
+    <button
+      onClick={onClick}
+      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition ${active ? c.active : c.idle}`}
+    >
+      <Icon size={12} />
+      {label}
+    </button>
   );
 }
 

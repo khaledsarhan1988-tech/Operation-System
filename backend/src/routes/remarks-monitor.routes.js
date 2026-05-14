@@ -388,6 +388,131 @@ router.get('/dashboard', authenticate, (req, res) => {
   }
 });
 
+// ─── GET /api/remarks-monitor/leaderboard ─────────────────────────────────────
+// Per-assignee aggregations for a given category
+router.get('/leaderboard', authenticate, (req, res) => {
+  const userLine = req.user?.line || 'Ahmed Hassan';
+  let line = req.query.line || userLine;
+  if (userLine !== 'All') line = userLine;
+  if (!line || line === 'All') return res.status(400).json({ error: 'يجب تحديد الـ Line' });
+
+  const category = req.query.category || 'Inprogress';
+  const stalledThresholdMinutes = parseInt(req.query.stalled_minutes, 10) || 1440;
+
+  try {
+    const latestSnap = db.prepare(
+      `SELECT id FROM remark_snapshots WHERE line = ? ORDER BY id DESC LIMIT 1`
+    ).get(line);
+    if (!latestSnap) return res.json({ leaderboard: [], category, line });
+
+    const rows = db.prepare(
+      `SELECT lr.external_id, lr.assigned_to,
+              COALESCE(es.total_events, 0) as total_events,
+              es.last_event_at, es.first_event_at
+         FROM remark_snapshot_rows lr
+         LEFT JOIN (
+           SELECT external_id, line, COUNT(*) as total_events,
+                  MIN(occurred_at) as first_event_at,
+                  MAX(occurred_at) as last_event_at
+             FROM remark_activity_events
+            WHERE line = ?
+            GROUP BY external_id, line
+         ) es ON lr.external_id = es.external_id AND lr.line = es.line
+        WHERE lr.line = ?
+          AND lr.snapshot_id = ?
+          AND lr.category = ?
+          AND lr.assigned_to IS NOT NULL AND lr.assigned_to != ''`
+    ).all(line, line, latestSnap.id, category);
+
+    const byAssignee = new Map();
+    const nowMs = Date.now();
+    for (const r of rows) {
+      let agg = byAssignee.get(r.assigned_to);
+      if (!agg) {
+        agg = {
+          assigned_to: r.assigned_to,
+          remarks_count: 0, total_events: 0,
+          active_count: 0, stalled_count: 0, idle_count: 0,
+          sum_silence_minutes: 0, silence_samples: 0,
+          max_silence_minutes: 0, oldest_remark_age_minutes: 0,
+        };
+        byAssignee.set(r.assigned_to, agg);
+      }
+      agg.remarks_count++;
+      agg.total_events += r.total_events || 0;
+      if (r.last_event_at) {
+        const t = Date.parse(r.last_event_at);
+        if (!isNaN(t)) {
+          const minutes = Math.floor(Math.max(0, nowMs - t) / 60000);
+          agg.sum_silence_minutes += minutes;
+          agg.silence_samples++;
+          if (minutes > agg.max_silence_minutes) agg.max_silence_minutes = minutes;
+          if (minutes <= 60) agg.active_count++;
+          if (minutes > stalledThresholdMinutes) agg.stalled_count++;
+        }
+      } else {
+        agg.idle_count++;
+      }
+      if (r.first_event_at) {
+        const t = Date.parse(r.first_event_at);
+        if (!isNaN(t)) {
+          const minutes = Math.floor(Math.max(0, nowMs - t) / 60000);
+          if (minutes > agg.oldest_remark_age_minutes) agg.oldest_remark_age_minutes = minutes;
+        }
+      }
+    }
+
+    const leaderboard = Array.from(byAssignee.values()).map(agg => ({
+      ...agg,
+      avg_silence_minutes: agg.silence_samples > 0 ? Math.round(agg.sum_silence_minutes / agg.silence_samples) : null,
+    }));
+
+    return res.json({ leaderboard, category, line, total_assignees: leaderboard.length });
+  } catch (err) {
+    console.error('[remarks-monitor] leaderboard error:', err);
+    return res.status(500).json({ error: 'فشل التحميل', details: err.message });
+  }
+});
+
+// ─── GET /api/remarks-monitor/daily-events ────────────────────────────────────
+// Events count per day for the chart
+router.get('/daily-events', authenticate, (req, res) => {
+  const userLine = req.user?.line || 'Ahmed Hassan';
+  let line = req.query.line || userLine;
+  if (userLine !== 'All') line = userLine;
+  if (!line || line === 'All') return res.status(400).json({ error: 'يجب تحديد الـ Line' });
+
+  const category = req.query.category || 'Inprogress';
+  const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 180);
+
+  try {
+    const latestSnap = db.prepare(
+      `SELECT id FROM remark_snapshots WHERE line = ? ORDER BY id DESC LIMIT 1`
+    ).get(line);
+    if (!latestSnap) return res.json({ daily: [], days, category, line });
+
+    const rows = db.prepare(
+      `SELECT DATE(e.occurred_at) as day,
+              COUNT(*) as events_count,
+              COUNT(DISTINCT e.external_id) as remarks_touched
+         FROM remark_activity_events e
+         INNER JOIN remark_snapshot_rows lr
+                 ON e.external_id = lr.external_id AND e.line = lr.line
+        WHERE e.line = ?
+          AND lr.category = ?
+          AND lr.snapshot_id = ?
+          AND DATE(e.occurred_at) >= DATE('now', '+2 hours', ?)
+        GROUP BY DATE(e.occurred_at)
+        ORDER BY day ASC`
+    ).all(line, category, latestSnap.id, `-${days} days`);
+
+    return res.json({ daily: rows, days, category, line });
+  } catch (err) {
+    console.error('[remarks-monitor] daily-events error:', err);
+    return res.status(500).json({ error: 'فشل التحميل', details: err.message });
+  }
+});
+
 // ─── GET /api/remarks-monitor/category-distribution ───────────────────────────
 // Category-focused view (defaults to Inprogress) — shows per-Remark event
 // metrics: total events, first/last event, time since last event (active duration).
@@ -407,6 +532,9 @@ router.get('/category-distribution', authenticate, (req, res) => {
   const assignedTo = req.query.assigned_to || null;
   const search     = (req.query.search || '').trim();
   const sortBy     = req.query.sort || 'last_event_desc';
+  const minEvents  = req.query.min_events != null ? parseInt(req.query.min_events, 10) : null;
+  const maxEvents  = req.query.max_events != null ? parseInt(req.query.max_events, 10) : null;
+  const minSilenceMin = req.query.min_silence_minutes != null ? parseInt(req.query.min_silence_minutes, 10) : null;
 
   try {
     const latestSnap = db.prepare(
@@ -441,11 +569,30 @@ router.get('/category-distribution', authenticate, (req, res) => {
       params.push(s, s, s, s);
     }
 
+    // Extra filters that need the joined stats table
+    const havingClauses = [];
+    const havingParams = [];
+    if (minEvents != null)    { havingClauses.push('COALESCE(stats.total_events, 0) >= ?'); havingParams.push(minEvents); }
+    if (maxEvents != null)    { havingClauses.push('COALESCE(stats.total_events, 0) <= ?'); havingParams.push(maxEvents); }
+    if (minSilenceMin != null) {
+      havingClauses.push(`stats.last_event_at IS NOT NULL AND (julianday('now', '+2 hours') - julianday(stats.last_event_at)) * 1440 >= ?`);
+      havingParams.push(minSilenceMin);
+    }
+    const extraWhere = havingClauses.length ? ' AND ' + havingClauses.join(' AND ') : '';
+
     const whereClause = wheres.join(' AND ');
 
     const totalRow = db.prepare(
-      `SELECT COUNT(*) as c FROM remark_snapshot_rows lr WHERE ${whereClause}`
-    ).get(...params);
+      `SELECT COUNT(*) as c FROM remark_snapshot_rows lr
+         LEFT JOIN (
+           SELECT external_id, line, COUNT(*) as total_events,
+                  MIN(occurred_at) as first_event_at,
+                  MAX(occurred_at) as last_event_at
+             FROM remark_activity_events WHERE line = ?
+            GROUP BY external_id, line
+         ) stats ON lr.external_id = stats.external_id AND lr.line = stats.line
+        WHERE ${whereClause}${extraWhere}`
+    ).get(line, ...params, ...havingParams);
     const total = totalRow ? totalRow.c : 0;
 
     let orderBy = '';
@@ -474,10 +621,10 @@ router.get('/category-distribution', authenticate, (req, res) => {
             WHERE line = ?
             GROUP BY external_id, line
          ) stats ON lr.external_id = stats.external_id AND lr.line = stats.line
-        WHERE ${whereClause}
+        WHERE ${whereClause}${extraWhere}
         ORDER BY ${orderBy} NULLS LAST, lr.external_id DESC
         LIMIT ? OFFSET ?`
-    ).all(line, ...params, limit, offset);
+    ).all(line, ...params, ...havingParams, limit, offset);
 
     const nowMs = Date.now();
     function durationFromMs(ms) {
