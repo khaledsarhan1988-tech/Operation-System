@@ -95,7 +95,6 @@ function getAdminLinks(user) {
     { to: '/admin',              label: 'nav.dashboard',     icon: LayoutDashboard, end: true, color: 'blue' },
     { to: '/admin/users',        label: 'nav.users',         icon: UserCog,         color: 'indigo' },
     { to: '/admin/upload',       label: 'nav.excelUpload',   icon: Upload,          color: 'orange' },
-    { to: '/admin/remarks-monitor', label: 'مراقبة الـ Remarks', icon: Activity,    color: 'fuchsia' },
     { to: '/admin/team',         label: 'nav.team',          icon: Users,           color: 'purple' },
     { to: '/admin/control',      label: 'nav.controlPanel',       icon: LayoutDashboard, color: 'pink' },
     { to: '/admin/distribution', label: 'nav.clientDistribution', icon: Shuffle,         color: 'cyan' },
@@ -114,7 +113,13 @@ function getAdminLinks(user) {
   const reports = mgmt === 'All'
     ? REPORT_LINKS
     : REPORT_LINKS.filter(r => r.management === mgmt || r.management === 'All');
-  return [...base, ...reports];
+
+  const monitoring = [
+    { type: 'section', label: 'المراقبة' },
+    { to: '/admin/remarks-monitor', label: 'مراقبة الـ Remarks', icon: Activity, color: 'fuchsia' },
+  ];
+
+  return [...base, ...reports, ...monitoring];
 }
 
 const AVATAR_GRADIENTS = [
