@@ -302,7 +302,13 @@ function _ingestRows({ parsedRows, uploadedBy, line, notesField }) {
       );
 
       const prevRow = prev.rowsByExternal.get(row.external_id);
-      const knownKeys = prevRow ? getKnownNoteKeys(row.external_id, line, prev.id) : new Set();
+      // OPTIMIZATION: getKnownNoteKeys is only needed when notes actually changed.
+      // For 16K+ remarks where most are unchanged, skipping this saves thousands
+      // of queries per snapshot (was causing "memory access out of bounds" in sql.js).
+      const notesChanged = prevRow && prevRow.notes_hash !== row.notes_hash;
+      const knownKeys = notesChanged
+        ? getKnownNoteKeys(row.external_id, line, prev.id)
+        : new Set();
       const events = computeDiff(prevRow, row, knownKeys, snapshotAt);
 
       for (const e of events) {
