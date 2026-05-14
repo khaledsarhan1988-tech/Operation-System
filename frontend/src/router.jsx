@@ -29,6 +29,7 @@ import AdminDashboard from './pages/admin/AdminDashboard';
 import UserManagement from './pages/admin/UserManagement';
 import ExcelUpload from './pages/admin/ExcelUpload';
 import RemarksMonitor from './pages/admin/RemarksMonitor';
+import RemarksMonitorCategory from './pages/admin/RemarksMonitorCategory';
 import SystemReports from './pages/admin/SystemReports';
 import EducationReports from './pages/admin/EducationReports';
 import QualityReports from './pages/admin/QualityReports';
@@ -115,6 +116,7 @@ const router = createBrowserRouter([
       { path: 'users',                        element: <UserManagement /> },
       { path: 'upload',                       element: <ExcelUpload /> },
       { path: 'remarks-monitor',              element: <RemarksMonitor /> },
+      { path: 'remarks-monitor/category',     element: <RemarksMonitorCategory /> },
       { path: 'team',                         element: <TeamPage /> },
       { path: 'reports/trainer-utilization',  element: <TrainerUtilization /> },
       { path: 'reports/find-available-trainer', element: <TrainerAvailabilityFinder /> },

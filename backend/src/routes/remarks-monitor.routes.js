@@ -388,6 +388,136 @@ router.get('/dashboard', authenticate, (req, res) => {
   }
 });
 
+// ─── GET /api/remarks-monitor/category-distribution ───────────────────────────
+// Category-focused view (defaults to Inprogress) — shows per-Remark event
+// metrics: total events, first/last event, time since last event (active duration).
+router.get('/category-distribution', authenticate, (req, res) => {
+  const userLine = req.user?.line || 'Ahmed Hassan';
+  const role = req.user?.role || 'agent';
+  let line = req.query.line || userLine;
+  if (userLine !== 'All') line = userLine;
+
+  if (!line || line === 'All') {
+    return res.status(400).json({ error: 'يجب تحديد الـ Line' });
+  }
+
+  const limit  = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+  const offset = parseInt(req.query.offset, 10) || 0;
+  const category   = req.query.category   || 'Inprogress';
+  const assignedTo = req.query.assigned_to || null;
+  const search     = (req.query.search || '').trim();
+  const sortBy     = req.query.sort || 'last_event_desc';
+
+  try {
+    const latestSnap = db.prepare(
+      `SELECT id, snapshot_at FROM remark_snapshots WHERE line = ? ORDER BY id DESC LIMIT 1`
+    ).get(line);
+
+    if (!latestSnap) {
+      return res.json({ remarks: [], total: 0, category, latest_snapshot: null });
+    }
+
+    const wheres = ['lr.line = ?', 'lr.snapshot_id = ?', 'lr.category = ?'];
+    const params = [line, latestSnap.id, category];
+
+    if (assignedTo) {
+      wheres.push('lr.assigned_to = ?');
+      params.push(assignedTo);
+    }
+
+    if (role === 'agent' && req.user?.full_name) {
+      wheres.push('lr.assigned_to = ?');
+      params.push(req.user.full_name);
+    }
+
+    if (search) {
+      wheres.push(`(
+        CAST(lr.external_id AS TEXT) LIKE ? OR
+        lr.client_name LIKE ? OR
+        lr.client_phone LIKE ? OR
+        lr.assigned_to LIKE ?
+      )`);
+      const s = `%${search}%`;
+      params.push(s, s, s, s);
+    }
+
+    const whereClause = wheres.join(' AND ');
+
+    const totalRow = db.prepare(
+      `SELECT COUNT(*) as c FROM remark_snapshot_rows lr WHERE ${whereClause}`
+    ).get(...params);
+    const total = totalRow ? totalRow.c : 0;
+
+    let orderBy = '';
+    switch (sortBy) {
+      case 'time_since_last_desc': orderBy = 'last_event_at ASC';  break;
+      case 'events_desc':          orderBy = 'total_events DESC';  break;
+      case 'first_event_asc':      orderBy = 'first_event_at ASC'; break;
+      case 'last_event_desc':
+      default:                     orderBy = 'last_event_at DESC'; break;
+    }
+
+    const rows = db.prepare(
+      `SELECT lr.external_id, lr.task_type, lr.assigned_to, lr.details,
+              lr.category, lr.status, lr.client_name, lr.client_phone,
+              lr.priority, lr.assigned_by, lr.notes_count,
+              lr.added_at, lr.last_updated,
+              COALESCE(stats.total_events, 0) as total_events,
+              stats.first_event_at,
+              stats.last_event_at
+         FROM remark_snapshot_rows lr
+         LEFT JOIN (
+           SELECT external_id, line, COUNT(*) as total_events,
+                  MIN(occurred_at) as first_event_at,
+                  MAX(occurred_at) as last_event_at
+             FROM remark_activity_events
+            WHERE line = ?
+            GROUP BY external_id, line
+         ) stats ON lr.external_id = stats.external_id AND lr.line = stats.line
+        WHERE ${whereClause}
+        ORDER BY ${orderBy} NULLS LAST, lr.external_id DESC
+        LIMIT ? OFFSET ?`
+    ).all(line, ...params, limit, offset);
+
+    const nowMs = Date.now();
+    function durationFromMs(ms) {
+      const totalMinutes = Math.floor(Math.max(0, ms) / 60000);
+      const days    = Math.floor(totalMinutes / 1440);
+      const hours   = Math.floor((totalMinutes % 1440) / 60);
+      const minutes = totalMinutes % 60;
+      return { days, hours, minutes, total_minutes: totalMinutes };
+    }
+
+    const decorated = rows.map(r => {
+      let time_since_last = null;
+      if (r.last_event_at) {
+        const t = Date.parse(r.last_event_at);
+        if (!isNaN(t)) time_since_last = durationFromMs(nowMs - t);
+      }
+
+      let active_span = null;
+      if (r.first_event_at && r.last_event_at) {
+        const t1 = Date.parse(r.first_event_at);
+        const t2 = Date.parse(r.last_event_at);
+        if (!isNaN(t1) && !isNaN(t2)) active_span = durationFromMs(t2 - t1);
+      }
+
+      return { ...r, time_since_last, active_span };
+    });
+
+    return res.json({
+      remarks: decorated,
+      total,
+      category,
+      latest_snapshot: latestSnap,
+      page: { limit, offset },
+    });
+  } catch (err) {
+    console.error('[remarks-monitor] category-distribution error:', err);
+    return res.status(500).json({ error: 'فشل التحميل', details: err.message });
+  }
+});
+
 // ─── GET /api/remarks-monitor/timeline/:externalId ────────────────────────────
 // Full activity timeline for a single remark
 router.get('/timeline/:externalId', authenticate, (req, res) => {

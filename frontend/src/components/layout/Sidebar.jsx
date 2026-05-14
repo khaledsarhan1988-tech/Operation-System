@@ -117,6 +117,7 @@ function getAdminLinks(user) {
   const monitoring = [
     { type: 'section', label: 'المراقبة' },
     { to: '/admin/remarks-monitor', label: 'مراقبة الـ Remarks', icon: Activity, color: 'fuchsia' },
+    { to: '/admin/remarks-monitor/category', label: 'توزيع التصنيفات', icon: BarChart3, color: 'pink', sub: true },
   ];
 
   return [...base, ...reports, ...monitoring];
