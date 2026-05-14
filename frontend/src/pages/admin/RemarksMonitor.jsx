@@ -344,6 +344,25 @@ export default function RemarksMonitor() {
     } finally { setDeletingId(null); }
   }
 
+  async function handleCleanupOrphans() {
+    if (!confirm('سيتم حذف كل الأحداث والـ Rows اللي مفيهاش Snapshot موجود (نتيجة حذف سابق). هل تريد المتابعة؟')) return;
+    try {
+      const { data } = await api.post('/remarks-monitor/cleanup-orphans', { line: selectedLine });
+      setSnapResult({
+        message: data.message,
+        snapshot_id: '—',
+        events_generated: data.orphaned_events_deleted,
+        prev_snapshot_id: null,
+        line: selectedLine,
+        source: 'cleanup',
+        cleaned_rows: data.orphaned_rows_deleted,
+      });
+      await Promise.all([loadSnapshots(), loadDashboard()]);
+    } catch (err) {
+      setSnapError(err.response?.data?.details || err.response?.data?.error || err.message);
+    }
+  }
+
   function updateFilter(key, value) {
     setFilters(f => ({ ...f, [key]: value }));
     setPage(0);
@@ -491,6 +510,21 @@ export default function RemarksMonitor() {
                 </button>
               </div>
             )}
+          </div>
+
+          {/* Cleanup button */}
+          <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-xl p-3">
+            <div>
+              <p className="text-sm font-semibold text-amber-900">تنظيف البيانات المعلقة</p>
+              <p className="text-xs text-amber-700">يحذف الأحداث والـ rows اللي بقيت ما لها Snapshot (من حذف سابق)</p>
+            </div>
+            <button
+              onClick={handleCleanupOrphans}
+              className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-sm font-bold flex items-center gap-1.5"
+            >
+              <Trash2 size={14} />
+              نظف الآن
+            </button>
           </div>
 
           {/* Snapshots list */}

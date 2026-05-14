@@ -4,7 +4,7 @@ const multer = require('multer');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const db = require('../config/database');
-const { ingestSnapshot, ingestSnapshotFromDb, deleteSnapshot } = require('../services/remarksMonitor.service');
+const { ingestSnapshot, ingestSnapshotFromDb, deleteSnapshot, cleanupOrphans } = require('../services/remarksMonitor.service');
 
 const router = express.Router();
 
@@ -171,6 +171,27 @@ router.delete(
     }
   }
 );
+
+// ─── POST /api/remarks-monitor/cleanup-orphans ────────────────────────────────
+// One-time cleanup for events/rows whose parent snapshot was deleted but
+// CASCADE didn't fire (sql.js limitation). Safe to call multiple times.
+router.post('/cleanup-orphans', authenticate, requireRole('leader'), (req, res) => {
+  const userLine = req.user?.line || 'Ahmed Hassan';
+  let line = (req.body && req.body.line) || req.query.line || userLine;
+  if (userLine !== 'All') line = userLine;
+
+  try {
+    const result = cleanupOrphans(line);
+    return res.json({
+      message: 'تم تنظيف الأحداث المعلقة',
+      ...result,
+      line,
+    });
+  } catch (err) {
+    console.error('[remarks-monitor] cleanup error:', err);
+    return res.status(500).json({ error: 'فشل التنظيف', details: err.message });
+  }
+});
 
 // ─── GET /api/remarks-monitor/filters ─────────────────────────────────────────
 // Returns dropdown values for the dashboard filters

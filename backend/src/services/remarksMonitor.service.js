@@ -350,10 +350,53 @@ function deleteSnapshot(snapshotId, line) {
     if (!snap) {
       throw new Error(`Snapshot #${snapshotId} غير موجود في الـ Line: ${line}`);
     }
-    // ON DELETE CASCADE handles remark_snapshot_rows + remark_activity_events.to_snapshot_id
-    // from_snapshot_id is SET NULL (keeps events from later snapshots intact).
-    const result = db.prepare(`DELETE FROM remark_snapshots WHERE id = ?`).run(snapshotId);
-    return { deleted_snapshot_id: snapshotId, changes: result.changes };
+    // sql.js doesn't reliably honor ON DELETE CASCADE — do it explicitly.
+    const evtDel = db.prepare(
+      `DELETE FROM remark_activity_events WHERE to_snapshot_id = ?`
+    ).run(snapshotId);
+    db.prepare(
+      `UPDATE remark_activity_events SET from_snapshot_id = NULL WHERE from_snapshot_id = ?`
+    ).run(snapshotId);
+    const rowsDel = db.prepare(
+      `DELETE FROM remark_snapshot_rows WHERE snapshot_id = ?`
+    ).run(snapshotId);
+    const snapDel = db.prepare(
+      `DELETE FROM remark_snapshots WHERE id = ?`
+    ).run(snapshotId);
+    return {
+      deleted_snapshot_id: snapshotId,
+      changes: snapDel.changes,
+      events_deleted: evtDel.changes,
+      rows_deleted: rowsDel.changes,
+    };
+  })();
+}
+
+function cleanupOrphans(line) {
+  return db.transaction(() => {
+    const lineFilter = line && line !== 'All' ? ` AND line = ?` : '';
+    const lineParam = line && line !== 'All' ? [line] : [];
+
+    const evtDel = db.prepare(
+      `DELETE FROM remark_activity_events
+        WHERE to_snapshot_id NOT IN (SELECT id FROM remark_snapshots)${lineFilter}`
+    ).run(...lineParam);
+
+    const rowsDel = db.prepare(
+      `DELETE FROM remark_snapshot_rows
+        WHERE snapshot_id NOT IN (SELECT id FROM remark_snapshots)${lineFilter}`
+    ).run(...lineParam);
+
+    db.prepare(
+      `UPDATE remark_activity_events SET from_snapshot_id = NULL
+        WHERE from_snapshot_id IS NOT NULL
+          AND from_snapshot_id NOT IN (SELECT id FROM remark_snapshots)${lineFilter}`
+    ).run(...lineParam);
+
+    return {
+      orphaned_events_deleted: evtDel.changes,
+      orphaned_rows_deleted: rowsDel.changes,
+    };
   })();
 }
 
@@ -374,5 +417,6 @@ module.exports = {
   ingestSnapshot,
   ingestSnapshotFromDb,
   deleteSnapshot,
+  cleanupOrphans,
   purgeOldSnapshotRows,
 };
