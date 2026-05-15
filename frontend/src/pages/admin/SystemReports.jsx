@@ -2513,7 +2513,21 @@ export default function SystemReports() {
         <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
           <Users size={11} /> حالة المجموعات
         </p>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+          <KpiCard
+            label="إجمالي المجموعات"
+            value={(kpis.active_groups ?? 0) + (kpis.waiting_trainees ?? 0) + (kpis.waiting_lectures ?? 0)}
+            icon={Layers}
+            gradient="linear-gradient(135deg, #0f766e 0%, #14b8a6 100%)"
+            loading={isLoading}
+            onClick={() => setGroupsModal({
+              title: 'إجمالي المجموعات',
+              groups: [
+                ...(data?.active_groups_list ?? []),
+                ...(data?.waiting_trainees_list ?? []),
+                ...(data?.waiting_lectures_list ?? []),
+              ],
+            })} />
           <KpiCard label="مجموعات نشطة" value={kpis.active_groups} icon={Users}
             gradient="linear-gradient(135deg, #1e3a5f 0%, #2d5a9e 100%)"
             loading={isLoading}
