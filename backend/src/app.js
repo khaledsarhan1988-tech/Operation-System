@@ -942,6 +942,29 @@ initDb().then(db => {
     console.error('quality_report_snapshots migration error:', e.message);
   }
 
+  // ── drive_sync_runs: audit log for Drive auto-sync (cron + manual triggers) ──
+  try {
+    db._raw.run(`CREATE TABLE IF NOT EXISTS drive_sync_runs (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      trigger      TEXT NOT NULL CHECK(trigger IN ('cron','manual')),
+      status       TEXT NOT NULL CHECK(status IN ('success','partial','error')),
+      started_at   TEXT NOT NULL,
+      finished_at  TEXT NOT NULL,
+      duration_ms  INTEGER NOT NULL DEFAULT 0,
+      imported     INTEGER NOT NULL DEFAULT 0,
+      skipped      INTEGER NOT NULL DEFAULT 0,
+      failed       INTEGER NOT NULL DEFAULT 0,
+      error_msg    TEXT,
+      details_json TEXT
+    )`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_drive_sync_runs_started ON drive_sync_runs(started_at)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_drive_sync_runs_status  ON drive_sync_runs(status)`);
+    saveNow();
+    console.log('✅ Migration: drive_sync_runs ready');
+  } catch (e) {
+    console.error('drive_sync_runs migration error:', e.message);
+  }
+
   // ── Auto-upsert admin user on every startup ───────────────────────────────
   // Ensures admin always exists even after DB reset (e.g. Railway redeploy).
   try {
@@ -996,6 +1019,7 @@ initDb().then(db => {
   // Routes
   app.use('/api/auth',    require('./routes/auth.routes'));
   app.use('/api/upload',  require('./routes/upload.routes'));
+  app.use('/api/drive',   require('./routes/drive.routes'));
   app.use('/api/agent',   require('./routes/agent.routes'));
   app.use('/api/clients', require('./routes/clients.routes'));
   app.use('/api/remarks', require('./routes/remarks.routes'));
@@ -1064,6 +1088,88 @@ initDb().then(db => {
     } catch (e) {
       console.error('Failed to schedule auto-freeze cron:', e.message);
     }
+  }
+
+  // ─── DRIVE AUTO-SYNC CRON ────────────────────────────────────────────────
+  // Pulls today's latest files from Google Drive for every line and imports
+  // them into the DB. Controlled by env vars (opt-in):
+  //   DRIVE_AUTO_SYNC_ENABLED=1                   — must be set to enable
+  //   DRIVE_AUTO_SYNC_CRON='0 */1 * * *'          — defaults to top of every hour
+  //   DRIVE_AUTO_SYNC_TZ='Africa/Cairo'           — defaults to Cairo
+  //
+  // Set DRIVE_AUTO_SYNC_ENABLED=1 only after credentials.json / GOOGLE_CREDENTIALS_JSON
+  // and DRIVE_ROOT_FOLDER_ID are configured. Disabled by default so existing
+  // deployments don't suddenly start hitting Drive on startup.
+  if (process.env.DRIVE_AUTO_SYNC_ENABLED === '1') {
+    try {
+      const cron = require('node-cron');
+      const driveSyncService = require('./services/driveSync.service');
+      const cronExpr = process.env.DRIVE_AUTO_SYNC_CRON || '0 */1 * * *';
+      const tz       = process.env.DRIVE_AUTO_SYNC_TZ   || 'Africa/Cairo';
+
+      if (!cron.validate(cronExpr)) {
+        console.error(`Drive auto-sync: invalid cron expression "${cronExpr}", skipping schedule.`);
+      } else {
+        cron.schedule(cronExpr, async () => {
+          try {
+            const result = await driveSyncService.runAutoSync('cron');
+            console.log(
+              `☁️  Drive auto-sync (${result.status}): imported=${result.totals.imported} ` +
+              `skipped=${result.totals.skipped} failed=${result.totals.failed} ` +
+              `duration=${result.durationMs}ms`
+            );
+            if (result.error) console.error('   error:', result.error);
+          } catch (e) {
+            console.error('Drive auto-sync cron error:', e.message);
+          }
+        }, { timezone: tz });
+        console.log(`⏰ Drive auto-sync cron scheduled (${cronExpr}, ${tz})`);
+      }
+    } catch (e) {
+      console.error('Failed to schedule Drive auto-sync cron:', e.message);
+    }
+  } else {
+    console.log('☁️  Drive auto-sync cron disabled (set DRIVE_AUTO_SYNC_ENABLED=1 to enable).');
+  }
+
+  // ─── DRIVE FOLDER PREP CRON ──────────────────────────────────────────────
+  // Pre-creates the day's folder structure (Line/YYYY/MM/DD/<7 file-type folders>)
+  // for every line so the Quality team finds folders ready when they log in.
+  // Controlled by env vars (opt-in):
+  //   DRIVE_PREP_FOLDERS_ENABLED=1                — must be set to enable
+  //   DRIVE_PREP_FOLDERS_CRON='30 0 * * *'        — defaults to 00:30 daily (just past midnight)
+  //   DRIVE_PREP_FOLDERS_TZ='Africa/Cairo'        — defaults to Cairo
+  if (process.env.DRIVE_PREP_FOLDERS_ENABLED === '1') {
+    try {
+      const cron = require('node-cron');
+      const googleDrive = require('./services/googleDrive.service');
+      const { VALID_LINES: prepLines } = require('./services/sync.service');
+      const cronExpr = process.env.DRIVE_PREP_FOLDERS_CRON || '30 0 * * *';
+      const tz       = process.env.DRIVE_PREP_FOLDERS_TZ   || 'Africa/Cairo';
+
+      if (!cron.validate(cronExpr)) {
+        console.error(`Drive prep-folders: invalid cron expression "${cronExpr}", skipping schedule.`);
+      } else {
+        cron.schedule(cronExpr, async () => {
+          const today = new Date();
+          for (const line of prepLines) {
+            try {
+              const r = await googleDrive.prepareDayFolders(line, today);
+              const made = r.folders.filter(f => f.created).length;
+              const kept = r.folders.length - made;
+              console.log(`📁 Drive prep ${line} ${r.date}: created=${made} existing=${kept}`);
+            } catch (e) {
+              console.error(`Drive prep ${line} failed:`, e.message);
+            }
+          }
+        }, { timezone: tz });
+        console.log(`⏰ Drive prep-folders cron scheduled (${cronExpr}, ${tz})`);
+      }
+    } catch (e) {
+      console.error('Failed to schedule Drive prep-folders cron:', e.message);
+    }
+  } else {
+    console.log('📁 Drive prep-folders cron disabled (set DRIVE_PREP_FOLDERS_ENABLED=1 to enable).');
   }
 
   // Graceful shutdown

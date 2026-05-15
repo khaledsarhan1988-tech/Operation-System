@@ -4,3 +4,9 @@ data/academy.db-wal
 data/academy.db-shm
 .env
 *.log
+
+# Google Drive integration — never commit credentials
+credentials.json
+*credentials*.json
+google-credentials.json
+src/config/drive-folders.json
