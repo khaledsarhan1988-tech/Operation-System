@@ -4285,6 +4285,182 @@ router.get('/attendance-absence', (req, res) => {
   }
 });
 
+// ─── GET /api/reports/attendance-absence-by-department ────────────────────────
+// Aggregated attendance & absence stats grouped by department (Semi/Private/General).
+// Same filters and same formulas as /attendance-absence, just grouped differently.
+router.get('/attendance-absence-by-department', (req, res) => {
+  const { from_date, to_date, coordinator } = req.query;
+  const line = lineFilter(req);
+  const lineL = buildLineFilter('l', line);
+  const lineA = buildLineFilter('a', line);
+
+  let deptFilterB = '', deptFilterB2 = '';
+  let coordFilterB = buildCoordFilter('b', coordinator);
+  let coordFilterB2 = buildCoordFilter('b2', coordinator);
+  if (req.user?.role === 'leader') {
+    deptFilterB  = buildStrictDeptFilter('b',  req.user.department);
+    deptFilterB2 = buildStrictDeptFilter('b2', req.user.department);
+  } else if (req.user?.role === 'admin') {
+    deptFilterB  = buildDeptFilter('b',  req.query.department);
+    deptFilterB2 = buildDeptFilter('b2', req.query.department);
+  } else if (req.user?.role === 'agent') {
+    coordFilterB  = buildCoordFilter('b',  req.user.full_name);
+    coordFilterB2 = buildCoordFilter('b2', req.user.full_name);
+  }
+
+  const dateFilterL = buildDateFilter('l.date', from_date, to_date);
+  const dateFilterResolved = from_date && to_date
+    ? ` AND resolved_date BETWEEN '${from_date}' AND '${to_date}'`
+    : from_date ? ` AND resolved_date >= '${from_date}'`
+    : to_date   ? ` AND resolved_date <= '${to_date}'` : '';
+
+  try {
+    // MAIN EXPECTED per department
+    const mainExpectedRows = db.prepare(`
+      SELECT COALESCE(b.dept_type, '—') AS department,
+        COALESCE(SUM(b.trainee_count), 0) AS cnt,
+        COUNT(DISTINCT b.coordinators) AS coords
+      FROM lectures l
+      INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
+      WHERE l.session_type = 'main' AND l.status != 'غير مؤكدة'
+      ${dateFilterL}${deptFilterB}${coordFilterB}${lineL}
+      GROUP BY b.dept_type
+    `).all();
+
+    // MAIN ABSENT — Part 1 per department
+    const mainAbsentPart1 = db.prepare(`
+      SELECT department, COUNT(*) AS cnt FROM (
+        SELECT COALESCE(b.dept_type, '—') AS department,
+          COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS resolved_date
+        FROM absent_students a
+        LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
+        LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
+          AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.phone = a.phone${line ? ' AND c_lu.line = a.line' : ''}
+        LEFT JOIN (
+          SELECT group_name, date, line,
+            ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
+          FROM lectures WHERE session_type='main' AND status != 'غير مؤكدة'${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''}
+        ) lec_inf ON (a.date IS NULL OR TRIM(a.date)='')
+          AND lec_inf.group_name = a.group_name
+          AND a.lecture_no IS NOT NULL
+          AND lec_inf.lec_num = a.lecture_no${line ? ' AND lec_inf.line = a.line' : ''}
+        WHERE (
+          (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
+          OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+        )
+        ${deptFilterB}${coordFilterB}${lineA}
+      ) p1
+      WHERE 1=1${dateFilterResolved}
+      GROUP BY department
+    `).all();
+
+    // MAIN ABSENT — Part 2 per department
+    const mainAbsentPart2 = db.prepare(`
+      SELECT COALESCE(b2.dept_type, '—') AS department, COUNT(*) AS cnt
+      FROM lectures l
+      INNER JOIN batches b2 ON l.group_name = b2.group_name${line ? ' AND b2.line = l.line' : ''}
+      INNER JOIN clients c ON c.group_name = l.group_name${line ? ' AND c.line = l.line' : ''}
+      LEFT JOIN absent_students a ON a.group_name = l.group_name AND a.lecture_no IS NOT NULL${line ? ' AND a.line = l.line' : ''}
+      WHERE l.session_type = 'main' AND l.status != 'غير مؤكدة'
+        AND (l.attendance IS NULL OR TRIM(l.attendance) = '')
+        AND a.id IS NULL
+      ${dateFilterL}${deptFilterB2}${coordFilterB2}${lineL}
+      GROUP BY b2.dept_type
+    `).all();
+
+    // ZOOM EXPECTED per department
+    const zoomBatchSubQ = line
+      ? `(SELECT b.group_name,
+           COALESCE(lc.canonical_line, MIN(b.line)) AS line,
+           MAX(b.coordinators) AS coordinators, MAX(b.dept_type) AS dept_type
+         FROM batches b
+         LEFT JOIN (SELECT group_name, MIN(line) AS canonical_line FROM lectures WHERE session_type = 'side' GROUP BY group_name) lc ON lc.group_name = b.group_name
+         WHERE b.line = '${line.replace(/'/g, "''")}'
+         GROUP BY b.group_name)`
+      : `(SELECT b.group_name,
+           COALESCE(lc.canonical_line, MIN(b.line)) AS line,
+           MAX(b.coordinators) AS coordinators, MAX(b.dept_type) AS dept_type
+         FROM batches b
+         LEFT JOIN (SELECT group_name, MIN(line) AS canonical_line FROM lectures WHERE session_type = 'side' GROUP BY group_name) lc ON lc.group_name = b.group_name
+         GROUP BY b.group_name)`;
+
+    const zoomExpectedRows = db.prepare(`
+      SELECT department, COALESCE(SUM(expected_slots), 0) AS cnt FROM (
+        SELECT COALESCE(b.dept_type, '—') AS department,
+          COUNT(*) AS expected_slots
+        FROM lectures l
+        INNER JOIN ${zoomBatchSubQ} b ON l.group_name = b.group_name AND l.line = b.line
+        WHERE l.session_type = 'side'
+          AND l.status = 'مؤكدة'
+          AND (l.duration IS NULL OR l.duration <= '00:15')
+        ${dateFilterL}${deptFilterB}${coordFilterB}
+        GROUP BY b.dept_type, l.group_name, l.date
+      ) sub
+      GROUP BY department
+    `).all();
+
+    const zoomAbsentRows = db.prepare(`
+      SELECT department, COALESCE(SUM(absent_count), 0) AS cnt FROM (
+        SELECT COALESCE(b.dept_type, '—') AS department,
+          COUNT(*) -
+            SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != ''
+                     AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END)
+            AS absent_count
+        FROM lectures l
+        INNER JOIN ${zoomBatchSubQ} b ON l.group_name = b.group_name AND l.line = b.line
+        WHERE l.session_type = 'side'
+          AND l.status = 'مؤكدة'
+          AND (l.duration IS NULL OR l.duration <= '00:15')
+        ${dateFilterL}${deptFilterB}${coordFilterB}
+        GROUP BY b.dept_type, l.group_name, l.date
+        HAVING absent_count > 0
+      ) sub
+      GROUP BY department
+    `).all();
+
+    // Merge per department
+    const map = new Map();
+    const ensure = (raw) => {
+      const key = raw || '—';
+      if (!map.has(key)) {
+        map.set(key, {
+          department: key,
+          coordinators: 0,
+          main_expected: 0, main_absent: 0,
+          zoom_expected: 0, zoom_absent: 0,
+        });
+      }
+      return map.get(key);
+    };
+
+    mainExpectedRows.forEach(r => {
+      const bucket = ensure(r.department);
+      bucket.main_expected += r.cnt || 0;
+      bucket.coordinators = Math.max(bucket.coordinators, r.coords || 0);
+    });
+    mainAbsentPart1.forEach(r => { ensure(r.department).main_absent += r.cnt || 0; });
+    mainAbsentPart2.forEach(r => { ensure(r.department).main_absent += r.cnt || 0; });
+    zoomExpectedRows.forEach(r => { ensure(r.department).zoom_expected += r.cnt || 0; });
+    zoomAbsentRows.forEach(r => { ensure(r.department).zoom_absent += r.cnt || 0; });
+
+    const result = Array.from(map.values())
+      .filter(r => r.main_expected + r.zoom_expected > 0)
+      .map(r => ({
+        ...r,
+        main_absence_rate: r.main_expected > 0
+          ? Math.round((r.main_absent / r.main_expected) * 100) : 0,
+        zoom_absence_rate: r.zoom_expected > 0
+          ? Math.round((r.zoom_absent / r.zoom_expected) * 100) : 0,
+      }))
+      .sort((a, b) => (b.main_absent + b.zoom_absent) - (a.main_absent + a.zoom_absent));
+
+    return res.json(result);
+  } catch (err) {
+    console.error('[reports] attendance-absence-by-department error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/reports/quality-employee ────────────────────────────────────────
 // Per-employee Quality summary:
 //   - code_problems_fixed   = problems on agent's groups whose status moved to

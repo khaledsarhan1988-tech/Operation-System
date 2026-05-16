@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   UserX, Users, Video, CalendarDays, TrendingDown, XCircle,
-  AlertTriangle, CheckCircle2, Activity, Search,
+  AlertTriangle, CheckCircle2, Activity, Search, Layers, Building2,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -108,6 +108,7 @@ export default function AttendanceAbsenceReport() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [coordQuery, setCoordQuery] = useState('');
+  const [department, setDepartment] = useState('');  // '' = all
 
   const hasDateRange = dateFrom || dateTo;
   const effective = useMemo(() => {
@@ -116,11 +117,21 @@ export default function AttendanceAbsenceReport() {
     return { from: r.from || undefined, to: r.to || undefined };
   }, [hasDateRange, dateFrom, dateTo, period]);
 
+  const queryParams = useMemo(() => {
+    const p = { from_date: effective.from, to_date: effective.to };
+    if (department) p.department = department;
+    return p;
+  }, [effective.from, effective.to, department]);
+
   const { data: raw, isLoading } = useQuery({
-    queryKey: ['attendance-absence', effective.from, effective.to],
-    queryFn: () => api.get('/reports/attendance-absence', {
-      params: { from_date: effective.from, to_date: effective.to },
-    }).then(r => r.data),
+    queryKey: ['attendance-absence', queryParams],
+    queryFn: () => api.get('/reports/attendance-absence', { params: queryParams }).then(r => r.data),
+    staleTime: 60 * 1000,
+  });
+
+  const { data: deptData } = useQuery({
+    queryKey: ['attendance-absence-by-department', queryParams],
+    queryFn: () => api.get('/reports/attendance-absence-by-department', { params: queryParams }).then(r => r.data),
     staleTime: 60 * 1000,
   });
 
@@ -185,6 +196,19 @@ export default function AttendanceAbsenceReport() {
           onChange={e => setCoordQuery(e.target.value)}
           className="bg-transparent text-white placeholder-white/50 text-xs font-bold focus:outline-none w-40"
         />
+      </div>
+      <div className="flex items-center gap-1.5 bg-white/10 backdrop-blur-md border border-white/20 rounded-xl px-3 py-1.5">
+        <Building2 size={13} className="text-white/70" />
+        <select
+          value={department}
+          onChange={e => setDepartment(e.target.value)}
+          className="bg-transparent text-white text-xs font-bold focus:outline-none cursor-pointer border-0"
+        >
+          <option value="" className="text-gray-700">كل الأقسام</option>
+          <option value="General" className="text-gray-700">General</option>
+          <option value="Private" className="text-gray-700">Private</option>
+          <option value="Semi" className="text-gray-700">Semi</option>
+        </select>
       </div>
       <select
         value={period}
@@ -327,6 +351,77 @@ export default function AttendanceAbsenceReport() {
             iconColor: 'text-amber-600',
           }}
         />
+      </div>
+
+      {/* ─── Per-Department Averages ─────────────────────────────── */}
+      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
+        <div className="flex items-center justify-between flex-wrap gap-3 px-5 py-3 bg-gradient-to-l from-violet-50/40 to-white border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 bg-violet-100 rounded-lg">
+              <Layers size={14} className="text-violet-600" />
+            </div>
+            <div>
+              <p className="text-sm font-bold text-gray-700">متوسط النسب لكل قسم</p>
+              <p className="text-[10px] text-gray-500">نسبة موزّونة (مجموع الغياب ÷ مجموع المتوقع)</p>
+            </div>
+          </div>
+        </div>
+        <div className="p-4">
+          {!deptData || deptData.length === 0 ? (
+            <p className="text-center py-6 text-gray-400 text-xs font-bold">لا توجد بيانات</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {deptData.map(d => {
+                const deptCls = {
+                  General: { bg: 'bg-blue-50',    bd: 'border-blue-200',    fg: 'text-blue-700'    },
+                  Private: { bg: 'bg-violet-50',  bd: 'border-violet-200',  fg: 'text-violet-700'  },
+                  Semi:    { bg: 'bg-orange-50',  bd: 'border-orange-200',  fg: 'text-orange-700'  },
+                }[d.department] || { bg: 'bg-gray-50', bd: 'border-gray-200', fg: 'text-gray-700' };
+                const rateBadge = (r) => r >= 30 ? 'text-rose-700 bg-rose-100'
+                                       : r >= 15 ? 'text-amber-700 bg-amber-100'
+                                       : r > 0   ? 'text-emerald-700 bg-emerald-100'
+                                       :           'text-gray-500 bg-gray-100';
+                return (
+                  <div key={d.department}
+                       className={`rounded-xl border ${deptCls.bd} ${deptCls.bg} p-3`}>
+                    <div className="flex items-center justify-between mb-2.5">
+                      <span className={`text-xs font-black ${deptCls.fg}`}>{d.department}</span>
+                      <span className="text-[10px] font-bold text-gray-500">
+                        {d.coordinators || 0} منسق
+                      </span>
+                    </div>
+                    <div className="mb-2">
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="text-[10px] font-bold text-gray-600 inline-flex items-center gap-1">
+                          <UserX size={10} className="text-rose-500" /> غياب أساسي
+                        </span>
+                        <span className={`text-[11px] font-black px-1.5 py-0.5 rounded-md ${rateBadge(d.main_absence_rate)}`}>
+                          {d.main_absence_rate}%
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-gray-500 font-mono">
+                        {d.main_absent.toLocaleString('en-US')} / {d.main_expected.toLocaleString('en-US')}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="text-[10px] font-bold text-gray-600 inline-flex items-center gap-1">
+                          <TrendingDown size={10} className="text-violet-500" /> غياب زووم
+                        </span>
+                        <span className={`text-[11px] font-black px-1.5 py-0.5 rounded-md ${rateBadge(d.zoom_absence_rate)}`}>
+                          {d.zoom_absence_rate}%
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-gray-500 font-mono">
+                        {d.zoom_absent.toLocaleString('en-US')} / {d.zoom_expected.toLocaleString('en-US')}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ─── Data Table ──────────────────────────────────────────── */}
