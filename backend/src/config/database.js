@@ -36,17 +36,55 @@ function _atomicWrite(data) {
   _fileTs = _fileMtime();
 }
 
-function _reloadFromDisk() {
+function _reloadFromDisk(reason = 'newer version detected from another process') {
   try {
-    if (!fs.existsSync(DB_PATH)) return;
+    if (!fs.existsSync(DB_PATH)) return false;
     const data = fs.readFileSync(DB_PATH);
-    if (_rawDb) _rawDb.close();
+    try { if (_rawDb) _rawDb.close(); } catch (_) { /* corrupted close, ignore */ }
     _rawDb = new _SQL.Database(data);
     _applyPragmas();
     _fileTs = _fileMtime();
-    console.log('[DB] Reloaded from disk — newer version detected from another process');
+    console.log(`[DB] Reloaded from disk — ${reason}`);
+    return true;
   } catch (e) {
     console.error('[DB] Reload error:', e.message);
+    return false;
+  }
+}
+
+// SELF-HEALING: detect WASM/sql.js corruption errors that indicate the
+// in-memory DB state is broken. On detection, we reload from disk and retry
+// the failed operation once. This prevents a heavy operation (e.g. 16K-row
+// snapshot ingest) from permanently breaking the server for all users.
+function _isWasmCorruption(err) {
+  if (!err) return false;
+  const msg = String(err.message || err).toLowerCase();
+  return msg.includes('memory access out of bounds')
+      || msg.includes('memory access out-of-bounds')
+      || msg.includes('null function or function signature mismatch')
+      || msg.includes('table index is out of bounds')
+      || msg.includes('bad parameter or other api misuse')
+      || msg.includes('sqlite_misuse')
+      || msg.includes('out of memory');
+}
+
+function _withRecovery(fn, opName = 'query') {
+  try {
+    return fn();
+  } catch (err) {
+    if (_inTransaction) throw err;  // transaction is doomed — caller must rollback
+    if (!_isWasmCorruption(err)) throw err;
+    console.warn(`[DB] WASM corruption on ${opName} — reloading from disk:`, err.message);
+    const reloaded = _reloadFromDisk('WASM corruption recovery');
+    if (!reloaded) throw err;
+    try {
+      const result = fn();
+      console.log(`[DB] Recovery succeeded for ${opName}`);
+      return result;
+    } catch (retryErr) {
+      console.error(`[DB] Recovery failed for ${opName}:`, retryErr.message);
+      throw retryErr;
+    }
   }
 }
 
@@ -110,6 +148,18 @@ class PreparedStatement {
   constructor(sql) { this._sql = sql; }
 
   run(...args) {
+    return _withRecovery(() => this._doRun(args), 'run');
+  }
+
+  get(...args) {
+    return _withRecovery(() => this._doGet(args), 'get');
+  }
+
+  all(...args) {
+    return _withRecovery(() => this._doAll(args), 'all');
+  }
+
+  _doRun(args) {
     const params = flattenParams(args);
     const stmt = _rawDb.prepare(this._sql);
     try {
@@ -118,19 +168,19 @@ class PreparedStatement {
       const changes = _rawDb.exec('SELECT changes()')[0]?.values[0][0] ?? 0;
       scheduleSave();
       return { lastInsertRowid: rowid, changes };
-    } finally { stmt.free(); }
+    } finally { try { stmt.free(); } catch (_) {} }
   }
 
-  get(...args) {
+  _doGet(args) {
     const params = flattenParams(args);
     const stmt = _rawDb.prepare(this._sql);
     try {
       stmt.bind(params);
       return stmt.step() ? stmt.getAsObject() : undefined;
-    } finally { stmt.free(); }
+    } finally { try { stmt.free(); } catch (_) {} }
   }
 
-  all(...args) {
+  _doAll(args) {
     const params = flattenParams(args);
     const stmt = _rawDb.prepare(this._sql);
     try {
@@ -138,7 +188,7 @@ class PreparedStatement {
       const rows = [];
       while (stmt.step()) rows.push(stmt.getAsObject());
       return rows;
-    } finally { stmt.free(); }
+    } finally { try { stmt.free(); } catch (_) {} }
   }
 }
 
@@ -193,6 +243,24 @@ const db = {
   close() {
     saveNow();
     if (_rawDb) { _rawDb.close(); _rawDb = null; }
+  },
+
+  // Public reload — re-reads DB from disk (e.g. for manual recovery)
+  reload(reason = 'manual') {
+    return _reloadFromDisk(reason);
+  },
+
+  // Health check — runs a trivial query; auto-recovers on WASM error.
+  // Returns true if DB is responsive.
+  healthCheck() {
+    try {
+      _withRecovery(() => {
+        _rawDb.exec('SELECT 1');
+      }, 'healthCheck');
+      return true;
+    } catch (_) {
+      return false;
+    }
   },
 
   get _raw() { return _rawDb; },
