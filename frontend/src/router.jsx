@@ -29,6 +29,7 @@ import AdminDashboard from './pages/admin/AdminDashboard';
 import UserManagement from './pages/admin/UserManagement';
 import ExcelUpload from './pages/admin/ExcelUpload';
 import DriveSync from './pages/admin/DriveSync';
+import DriveSyncHistory from './pages/admin/DriveSyncHistory';
 import RemarksMonitor from './pages/admin/RemarksMonitor';
 import RemarksMonitorCategory from './pages/admin/RemarksMonitorCategory';
 import SystemReports from './pages/admin/SystemReports';
@@ -117,6 +118,7 @@ const router = createBrowserRouter([
       { path: 'users',                        element: <UserManagement /> },
       { path: 'upload',                       element: <ExcelUpload /> },
       { path: 'drive-sync',                   element: <DriveSync /> },
+      { path: 'drive-sync/history',           element: <DriveSyncHistory /> },
       { path: 'remarks-monitor',              element: <RemarksMonitor /> },
       { path: 'remarks-monitor/category',     element: <RemarksMonitorCategory /> },
       { path: 'team',                         element: <TeamPage /> },

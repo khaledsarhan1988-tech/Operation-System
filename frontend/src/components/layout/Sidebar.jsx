@@ -7,7 +7,7 @@ import {
   Video, Users, BarChart2, Globe, UserCog, Upload, FileText,
   LogOut, Headphones, GraduationCap, ShieldCheck, AlertTriangle, Activity, Shuffle, Kanban,
   TrendingUp, Target, Settings, Award, Snowflake, Goal, Database, ChevronDown, Sparkles, BarChart3,
-  Cloud
+  Cloud, History
 } from 'lucide-react';
 
 // ─── COLOR PALETTE ─────────────────────────────────────────────────────────
@@ -97,6 +97,7 @@ function getAdminLinks(user) {
     { to: '/admin/users',        label: 'nav.users',         icon: UserCog,         color: 'indigo' },
     { to: '/admin/upload',       label: 'nav.excelUpload',   icon: Upload,          color: 'orange' },
     { to: '/admin/drive-sync',   label: 'مزامنة Drive',      icon: Cloud,           color: 'sky' },
+    { to: '/admin/drive-sync/history', label: 'تاريخ المزامنات', icon: History,    color: 'cyan',  sub: true },
     { to: '/admin/team',         label: 'nav.team',          icon: Users,           color: 'purple' },
     { to: '/admin/control',      label: 'nav.controlPanel',       icon: LayoutDashboard, color: 'pink' },
     { to: '/admin/distribution', label: 'nav.clientDistribution', icon: Shuffle,         color: 'cyan' },
