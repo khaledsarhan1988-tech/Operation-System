@@ -236,9 +236,14 @@ function RunDetailsModal({ runId, onClose, isAr }) {
                         <td className="px-3 py-1.5">{lbl ? (isAr ? lbl.ar : lbl.en) : r.fileType}</td>
                         <td className={`px-3 py-1.5 ${STATUS.c}`}>
                           <Icon className="w-3 h-3 inline mr-1" /> {STATUS.t}
-                          {r.reason === 'unchanged'     && <span className="text-gray-400 ms-1">({isAr ? 'بدون تغيير' : 'unchanged'})</span>}
-                          {r.reason === 'folder_empty' && <span className="text-gray-400 ms-1">({isAr ? 'فولدر فاضي' : 'empty'})</span>}
-                          {r.reason === 'folder_missing' && <span className="text-gray-400 ms-1">({isAr ? 'فولدر مفقود' : 'missing'})</span>}
+                          {r.reason === 'unchanged'        && <span className="text-gray-400 ms-1">({isAr ? 'بدون تغيير' : 'unchanged'})</span>}
+                          {r.reason === 'folder_empty'    && <span className="text-gray-400 ms-1">({isAr ? 'فولدر فاضي' : 'empty'})</span>}
+                          {r.reason === 'folder_missing'  && <span className="text-gray-400 ms-1">({isAr ? 'فولدر مفقود' : 'missing'})</span>}
+                          {r.reason === 'anomaly_detected' && (
+                            <span className="text-amber-700 font-semibold ms-1" title={r.anomaly?.message}>
+                              ({isAr ? 'بيانات غير طبيعية' : 'anomaly'}: {r.anomaly?.lastRows} → {r.anomaly?.newRows})
+                            </span>
+                          )}
                         </td>
                         <td className="px-3 py-1.5 font-mono text-gray-700">{r.filename || '—'}</td>
                         <td className="px-3 py-1.5 font-semibold">{typeof r.rows_imported === 'number' ? r.rows_imported.toLocaleString() : '—'}</td>

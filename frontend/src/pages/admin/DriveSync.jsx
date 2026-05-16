@@ -217,6 +217,13 @@ function SyncResultsTable({ results, isAr }) {
                       {isAr ? 'بدون تغيير منذ آخر استيراد' : 'No changes since last import'}
                     </span>
                   )}
+                  {r.reason === 'anomaly_detected' && r.anomaly && (
+                    <span className="text-amber-700 font-semibold inline-flex items-center gap-1" title={r.anomaly.message}>
+                      <AlertTriangle className="w-3 h-3" />
+                      {isAr ? '⚠ بيانات غير طبيعية — مرفوضة' : '⚠ Anomaly — rejected'}
+                      <span className="text-gray-500 font-normal">({r.anomaly.lastRows} → {r.anomaly.newRows})</span>
+                    </span>
+                  )}
                   {r.error && <span className="text-red-600" title={r.error}>{r.error}</span>}
                   {r.warnings && r.warnings.length > 0 && (
                     <span className="text-amber-600">
@@ -470,6 +477,91 @@ export default function DriveSync() {
           {syncMutation.error?.response?.data?.error || syncMutation.error?.message}
         </div>
       )}
+
+      {/* Anomaly warning banner — appears when Smart Validation rejected any files */}
+      {syncData && (() => {
+        const anomalies = (syncData.results || []).filter(r => r.reason === 'anomaly_detected');
+        if (anomalies.length === 0) return null;
+        return (
+          <div className="bg-amber-50 border-2 border-amber-300 rounded-xl p-4 space-y-3">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <h3 className="font-bold text-amber-900 text-sm">
+                  {isAr ? `⚠ تم رفض ${anomalies.length} ملف بسبب بيانات غير طبيعية` : `⚠ ${anomalies.length} file(s) rejected — anomalous data`}
+                </h3>
+                <p className="text-xs text-amber-800 mt-1">
+                  {isAr
+                    ? 'الـ Smart Validation منع استيراد الملفات دي عشان حماية بياناتك من الحذف غير المقصود. راجع التفاصيل تحت، ولو متأكد إن البيانات الجديدة صحيحة، فعّل "إعادة استيراد إجبارية" واعمل Sync تاني.'
+                    : 'Smart Validation rejected these files to protect your data from accidental loss. Review the details below — if the new data is correct, enable "Force re-import" and sync again.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-white border border-amber-200 rounded-lg overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-amber-50">
+                  <tr>
+                    <th className="px-3 py-1.5 text-start font-semibold text-amber-900">{isAr ? 'الملف' : 'File'}</th>
+                    <th className="px-3 py-1.5 text-start font-semibold text-amber-900">{isAr ? 'سبب الرفض' : 'Reason'}</th>
+                    <th className="px-3 py-1.5 text-start font-semibold text-amber-900">{isAr ? 'آخر استيراد' : 'Last import'}</th>
+                    <th className="px-3 py-1.5 text-start font-semibold text-amber-900">{isAr ? 'الملف الجديد' : 'New file'}</th>
+                    <th className="px-3 py-1.5 text-start font-semibold text-amber-900">{isAr ? 'التغير' : 'Change'}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {anomalies.map((r, i) => {
+                    const ft = FILE_TYPES.find(f => f.key === r.fileType);
+                    const a = r.anomaly || {};
+                    const REASON = {
+                      empty_or_near_empty: isAr ? 'ملف فاضي تقريباً' : 'Empty / near-empty',
+                      large_drop:          isAr ? 'هبوط كبير' : 'Large drop',
+                      large_surge:         isAr ? 'قفزة كبيرة' : 'Large surge',
+                    }[a.code] || a.code;
+                    return (
+                      <tr key={i} className="border-t border-amber-100">
+                        <td className="px-3 py-1.5 font-medium">{ft ? (isAr ? ft.labelAr : ft.labelEn) : r.fileType}</td>
+                        <td className="px-3 py-1.5">
+                          <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded font-semibold">
+                            {REASON}
+                          </span>
+                        </td>
+                        <td className="px-3 py-1.5 text-gray-700">{a.lastRows?.toLocaleString() ?? '—'} {isAr ? 'صف' : 'rows'}</td>
+                        <td className="px-3 py-1.5 text-gray-700 font-semibold">{a.newRows?.toLocaleString() ?? '—'} {isAr ? 'صف' : 'rows'}</td>
+                        <td className="px-3 py-1.5">
+                          <span className={`font-bold ${(a.changePct ?? 0) < 0 ? 'text-red-600' : 'text-amber-700'}`}>
+                            {typeof a.changePct === 'number' ? `${a.changePct > 0 ? '+' : ''}${a.changePct}%` : '—'}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                onClick={() => {
+                  setForceReimport(true);
+                  setTimeout(() => syncMutation.mutate(), 100); // small delay so the toggle is visible
+                }}
+                disabled={syncMutation.isPending}
+                className="text-xs px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-md font-semibold inline-flex items-center gap-1 disabled:opacity-50"
+              >
+                {syncMutation.isPending
+                  ? <RefreshCw className="w-3 h-3 animate-spin" />
+                  : <Play className="w-3 h-3" />}
+                {isAr ? 'تأكيد الاستيراد رغم التحذير' : 'Import anyway'}
+              </button>
+              <span className="text-[11px] text-amber-700">
+                {isAr ? '← يستخدم زي ما يبدو لو إنت متأكد إن البيانات الجديدة صح' : '← only if you are sure the new data is correct'}
+              </span>
+            </div>
+          </div>
+        );
+      })()}
+
       {syncData && (
         <div className="card">
           <div className="flex items-center justify-between mb-3">

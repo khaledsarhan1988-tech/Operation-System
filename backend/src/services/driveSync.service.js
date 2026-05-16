@@ -10,10 +10,23 @@
  * No HTTP concerns here — pure business logic.
  */
 
+const XLSX = require('xlsx');
 const drive = require('./googleDrive.service');
 const { syncFile, VALID_LINES } = require('./sync.service');
 const db = require('../config/database');
 const { saveNow } = require('../config/database');
+
+// ─── SMART VALIDATION — anomaly detection thresholds ──────────────────────────
+// These guard against catastrophic data loss when a wrong/corrupted file lands
+// on Drive (e.g., team accidentally uploads an empty template or a draft with
+// only a few rows). All thresholds are conservative — they only fire for the
+// kind of changes that almost-certainly indicate a mistake, not normal
+// day-to-day fluctuations.
+const ANOMALY_BASELINE_FLOOR = 10;   // skip validation if last import had < this many rows
+const ANOMALY_EMPTY_FLOOR    = 5;    // < this many new rows is always suspicious
+const ANOMALY_EMPTY_PCT      = 0.05; // OR < 5% of last import = empty/near-empty
+const ANOMALY_DROP_PCT       = 0.50; // > 50% drop = anomaly
+const ANOMALY_SURGE_MULT     = 4;    // > 4x previous = anomaly
 
 const SYSTEM_USER_ID = 0; // sentinel for cron-initiated syncs
 
@@ -41,6 +54,95 @@ function getLastImportTime(fileType, line) {
   } catch (_) {
     return null;
   }
+}
+
+/**
+ * Quickly counts the data rows in an .xlsx buffer by reading sheet metadata
+ * (range), without parsing every cell. Returns -1 if it can't be determined.
+ * Slightly over-counts because it includes the header row + any blank trailing
+ * rows, which is fine for order-of-magnitude anomaly detection.
+ */
+function countRowsInXlsx(buffer) {
+  try {
+    const wb = XLSX.read(buffer, { type: 'buffer', bookSheets: true, sheetRows: 0 });
+    const sheetName = wb.SheetNames[0];
+    const sheet = wb.Sheets[sheetName];
+    if (!sheet || !sheet['!ref']) return 0;
+    const range = XLSX.utils.decode_range(sheet['!ref']);
+    return Math.max(0, range.e.r - range.s.r); // subtract 1 to exclude header
+  } catch (_) {
+    return -1;
+  }
+}
+
+/**
+ * Compares a new file's row count against the last successful import for
+ * (fileType, line). Returns { ok: true } if the change is normal, or
+ * { ok: false, code, lastRows, newRows, ... } describing the anomaly.
+ *
+ * Anomaly codes:
+ *   - 'empty_or_near_empty' — file is essentially empty (< 5 rows or < 5% of baseline)
+ *   - 'large_drop'          — > 50% fewer rows than last import
+ *   - 'large_surge'         — > 4x more rows than last import
+ *
+ * Returns ok=true (no validation) when:
+ *   - We can't read the row count
+ *   - There's no previous import (first time)
+ *   - Last import had < 10 rows (baseline too small to compare)
+ */
+function detectAnomaly(fileType, line, newRows) {
+  if (newRows < 0) return { ok: true, reason: 'count_unknown' };
+
+  const lastSync = db.prepare(`
+    SELECT rows_imported FROM excel_syncs
+    WHERE file_type = ? AND line = ? AND status = 'success'
+    ORDER BY created_at DESC
+    LIMIT 1
+  `).get(fileType, line);
+
+  if (!lastSync) return { ok: true, reason: 'no_baseline' };
+
+  const lastRows = lastSync.rows_imported || 0;
+  if (lastRows < ANOMALY_BASELINE_FLOOR) return { ok: true, reason: 'baseline_too_small' };
+
+  // Empty / near-empty — strongest signal something is wrong
+  if (newRows < Math.max(ANOMALY_EMPTY_FLOOR, lastRows * ANOMALY_EMPTY_PCT)) {
+    return {
+      ok: false,
+      code: 'empty_or_near_empty',
+      lastRows,
+      newRows,
+      message: `الملف الجديد فيه ${newRows} صف فقط مقارنة بـ ${lastRows} في آخر استيراد ناجح.`,
+    };
+  }
+
+  // Large drop (> 50% drop)
+  if (newRows < lastRows * (1 - ANOMALY_DROP_PCT)) {
+    const dropPct = Math.round(((lastRows - newRows) / lastRows) * 100);
+    return {
+      ok: false,
+      code: 'large_drop',
+      lastRows,
+      newRows,
+      changePct: -dropPct,
+      message: `هبوط كبير: ${lastRows} → ${newRows} صف (-${dropPct}%).`,
+    };
+  }
+
+  // Large surge (> 4x previous)
+  if (newRows > lastRows * ANOMALY_SURGE_MULT) {
+    const surgePct = Math.round(((newRows - lastRows) / lastRows) * 100);
+    return {
+      ok: false,
+      code: 'large_surge',
+      lastRows,
+      newRows,
+      changePct: surgePct,
+      message: `قفزة كبيرة: ${lastRows} → ${newRows} صف (+${surgePct}%).`,
+    };
+  }
+
+  return { ok: true };
 }
 
 /**
@@ -110,6 +212,27 @@ async function syncLineForDate({ line, date, userId = SYSTEM_USER_ID, fileTypes,
       }
 
       const buffer = await drive.downloadFile(latest.id);
+
+      // Smart Validation: detect anomalies BEFORE writing to DB.
+      // Force mode bypasses this — the user has explicitly opted in.
+      if (!force) {
+        const approxRows = countRowsInXlsx(buffer);
+        const anomaly = detectAnomaly(fileType, line, approxRows);
+        if (!anomaly.ok) {
+          results.push({
+            fileType,
+            status: 'skipped',
+            reason: 'anomaly_detected',
+            filename: latest.name,
+            driveFileId: latest.id,
+            modifiedTime: latest.modifiedTime,
+            anomaly,
+          });
+          skipped++;
+          continue;
+        }
+      }
+
       const result = syncFile(fileType, buffer, userId, latest.name, line);
 
       results.push({
@@ -242,5 +365,7 @@ module.exports = {
   syncMultipleLinesToday,
   runAutoSync,
   getLastImportTime,
+  detectAnomaly,
+  countRowsInXlsx,
   SYSTEM_USER_ID,
 };
