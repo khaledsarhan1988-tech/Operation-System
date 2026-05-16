@@ -33,9 +33,18 @@ router.post('/login', loginLimiter, (req, res) => {
     return res.status(400).json({ error: 'Username and password required' });
   }
 
-  const user = db.prepare(
-    'SELECT * FROM users WHERE username = ? COLLATE NOCASE AND is_active = 1'
-  ).get(username);
+  let user;
+  try {
+    user = db.prepare(
+      'SELECT * FROM users WHERE username = ? COLLATE NOCASE AND is_active = 1'
+    ).get(username);
+  } catch (e) {
+    console.error('[auth/login] users lookup failed:', e.message, e.stack);
+    return res.status(503).json({
+      error: 'تعذر الوصول لقاعدة البيانات مؤقتاً. يرجى المحاولة بعد دقيقة',
+      details: e.message,
+    });
+  }
 
   if (!user || !bcrypt.compareSync(password, user.password_hash)) {
     return res.status(401).json({ error: 'Invalid credentials' });
@@ -52,22 +61,31 @@ router.post('/login', loginLimiter, (req, res) => {
     language: user.language,
   };
 
-  const accessToken = jwt.signAccess(payload);
-  const rawRefresh  = jwt.generateRefreshToken();
-  const hashRefresh = jwt.hashToken(rawRefresh);
+  let accessToken, rawRefresh, hashRefresh;
+  try {
+    accessToken = jwt.signAccess(payload);
+    rawRefresh  = jwt.generateRefreshToken();
+    hashRefresh = jwt.hashToken(rawRefresh);
 
-  // Clean old refresh tokens for this user (keep last 3)
-  const existing = db.prepare(
-    "SELECT id FROM refresh_tokens WHERE user_id = ? ORDER BY created_at DESC LIMIT -1 OFFSET 2"
-  ).all(user.id);
-  if (existing.length) {
-    const ids = existing.map(r => r.id).join(',');
-    db.exec(`DELETE FROM refresh_tokens WHERE id IN (${ids})`);
+    // Clean old refresh tokens for this user (keep last 3)
+    const existing = db.prepare(
+      "SELECT id FROM refresh_tokens WHERE user_id = ? ORDER BY created_at DESC LIMIT -1 OFFSET 2"
+    ).all(user.id);
+    if (existing.length) {
+      const ids = existing.map(r => r.id).join(',');
+      db.exec(`DELETE FROM refresh_tokens WHERE id IN (${ids})`);
+    }
+
+    db.prepare(
+      'INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)'
+    ).run(user.id, hashRefresh, jwt.refreshExpiresAt());
+  } catch (e) {
+    console.error('[auth/login] token issue failed:', e.message, e.stack);
+    return res.status(503).json({
+      error: 'تعذر إنشاء جلسة جديدة مؤقتاً. يرجى المحاولة بعد دقيقة',
+      details: e.message,
+    });
   }
-
-  db.prepare(
-    'INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)'
-  ).run(user.id, hashRefresh, jwt.refreshExpiresAt());
 
   res.cookie('refreshToken', rawRefresh, COOKIE_OPTIONS);
   return res.json({
