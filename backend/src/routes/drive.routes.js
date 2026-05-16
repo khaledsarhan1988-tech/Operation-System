@@ -73,15 +73,24 @@ router.get('/files', authenticate, requireRole('leader'), async (req, res) => {
         annotated[fileType] = file;
         continue;
       }
-      const lastImportMs = driveSync.getLastImportTime(fileType, line);
-      // Use effectiveModifiedTime = max(modifiedTime, createdTime) — this is the
-      // moment the file effectively "landed" on Drive in its current form.
-      // Falls back to modifiedTime for older callers.
+      // Use the same logic as syncLineForDate (file ID + time) so the preview
+      // exactly matches what will happen on sync.
+      const lastImport = driveSync.getLastImport
+        ? driveSync.getLastImport(fileType, line)
+        : { timeMs: driveSync.getLastImportTime(fileType, line), driveFileId: null };
       const driveMs = Date.parse(file.effectiveModifiedTime || file.modifiedTime);
-      const changed = !lastImportMs || !Number.isFinite(driveMs) || driveMs > lastImportMs;
+
+      const sameFile = lastImport.driveFileId && lastImport.driveFileId === file.id;
+      const noFileIdRecorded = !lastImport.driveFileId;
+      const fileNotModified = lastImport.timeMs && Number.isFinite(driveMs) && driveMs <= lastImport.timeMs;
+
+      // "changed" = NOT (same file AND not modified) AND NOT (legacy AND time-stable)
+      const changed = !((sameFile && fileNotModified) || (noFileIdRecorded && fileNotModified));
+
       annotated[fileType] = {
         ...file,
-        lastImportAt: lastImportMs ? new Date(lastImportMs).toISOString() : null,
+        lastImportAt: lastImport.timeMs ? new Date(lastImport.timeMs).toISOString() : null,
+        lastImportedFileId: lastImport.driveFileId,
         changed,
       };
     }

@@ -31,29 +31,41 @@ const ANOMALY_SURGE_MULT     = 4;    // > 4x previous = anomaly
 const SYSTEM_USER_ID = 0; // sentinel for cron-initiated syncs
 
 /**
- * Returns the timestamp (ms since epoch) of the most-recent successful import
- * for a given (fileType, line). Used by Smart Sync to skip unchanged files.
+ * Returns metadata about the most-recent successful import for (fileType, line):
+ *   { timeMs: number, driveFileId: string|null }
+ *
+ * Smart Sync uses BOTH:
+ *   - driveFileId to detect "is this the same file as last time?"
+ *   - timeMs as a fallback for files imported before the drive_file_id column
+ *     existed, or for manual uploads (which have no Drive file ID)
  *
  * The excel_syncs.created_at is stored via SQLite datetime('now','localtime')
- * which on Railway (UTC server) equals UTC. We parse it as UTC by appending
- * 'Z'. If the server were on a non-UTC TZ, the comparison would be overly
- * cautious (might re-import unchanged files) — which is SAFE, no data risk.
+ * which on Railway (UTC server) equals UTC.
  */
-function getLastImportTime(fileType, line) {
+function getLastImport(fileType, line) {
   try {
     const row = db.prepare(`
-      SELECT MAX(created_at) as last_at
+      SELECT created_at, drive_file_id
       FROM excel_syncs
       WHERE file_type = ? AND line = ? AND status = 'success'
+      ORDER BY created_at DESC
+      LIMIT 1
     `).get(fileType, line);
-    if (!row || !row.last_at) return null;
-    // SQLite returns 'YYYY-MM-DD HH:MM:SS' — convert to ISO and parse as UTC
-    const iso = String(row.last_at).replace(' ', 'T') + 'Z';
+    if (!row || !row.created_at) return { timeMs: null, driveFileId: null };
+    const iso = String(row.created_at).replace(' ', 'T') + 'Z';
     const t = Date.parse(iso);
-    return Number.isFinite(t) ? t : null;
+    return {
+      timeMs: Number.isFinite(t) ? t : null,
+      driveFileId: row.drive_file_id || null,
+    };
   } catch (_) {
-    return null;
+    return { timeMs: null, driveFileId: null };
   }
+}
+
+// Backward-compat: callers that only need the time
+function getLastImportTime(fileType, line) {
+  return getLastImport(fileType, line).timeMs;
 }
 
 /**
@@ -193,24 +205,37 @@ async function syncLineForDate({ line, date, userId = SYSTEM_USER_ID, fileTypes,
         continue;
       }
 
-      // Smart Sync: skip if Drive file hasn't appeared/been-modified since the
-      // last successful import. We use effectiveModifiedTime = max(modifiedTime,
-      // createdTime) because Drive preserves a local file's modifiedTime on upload,
-      // so a "newly uploaded but locally-old" file has modifiedTime in the past
-      // even though it just landed on Drive (createdTime = now).
+      // Smart Sync: skip only when we're SURE this exact file has already been
+      // imported. The check uses BOTH file IDENTITY and time:
+      //   1. If last import's drive_file_id == current latest.id → same file →
+      //      compare effective time, skip only if not modified since import.
+      //   2. If last import's drive_file_id != current latest.id → DIFFERENT file
+      //      on Drive → ALWAYS import (we've never seen this file before).
+      //   3. If last import has no drive_file_id (legacy/manual upload) → fall
+      //      back to time-only check.
       if (!force) {
-        const lastImportMs = getLastImportTime(fileType, line);
+        const lastImport = getLastImport(fileType, line);
         const driveMs = Date.parse(latest.effectiveModifiedTime || latest.modifiedTime);
-        if (lastImportMs && Number.isFinite(driveMs) && driveMs <= lastImportMs) {
+
+        const sameFile = lastImport.driveFileId && lastImport.driveFileId === latest.id;
+        const noFileIdRecorded = !lastImport.driveFileId;
+        const fileNotModified = lastImport.timeMs && Number.isFinite(driveMs) && driveMs <= lastImport.timeMs;
+
+        // Skip when: it's the SAME Drive file AND hasn't been modified since import
+        // OR when: legacy record (no file_id) AND time check passes
+        const shouldSkip = (sameFile && fileNotModified) || (noFileIdRecorded && fileNotModified);
+
+        if (shouldSkip) {
           results.push({
             fileType,
             status: 'skipped',
             reason: 'unchanged',
             filename: latest.name,
+            driveFileId: latest.id,
             modifiedTime: latest.modifiedTime,
             createdTime: latest.createdTime,
             effectiveModifiedTime: latest.effectiveModifiedTime,
-            lastImportAt: new Date(lastImportMs).toISOString(),
+            lastImportAt: new Date(lastImport.timeMs).toISOString(),
           });
           skipped++;
           continue;
@@ -239,7 +264,9 @@ async function syncLineForDate({ line, date, userId = SYSTEM_USER_ID, fileTypes,
         }
       }
 
-      const result = syncFile(fileType, buffer, userId, latest.name, line);
+      const result = syncFile(fileType, buffer, userId, latest.name, line, {
+        driveFileId: latest.id,
+      });
 
       results.push({
         fileType,
@@ -370,6 +397,7 @@ module.exports = {
   syncLineForDate,
   syncMultipleLinesToday,
   runAutoSync,
+  getLastImport,
   getLastImportTime,
   detectAnomaly,
   countRowsInXlsx,

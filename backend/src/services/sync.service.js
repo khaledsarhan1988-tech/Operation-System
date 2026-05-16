@@ -186,9 +186,15 @@ function evictFromOtherLines(table, line, groupNames, extraWhere = '') {
  * Each line operates on isolated data — DELETE + INSERT are scoped by line.
  * Cross-line external_id duplicates are detected and returned as warnings (non-fatal).
  */
-function syncFile(fileType, buffer, userId, filename, line) {
+function syncFile(fileType, buffer, userId, filename, line, options = {}) {
   if (!line) throw new Error('Line is required for upload (Ahmed Hassan | Dardasha)');
   if (!VALID_LINES.includes(line)) throw new Error(`Invalid line: ${line}`);
+
+  // Optional: drive_file_id — set when imported via Drive Sync. Stored in
+  // excel_syncs so Smart Sync can compare by file IDENTITY (not just time),
+  // which protects against the "new upload with old local mtime" case.
+  // Manual uploads (no Drive context) pass null and the column stays NULL.
+  const driveFileId = options.driveFileId || null;
 
   const syncEntry = { file_type: fileType, filename, rows_imported: 0, status: 'success', error_msg: null, uploaded_by: userId, line };
   const warnings = [];
@@ -212,9 +218,13 @@ function syncFile(fileType, buffer, userId, filename, line) {
     throw err;
   } finally {
     db.prepare(`
-      INSERT INTO excel_syncs (file_type, filename, rows_imported, status, error_msg, uploaded_by, line, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
-    `).run(syncEntry.file_type, syncEntry.filename, syncEntry.rows_imported, syncEntry.status, syncEntry.error_msg, syncEntry.uploaded_by, syncEntry.line);
+      INSERT INTO excel_syncs (file_type, filename, rows_imported, status, error_msg, uploaded_by, line, drive_file_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
+    `).run(
+      syncEntry.file_type, syncEntry.filename, syncEntry.rows_imported,
+      syncEntry.status, syncEntry.error_msg, syncEntry.uploaded_by,
+      syncEntry.line, driveFileId
+    );
     // Force immediate disk write — prevents data loss on Railway rolling deployments
     saveNow();
   }

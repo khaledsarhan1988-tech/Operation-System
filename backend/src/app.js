@@ -942,6 +942,23 @@ initDb().then(db => {
     console.error('quality_report_snapshots migration error:', e.message);
   }
 
+  // ── excel_syncs: add drive_file_id (track which Drive file was imported) ──
+  // Lets Smart Sync compare by file IDENTITY, not just time. Solves the case
+  // where a new file is uploaded with createdTime BEFORE a previous successful
+  // sync — without this, the system would mistake it for "already imported".
+  try {
+    const info = db._raw.exec(`PRAGMA table_info(excel_syncs)`);
+    const cols = info[0]?.values.map((r) => r[1]) || [];
+    if (cols.length > 0 && !cols.includes('drive_file_id')) {
+      db._raw.run(`ALTER TABLE excel_syncs ADD COLUMN drive_file_id TEXT`);
+      db._raw.run(`CREATE INDEX IF NOT EXISTS idx_excel_syncs_drive_file ON excel_syncs(drive_file_id)`);
+      saveNow();
+      console.log('✅ Migration: excel_syncs.drive_file_id added');
+    }
+  } catch (e) {
+    console.error('excel_syncs.drive_file_id migration error:', e.message);
+  }
+
   // ── drive_sync_runs: audit log for Drive auto-sync (cron + manual triggers) ──
   try {
     db._raw.run(`CREATE TABLE IF NOT EXISTS drive_sync_runs (
