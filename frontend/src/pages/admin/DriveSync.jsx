@@ -140,9 +140,17 @@ function FilePreviewTable({ files, isLoading, isAr }) {
                   {hasFile ? formatTime(file.modifiedTime) : '—'}
                 </td>
                 <td className="px-3 py-2">
-                  {hasFile && (
+                  {hasFile && file.changed === false && (
+                    <span
+                      className="inline-flex items-center gap-1 text-gray-500 text-xs font-medium"
+                      title={file.lastImportAt ? `${isAr ? 'آخر استيراد:' : 'Last imported:'} ${formatTime(file.lastImportAt)}` : ''}
+                    >
+                      <CheckCircle className="w-3 h-3 text-gray-400" /> {isAr ? 'بدون تغيير' : 'Unchanged'}
+                    </span>
+                  )}
+                  {hasFile && file.changed !== false && (
                     <span className="inline-flex items-center gap-1 text-emerald-700 text-xs font-medium">
-                      <CheckCircle className="w-3 h-3" /> {isAr ? 'جاهز' : 'Ready'}
+                      <CheckCircle className="w-3 h-3" /> {isAr ? 'جاهز للاستيراد' : 'Ready'}
                     </span>
                   )}
                   {hasError && (
@@ -204,6 +212,11 @@ function SyncResultsTable({ results, isAr }) {
                 <td className="px-3 py-2 text-xs text-gray-500">
                   {r.reason === 'folder_missing' && (isAr ? 'الفولدر غير موجود' : 'Folder missing')}
                   {r.reason === 'folder_empty'   && (isAr ? 'الفولدر فاضي'      : 'Folder empty')}
+                  {r.reason === 'unchanged'      && (
+                    <span title={r.lastImportAt ? `${isAr ? 'آخر استيراد:' : 'Last imported:'} ${formatTime(r.lastImportAt)}` : ''}>
+                      {isAr ? 'بدون تغيير منذ آخر استيراد' : 'No changes since last import'}
+                    </span>
+                  )}
                   {r.error && <span className="text-red-600" title={r.error}>{r.error}</span>}
                   {r.warnings && r.warnings.length > 0 && (
                     <span className="text-amber-600">
@@ -233,6 +246,7 @@ export default function DriveSync() {
   const [selectedLine, setSelectedLine] = useState(canChooseLine ? 'Ahmed Hassan' : userLine);
   const [date, setDate] = useState(todayStr());
   const [previewedAt, setPreviewedAt] = useState(null);
+  const [forceReimport, setForceReimport] = useState(false);
 
   // Preview query — disabled by default, triggered by button
   const previewQuery = useQuery({
@@ -248,7 +262,11 @@ export default function DriveSync() {
 
   // Sync mutation
   const syncMutation = useMutation({
-    mutationFn: () => api.post('/drive/sync', { line: selectedLine, date }).then(r => r.data),
+    mutationFn: () => api.post('/drive/sync', {
+      line: selectedLine,
+      date,
+      force: forceReimport,
+    }).then(r => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['syncs'] });
       queryClient.invalidateQueries({ queryKey: ['upload-status'] });
@@ -273,6 +291,17 @@ export default function DriveSync() {
     if (!previewData?.files) return 0;
     return Object.values(previewData.files).filter(f => f && f.id).length;
   }, [previewData]);
+
+  // Files that actually need re-importing (changed since last import). When
+  // forceReimport is on, all present files are eligible regardless.
+  const filesToImportCount = useMemo(() => {
+    if (!previewData?.files) return 0;
+    return Object.values(previewData.files).filter(f => {
+      if (!f || !f.id) return false;
+      if (forceReimport) return true;
+      return f.changed !== false;
+    }).length;
+  }, [previewData, forceReimport]);
 
   return (
     <div className="space-y-5 animate-fadeIn pb-12" dir={isAr ? 'rtl' : 'ltr'}>
@@ -362,7 +391,7 @@ export default function DriveSync() {
       )}
 
       {/* Action buttons */}
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-wrap gap-3 items-center">
         <button
           onClick={handlePreview}
           disabled={previewQuery.isFetching}
@@ -377,15 +406,39 @@ export default function DriveSync() {
           onClick={() => syncMutation.mutate()}
           disabled={syncMutation.isPending || filesAvailableCount === 0}
           className="btn-primary flex items-center gap-2"
-          title={filesAvailableCount === 0 ? (isAr ? 'اعمل Preview الأول' : 'Preview files first') : ''}
+          title={filesAvailableCount === 0
+            ? (isAr ? 'اعمل Preview الأول' : 'Preview files first')
+            : (filesToImportCount === 0 && !forceReimport
+              ? (isAr ? 'مفيش ملفات اتغيّرت — فعّل "إعادة استيراد إجبارية" لو عاوز تستورد كل حاجة' : 'No changes — enable "Force re-import" to import all')
+              : '')}
         >
           {syncMutation.isPending
             ? <RefreshCw className="w-4 h-4 animate-spin" />
             : <Play className="w-4 h-4" />}
           {syncMutation.isPending
             ? (isAr ? 'جارٍ الاستيراد...' : 'Importing...')
-            : (isAr ? `استيراد الآن (${filesAvailableCount})` : `Sync Now (${filesAvailableCount})`)}
+            : forceReimport
+              ? (isAr ? `استيراد إجباري (${filesAvailableCount})` : `Force Import (${filesAvailableCount})`)
+              : (isAr ? `استيراد المتغيّر (${filesToImportCount})` : `Sync Changes (${filesToImportCount})`)}
         </button>
+
+        {/* Force re-import toggle */}
+        <label
+          className="ms-auto inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white cursor-pointer hover:bg-gray-50"
+          title={isAr
+            ? 'لو مفعّل، السيستم هيستورد كل الملفات الموجودة حتى لو ما تغيّرتش (هياخد وقت أكتر).'
+            : 'When on, re-imports every file even if unchanged (slower).'}
+        >
+          <input
+            type="checkbox"
+            checked={forceReimport}
+            onChange={(e) => setForceReimport(e.target.checked)}
+            className="rounded"
+          />
+          <span className="text-xs font-medium text-gray-700">
+            {isAr ? 'إعادة استيراد إجبارية' : 'Force re-import'}
+          </span>
+        </label>
       </div>
 
       {/* Preview results */}

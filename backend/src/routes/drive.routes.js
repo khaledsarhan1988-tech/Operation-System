@@ -54,6 +54,7 @@ router.get('/status', authenticate, requireRole('leader'), async (req, res) => {
 });
 
 // GET /api/drive/files?line=X&date=YYYY-MM-DD
+// Returns latest file per File Type folder + Smart Sync hint (changed/unchanged).
 router.get('/files', authenticate, requireRole('leader'), async (req, res) => {
   const { line: lineParam, date: dateParam } = req.query;
   const { line, error } = resolveLine(req, lineParam);
@@ -64,10 +65,27 @@ router.get('/files', authenticate, requireRole('leader'), async (req, res) => {
 
   try {
     const files = await drive.getLatestFilesForDay(line, date);
+    // Annotate each file with `changed` (true if Drive modifiedTime > last import time).
+    // null = no file or never imported; we treat that as "changed/eligible".
+    const annotated = {};
+    for (const [fileType, file] of Object.entries(files)) {
+      if (!file || !file.id) {
+        annotated[fileType] = file;
+        continue;
+      }
+      const lastImportMs = driveSync.getLastImportTime(fileType, line);
+      const driveMs = Date.parse(file.modifiedTime);
+      const changed = !lastImportMs || !Number.isFinite(driveMs) || driveMs > lastImportMs;
+      annotated[fileType] = {
+        ...file,
+        lastImportAt: lastImportMs ? new Date(lastImportMs).toISOString() : null,
+        changed,
+      };
+    }
     return res.json({
       line,
       date: date.toISOString().slice(0, 10),
-      files,
+      files: annotated,
     });
   } catch (err) {
     return res.status(500).json({ error: 'Failed to list Drive files', details: err.message });
@@ -99,8 +117,10 @@ router.post('/prepare-folders', authenticate, requireRole('leader'), express.jso
 });
 
 // POST /api/drive/sync
+// Body: { line, date, fileTypes?, force? }
+// force=true → re-import even unchanged files (default false = Smart Sync)
 router.post('/sync', authenticate, requireRole('leader'), express.json(), async (req, res) => {
-  const { line: lineParam, date: dateParam, fileTypes } = req.body || {};
+  const { line: lineParam, date: dateParam, fileTypes, force } = req.body || {};
   const { line, error } = resolveLine(req, lineParam);
   if (error) return res.status(400).json({ error });
 
@@ -113,6 +133,7 @@ router.post('/sync', authenticate, requireRole('leader'), express.json(), async 
       date,
       userId: req.user.id,
       fileTypes,
+      force: force === true,
     });
     return res.json(result);
   } catch (err) {
@@ -136,7 +157,11 @@ router.post('/sync-today', authenticate, requireRole('leader'), express.json(), 
   }
 
   try {
-    const result = await driveSync.syncMultipleLinesToday({ lines, userId: req.user.id });
+    const result = await driveSync.syncMultipleLinesToday({
+      lines,
+      userId: req.user.id,
+      force: req.body?.force === true,
+    });
     return res.json(result);
   } catch (err) {
     return res.status(500).json({ error: 'Sync failed', details: err.message });
