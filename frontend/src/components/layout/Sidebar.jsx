@@ -183,25 +183,28 @@ export default function Sidebar({ mobile, onClose }) {
     return out;
   }, [links]);
 
-  // Track which parents the user has manually expanded. Sub-items are hidden
-  // by default and only show when the parent has been clicked.
-  const [expanded, setExpanded] = useState(() => new Set());
+  // Tracks per-parent overrides set by the user when they click the chevron.
+  // Map<routeKey, 'open' | 'closed'> — if absent, falls back to the route-based
+  // default (parent is open when the current route matches it or a child).
+  // We need a real override (not just a Set of "opened") because the user
+  // should be able to MANUALLY COLLAPSE a parent whose route they're on.
+  const [overrides, setOverrides] = useState(() => new Map());
 
-  // A parent is considered "open" if the user opened it OR if the active
-  // route is the parent itself / any of its children. The route check is
-  // derived (no setState in render) so a child route auto-shows its siblings
-  // without us forcing extra state.
   const isParentOpen = (node) => {
-    if (expanded.has(node.to)) return true;
+    const o = overrides.get(node.to);
+    if (o === 'closed') return false;
+    if (o === 'open')   return true;
+    // No user override — use route-based default
     if (location.pathname === node.to) return true;
     if (node.children?.some(c => c.to && (location.pathname === c.to || location.pathname.startsWith(c.to + '/')))) return true;
     return false;
   };
 
-  const toggleExpand = (key) => {
-    setExpanded(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
+  // Toggle takes the current open state so we know which direction to flip to.
+  const toggleExpand = (key, currentlyOpen) => {
+    setOverrides(prev => {
+      const next = new Map(prev);
+      next.set(key, currentlyOpen ? 'closed' : 'open');
       return next;
     });
   };
@@ -309,7 +312,9 @@ export default function Sidebar({ mobile, onClose }) {
                   to={to}
                   end={end}
                   onClick={() => {
-                    if (hasChildren) toggleExpand(to);
+                    // Clicking the parent's main row navigates + ensures it's open
+                    // (so the user sees their context). Use the chevron to collapse.
+                    if (hasChildren && !isOpen) toggleExpand(to, false);
                     if (mobile) onClose?.();
                   }}
                   style={colorVars(color)}
@@ -328,7 +333,7 @@ export default function Sidebar({ mobile, onClose }) {
                   <button
                     type="button"
                     aria-label={isOpen ? 'طي' : 'فتح'}
-                    onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggleExpand(to); }}
+                    onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggleExpand(to, isOpen); }}
                     className="absolute left-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-all"
                   >
                     <ChevronDown
