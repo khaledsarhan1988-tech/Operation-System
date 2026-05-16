@@ -74,7 +74,10 @@ router.get('/files', authenticate, requireRole('leader'), async (req, res) => {
         continue;
       }
       const lastImportMs = driveSync.getLastImportTime(fileType, line);
-      const driveMs = Date.parse(file.modifiedTime);
+      // Use effectiveModifiedTime = max(modifiedTime, createdTime) — this is the
+      // moment the file effectively "landed" on Drive in its current form.
+      // Falls back to modifiedTime for older callers.
+      const driveMs = Date.parse(file.effectiveModifiedTime || file.modifiedTime);
       const changed = !lastImportMs || !Number.isFinite(driveMs) || driveMs > lastImportMs;
       annotated[fileType] = {
         ...file,

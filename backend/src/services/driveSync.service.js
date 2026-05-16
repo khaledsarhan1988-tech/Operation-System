@@ -193,10 +193,14 @@ async function syncLineForDate({ line, date, userId = SYSTEM_USER_ID, fileTypes,
         continue;
       }
 
-      // Smart Sync: skip if Drive file hasn't been modified since the last successful import
+      // Smart Sync: skip if Drive file hasn't appeared/been-modified since the
+      // last successful import. We use effectiveModifiedTime = max(modifiedTime,
+      // createdTime) because Drive preserves a local file's modifiedTime on upload,
+      // so a "newly uploaded but locally-old" file has modifiedTime in the past
+      // even though it just landed on Drive (createdTime = now).
       if (!force) {
         const lastImportMs = getLastImportTime(fileType, line);
-        const driveMs = Date.parse(latest.modifiedTime);
+        const driveMs = Date.parse(latest.effectiveModifiedTime || latest.modifiedTime);
         if (lastImportMs && Number.isFinite(driveMs) && driveMs <= lastImportMs) {
           results.push({
             fileType,
@@ -204,6 +208,8 @@ async function syncLineForDate({ line, date, userId = SYSTEM_USER_ID, fileTypes,
             reason: 'unchanged',
             filename: latest.name,
             modifiedTime: latest.modifiedTime,
+            createdTime: latest.createdTime,
+            effectiveModifiedTime: latest.effectiveModifiedTime,
             lastImportAt: new Date(lastImportMs).toISOString(),
           });
           skipped++;

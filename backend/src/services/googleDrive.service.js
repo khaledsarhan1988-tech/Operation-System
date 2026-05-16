@@ -162,17 +162,35 @@ async function listFilesInFolder(folderId) {
   const drive = getDriveClient();
   const res = await drive.files.list({
     q: `'${folderId}' in parents and trashed=false and mimeType != '${FOLDER_MIME}'`,
-    fields: 'files(id, name, mimeType, modifiedTime, size)',
-    orderBy: 'modifiedTime desc',
+    // We request BOTH modifiedTime and createdTime because Google Drive
+    // preserves a local file's modifiedTime when you upload it from your
+    // computer. If a user uploads a "new" Remarks.xlsx whose local copy was
+    // last edited 3 days ago, modifiedTime will be 3 days ago even though
+    // the file LANDED on Drive just now. createdTime is the upload moment
+    // on Drive, so it's a more reliable signal of "when did this file appear".
+    fields: 'files(id, name, mimeType, modifiedTime, createdTime, size)',
     pageSize: 50,
     supportsAllDrives: true,
     includeItemsFromAllDrives: true,
   });
-  return res.data.files || [];
+  const files = res.data.files || [];
+  // Annotate each file with effectiveModifiedTime = max(modifiedTime, createdTime).
+  // This is what callers should compare against to determine "is this file newer
+  // than my last sync?" and "which file is the latest in the folder?".
+  for (const f of files) {
+    const mod = Date.parse(f.modifiedTime) || 0;
+    const cre = Date.parse(f.createdTime) || 0;
+    f.effectiveModifiedTime = new Date(Math.max(mod, cre)).toISOString();
+  }
+  // Sort by effectiveModifiedTime desc (latest first)
+  files.sort((a, b) => Date.parse(b.effectiveModifiedTime) - Date.parse(a.effectiveModifiedTime));
+  return files;
 }
 
 /**
- * Returns the most-recently-modified file in a folder (or null if empty).
+ * Returns the latest file in a folder. "Latest" = max(modifiedTime, createdTime)
+ * which handles both new uploads (createdTime = now, modifiedTime = old local time)
+ * and Drive overwrites (modifiedTime updates, createdTime stays).
  */
 async function getLatestFileInFolder(folderId) {
   const files = await listFilesInFolder(folderId);
