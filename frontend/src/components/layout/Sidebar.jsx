@@ -96,9 +96,13 @@ function getAdminLinks(user) {
   const base = [
     { to: '/admin',              label: 'nav.dashboard',     icon: LayoutDashboard, end: true, color: 'blue' },
     { to: '/admin/users',        label: 'nav.users',         icon: UserCog,         color: 'indigo' },
-    { to: '/admin/upload',       label: 'nav.excelUpload',   icon: Upload,          color: 'orange' },
-    { to: '/admin/drive-sync',   label: 'مزامنة Drive',      icon: Cloud,           color: 'sky' },
-    { to: '/admin/drive-sync/history', label: 'تاريخ المزامنات', icon: History,    color: 'cyan',  sub: true },
+    // Excel upload + Drive sync — Super Admin (management='All') only.
+    // Department managers don't see these in the sidebar AND backend rejects them.
+    ...(isSuperAdmin ? [
+      { to: '/admin/upload',       label: 'nav.excelUpload',   icon: Upload,          color: 'orange' },
+      { to: '/admin/drive-sync',   label: 'مزامنة Drive',      icon: Cloud,           color: 'sky' },
+      { to: '/admin/drive-sync/history', label: 'تاريخ المزامنات', icon: History,    color: 'cyan',  sub: true },
+    ] : []),
     { to: '/admin/team',         label: 'nav.team',          icon: Users,           color: 'purple' },
     { to: '/admin/org-chart',    label: 'الهيكل التنظيمي',    icon: Network,         color: 'indigo' },
     { to: '/admin/control',      label: 'nav.controlPanel',       icon: LayoutDashboard, color: 'pink' },

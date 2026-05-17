@@ -198,7 +198,14 @@ export default function UserManagement() {
   const columns = [
     { key: 'username', label: t('admin.username') },
     { key: 'full_name', label: t('admin.fullName') },
-    { key: 'role', label: t('admin.role'), render: v => <span className="badge bg-primary/10 text-primary">{t(`roles.${v}`, v)}</span> },
+    { key: 'role', label: t('admin.role'), render: (v, row) => {
+      // admin بـ management != 'All' = "مدير" (department-scoped)
+      // admin بـ management = 'All' = "مسؤول" (Super Admin)
+      const isManager = v === 'admin' && row.management && row.management !== 'All';
+      const label = isManager ? 'مدير' : t(`roles.${v}`, v);
+      const cls = isManager ? 'bg-amber-100 text-amber-700' : 'bg-primary/10 text-primary';
+      return <span className={`badge ${cls}`}>{label}</span>;
+    } },
     { key: 'department', label: t('admin.department') },
     { key: 'management', label: 'الإدارة', render: v => {
       const map = { 'Customer Services': 'خدمة العملاء', 'Education': 'التعليم', 'Quality': 'الجودة' };

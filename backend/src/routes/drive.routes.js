@@ -10,6 +10,15 @@ const db = require('../config/database');
 
 const router = express.Router();
 
+// Super-Admin only: department managers (admin بـ management != 'All')
+// ما يقدروش يستخدموا الـ Drive sync. الرفع للمسؤول العام فقط.
+router.use(authenticate, (req, res, next) => {
+  if (req.user?.role !== 'admin' || req.user?.management !== 'All') {
+    return res.status(403).json({ error: 'صلاحية Drive للمسؤول العام فقط (Super Admin)' });
+  }
+  next();
+});
+
 // Resolve the line a request should target, honoring line restrictions.
 function resolveLine(req, requestedLine) {
   const userLine = req.user.line || 'Ahmed Hassan';
