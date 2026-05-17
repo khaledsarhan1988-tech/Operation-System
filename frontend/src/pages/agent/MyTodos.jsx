@@ -240,6 +240,9 @@ function TodoCard({ todo, onToggle, onEdit, onOpen }) {
           {todo.priority === 'urgent' && !done && (
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-500 text-white">عاجل</span>
           )}
+          {todo.parent_todo_id && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700" title="مهمة يومية متكررة">🔁 يومي</span>
+          )}
         </div>
         {todo.description && (
           <p className="text-xs text-gray-500 line-clamp-1 mt-0.5">{todo.description}</p>
@@ -293,6 +296,7 @@ function EmptyState({ bucket }) {
 // ─── Edit / Create Modal ──────────────────────────────────────────────────────
 function TodoEditModal({ todo, onClose, onSaved }) {
   const isEdit = !!todo;
+  const isInstance = !!todo?.parent_todo_id;
   const [title, setTitle] = useState(todo?.title || '');
   const [description, setDescription] = useState(todo?.description || '');
   const [priority, setPriority] = useState(todo?.priority || 'normal');
@@ -300,6 +304,8 @@ function TodoEditModal({ todo, onClose, onSaved }) {
   const [dueDate, setDueDate] = useState(todo?.due_date || '');
   const [dueTime, setDueTime] = useState(todo?.due_time || '');
   const [assignedTo, setAssignedTo] = useState(todo?.assigned_to || '');
+  const [isRecurring, setIsRecurring] = useState(todo?.is_recurring === 1);
+  const [recurrencePattern, setRecurrencePattern] = useState(todo?.recurrence_pattern || 'daily');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const titleRef = useRef(null);
@@ -333,6 +339,8 @@ function TodoEditModal({ todo, onClose, onSaved }) {
         due_date: dueDate || null,
         due_time: dueTime || null,
         assigned_to: assignedTo || null,
+        is_recurring: isRecurring && !isInstance ? 1 : 0,
+        recurrence_pattern: isRecurring && !isInstance ? recurrencePattern : null,
       };
       if (isEdit) {
         await api.patch(`/todos/${todo.id}`, body);
@@ -408,6 +416,45 @@ function TodoEditModal({ todo, onClose, onSaved }) {
               </select>
             </Field>
           )}
+
+          {/* Recurring section */}
+          <div className="bg-rose-50/50 border border-rose-200 rounded-lg p-3">
+            {isInstance ? (
+              <p className="text-xs text-rose-700">
+                🔁 هذه نسخة يومية من قالب متكرر. لتغيير التكرار، عدّل القالب من قائمة "المهام المتكررة".
+              </p>
+            ) : (
+              <>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={isRecurring}
+                    onChange={e => setIsRecurring(e.target.checked)}
+                    className="w-4 h-4 accent-rose-500" />
+                  <span className="text-sm font-bold text-gray-800">🔁 مهمة متكررة</span>
+                </label>
+                {isRecurring && (
+                  <select value={recurrencePattern} onChange={e => setRecurrencePattern(e.target.value)}
+                    className="mt-2 w-full px-3 py-2 rounded-lg border border-rose-300 text-sm bg-white">
+                    <option value="daily">كل يوم</option>
+                    <option value="weekly:sat,sun,mon,tue,wed,thu">أيام العمل (سبت - خميس)</option>
+                    <option value="weekly:sat,sun,mon,tue,wed">سبت - أربعاء</option>
+                    <option value="weekly:fri,sat">عطلة (جمعة - سبت)</option>
+                    <option value="weekly:sun">كل أحد</option>
+                    <option value="weekly:mon">كل إثنين</option>
+                    <option value="weekly:tue">كل ثلاثاء</option>
+                    <option value="weekly:wed">كل أربعاء</option>
+                    <option value="weekly:thu">كل خميس</option>
+                    <option value="weekly:fri">كل جمعة</option>
+                    <option value="weekly:sat">كل سبت</option>
+                  </select>
+                )}
+                {isRecurring && (
+                  <p className="text-[10px] text-rose-600 mt-2">
+                    💡 السيستم هيخلق نسخة جديدة من المهمة دي تلقائياً في كل يوم متوافق
+                  </p>
+                )}
+              </>
+            )}
+          </div>
         </div>
         <div className="px-5 py-3 bg-gray-50 border-t flex items-center justify-between gap-2">
           <span className="text-[10px] text-gray-500">⌘+Enter للحفظ • Esc للإغلاق</span>

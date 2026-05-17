@@ -404,6 +404,7 @@ function StatCard({ icon: Icon, label, value, color }) {
 // ─── Reused Modals (compact versions, same APIs as agent/leader) ──────────────
 function TodoEditModal({ todo, usersData, onClose, onSaved }) {
   const isEdit = !!todo;
+  const isInstance = !!todo?.parent_todo_id;
   const [title, setTitle] = useState(todo?.title || '');
   const [description, setDescription] = useState(todo?.description || '');
   const [priority, setPriority] = useState(todo?.priority || 'normal');
@@ -411,6 +412,8 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
   const [dueDate, setDueDate] = useState(todo?.due_date || '');
   const [dueTime, setDueTime] = useState(todo?.due_time || '');
   const [assignedTo, setAssignedTo] = useState(todo?.assigned_to || '');
+  const [isRecurring, setIsRecurring] = useState(todo?.is_recurring === 1);
+  const [recurrencePattern, setRecurrencePattern] = useState(todo?.recurrence_pattern || 'daily');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
@@ -418,7 +421,11 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
     if (!title.trim()) { setError('العنوان مطلوب'); return; }
     setSubmitting(true); setError(null);
     try {
-      const body = { title, description, priority, status, due_date: dueDate || null, due_time: dueTime || null, assigned_to: assignedTo || null };
+      const body = {
+        title, description, priority, status, due_date: dueDate || null, due_time: dueTime || null, assigned_to: assignedTo || null,
+        is_recurring: isRecurring && !isInstance ? 1 : 0,
+        recurrence_pattern: isRecurring && !isInstance ? recurrencePattern : null,
+      };
       if (isEdit) await api.patch(`/todos/${todo.id}`, body);
       else        await api.post('/todos', body);
       onSaved();
@@ -476,6 +483,39 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
               {(usersData?.users || []).map(u => (<option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>))}
             </select>
           </label>
+
+          <div className="bg-violet-50/50 border border-violet-200 rounded-lg p-3">
+            {isInstance ? (
+              <p className="text-xs text-violet-700">
+                🔁 هذه نسخة يومية من قالب متكرر. عدّل القالب لتغيير التكرار.
+              </p>
+            ) : (
+              <>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={isRecurring}
+                    onChange={e => setIsRecurring(e.target.checked)}
+                    className="w-4 h-4 accent-violet-500" />
+                  <span className="text-sm font-bold text-gray-800">🔁 مهمة متكررة</span>
+                </label>
+                {isRecurring && (
+                  <select value={recurrencePattern} onChange={e => setRecurrencePattern(e.target.value)}
+                    className="mt-2 w-full px-3 py-2 rounded-lg border border-violet-300 text-sm bg-white">
+                    <option value="daily">كل يوم</option>
+                    <option value="weekly:sat,sun,mon,tue,wed,thu">أيام العمل (سبت - خميس)</option>
+                    <option value="weekly:sat,sun,mon,tue,wed">سبت - أربعاء</option>
+                    <option value="weekly:fri,sat">عطلة (جمعة - سبت)</option>
+                    <option value="weekly:sun">كل أحد</option>
+                    <option value="weekly:mon">كل إثنين</option>
+                    <option value="weekly:tue">كل ثلاثاء</option>
+                    <option value="weekly:wed">كل أربعاء</option>
+                    <option value="weekly:thu">كل خميس</option>
+                    <option value="weekly:fri">كل جمعة</option>
+                    <option value="weekly:sat">كل سبت</option>
+                  </select>
+                )}
+              </>
+            )}
+          </div>
         </div>
         <div className="px-5 py-3 bg-gray-50 border-t flex justify-end gap-2">
           <button onClick={onClose} className="px-4 py-1.5 rounded-lg border border-gray-300 text-sm">إلغاء</button>

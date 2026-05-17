@@ -120,13 +120,112 @@ function addDaysCairo(n) {
   return r?.d || null;
 }
 
+// ─── Recurring instance generator ─────────────────────────────────────────────
+// For each recurring "template" todo, ensure that today's instance exists.
+// Templates are: is_recurring=1 AND parent_todo_id IS NULL.
+// Instances are: parent_todo_id = template.id, due_date = today.
+// Patterns supported:
+//   • 'daily'                                  → every day
+//   • 'weekly:sat,sun,mon,tue,wed,thu,fri'     → specific weekdays
+//   • 'monthly:15'                             → 15th of every month
+function recurrenceMatchesToday(pattern, today) {
+  if (!pattern) return false;
+  if (pattern === 'daily') return true;
+  if (pattern.startsWith('weekly:')) {
+    const days = pattern.slice(7).toLowerCase().split(',').map(s => s.trim());
+    const dayOfWeek = new Date(today + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' }).toLowerCase();
+    return days.some(d => d.startsWith(dayOfWeek));
+  }
+  if (pattern.startsWith('monthly:')) {
+    const day = parseInt(pattern.slice(8), 10);
+    const todayDay = parseInt(today.split('-')[2], 10);
+    return day === todayDay;
+  }
+  return false;
+}
+
+function ensureTodayRecurringInstances(scope) {
+  try {
+    const today = todayCairo();
+    const lineParam = scope.line === 'All' ? 'Ahmed Hassan' : scope.line;
+
+    // Find all visible recurring templates for this user
+    let templates;
+    if (scope.role === 'admin' && scope.management === 'All') {
+      templates = db.prepare(`
+        SELECT * FROM todos
+        WHERE is_recurring = 1 AND parent_todo_id IS NULL
+          AND status NOT IN ('cancelled') AND line = ?
+      `).all(lineParam);
+    } else if (scope.role === 'admin') {
+      templates = db.prepare(`
+        SELECT * FROM todos
+        WHERE is_recurring = 1 AND parent_todo_id IS NULL
+          AND status NOT IN ('cancelled') AND line = ?
+          AND (management = ? OR management = 'All' OR management IS NULL)
+      `).all(lineParam, scope.management);
+    } else if (scope.role === 'leader') {
+      templates = db.prepare(`
+        SELECT * FROM todos
+        WHERE is_recurring = 1 AND parent_todo_id IS NULL
+          AND status NOT IN ('cancelled') AND line = ?
+          AND (assigned_to = ? OR created_by = ? OR department = ? OR management = ?)
+      `).all(lineParam, scope.id, scope.id, scope.department, scope.management);
+    } else {
+      templates = db.prepare(`
+        SELECT * FROM todos
+        WHERE is_recurring = 1 AND parent_todo_id IS NULL
+          AND status NOT IN ('cancelled') AND line = ?
+          AND (assigned_to = ? OR created_by = ?)
+      `).all(lineParam, scope.id, scope.id);
+    }
+
+    const insertInstance = db.prepare(`
+      INSERT INTO todos
+        (title, description, status, priority, due_date, due_time,
+         created_by, assigned_to, department, management,
+         related_remark_id, tags, parent_todo_id, line)
+      VALUES (?,?,'new',?,?,?,?,?,?,?,?,?,?,?)
+    `);
+
+    for (const tmpl of templates) {
+      if (!recurrenceMatchesToday(tmpl.recurrence_pattern, today)) continue;
+
+      // Skip if today's instance already exists
+      const existing = db.prepare(
+        `SELECT id FROM todos WHERE parent_todo_id = ? AND due_date = ? LIMIT 1`
+      ).get(tmpl.id, today);
+      if (existing) continue;
+
+      insertInstance.run(
+        tmpl.title, tmpl.description, tmpl.priority,
+        today, tmpl.due_time,
+        tmpl.created_by, tmpl.assigned_to, tmpl.department, tmpl.management,
+        tmpl.related_remark_id, tmpl.tags, tmpl.id, tmpl.line
+      );
+    }
+  } catch (e) {
+    console.error('[todos] recurring generation error:', e.message);
+  }
+}
+
 // ─── ROUTES ───────────────────────────────────────────────────────────────────
 
 // GET /api/todos — list (role-aware)
 router.get('/', (req, res) => {
   try {
     const scope = userScope(req);
+    // Generate today's recurring instances BEFORE fetching so they appear
+    // in the user's "Today" bucket immediately.
+    ensureTodayRecurringInstances(scope);
+
+    const includeTemplates = req.query.include_templates === '1';
     const { where, params } = buildListWhere(scope, req.query);
+    // Hide template todos from the main list — only their daily instances
+    // should appear. Caller can pass ?include_templates=1 to see templates.
+    const templateClause = includeTemplates
+      ? ''
+      : ` AND NOT (t.is_recurring = 1 AND t.parent_todo_id IS NULL)`;
     const sort = (req.query.sort || 'smart').toString();
     let orderBy;
     switch (sort) {
@@ -155,7 +254,7 @@ router.get('/', (req, res) => {
       FROM todos t
       LEFT JOIN users u_assigned ON u_assigned.id = t.assigned_to
       LEFT JOIN users u_created  ON u_created.id  = t.created_by
-      WHERE ${where}
+      WHERE ${where}${templateClause}
       ORDER BY ${orderBy}
       LIMIT ?
     `).all(...params, parseInt(req.query.limit, 10) || 500);
@@ -171,6 +270,7 @@ router.get('/', (req, res) => {
 router.get('/stats', (req, res) => {
   try {
     const scope = userScope(req);
+    ensureTodayRecurringInstances(scope);
     const { where, params } = buildListWhere(scope, {});
     const today = todayCairo();
 
@@ -187,11 +287,36 @@ router.get('/stats', (req, res) => {
         SUM(CASE WHEN t.priority='urgent' AND t.status NOT IN ('completed','cancelled') THEN 1 ELSE 0 END) AS urgent_open
       FROM todos t
       WHERE ${where}
+        AND NOT (t.is_recurring = 1 AND t.parent_todo_id IS NULL)
     `).get(today, today, ...params);
 
     return res.json(stats || {});
   } catch (err) {
     console.error('[todos] stats error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/todos/templates — list user's recurring templates
+router.get('/templates', (req, res) => {
+  try {
+    const scope = userScope(req);
+    const { where, params } = buildListWhere(scope, {});
+    const rows = db.prepare(`
+      SELECT t.*,
+        u_assigned.full_name AS assigned_to_name,
+        u_created.full_name  AS created_by_name,
+        (SELECT COUNT(*) FROM todos c WHERE c.parent_todo_id = t.id) AS instances_count,
+        (SELECT COUNT(*) FROM todos c WHERE c.parent_todo_id = t.id AND c.status='completed') AS completed_count
+      FROM todos t
+      LEFT JOIN users u_assigned ON u_assigned.id = t.assigned_to
+      LEFT JOIN users u_created  ON u_created.id  = t.created_by
+      WHERE ${where} AND t.is_recurring = 1 AND t.parent_todo_id IS NULL
+      ORDER BY t.created_at DESC
+    `).all(...params);
+    return res.json({ templates: rows });
+  } catch (err) {
+    console.error('[todos] templates error:', err);
     return res.status(500).json({ error: err.message });
   }
 });

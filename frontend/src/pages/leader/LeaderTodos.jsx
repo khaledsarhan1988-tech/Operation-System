@@ -269,6 +269,9 @@ function KanbanCard({ todo, onDragStart, onClick, onEdit }) {
                 <Star size={9} /> عاجل
               </span>
             )}
+            {todo.parent_todo_id && (
+              <span className="inline-flex items-center gap-0.5 bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded font-bold" title="مهمة يومية متكررة">🔁 يومي</span>
+            )}
             {todo.comment_count > 0 && (
               <span className="inline-flex items-center gap-0.5">
                 <MessageSquare size={10} /> {todo.comment_count}
@@ -284,6 +287,7 @@ function KanbanCard({ todo, onDragStart, onClick, onEdit }) {
 // ─── Reused: Edit + Detail Modal (same as agent's) ────────────────────────────
 function TodoEditModal({ todo, usersData, onClose, onSaved }) {
   const isEdit = !!todo;
+  const isInstance = !!todo?.parent_todo_id;
   const [title, setTitle] = useState(todo?.title || '');
   const [description, setDescription] = useState(todo?.description || '');
   const [priority, setPriority] = useState(todo?.priority || 'normal');
@@ -291,6 +295,8 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
   const [dueDate, setDueDate] = useState(todo?.due_date || '');
   const [dueTime, setDueTime] = useState(todo?.due_time || '');
   const [assignedTo, setAssignedTo] = useState(todo?.assigned_to || '');
+  const [isRecurring, setIsRecurring] = useState(todo?.is_recurring === 1);
+  const [recurrencePattern, setRecurrencePattern] = useState(todo?.recurrence_pattern || 'daily');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
@@ -302,6 +308,8 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
         title, description, priority, status,
         due_date: dueDate || null, due_time: dueTime || null,
         assigned_to: assignedTo || null,
+        is_recurring: isRecurring && !isInstance ? 1 : 0,
+        recurrence_pattern: isRecurring && !isInstance ? recurrencePattern : null,
       };
       if (isEdit) await api.patch(`/todos/${todo.id}`, body);
       else        await api.post('/todos', body);
@@ -359,6 +367,39 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
               ))}
             </select>
           </Field>
+
+          <div className="bg-indigo-50/50 border border-indigo-200 rounded-lg p-3">
+            {isInstance ? (
+              <p className="text-xs text-indigo-700">
+                🔁 هذه نسخة يومية من قالب متكرر. عدّل القالب لتغيير التكرار.
+              </p>
+            ) : (
+              <>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={isRecurring}
+                    onChange={e => setIsRecurring(e.target.checked)}
+                    className="w-4 h-4 accent-indigo-500" />
+                  <span className="text-sm font-bold text-gray-800">🔁 مهمة متكررة</span>
+                </label>
+                {isRecurring && (
+                  <select value={recurrencePattern} onChange={e => setRecurrencePattern(e.target.value)}
+                    className="mt-2 w-full px-3 py-2 rounded-lg border border-indigo-300 text-sm bg-white">
+                    <option value="daily">كل يوم</option>
+                    <option value="weekly:sat,sun,mon,tue,wed,thu">أيام العمل (سبت - خميس)</option>
+                    <option value="weekly:sat,sun,mon,tue,wed">سبت - أربعاء</option>
+                    <option value="weekly:fri,sat">عطلة (جمعة - سبت)</option>
+                    <option value="weekly:sun">كل أحد</option>
+                    <option value="weekly:mon">كل إثنين</option>
+                    <option value="weekly:tue">كل ثلاثاء</option>
+                    <option value="weekly:wed">كل أربعاء</option>
+                    <option value="weekly:thu">كل خميس</option>
+                    <option value="weekly:fri">كل جمعة</option>
+                    <option value="weekly:sat">كل سبت</option>
+                  </select>
+                )}
+              </>
+            )}
+          </div>
         </div>
         <div className="px-5 py-3 bg-gray-50 border-t flex justify-end gap-2">
           <button onClick={onClose} className="px-4 py-1.5 rounded-lg border border-gray-300 text-sm hover:bg-gray-100">إلغاء</button>
