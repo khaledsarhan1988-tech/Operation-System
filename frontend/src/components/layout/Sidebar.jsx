@@ -59,6 +59,7 @@ const ENROLLMENT_LEADER_LINKS = [
 const LEADER_LINKS = [
   { to: '/leader',                              label: 'nav.dashboard',        icon: LayoutDashboard, end: true, color: 'blue' },
   { to: '/leader/team',                         label: 'nav.team',             icon: Users,           color: 'purple' },
+  { to: '/leader/org-chart',                    label: 'الهيكل التنظيمي',       icon: Network,         color: 'indigo' },
   { to: '/leader/groups',                       label: 'nav.groupCoverage',    icon: Globe,           color: 'cyan' },
   { to: '/leader/absent',                       label: 'nav.absentReport',     icon: UserX,           color: 'rose' },
   { to: '/leader/performance',                  label: 'nav.performance',      icon: BarChart2,       color: 'green' },

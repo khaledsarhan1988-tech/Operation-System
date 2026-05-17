@@ -25,6 +25,10 @@ router.use(authenticate, requireRole('leader'));
 //   • group_count    → active batches the member coordinates.
 //   • Both are NULL for the 'appointments' column — count logic not yet
 //     defined for that dept by the business.
+//
+// Role scoping:
+//   • admin → full 4-column view.
+//   • leader → only the section matching their users.department.
 router.get('/customer-services', (req, res) => {
   try {
     const sections = [
@@ -33,6 +37,21 @@ router.get('/customer-services', (req, res) => {
       { key: 'semi',         label: 'شبه خاص', dept_users: 'Semi',        tm_dept: 'customer_services', tm_section: 'semi'    },
       { key: 'appointments', label: 'مواعيد',  dept_users: 'Appointments',tm_dept: 'appointments',      tm_section: null      },
     ];
+
+    // Filter to the leader's own section so each team-leader sees only the
+    // column they actually own. Admins (and any other higher role) get all.
+    let visibleSections = sections;
+    if (req.user?.role === 'leader') {
+      const dept = (req.user.department || '').trim();
+      visibleSections = sections.filter((s) => s.dept_users.toLowerCase() === dept.toLowerCase());
+      if (!visibleSections.length) {
+        return res.json({
+          sections: [],
+          viewer_role: 'leader',
+          warning: `لا يوجد قسم يطابق department='${dept}' في users`,
+        });
+      }
+    }
 
     const leaderStmt = db.prepare(
       `SELECT id, full_name AS name FROM users
@@ -50,7 +69,7 @@ router.get('/customer-services', (req, res) => {
         ORDER BY name COLLATE NOCASE`
     );
 
-    const result = sections.map((s) => {
+    const result = visibleSections.map((s) => {
       const leader = leaderStmt.get(s.dept_users) || null;
       const members = s.tm_section
         ? membersWithSection.all(s.tm_dept, s.tm_section)
@@ -102,7 +121,7 @@ router.get('/customer-services', (req, res) => {
       };
     });
 
-    return res.json({ sections: result });
+    return res.json({ sections: result, viewer_role: req.user?.role || null });
   } catch (err) {
     console.error('[org-chart] customer-services error:', err);
     return res.status(500).json({ error: err.message });
@@ -250,6 +269,11 @@ function planTargetRedistribution(aliName, targetMembers) {
 // the user's balancing preference: distribute by CUSTOMER count, not group
 // count.
 router.get('/transfer-simulation', (req, res) => {
+  // Simulator is an admin operation — moving members between sections is
+  // outside a single leader's scope. Block leaders with a clear 403.
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({ error: 'صلاحية المحاكاة للمدير فقط' });
+  }
   const { coordinator = '', fromSection = '', toSection = '' } = req.query;
   const aliName = String(coordinator).trim();
   if (!aliName) return res.status(400).json({ error: 'coordinator is required' });

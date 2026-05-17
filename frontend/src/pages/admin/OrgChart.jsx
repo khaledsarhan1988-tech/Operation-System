@@ -442,6 +442,15 @@ export default function OrgChart() {
     enabled: activeTab === 'customer_services',
   });
 
+  // Layout/feature flags driven by who is viewing. Admin gets the full view
+  // (all sections + simulator). A team leader gets only their own column and
+  // no simulator (moving members between sections is an admin action).
+  const isAdmin = data?.viewer_role === 'admin';
+  const sectionCount = data?.sections?.length || 0;
+  const gridCols = sectionCount === 1
+    ? 'grid-cols-1 max-w-md mx-auto'
+    : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-4';
+
   return (
     <div className="space-y-6 pb-12">
       <PageHero
@@ -485,16 +494,22 @@ export default function OrgChart() {
             </div>
           )}
 
-          {data?.sections && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {data?.sections && data.sections.length > 0 && (
+            <div className={`grid ${gridCols} gap-4`}>
               {data.sections.map((s) => (
                 <ColumnCard key={s.key} section={s} />
               ))}
             </div>
           )}
 
-          {/* ── Bottom half: Transfer Simulator ─────────────────────────── */}
-          {data?.sections && (
+          {data?.sections && data.sections.length === 0 && (
+            <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 text-amber-800 text-sm">
+              {data.warning || 'لا يوجد بيانات لعرضها'}
+            </div>
+          )}
+
+          {/* ── Bottom half: Transfer Simulator (admin only) ────────────── */}
+          {isAdmin && data?.sections && data.sections.length > 0 && (
             <TransferSimulator sections={data.sections} />
           )}
         </>

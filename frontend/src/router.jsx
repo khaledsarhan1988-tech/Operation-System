@@ -91,6 +91,7 @@ const router = createBrowserRouter([
       { index: true, element: <Navigate to="dashboard" replace /> },
       { path: 'dashboard',                    element: <LeaderDashboard /> },
       { path: 'team',                         element: <TeamOverview /> },
+      { path: 'org-chart',                    element: <OrgChart /> },
       { path: 'absent-report',                element: <AbsentReport /> },
       { path: 'groups',                       element: <GroupCoverage /> },
       { path: 'tasks',                        element: <TaskDistribution /> },
