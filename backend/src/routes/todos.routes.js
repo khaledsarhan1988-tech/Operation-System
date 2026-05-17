@@ -530,6 +530,79 @@ router.delete('/:id', (req, res) => {
   }
 });
 
+// POST /api/todos/bulk-templates — Admin tool: apply a workflow (list of
+// recurring templates) to a list of users. Idempotent — skips templates
+// where a user already has a template with the same title.
+router.post('/bulk-templates', express.json(), (req, res) => {
+  const scope = userScope(req);
+  if (scope.role !== 'admin') {
+    return res.status(403).json({ error: 'صلاحية للأدمن فقط' });
+  }
+
+  const templates = Array.isArray(req.body?.templates) ? req.body.templates : [];
+  const userIds   = Array.isArray(req.body?.user_ids)  ? req.body.user_ids  : [];
+  if (templates.length === 0) return res.status(400).json({ error: 'يجب تحديد القوالب' });
+  if (userIds.length === 0)   return res.status(400).json({ error: 'يجب تحديد المستخدمين' });
+
+  const getUser = db.prepare(
+    `SELECT id, line, department, management FROM users WHERE id = ? AND is_active = 1`
+  );
+  const checkExisting = db.prepare(`
+    SELECT id FROM todos
+     WHERE assigned_to = ? AND is_recurring = 1 AND parent_todo_id IS NULL
+       AND LOWER(TRIM(title)) = LOWER(TRIM(?))
+     LIMIT 1
+  `);
+  const insertTemplate = db.prepare(`
+    INSERT INTO todos
+      (title, description, status, priority, due_date, due_time,
+       created_by, assigned_to, department, management,
+       is_recurring, recurrence_pattern, line)
+    VALUES (?,?,'new',?,NULL,?,?,?,?,?,1,?,?)
+  `);
+
+  let created = 0, skipped = 0;
+  const details = [];
+
+  for (const uid of userIds) {
+    const u = getUser.get(uid);
+    if (!u) { details.push({ user_id: uid, status: 'user_not_found' }); continue; }
+
+    let userCreated = 0, userSkipped = 0;
+    for (const t of templates) {
+      const title = String(t.title || '').trim();
+      if (!title) continue;
+      if (checkExisting.get(uid, title)) { skipped++; userSkipped++; continue; }
+      try {
+        insertTemplate.run(
+          title,
+          t.description || null,
+          t.priority || 'normal',
+          t.due_time || null,
+          scope.id,
+          uid,
+          u.department || null,
+          u.management || null,
+          t.recurrence_pattern || 'daily',
+          u.line || 'Ahmed Hassan',
+        );
+        created++; userCreated++;
+      } catch (e) {
+        details.push({ user_id: uid, task: title, error: e.message });
+      }
+    }
+    details.push({ user_id: uid, created: userCreated, skipped: userSkipped });
+  }
+
+  return res.json({
+    message: `تم إنشاء ${created} قالب، تخطي ${skipped} مكرّر`,
+    created, skipped,
+    total_users: userIds.length,
+    total_templates: templates.length,
+    details,
+  });
+});
+
 // POST /api/todos/:id/comments — add comment
 router.post('/:id/comments', express.json(), (req, res) => {
   try {

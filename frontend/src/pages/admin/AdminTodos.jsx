@@ -4,6 +4,7 @@ import {
   ListTodo, Plus, BarChart3, Users as UsersIcon, AlertTriangle, CheckCircle2,
   Zap, Clock, Calendar, AlertCircle, TrendingUp, Search, X, Edit3, Trash2,
   Send, MessageSquare, UserCircle, Star, Filter, Download, RefreshCw,
+  Sparkles, ClipboardCheck, ChevronDown, ChevronUp, Check,
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Legend } from 'recharts';
 import api from '../../api/axios';
@@ -29,6 +30,21 @@ function todayStr() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// ─── Default Daily Workflow (11 tasks for Customer Services) ──────────────────
+const DEFAULT_DAILY_WORKFLOW = [
+  { title: 'Whatsapp', description: 'اللي خلصت بس Resolved بنصفر الواتساب + بنعمل المسجات كلها', due_time: '10:00', priority: 'high' },
+  { title: 'Remarks', description: 'بنصفر الريماركات', due_time: '10:15', priority: 'high' },
+  { title: 'Attend (Call / Session / Task)', description: 'حضور المكالمات والجلسات والتاسكات', due_time: '10:30', priority: 'high' },
+  { title: 'Class Visit', description: 'زيارة الفصول', due_time: '11:30', priority: 'normal' },
+  { title: 'Whatsapp + Remarks (جولة 2)', description: 'اللي خلصت بس resolved بنصفر الواتساب والريماركات ثاني + بنعمل المسجات كلها', due_time: '12:00', priority: 'high' },
+  { title: 'Report', description: 'بتسحب ريبورت وتظبط اكوادك', due_time: '12:30', priority: 'high' },
+  { title: 'System Quality', description: 'حل المشاكل اللي موجودة عند كل واحد في السيستم', due_time: '13:00', priority: 'high' },
+  { title: 'Meeting / On Boarding / End Group', description: 'لو ف اي حاجة مع عميل مش واضحة بتدخل ميتنج توضحها، ولو عندك أوبيوردنج أو دا يوم الإند جروب بتاعك', due_time: '14:00', priority: 'high' },
+  { title: 'Task + Retention', description: 'تاسك + ريتنشن', due_time: '15:00', priority: 'high' },
+  { title: 'Whatsapp + Remarks (جولة 3)', description: 'اللي خلصت بس resolved بنصفر الواتساب والريماركات + بنعمل المسجات كلها', due_time: '16:00', priority: 'high' },
+  { title: 'Submission Sheet', description: 'شيت مستر خالد اللي بنضيف فيه داتا كل العملا اللي معانا', due_time: '17:00', priority: 'high' },
+];
+
 export default function AdminTodos() {
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
@@ -37,6 +53,7 @@ export default function AdminTodos() {
   const [openId, setOpenId] = useState(null);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [showWorkflow, setShowWorkflow] = useState(false);
   const qc = useQueryClient();
 
   const { data: todosData, isLoading } = useQuery({
@@ -146,6 +163,28 @@ export default function AdminTodos() {
         icon={BarChart3}
         gradient="from-violet-500 to-fuchsia-500"
       />
+
+      {/* Daily Workflow Setup CTA */}
+      <button
+        onClick={() => setShowWorkflow(true)}
+        className="w-full bg-gradient-to-r from-orange-50 via-amber-50 to-yellow-50 border-2 border-orange-300 rounded-2xl p-4 hover:from-orange-100 hover:via-amber-100 hover:to-yellow-100 transition group text-right"
+      >
+        <div className="flex items-center gap-4">
+          <div className="p-3 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 shadow-lg group-hover:scale-105 transition">
+            <ClipboardCheck size={24} className="text-white" />
+          </div>
+          <div className="flex-1">
+            <h3 className="font-bold text-orange-900 text-base flex items-center gap-2">
+              <Sparkles size={16} className="text-orange-600" />
+              إعداد جدول الأعمال اليومي القياسي
+            </h3>
+            <p className="text-xs text-orange-700 mt-1">
+              طبّق {DEFAULT_DAILY_WORKFLOW.length} مهمة يومية متكررة على أي عدد من الموظفين دفعة واحدة — تظهر تلقائياً كل يوم في صفحة "مهامي" بتاعتهم.
+            </p>
+          </div>
+          <ChevronDown size={18} className="text-orange-500 group-hover:translate-x-1 transition" />
+        </div>
+      </button>
 
       {/* Stats */}
       {stats && (
@@ -376,6 +415,219 @@ export default function AdminTodos() {
           onDeleted={() => { qc.invalidateQueries({ queryKey: ['todos'] }); setOpenId(null); }}
         />
       )}
+      {showWorkflow && (
+        <DailyWorkflowModal
+          users={usersData?.users || []}
+          onClose={() => setShowWorkflow(false)}
+          onApplied={() => { qc.invalidateQueries({ queryKey: ['todos'] }); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Daily Workflow Modal ─────────────────────────────────────────────────────
+function DailyWorkflowModal({ users, onClose, onApplied }) {
+  const [tasks, setTasks] = useState(DEFAULT_DAILY_WORKFLOW.map((t, i) => ({ ...t, id: i, enabled: true })));
+  const [selectedUserIds, setSelectedUserIds] = useState([]);
+  const [deptFilter, setDeptFilter] = useState('');
+  const [roleFilter, setRoleFilter] = useState('agent');  // default: agents only
+  const [search, setSearch] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const filteredUsers = useMemo(() => {
+    return users.filter(u => {
+      if (deptFilter && u.department !== deptFilter) return false;
+      if (roleFilter && u.role !== roleFilter) return false;
+      if (search && !u.full_name.toLowerCase().includes(search.toLowerCase())) return false;
+      return true;
+    });
+  }, [users, deptFilter, roleFilter, search]);
+
+  function toggleUser(id) {
+    setSelectedUserIds(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
+  }
+  function toggleAll() {
+    const allIds = filteredUsers.map(u => u.id);
+    const allSelected = allIds.every(id => selectedUserIds.includes(id));
+    if (allSelected) {
+      setSelectedUserIds(s => s.filter(id => !allIds.includes(id)));
+    } else {
+      setSelectedUserIds(s => [...new Set([...s, ...allIds])]);
+    }
+  }
+  function updateTask(id, key, value) {
+    setTasks(ts => ts.map(t => t.id === id ? { ...t, [key]: value } : t));
+  }
+  function removeTask(id) {
+    setTasks(ts => ts.filter(t => t.id !== id));
+  }
+  function addTask() {
+    setTasks(ts => [...ts, { id: Date.now(), title: '', description: '', due_time: '09:00', priority: 'normal', enabled: true }]);
+  }
+
+  async function apply() {
+    const activeTasks = tasks.filter(t => t.enabled && t.title.trim());
+    if (activeTasks.length === 0) { setResult({ error: 'لا توجد مهام مفعّلة' }); return; }
+    if (selectedUserIds.length === 0) { setResult({ error: 'لم تختار أي مستخدم' }); return; }
+    if (!confirm(`سيتم إنشاء ${activeTasks.length} قالب لـ ${selectedUserIds.length} مستخدم (= ${activeTasks.length * selectedUserIds.length} قالب). متابعة؟`)) return;
+
+    setSubmitting(true); setResult(null);
+    try {
+      const { data } = await api.post('/todos/bulk-templates', {
+        templates: activeTasks.map(t => ({
+          title: t.title,
+          description: t.description || null,
+          due_time: t.due_time || null,
+          priority: t.priority,
+          recurrence_pattern: 'daily',
+        })),
+        user_ids: selectedUserIds,
+      });
+      setResult(data);
+      onApplied();
+    } catch (err) {
+      setResult({ error: err.response?.data?.error || err.message });
+    } finally { setSubmitting(false); }
+  }
+
+  const activeCount = tasks.filter(t => t.enabled && t.title.trim()).length;
+  const allFilteredSelected = filteredUsers.length > 0 && filteredUsers.every(u => selectedUserIds.includes(u.id));
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl max-w-5xl w-full max-h-[92vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-4 bg-gradient-to-r from-orange-500 to-amber-500 text-white flex items-center justify-between">
+          <div>
+            <h3 className="font-bold text-lg flex items-center gap-2">
+              <ClipboardCheck size={20} />
+              إعداد جدول الأعمال اليومي
+            </h3>
+            <p className="text-xs opacity-90 mt-0.5">القوالب هتظهر تلقائياً كل يوم لكل مستخدم تختاره</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-white/20 rounded-lg"><X size={18} /></button>
+        </div>
+
+        <div className="overflow-y-auto flex-1 grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-gray-200">
+
+          {/* LEFT: Tasks */}
+          <div className="p-4 space-y-2">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="font-bold text-gray-800 text-sm">
+                📋 القوالب ({activeCount} مفعّلة من {tasks.length})
+              </h4>
+              <button onClick={addTask}
+                className="text-xs px-2 py-1 rounded bg-orange-100 hover:bg-orange-200 text-orange-700 font-bold flex items-center gap-1">
+                <Plus size={12} /> إضافة
+              </button>
+            </div>
+            <div className="space-y-1.5 max-h-[55vh] overflow-y-auto pr-1">
+              {tasks.map(t => (
+                <div key={t.id} className={`p-2.5 rounded-lg border ${t.enabled ? 'bg-white border-gray-200' : 'bg-gray-50 border-gray-100 opacity-50'}`}>
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <input type="checkbox" checked={t.enabled} onChange={e => updateTask(t.id, 'enabled', e.target.checked)}
+                      className="w-4 h-4 accent-orange-500 flex-shrink-0" />
+                    <input type="text" value={t.title} onChange={e => updateTask(t.id, 'title', e.target.value)}
+                      placeholder="عنوان المهمة"
+                      className="flex-1 px-2 py-1 text-sm font-bold border border-gray-200 rounded" />
+                    <input type="time" value={t.due_time || ''} onChange={e => updateTask(t.id, 'due_time', e.target.value)}
+                      className="px-2 py-1 text-xs border border-gray-200 rounded w-24" />
+                    <select value={t.priority} onChange={e => updateTask(t.id, 'priority', e.target.value)}
+                      className="px-1 py-1 text-xs border border-gray-200 rounded">
+                      <option value="urgent">🔴</option>
+                      <option value="high">🟠</option>
+                      <option value="normal">🔵</option>
+                      <option value="low">⚪</option>
+                    </select>
+                    <button onClick={() => removeTask(t.id)} className="p-1 hover:bg-red-50 rounded text-red-500">
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                  <input type="text" value={t.description || ''} onChange={e => updateTask(t.id, 'description', e.target.value)}
+                    placeholder="وصف اختياري"
+                    className="w-full px-2 py-1 text-xs text-gray-600 border border-gray-100 rounded" />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* RIGHT: Users */}
+          <div className="p-4 space-y-2">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="font-bold text-gray-800 text-sm">
+                👥 المستخدمين ({selectedUserIds.length} مختار من {filteredUsers.length})
+              </h4>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)}
+                className="px-2 py-1.5 text-xs border border-gray-200 rounded">
+                <option value="">كل الأدوار</option>
+                <option value="agent">موظف</option>
+                <option value="leader">مشرف</option>
+                <option value="admin">مدير/مسؤول</option>
+              </select>
+              <select value={deptFilter} onChange={e => setDeptFilter(e.target.value)}
+                className="px-2 py-1.5 text-xs border border-gray-200 rounded">
+                <option value="">كل الأقسام</option>
+                <option value="General">General</option>
+                <option value="Private">Private</option>
+                <option value="Semi">Semi</option>
+                <option value="Appointments">Appointments</option>
+                <option value="All">All</option>
+              </select>
+            </div>
+            <input type="text" value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="🔍 بحث بالاسم..."
+              className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded" />
+
+            <button onClick={toggleAll}
+              className="w-full px-3 py-1.5 text-xs font-bold rounded bg-orange-100 text-orange-700 hover:bg-orange-200 flex items-center justify-center gap-1">
+              <Check size={12} /> {allFilteredSelected ? 'إلغاء تحديد الكل' : 'تحديد الكل'}
+            </button>
+
+            <div className="space-y-1 max-h-[40vh] overflow-y-auto pr-1 border border-gray-200 rounded-lg p-2">
+              {filteredUsers.length === 0 ? (
+                <p className="text-xs text-gray-400 text-center py-4">لا يوجد مستخدمين بالفلتر ده</p>
+              ) : filteredUsers.map(u => (
+                <label key={u.id} className={`flex items-center gap-2 p-2 rounded cursor-pointer text-sm
+                  ${selectedUserIds.includes(u.id) ? 'bg-orange-100' : 'hover:bg-gray-50'}`}>
+                  <input type="checkbox" checked={selectedUserIds.includes(u.id)}
+                    onChange={() => toggleUser(u.id)}
+                    className="w-4 h-4 accent-orange-500" />
+                  <span className="flex-1 font-semibold">{u.full_name}</span>
+                  <span className="text-[10px] text-gray-500">{u.role}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100">{u.department}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Result + Actions */}
+        {result && (
+          <div className={`px-5 py-3 ${result.error ? 'bg-red-50 border-t border-red-200 text-red-700' : 'bg-emerald-50 border-t border-emerald-200 text-emerald-800'} text-sm flex items-center gap-2`}>
+            {result.error
+              ? <><AlertCircle size={16} /> {result.error}</>
+              : <><CheckCircle2 size={16} /> {result.message} — موزعة على {result.total_users} مستخدم</>}
+          </div>
+        )}
+
+        <div className="px-5 py-3 bg-gray-50 border-t flex items-center justify-between">
+          <p className="text-xs text-gray-600">
+            ⚡ <strong>{activeCount * selectedUserIds.length}</strong> قالب سيتم إنشاؤها ({activeCount} مهمة × {selectedUserIds.length} مستخدم)
+          </p>
+          <div className="flex gap-2">
+            <button onClick={onClose}
+              className="px-4 py-1.5 rounded-lg border border-gray-300 text-sm hover:bg-gray-100">إغلاق</button>
+            <button onClick={apply} disabled={submitting || activeCount === 0 || selectedUserIds.length === 0}
+              className="px-5 py-1.5 rounded-lg bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-bold text-sm disabled:opacity-40 flex items-center gap-1.5">
+              <Sparkles size={14} />
+              {submitting ? 'جاري التطبيق...' : 'طبّق على المختارين'}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
