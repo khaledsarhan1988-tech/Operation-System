@@ -204,6 +204,35 @@ router.put('/:id', (req, res) => {
   }
 });
 
+// ─── PATCH /api/team/:id/line ─────────────────────────────────────────────────
+// Tiny admin helper to update ONLY the `line` field on a team_members row.
+// Useful when the full edit form is unavailable (browser cache, stale build)
+// — admin can call it from DevTools/cURL: e.g.
+//   fetch('/api/team/Alia7/line', { method:'PATCH', headers:{...},
+//     body: JSON.stringify({ line: 'Dardasha' }) })
+// `:id` accepts either the numeric id OR the exact team_members.name.
+router.patch('/:id/line', (req, res) => {
+  const idOrName = req.params.id;
+  const line = req.body?.line;
+  if (!VALID_LINES_TM.includes(line)) {
+    return res.status(400).json({ error: `line must be one of ${VALID_LINES_TM.join(', ')}` });
+  }
+  try {
+    let result;
+    if (/^\d+$/.test(idOrName)) {
+      result = db.prepare('UPDATE team_members SET line=? WHERE id=?').run(line, Number(idOrName));
+    } else {
+      result = db.prepare(
+        `UPDATE team_members SET line=? WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))`
+      ).run(line, idOrName);
+    }
+    if (!result.changes) return res.status(404).json({ error: 'team member not found' });
+    return res.json({ ok: true, changes: result.changes, line });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── DELETE /api/team/:id ─────────────────────────────────────────────────────
 router.delete('/:id', (req, res) => {
   try {
