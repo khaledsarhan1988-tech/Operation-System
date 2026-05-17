@@ -988,19 +988,22 @@ initDb().then(db => {
   // against. We use a far-past effective_from so any historical event lands
   // inside this seed window (queries become equivalent to the legacy behavior
   // for unchanged groups). Subsequent runs are no-ops — only seed when empty.
+  // NOTE: Use the wrapper `db.prepare(...)` (not `db._raw.prepare(...)`).
+  // sql.js's raw Statement has no `.all()` method — only the wrapper provides
+  // `.all()` / `.get()` / `.run()` that return plain JS values.
   try {
-    const chCount = db._raw.prepare(`SELECT COUNT(*) AS cnt FROM coordinator_history`).get();
+    const chCount = db.prepare(`SELECT COUNT(*) AS cnt FROM coordinator_history`).get();
     if (chCount && chCount.cnt === 0) {
-      const batches = db._raw.prepare(
+      const batches = db.prepare(
         `SELECT group_name, line, coordinators FROM batches WHERE coordinators IS NOT NULL AND TRIM(coordinators) != ''`
       ).all();
-      const insertCh = db._raw.prepare(
+      const insertCh = db.prepare(
         `INSERT INTO coordinator_history (group_name, line, coordinator, effective_from, effective_to)
          VALUES (?, ?, ?, '2000-01-01', NULL)`
       );
       const seen = new Set();
       let seeded = 0;
-      const tx = db._raw.transaction(() => {
+      const tx = db.transaction(() => {
         for (const b of batches) {
           if (!b.coordinators) continue;
           for (const raw of String(b.coordinators).split(',')) {
@@ -1025,21 +1028,21 @@ initDb().then(db => {
   }
 
   try {
-    const rahCount = db._raw.prepare(`SELECT COUNT(*) AS cnt FROM remark_assignment_history`).get();
+    const rahCount = db.prepare(`SELECT COUNT(*) AS cnt FROM remark_assignment_history`).get();
     if (rahCount && rahCount.cnt === 0) {
-      const remarks = db._raw.prepare(
+      const remarks = db.prepare(
         `SELECT external_id, line, assigned_to, added_at
            FROM remarks
           WHERE external_id IS NOT NULL
             AND assigned_to IS NOT NULL AND TRIM(assigned_to) != ''`
       ).all();
-      const insertRah = db._raw.prepare(
+      const insertRah = db.prepare(
         `INSERT INTO remark_assignment_history
            (remark_external_id, line, assigned_to, effective_from, effective_to)
          VALUES (?, ?, ?, ?, NULL)`
       );
       let seeded = 0;
-      const tx = db._raw.transaction(() => {
+      const tx = db.transaction(() => {
         for (const r of remarks) {
           // Use added_at as effective_from when available; fallback to far-past
           const eff = (r.added_at && String(r.added_at).trim()) ? r.added_at : '2000-01-01';
@@ -1070,15 +1073,16 @@ initDb().then(db => {
   // the rule produces, so reruns are no-ops once data is converged.
   try {
     const excelSvc = require('./services/excel.service');
-    const allBatches = db._raw.prepare(
+    // Use wrapper db.prepare (raw sql.js Statement lacks .all/.get/.run).
+    const allBatches = db.prepare(
       `SELECT id, group_name, course, dept_type, lecture_duration_min FROM batches`
     ).all();
-    const updateStmt = db._raw.prepare(
+    const updateStmt = db.prepare(
       `UPDATE batches SET dept_type = ?, lecture_duration_min = ? WHERE id = ?`
     );
     let changed = 0;
     const sample = [];
-    const tx = db._raw.transaction(() => {
+    const tx = db.transaction(() => {
       for (const b of allBatches) {
         const newDept = excelSvc.classifyDeptFromCourse(b.course);
         if (!newDept) continue; // no course → keep legacy classification untouched
