@@ -23,6 +23,7 @@ import TeamOverview from './pages/leader/TeamOverview';
 import AbsentReport from './pages/leader/AbsentReport';
 import GroupCoverage from './pages/leader/GroupCoverage';
 import TaskDistribution from './pages/leader/TaskDistribution';
+import LeaderTodos from './pages/leader/LeaderTodos';
 
 // Admin pages
 import AdminDashboard from './pages/admin/AdminDashboard';
@@ -97,6 +98,7 @@ const router = createBrowserRouter([
       { path: 'absent-report',                element: <AbsentReport /> },
       { path: 'groups',                       element: <GroupCoverage /> },
       { path: 'tasks',                        element: <TaskDistribution /> },
+      { path: 'todos',                        element: <LeaderTodos /> },
       { path: 'users',                        element: <UserManagement /> },
       { path: 'upload',                       element: <ExcelUpload /> },
       { path: 'code-problems',                element: <LeaderCodeProblems /> },

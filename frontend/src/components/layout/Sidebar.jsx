@@ -65,6 +65,7 @@ const LEADER_LINKS = [
   { to: '/leader/absent',                       label: 'nav.absentReport',     icon: UserX,           color: 'rose' },
   { to: '/leader/performance',                  label: 'nav.performance',      icon: BarChart2,       color: 'green' },
   { to: '/leader/tasks',                        label: 'nav.taskDistribution', icon: ClipboardList,   color: 'indigo' },
+  { to: '/leader/todos',                        label: 'مهام الفريق',          icon: ListTodo,        color: 'pink' },
   { to: '/leader/code-problems',                label: 'nav.codeProblems',     icon: AlertTriangle,   color: 'amber' },
   { to: '/leader/pipeline',                     label: 'nav.clientPipeline',   icon: Kanban,          color: 'emerald' },
   { type: 'section', label: 'nav.reportsSection' },
