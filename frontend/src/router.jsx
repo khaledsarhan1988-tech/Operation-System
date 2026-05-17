@@ -33,6 +33,7 @@ import DriveSync from './pages/admin/DriveSync';
 import DriveSyncHistory from './pages/admin/DriveSyncHistory';
 import RemarksMonitor from './pages/admin/RemarksMonitor';
 import RemarksMonitorCategory from './pages/admin/RemarksMonitorCategory';
+import AdminTodos from './pages/admin/AdminTodos';
 import SystemReports from './pages/admin/SystemReports';
 import EducationReports from './pages/admin/EducationReports';
 import QualityReports from './pages/admin/QualityReports';
@@ -127,6 +128,7 @@ const router = createBrowserRouter([
       { path: 'drive-sync/history',           element: <DriveSyncHistory /> },
       { path: 'remarks-monitor',              element: <RemarksMonitor /> },
       { path: 'remarks-monitor/category',     element: <RemarksMonitorCategory /> },
+      { path: 'todos',                        element: <AdminTodos /> },
       { path: 'team',                         element: <TeamPage /> },
       { path: 'org-chart',                    element: <OrgChart /> },
       { path: 'reports/trainer-utilization',  element: <TrainerUtilization /> },

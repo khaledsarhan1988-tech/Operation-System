@@ -111,6 +111,7 @@ function getAdminLinks(user) {
     { to: '/admin/distribution', label: 'nav.clientDistribution', icon: Shuffle,         color: 'cyan' },
     { to: '/admin/pipeline',     label: 'nav.clientPipeline',     icon: Kanban,          color: 'emerald' },
     { to: '/admin/employee-progression', label: 'nav.employeeProgression', icon: TrendingUp, color: 'violet' },
+    { to: '/admin/todos',        label: 'إدارة المهام',            icon: ListTodo,        color: 'pink' },
     { to: '/admin/targets',      label: 'nav.targets',            icon: Target,          color: 'green' },
     // System-wide config — super-admin (management='All') only.
     // Department-scoped admins (Customer Services / Quality / Education) don't see these.

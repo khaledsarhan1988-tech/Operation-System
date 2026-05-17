@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
+import QuickAddTodo from '../todos/QuickAddTodo';
 
 export default function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -39,6 +40,9 @@ export default function AppShell() {
           </div>
         </main>
       </div>
+
+      {/* Global Quick-Add Todo (Ctrl/Cmd+K) */}
+      <QuickAddTodo />
     </div>
   );
 }
