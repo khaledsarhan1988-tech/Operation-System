@@ -982,6 +982,81 @@ initDb().then(db => {
     console.error('drive_sync_runs migration error:', e.message);
   }
 
+  // ── coordinator_history / remark_assignment_history bootstrap ────────────
+  // First-time seed: when these tables exist but are empty, populate from the
+  // current state of `batches` and `remarks` so reports have a baseline to JOIN
+  // against. We use a far-past effective_from so any historical event lands
+  // inside this seed window (queries become equivalent to the legacy behavior
+  // for unchanged groups). Subsequent runs are no-ops — only seed when empty.
+  try {
+    const chCount = db._raw.prepare(`SELECT COUNT(*) AS cnt FROM coordinator_history`).get();
+    if (chCount && chCount.cnt === 0) {
+      const batches = db._raw.prepare(
+        `SELECT group_name, line, coordinators FROM batches WHERE coordinators IS NOT NULL AND TRIM(coordinators) != ''`
+      ).all();
+      const insertCh = db._raw.prepare(
+        `INSERT INTO coordinator_history (group_name, line, coordinator, effective_from, effective_to)
+         VALUES (?, ?, ?, '2000-01-01', NULL)`
+      );
+      const seen = new Set();
+      let seeded = 0;
+      const tx = db._raw.transaction(() => {
+        for (const b of batches) {
+          if (!b.coordinators) continue;
+          for (const raw of String(b.coordinators).split(',')) {
+            const name = raw.trim();
+            if (!name) continue;
+            const key = `${b.group_name}|${b.line}|${name.toLowerCase()}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            insertCh.run(b.group_name, b.line, name);
+            seeded += 1;
+          }
+        }
+      });
+      tx();
+      if (seeded > 0) {
+        saveNow();
+        console.log(`✅ Migration: coordinator_history seeded with ${seeded} baseline rows`);
+      }
+    }
+  } catch (e) {
+    console.error('coordinator_history bootstrap error:', e.message);
+  }
+
+  try {
+    const rahCount = db._raw.prepare(`SELECT COUNT(*) AS cnt FROM remark_assignment_history`).get();
+    if (rahCount && rahCount.cnt === 0) {
+      const remarks = db._raw.prepare(
+        `SELECT external_id, line, assigned_to, added_at
+           FROM remarks
+          WHERE external_id IS NOT NULL
+            AND assigned_to IS NOT NULL AND TRIM(assigned_to) != ''`
+      ).all();
+      const insertRah = db._raw.prepare(
+        `INSERT INTO remark_assignment_history
+           (remark_external_id, line, assigned_to, effective_from, effective_to)
+         VALUES (?, ?, ?, ?, NULL)`
+      );
+      let seeded = 0;
+      const tx = db._raw.transaction(() => {
+        for (const r of remarks) {
+          // Use added_at as effective_from when available; fallback to far-past
+          const eff = (r.added_at && String(r.added_at).trim()) ? r.added_at : '2000-01-01';
+          insertRah.run(r.external_id, r.line, String(r.assigned_to).trim(), eff);
+          seeded += 1;
+        }
+      });
+      tx();
+      if (seeded > 0) {
+        saveNow();
+        console.log(`✅ Migration: remark_assignment_history seeded with ${seeded} baseline rows`);
+      }
+    }
+  } catch (e) {
+    console.error('remark_assignment_history bootstrap error:', e.message);
+  }
+
   // ── batches.dept_type re-classification from `course` column ─────────────
   // Authoritative rule (per Ahmed Hassan Academy convention):
   //   "Private <course>"  → Private

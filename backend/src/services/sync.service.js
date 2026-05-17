@@ -266,11 +266,73 @@ function syncTrainees(buffer, line) {
   return rows.length;
 }
 
+// Normalize a coordinators field (TEXT, may contain comma-separated names) to a
+// sorted unique Set of trimmed lowercase-keyed names. Returns Map<lowerKey, original>
+// so we preserve the original casing for storage but use the lowercase for comparison.
+function parseCoordinatorList(coordField) {
+  const map = new Map();
+  if (!coordField) return map;
+  String(coordField).split(',').forEach(raw => {
+    const t = raw.trim();
+    if (!t) return;
+    const key = t.toLowerCase();
+    if (!map.has(key)) map.set(key, t);
+  });
+  return map;
+}
+
 function syncBatches(buffer, line) {
   const rows = excel.parseBatches(buffer);
   const uniqueGroups = [...new Set(rows.map(r => r.group_name))];
   const run = db.transaction(() => {
-    // Remove this line's old batches
+    // ── COORDINATOR HISTORY: detect changes BEFORE we DELETE batches ─────
+    // For each incoming group, diff old vs new coordinator sets:
+    //   removed = old - new  → close their history rows (effective_to = NOW)
+    //   added   = new - old  → open new history rows (effective_from = NOW)
+    //   common              → leave as is
+    // Multi-coordinator-aware (handles "خالد, سعيد" → "احمد, سعيد" cleanly).
+    const oldCoords = db.prepare(
+      `SELECT group_name, coordinators FROM batches WHERE line = ?`
+    ).all(line);
+    const oldByGroup = new Map(oldCoords.map(r => [r.group_name, r.coordinators]));
+
+    const nowIso = new Date().toISOString();
+    const closeStmt = db.prepare(
+      `UPDATE coordinator_history
+          SET effective_to = ?
+        WHERE group_name = ? AND line = ? AND coordinator = ? AND effective_to IS NULL`
+    );
+    const openStmt = db.prepare(
+      `INSERT INTO coordinator_history (group_name, line, coordinator, effective_from, effective_to)
+       VALUES (?, ?, ?, ?, NULL)`
+    );
+
+    let closed = 0, opened = 0;
+    for (const r of rows) {
+      const oldField = oldByGroup.get(r.group_name);
+      const oldMap   = parseCoordinatorList(oldField);
+      const newMap   = parseCoordinatorList(r.coordinators);
+
+      // removed
+      for (const [key, original] of oldMap) {
+        if (!newMap.has(key)) {
+          closeStmt.run(nowIso, r.group_name, line, original);
+          closed += 1;
+        }
+      }
+      // added
+      for (const [key, original] of newMap) {
+        if (!oldMap.has(key)) {
+          openStmt.run(r.group_name, line, original, nowIso);
+          opened += 1;
+        }
+      }
+    }
+    if (closed > 0 || opened > 0) {
+      console.log(`[syncBatches] coordinator_history: ${opened} opened, ${closed} closed for line=${line}`);
+    }
+
+    // ── existing batches replacement ────────────────────────────────────
     db.prepare('DELETE FROM batches WHERE line = ?').run(line);
     // Claim exclusive ownership — remove same groups from other lines
     evictFromOtherLines('batches', line, uniqueGroups);
@@ -349,7 +411,47 @@ function syncRemarks(buffer, line, warnings) {
     .all(line)
     .forEach(r => { preserved[r.external_id] = { agent_notes: r.agent_notes, resolved_at: r.resolved_at }; });
 
+  // ── REMARK ASSIGNMENT HISTORY: detect changes BEFORE DELETE ──────────
+  // Each remark has a single assigned_to value. Diff: if old != new, close
+  // the open history row for the old assignee and open one for the new.
+  const oldAssign = db.prepare(
+    `SELECT external_id, assigned_to FROM remarks WHERE line = ? AND external_id IS NOT NULL`
+  ).all(line);
+  const oldAssignByExt = new Map(oldAssign.map(r => [r.external_id, r.assigned_to]));
+
   const run = db.transaction(() => {
+    // ── apply assignment-history diff ─────────────────────────────────
+    const nowIso = new Date().toISOString();
+    const closeAssignStmt = db.prepare(
+      `UPDATE remark_assignment_history
+          SET effective_to = ?
+        WHERE remark_external_id = ? AND line = ? AND assigned_to = ? AND effective_to IS NULL`
+    );
+    const openAssignStmt = db.prepare(
+      `INSERT INTO remark_assignment_history
+         (remark_external_id, line, assigned_to, effective_from, effective_to)
+       VALUES (?, ?, ?, ?, NULL)`
+    );
+
+    let aClosed = 0, aOpened = 0;
+    for (const r of rows) {
+      if (r.external_id == null || !Number.isFinite(r.external_id)) continue;
+      const oldVal = (oldAssignByExt.get(r.external_id) || '').trim();
+      const newVal = (r.assigned_to || '').trim();
+      if (oldVal === newVal) continue;
+      if (oldVal) {
+        closeAssignStmt.run(nowIso, r.external_id, line, oldVal);
+        aClosed += 1;
+      }
+      if (newVal) {
+        openAssignStmt.run(r.external_id, line, newVal, nowIso);
+        aOpened += 1;
+      }
+    }
+    if (aClosed > 0 || aOpened > 0) {
+      console.log(`[syncRemarks] remark_assignment_history: ${aOpened} opened, ${aClosed} closed for line=${line}`);
+    }
+
     db.prepare('DELETE FROM remarks WHERE line = ?').run(line);
 
     // Evict same external_ids from OTHER lines — each external_id belongs to ONE line only

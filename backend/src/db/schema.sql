@@ -337,6 +337,49 @@ CREATE INDEX IF NOT EXISTS idx_clients_group_line      ON clients(group_name, li
 CREATE INDEX IF NOT EXISTS idx_batches_group_line      ON batches(group_name, line);
 
 -- =============================================
+-- COORDINATOR HISTORY — date-aware coordinator attribution per batch
+-- =============================================
+-- Each row represents one coordinator's tenure on one group within one line.
+-- Multiple coordinators per group are stored as separate rows (not comma-list).
+-- effective_to = NULL means "still active". Auto-managed by syncBatches:
+--   • Old coord disappears from Excel → set effective_to = NOW
+--   • New coord appears in Excel → INSERT new row with effective_from = NOW
+-- Reports use this to attribute historical events (absences, etc.) to the
+-- coordinator who was actually responsible on each event's date.
+CREATE TABLE IF NOT EXISTS coordinator_history (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  group_name      TEXT NOT NULL,
+  line            TEXT NOT NULL,
+  coordinator     TEXT NOT NULL,
+  effective_from  TEXT NOT NULL,
+  effective_to    TEXT,
+  detected_at     TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+);
+CREATE INDEX IF NOT EXISTS idx_ch_group_line   ON coordinator_history(group_name, line);
+CREATE INDEX IF NOT EXISTS idx_ch_coord        ON coordinator_history(coordinator COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_ch_dates        ON coordinator_history(effective_from, effective_to);
+CREATE INDEX IF NOT EXISTS idx_ch_open         ON coordinator_history(group_name, line, effective_to);
+
+-- =============================================
+-- REMARK ASSIGNMENT HISTORY — date-aware assignee attribution per remark
+-- =============================================
+-- Same shape as coordinator_history but keyed by remark.external_id (stable
+-- across re-imports). Auto-managed by syncRemarks.
+CREATE TABLE IF NOT EXISTS remark_assignment_history (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  remark_external_id INTEGER NOT NULL,
+  line               TEXT NOT NULL,
+  assigned_to        TEXT NOT NULL,
+  effective_from     TEXT NOT NULL,
+  effective_to       TEXT,
+  detected_at        TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+);
+CREATE INDEX IF NOT EXISTS idx_rah_external    ON remark_assignment_history(remark_external_id, line);
+CREATE INDEX IF NOT EXISTS idx_rah_assignee    ON remark_assignment_history(assigned_to COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_rah_dates       ON remark_assignment_history(effective_from, effective_to);
+CREATE INDEX IF NOT EXISTS idx_rah_open        ON remark_assignment_history(remark_external_id, line, effective_to);
+
+-- =============================================
 -- MONTHLY SNAPSHOTS — frozen KPIs per agent per month (Level 2)
 -- =============================================
 CREATE TABLE IF NOT EXISTS monthly_snapshots (
