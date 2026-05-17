@@ -284,7 +284,14 @@ export default function Sidebar({ mobile, onClose }) {
               {user?.full_name}
             </p>
             <p className="text-slate-400 text-[11px] truncate font-bold mt-0.5">
-              {t(`roles.${user?.role}`, user?.role)}
+              {/* Department-scoped admin reads as "مدير" / "Manager" — matches
+                  the convention used in the UserManagement table. */}
+              {(() => {
+                const roleKey = (user?.role === 'admin' && user?.management && user.management !== 'All')
+                  ? 'manager'
+                  : user?.role;
+                return t(`roles.${roleKey}`, roleKey);
+              })()}
               {user?.management ? ` · ${managementMap[user?.management] || user?.management}` : ''}
             </p>
           </div>

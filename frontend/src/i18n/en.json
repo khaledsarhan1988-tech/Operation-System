@@ -5,6 +5,7 @@
   },
   "roles": {
     "admin": "Admin",
+    "manager": "Manager",
     "leader": "Team Leader",
     "agent": "Agent"
   },

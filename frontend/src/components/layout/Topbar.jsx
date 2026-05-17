@@ -23,11 +23,20 @@ function gradientFor(name = '') {
 
 const ROLE_LABELS = {
   admin: 'Administrator',
+  manager: 'Manager',            // admin scoped to a single management (not 'All')
   leader: 'Team Leader',
   agent: 'Agent',
   enrollment: 'Enrollment',
   enrollment_leader: 'Enrollment Lead',
 };
+
+// Resolve the effective role label for a user. Department-scoped admins
+// (management != 'All') read as "Manager" — matches the convention already
+// used in the UserManagement table.
+function resolveRoleKey(user) {
+  if (user?.role === 'admin' && user?.management && user.management !== 'All') return 'manager';
+  return user?.role;
+}
 
 export default function Topbar({ onMenuClick }) {
   const { i18n } = useTranslation();
@@ -118,7 +127,7 @@ export default function Topbar({ onMenuClick }) {
           <div className="hidden sm:flex flex-col items-end leading-tight">
             <p className="text-sm font-bold text-white tracking-tight">{user?.full_name}</p>
             <p className="text-[11px] text-slate-400 font-bold uppercase tracking-wider">
-              {ROLE_LABELS[user?.role] || user?.role}
+              {ROLE_LABELS[resolveRoleKey(user)] || user?.role}
             </p>
           </div>
           <div className={`avatar avatar-md bg-gradient-to-br ${gradient}`}>
