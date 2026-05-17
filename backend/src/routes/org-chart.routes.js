@@ -166,6 +166,53 @@ function getMemberCustomerCount(memberName) {
   return row?.cnt ?? 0;
 }
 
+// Collect EVERY name in the system that represents a leadership role. A
+// leader/manager/supervisor is never a valid coordinator-transfer recipient
+// or donor, even if they also appear in team_members. We collect from two
+// sources, normalized to lowercase trimmed for stable matching:
+//
+//   1. users with role IN ('leader','admin') and is_active=1 — covers both
+//      "team leader" (role='leader') and "department manager" (role='admin'
+//      with management-scoped department). Department comparison is dropped
+//      entirely so we don't depend on case/whitespace agreement.
+//
+//   2. team_members whose job_title indicates leadership (Arabic + English
+//      keywords). Catches leaders that exist only in the directory and were
+//      never given a system login.
+function getLeaderAndManagerNames() {
+  const set = new Set();
+  const norm = (s) => String(s || '').trim().toLowerCase();
+
+  try {
+    const userRows = db.prepare(
+      `SELECT DISTINCT full_name FROM users
+        WHERE is_active=1 AND role IN ('leader','admin')`
+    ).all();
+    userRows.forEach((r) => r.full_name && set.add(norm(r.full_name)));
+  } catch (_) { /* table might not exist on first boot */ }
+
+  try {
+    const tmRows = db.prepare(
+      `SELECT DISTINCT name FROM team_members
+        WHERE status='active' AND job_title IS NOT NULL
+          AND (
+               LOWER(job_title) LIKE '%leader%'
+            OR LOWER(job_title) LIKE '%lead'
+            OR LOWER(job_title) LIKE 'lead %'
+            OR LOWER(job_title) LIKE '%manager%'
+            OR LOWER(job_title) LIKE '%supervisor%'
+            OR job_title LIKE '%قائد%'
+            OR job_title LIKE '%مدير%'
+            OR job_title LIKE '%مشرف%'
+            OR job_title LIKE '%رئيس%'
+          )`
+    ).all();
+    tmRows.forEach((r) => r.name && set.add(norm(r.name)));
+  } catch (_) { /* schema might not have job_title yet */ }
+
+  return set;
+}
+
 // Fetch the team leader's name for a section using the SAME query pattern as
 // the org-chart column header — guarantees both views agree on who's the
 // leader (regardless of case/whitespace in users.department).
@@ -181,13 +228,12 @@ function getSectionLeaderName(section) {
 }
 
 // Active customer-services team members in a given section, with optional
-// name-based exclusions (callers typically exclude the moving coordinator
-// AND the section's team leader so leaders never appear as transfer
-// recipients or donors).
+// per-call exclusions on top of the system-wide leader/manager set.
 function getSectionMembers(section, excludeNames = []) {
-  const excludeSet = new Set(
-    excludeNames.filter(Boolean).map((n) => String(n).trim().toLowerCase())
-  );
+  const excludeSet = getLeaderAndManagerNames();
+  excludeNames
+    .filter(Boolean)
+    .forEach((n) => excludeSet.add(String(n).trim().toLowerCase()));
   const rows = db.prepare(
     `SELECT id, name FROM team_members
       WHERE status='active' AND department='customer_services' AND section = ?
