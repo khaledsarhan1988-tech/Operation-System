@@ -65,6 +65,80 @@ function buildCoordFilter(table, value) {
   return ` AND ${nameInListInline(`${table}.coordinators`, value)}`;
 }
 
+// ── DATE-AWARE COORDINATOR HELPERS ────────────────────────────────────────────
+// When an event has a date (absences, lectures, remarks), we attribute it to
+// the coordinator who was responsible AT THAT DATE — not the current value
+// of batches.coordinators. The coordinator_history table holds (effective_from,
+// effective_to) intervals per group/coordinator/line.
+
+/**
+ * Filter clause: keep events whose coordinator-at-date matches `value`.
+ * Use inside WHERE clauses alongside an event row that has group/line/date.
+ */
+function coordFilterAtDate(groupExpr, lineExpr, dateExpr, value) {
+  if (!value) return '';
+  const safe = String(value).replace(/'/g, "''").trim();
+  if (!safe) return '';
+  return ` AND EXISTS (
+    SELECT 1 FROM coordinator_history ch_f
+    WHERE ch_f.group_name = ${groupExpr}
+      AND ch_f.line       = ${lineExpr}
+      AND ch_f.effective_from <= ${dateExpr}
+      AND (ch_f.effective_to IS NULL OR ch_f.effective_to > ${dateExpr})
+      AND ch_f.coordinator = '${safe}' COLLATE NOCASE
+  )`;
+}
+
+/**
+ * Parameterized variant of coordFilterAtDate for use with prepared statements.
+ * Emits the EXISTS clause WITHOUT inlining the name — the caller binds the
+ * name as a positional `?` parameter. Returns a SQL fragment that always
+ * applies (no empty-string shortcut).
+ */
+function coordFilterAtDatePrepared(groupExpr, lineExpr, dateExpr) {
+  return ` AND EXISTS (
+    SELECT 1 FROM coordinator_history ch_f
+    WHERE ch_f.group_name = ${groupExpr}
+      AND ch_f.line       = ${lineExpr}
+      AND ch_f.effective_from <= ${dateExpr}
+      AND (ch_f.effective_to IS NULL OR ch_f.effective_to > ${dateExpr})
+      AND ch_f.coordinator = ? COLLATE NOCASE
+  )`;
+}
+
+/**
+ * Display expression: returns the coordinator(s) responsible at the event's
+ * date (comma-separated if more than one). NULL if no history record covers
+ * that date — caller can COALESCE with the current batches.coordinators.
+ */
+function coordinatorAtDateExpr(groupExpr, lineExpr, dateExpr) {
+  return `(SELECT GROUP_CONCAT(ch_d.coordinator, ', ')
+             FROM coordinator_history ch_d
+            WHERE ch_d.group_name = ${groupExpr}
+              AND ch_d.line       = ${lineExpr}
+              AND ch_d.effective_from <= ${dateExpr}
+              AND (ch_d.effective_to IS NULL OR ch_d.effective_to > ${dateExpr}))`;
+}
+
+/**
+ * Remarks counterpart — assigned_to history keyed by remark external_id.
+ * Use when filtering remark-counting queries by assignee name with a date.
+ * `dateExpr` is the date column on the event row (usually the remark itself).
+ */
+function remarkAssigneeFilterAtDate(externalIdExpr, lineExpr, dateExpr, value) {
+  if (!value) return '';
+  const safe = String(value).replace(/'/g, "''").trim();
+  if (!safe) return '';
+  return ` AND EXISTS (
+    SELECT 1 FROM remark_assignment_history rah_f
+    WHERE rah_f.remark_external_id = ${externalIdExpr}
+      AND rah_f.line               = ${lineExpr}
+      AND rah_f.effective_from <= ${dateExpr}
+      AND (rah_f.effective_to IS NULL OR rah_f.effective_to > ${dateExpr})
+      AND rah_f.assigned_to = '${safe}' COLLATE NOCASE
+  )`;
+}
+
 // Department filter for the `remarks` table — coordinator-first rule (Fix 16) + Fix 9 fallback.
 // Rules:
 //   1. Client HAS a group → match if coordinator registered in this dept,
@@ -596,9 +670,13 @@ router.get('/dashboard', (req, res) => {
 
   const deptBatches = buildDeptFilter('batches', department);
   const deptB       = buildDeptFilter('b', department);
-  const empFilter   = buildCoordFilter('batches', employee);
-  const empBFilter  = buildCoordFilter('b', employee);
-  const empRemark   = employee ? ` AND ${nameInListInline('remarks.assigned_to', employee)}` : '';
+  const empFilter   = buildCoordFilter('batches', employee);      // current state (groups counts)
+  // Date-aware variants for event-based queries (lectures, absences):
+  const empFilterLectures = coordFilterAtDate('lectures.group_name', 'lectures.line', 'lectures.date', employee);
+  const empFilterAbsentA  = coordFilterAtDate('a.group_name', 'a.line', 'a.date', employee);
+  const empFilterAbsentL  = coordFilterAtDate('l.group_name', 'l.line', 'l.date', employee);
+  const empBFilter        = buildCoordFilter('b', employee);       // current state (for batch-level filters)
+  const empRemark         = employee ? ` AND ${nameInListInline('remarks.assigned_to', employee)}` : '';
 
   // Remarks dept filter — coordinator-first (Fix 16) + team_members fallback (Fix 9).
   // Centralized helper ensures dashboard KPIs and /remarks-list match exactly.
@@ -631,13 +709,14 @@ router.get('/dashboard', (req, res) => {
 
     // 3. Main lectures count — session_type='main' (uploaded from "Lecture" Excel sheet)
     // Only confirmed lectures count — status='مؤكدة'
+    // Date-aware: attribute by who was coordinator on lectures.date.
     const mainLecturesRow = db.prepare(
       `SELECT COUNT(*) as cnt FROM lectures
        INNER JOIN batches ON lectures.group_name = batches.group_name${line ? ' AND batches.line = lectures.line' : ''}
        WHERE lectures.session_type = 'main'
          AND lectures.status != 'غير مؤكدة'
        ${buildDateFilter('lectures.date', from_date, to_date)}
-       ${deptBatches}${empFilter}${lineL}`
+       ${deptBatches}${empFilterLectures}${lineL}`
     ).get();
 
     // 4. Side sessions count — all confirmed side sessions
@@ -647,7 +726,7 @@ router.get('/dashboard', (req, res) => {
        WHERE lectures.session_type = 'side'
          AND lectures.status != 'غير مؤكدة'
        ${buildDateFilter('lectures.date', from_date, to_date)}
-       ${deptBatches}${empFilter}${lineL}`
+       ${deptBatches}${empFilterLectures}${lineL}`
     ).get();
 
     // 4b. Zoom calls count — confirmed regular side sessions (15 min only)
@@ -658,7 +737,7 @@ router.get('/dashboard', (req, res) => {
          AND lectures.status != 'غير مؤكدة'
          AND lectures.side_session_category = 'regular'
        ${buildDateFilter('lectures.date', from_date, to_date)}
-       ${deptBatches}${empFilter}${lineL}`
+       ${deptBatches}${empFilterLectures}${lineL}`
     ).get();
 
     // 5. Absent main — Part1: absent_students with name lookup + date inference from lecture_no
@@ -671,8 +750,9 @@ router.get('/dashboard', (req, res) => {
     const absentDateL  = buildDateFilter('l.date', from_date, to_date);
     const absentDeptB  = buildDeptFilter('b', department);
     const absentDeptB2 = buildDeptFilter('b2', department);
-    const absentEmpB   = buildCoordFilter('b', employee);
-    const absentEmpB2  = buildCoordFilter('b2', employee);
+    // Date-aware coordinator attribution on the event row (a.date / l.date)
+    const absentEmpB   = coordFilterAtDate('a.group_name', 'a.line',  `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`, employee);
+    const absentEmpB2  = coordFilterAtDate('l.group_name', 'l.line', 'l.date', employee);
     // KPI must match the row count returned by /absent-list exactly.
     // Previous version used `LEFT JOIN clients c_lu` to validate phones,
     // which double-counted absent rows when the same phone appeared more than
@@ -764,7 +844,7 @@ router.get('/dashboard', (req, res) => {
               AND l.session_type = 'side'
               AND l.side_session_category = 'regular'${line ? ' AND l.line = a.line' : ''}
          )
-         ${deptB}${empBFilter}${lineAZ}${azDateF}`
+         ${deptB}${empFilterAbsentA}${lineAZ}${azDateF}`
       ).get();
     } else {
       // FALLBACK: original lectures-based calculation
@@ -793,7 +873,7 @@ router.get('/dashboard', (req, res) => {
              AND l.status = 'مؤكدة'
              AND (l.duration IS NULL OR l.duration <= '00:15')
            ${buildDateFilter('l.date', from_date, to_date)}
-           ${deptB}${empBFilter}
+           ${deptB}${empFilterAbsentL}
            GROUP BY l.group_name, l.date
            HAVING absent_count > 0
          )`
@@ -1014,8 +1094,9 @@ router.get('/absent-list', (req, res) => {
   const activeTo    = modal_to    || to_date;
 
   const deptFilter   = buildDeptFilter('b', activeDept);
-  const empFilter    = buildCoordFilter('b', employee);
-  const coordFilter  = buildCoordFilter('b', coordinator);
+  // Date-aware: attribute each absence to whoever was coordinator at a.date
+  const empFilter    = coordFilterAtDate('a.group_name', 'a.line', 'a.date', employee);
+  const coordFilter  = coordFilterAtDate('a.group_name', 'a.line', 'a.date', coordinator);
   const searchFilter = search     ? ` AND a.group_name LIKE '%${escapeLike(search)}%' ESCAPE '\\'` : '';
   // Part1 date filter uses computed 'date' column (after inference), not raw a.date
   const dateFilterP1 = activeFrom && activeTo ? ` AND date BETWEEN '${activeFrom}' AND '${activeTo}'`
@@ -1027,8 +1108,8 @@ router.get('/absent-list', (req, res) => {
                      : activeFrom ? ` AND l.date >= '${activeFrom}'`
                      : activeTo   ? ` AND l.date <= '${activeTo}'` : '';
   const deptFilter2  = buildDeptFilter('b2', activeDept);
-  const empFilter2   = buildCoordFilter('b2', employee);
-  const coordFilter2 = buildCoordFilter('b2', coordinator);
+  const empFilter2   = coordFilterAtDate('l.group_name', 'l.line', 'l.date', employee);
+  const coordFilter2 = coordFilterAtDate('l.group_name', 'l.line', 'l.date', coordinator);
   const searchFilter2= search      ? ` AND l.group_name LIKE '%${escapeLike(search)}%' ESCAPE '\\'` : '';
 
   // Part1: absent_students — with name lookup + date inference from lecture_no when date is missing
@@ -1049,7 +1130,10 @@ router.get('/absent-list', (req, res) => {
           (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) LIMIT 1),
           b.dept_type
         ) AS dept_type,
-        b.coordinators
+        COALESCE(
+          ${coordinatorAtDateExpr('a.group_name', 'a.line', `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`)},
+          b.coordinators
+        ) AS coordinators
       FROM absent_students a
       LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
       LEFT JOIN (
@@ -1077,7 +1161,10 @@ router.get('/absent-list', (req, res) => {
         (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b2.coordinators)) LIMIT 1),
         b2.dept_type
       ) AS dept_type,
-      b2.coordinators
+      COALESCE(
+        ${coordinatorAtDateExpr('l.group_name', 'l.line', 'l.date')},
+        b2.coordinators
+      ) AS coordinators
     FROM lectures l
     INNER JOIN batches b2 ON l.group_name = b2.group_name${line ? ' AND b2.line = l.line' : ''}
     INNER JOIN clients c ON c.group_name = l.group_name${line ? ' AND c.line = l.line' : ''}
@@ -1125,9 +1212,10 @@ router.get('/absent-side-list', (req, res) => {
   const activeTo   = modal_to   || to_date;
 
   const deptFilter    = buildDeptFilter('b', activeDept);
-  const empFilter     = buildCoordFilter('b', employee);
+  // Date-aware: attribute each lecture to the coordinator on l.date, not current b.coordinators.
+  const empFilter     = coordFilterAtDate('l.group_name', 'l.line', 'l.date', employee);
   const trainerFilter = trainer     ? ` AND l.trainer LIKE '%${escapeLike(trainer)}%' ESCAPE '\\'` : '';
-  const coordFilter   = buildCoordFilter('b', coordinator);
+  const coordFilter   = coordFilterAtDate('l.group_name', 'l.line', 'l.date', coordinator);
   const searchFilter  = search      ? ` AND l.group_name LIKE '%${escapeLike(search)}%' ESCAPE '\\'` : '';
   const dateFilter    = activeFrom && activeTo
     ? ` AND l.date BETWEEN '${activeFrom}' AND '${activeTo}'`
@@ -1146,8 +1234,10 @@ router.get('/absent-side-list', (req, res) => {
       : activeFrom ? ` AND a.date >= '${activeFrom}'`
       : activeTo   ? ` AND a.date <= '${activeTo}'` : '';
     const azSearchFilter = search ? ` AND (a.group_name LIKE '%${escapeLike(search)}%' ESCAPE '\\' OR a.student_name LIKE '%${escapeLike(search)}%' ESCAPE '\\' OR a.phone LIKE '%${escapeLike(search)}%' ESCAPE '\\')` : '';
-    const azCoordFilter  = coordinator ? ` AND ${nameInListInline('b.coordinators', coordinator)}` : '';
-    const azEmpFilter    = employee    ? ` AND ${nameInListInline('b.coordinators', employee)}`    : '';
+    // Date-aware coordinator/employee filter: attribute each absence to whoever
+    // was the coordinator on `a.date` (not the CURRENT batches.coordinators).
+    const azCoordFilter  = coordFilterAtDate('a.group_name', 'a.line', 'a.date', coordinator);
+    const azEmpFilter    = coordFilterAtDate('a.group_name', 'a.line', 'a.date', employee);
     const azDeptFilter   = buildDeptFilter('b', activeDept);
 
     // Restrict zoom-absent rows to absences against REGULAR (≤15-min) zoom
@@ -1186,7 +1276,10 @@ router.get('/absent-side-list', (req, res) => {
            a.time,
            a.lecture_no,
            MAX(b.dept_type)    AS dept_type,
-           MAX(b.coordinators) AS coordinators
+           COALESCE(
+             ${coordinatorAtDateExpr('a.group_name', 'a.line', 'a.date')},
+             MAX(b.coordinators)
+           ) AS coordinators
          ${azBaseFrom}
          GROUP BY a.id
          ORDER BY a.date DESC, a.group_name
@@ -1246,7 +1339,8 @@ router.get('/absent-side-list', (req, res) => {
       l.group_name,
       l.date                                                                    AS session_date,
       MAX(l.trainer)                                                            AS trainer,
-      MAX(b.coordinators)                                                       AS coordinators,
+      COALESCE(${coordinatorAtDateExpr('l.group_name', 'l.line', 'l.date')},
+               MAX(b.coordinators))                                             AS coordinators,
       COALESCE(MAX((SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) AND u.department != 'All' LIMIT 1)), MAX(b.dept_type)) AS dept_type,
       COUNT(*)                                                                  AS trainee_count,
       SUM(CASE WHEN l.attendance IS NOT NULL
@@ -3430,8 +3524,10 @@ router.get('/team-summary-detail', (req, res) => {
   const lineA = buildLineFilter('a', line);
   const lineRemarks = buildLineFilter('', line);
   const { deptF, dateA, dateL, dateR } = tsFilters(req.query);
-  const empFBatches = buildCoordFilter('batches', employee);
-  const empFB       = buildCoordFilter('b', employee);
+  const empFBatches = buildCoordFilter('batches', employee);    // current state (expired_groups: who owns NOW)
+  // Date-aware variants: pick correct event-row aliases per metric below
+  const empFB_aDate = coordFilterAtDate('a.group_name', 'a.line', 'a.date', employee);
+  const empFB_lDate = coordFilterAtDate('l.group_name', 'l.line', 'l.date', employee);
   const empFRemarks = employee ? ` AND ${nameInListInline('assigned_to', employee)}` : '';
 
   try {
@@ -3486,7 +3582,7 @@ router.get('/team-summary-detail', (req, res) => {
          FROM absent_students a
          INNER JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
          WHERE 1=1
-           ${empFB}
+           ${empFB_aDate}
            ${deptF}${dateA}${lineA}
            AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
            AND NOT EXISTS (
@@ -3510,7 +3606,7 @@ router.get('/team-summary-detail', (req, res) => {
            FROM absent_zoom_students a
            INNER JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
            WHERE 1=1
-             ${empFB}
+             ${empFB_aDate}
              ${deptF}${dateA}${lineA}
              AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
              AND NOT EXISTS (
@@ -3527,7 +3623,7 @@ router.get('/team-summary-detail', (req, res) => {
            FROM lectures l
            INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
            WHERE 1=1
-             ${empFB}
+             ${empFB_lDate}
              ${deptF}${dateL}${lineL}
              AND l.session_type = 'side'
              AND l.side_session_category = 'regular'
@@ -3635,11 +3731,14 @@ router.get('/team-summary', (req, res) => {
            OR ROUND((julianday('now') - ${RJD('last_updated')}) * 24, 1) >= 24)`
     );
 
+    // Date-aware: attribute each absence to whoever was coordinator on a.date.
+    // The `?` is bound to the exact coordinator name (not LIKE wildcard).
     const stmtMainAbsence = db.prepare(
       `SELECT COUNT(*) as cnt
        FROM absent_students a
        INNER JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
-       WHERE b.coordinators LIKE ?
+       WHERE 1=1
+         ${coordFilterAtDatePrepared('a.group_name', 'a.line', 'a.date')}
          ${deptF}${dateA}${lineA}
          AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
          AND NOT EXISTS (
@@ -3660,10 +3759,12 @@ router.get('/team-summary', (req, res) => {
       ? db.prepare(
         // NEW: count rows from absent_zoom_students that have NO matching
         // 'Attendance Zoom Call' remark — mirrors stmtMainAbsence semantics.
+        // Date-aware: coordinator-on-a.date drives attribution.
         `SELECT COUNT(*) as cnt
          FROM absent_zoom_students a
          INNER JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
-         WHERE b.coordinators LIKE ?
+         WHERE 1=1
+           ${coordFilterAtDatePrepared('a.group_name', 'a.line', 'a.date')}
            ${deptF}${dateA}${lineA}
            AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
            AND NOT EXISTS (
@@ -3673,12 +3774,13 @@ router.get('/team-summary', (req, res) => {
            )`
       )
       : db.prepare(
-        // FALLBACK: original lectures-based calculation
+        // FALLBACK: original lectures-based calculation, date-aware on l.date
         `SELECT COUNT(*) as cnt FROM (
            SELECT DISTINCT l.group_name, l.date
            FROM lectures l
            INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
-           WHERE b.coordinators LIKE ?
+           WHERE 1=1
+             ${coordFilterAtDatePrepared('l.group_name', 'l.line', 'l.date')}
              ${deptF}${dateL}${lineL}
              AND l.session_type = 'side'
              AND l.side_session_category = 'regular'
@@ -3721,16 +3823,18 @@ router.get('/team-summary', (req, res) => {
 
     const result = members.map(m => {
       const like = `%${m.name}%`;
+      // Absence statements use the date-aware history (exact match on name);
+      // expired/overdue still operate on current state (LIKE substring).
       return {
         id:                    m.id,
         name:                  m.name,
         department:            m.department,
         section:               m.section,
         job_title:             m.job_title,
-        expired_groups:        stmtExpired.get(like)?.cnt    ?? 0,
-        overdue_remarks:       stmtOverdue.get(like)?.cnt    ?? 0,
-        main_absence_no_remark:stmtMainAbsence.get(like)?.cnt?? 0,
-        side_absence_no_remark:stmtSideAbsence.get(like)?.cnt?? 0,
+        expired_groups:        stmtExpired.get(like)?.cnt     ?? 0,
+        overdue_remarks:       stmtOverdue.get(like)?.cnt     ?? 0,
+        main_absence_no_remark:stmtMainAbsence.get(m.name)?.cnt ?? 0,
+        side_absence_no_remark:stmtSideAbsence.get(m.name)?.cnt ?? 0,
         groups_with_errors:    countProblemsForName(m.name),
       };
     });
