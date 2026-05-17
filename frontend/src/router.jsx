@@ -39,6 +39,7 @@ import QualityDiagnostic from './pages/admin/QualityDiagnostic';
 import QualitySnapshots from './pages/admin/QualitySnapshots';
 import DbStatus from './pages/admin/DbStatus';
 import TeamPage from './pages/admin/TeamPage';
+import OrgChart from './pages/admin/OrgChart';
 import TrainerUtilization from './pages/admin/TrainerUtilization';
 import TrainerAvailabilityFinder from './pages/admin/TrainerAvailabilityFinder';
 import TrainerUtilizationDashboard from './pages/admin/TrainerUtilizationDashboard';
@@ -122,6 +123,7 @@ const router = createBrowserRouter([
       { path: 'remarks-monitor',              element: <RemarksMonitor /> },
       { path: 'remarks-monitor/category',     element: <RemarksMonitorCategory /> },
       { path: 'team',                         element: <TeamPage /> },
+      { path: 'org-chart',                    element: <OrgChart /> },
       { path: 'reports/trainer-utilization',  element: <TrainerUtilization /> },
       { path: 'reports/find-available-trainer', element: <TrainerAvailabilityFinder /> },
       { path: 'reports/trainer-dashboard',      element: <TrainerUtilizationDashboard /> },

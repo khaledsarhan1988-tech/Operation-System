@@ -1177,6 +1177,7 @@ initDb().then(db => {
   app.use('/api/export',  require('./routes/export.routes'));
   app.use('/api/reports',       require('./routes/reports.routes'));
   app.use('/api/team',          require('./routes/team.routes'));
+  app.use('/api/org-chart',     require('./routes/org-chart.routes'));
   app.use('/api/distribution',       require('./routes/distribution.routes'));
   app.use('/api/enrollment',         require('./routes/enrollment.routes'));
   app.use('/api/enrollment-leader',  require('./routes/enrollment-leader.routes'));
