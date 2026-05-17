@@ -49,6 +49,7 @@ import AdminPipeline from './pages/admin/AdminPipeline';
 import EmployeeProgression from './pages/admin/EmployeeProgression';
 import TargetsManagement from './pages/admin/TargetsManagement';
 import MyProgression from './pages/agent/MyProgression';
+import MyTodos from './pages/agent/MyTodos';
 import SystemSettings from './pages/admin/SystemSettings';
 import TeamProgression from './pages/leader/TeamProgression';
 import EvaluateGoals from './pages/leader/EvaluateGoals';
@@ -79,6 +80,7 @@ const router = createBrowserRouter([
       { path: 'code-problems',      element: <AgentCodeProblems /> },
       { path: 'pipeline',           element: <Pipeline /> },
       { path: 'my-progression',     element: <MyProgression /> },
+      { path: 'todos',              element: <MyTodos /> },
       { path: 'targets',            element: <TargetsManagement /> },
     ],
   },

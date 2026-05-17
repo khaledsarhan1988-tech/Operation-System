@@ -1165,6 +1165,7 @@ initDb().then(db => {
   app.use('/api/clients', require('./routes/clients.routes'));
   app.use('/api/remarks', require('./routes/remarks.routes'));
   app.use('/api/remarks-monitor', require('./routes/remarks-monitor.routes'));
+  app.use('/api/todos',           require('./routes/todos.routes'));
   app.use('/api/leader',  require('./routes/leader.routes'));
   // Level 2: snapshots + targets — mount BEFORE generic /api/admin so the
   // sub-paths win (Express matches in registration order).

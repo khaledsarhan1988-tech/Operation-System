@@ -711,3 +711,55 @@ INSERT OR IGNORE INTO remark_monitor_tasks (name, sort_order) VALUES
 INSERT OR IGNORE INTO remark_monitor_categories (name, sort_order) VALUES
   ('Inprogress', 1),
   ('Information', 2);
+
+-- =============================================
+-- TODOS — Task management module
+-- Added 2026-05-18 — independent system, not coupled to Remarks.
+-- =============================================
+CREATE TABLE IF NOT EXISTS todos (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  title           TEXT NOT NULL,
+  description     TEXT,
+  status          TEXT NOT NULL DEFAULT 'new'
+                  CHECK(status IN ('new','in_progress','on_hold','completed','cancelled')),
+  priority        TEXT NOT NULL DEFAULT 'normal'
+                  CHECK(priority IN ('urgent','high','normal','low')),
+  due_date        TEXT,            -- YYYY-MM-DD
+  due_time        TEXT,            -- HH:MM optional
+  created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  assigned_to     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  department      TEXT,            -- 'General' | 'Private' | 'Semi' | 'All' | NULL
+  management      TEXT,            -- 'Customer Services' | 'Education' | 'Quality' | 'All' | NULL
+  related_remark_id INTEGER,       -- optional link to a remark (external_id)
+  tags            TEXT,            -- comma-separated user-defined tags
+  is_recurring    INTEGER DEFAULT 0,
+  recurrence_pattern TEXT,         -- 'daily' | 'weekly' | 'monthly' | NULL
+  parent_todo_id  INTEGER REFERENCES todos(id) ON DELETE CASCADE,
+  line            TEXT NOT NULL DEFAULT 'Ahmed Hassan',
+  created_at      TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+  updated_at      TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+  completed_at    TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_todos_assigned ON todos(assigned_to);
+CREATE INDEX IF NOT EXISTS idx_todos_created  ON todos(created_by);
+CREATE INDEX IF NOT EXISTS idx_todos_status   ON todos(status);
+CREATE INDEX IF NOT EXISTS idx_todos_due      ON todos(due_date);
+CREATE INDEX IF NOT EXISTS idx_todos_dept     ON todos(department);
+CREATE INDEX IF NOT EXISTS idx_todos_mgmt     ON todos(management);
+CREATE INDEX IF NOT EXISTS idx_todos_line     ON todos(line);
+CREATE INDEX IF NOT EXISTS idx_todos_parent   ON todos(parent_todo_id);
+CREATE INDEX IF NOT EXISTS idx_todos_priority ON todos(priority);
+-- Composite: "my open todos sorted by due"
+CREATE INDEX IF NOT EXISTS idx_todos_assigned_status_due
+  ON todos(assigned_to, status, due_date);
+
+CREATE TABLE IF NOT EXISTS todo_comments (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  todo_id     INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+  user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  comment     TEXT NOT NULL,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+);
+CREATE INDEX IF NOT EXISTS idx_todo_comments_todo ON todo_comments(todo_id);
+CREATE INDEX IF NOT EXISTS idx_todo_comments_user ON todo_comments(user_id);
