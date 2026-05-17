@@ -1,6 +1,9 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Network, Crown, User, Users, Layers, AlertCircle } from 'lucide-react';
+import {
+  Network, Crown, User, Users, Layers, AlertCircle,
+  ArrowRight, ArrowLeftRight, Sparkles, ChevronDown, RefreshCw,
+} from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 
@@ -117,6 +120,314 @@ function ColumnCard({ section }) {
   );
 }
 
+// ─── TRANSFER SIMULATOR (bottom half) ─────────────────────────────────────────
+const TRANSFERABLE_SECTIONS = ['general', 'private', 'semi']; // 'appointments' excluded (no group/customer counts)
+
+function TransferSimulator({ sections }) {
+  const [coord, setCoord] = useState('');         // selected coordinator name
+  const [toSection, setToSection] = useState('');
+
+  // Flatten members across transferable sections — each row knows where it is.
+  const allMembers = useMemo(() => {
+    return sections
+      .filter((s) => TRANSFERABLE_SECTIONS.includes(s.key))
+      .flatMap((s) => s.members.map((m) => ({
+        name: m.name, fromSection: s.key, fromLabel: s.label,
+        customer_count: m.customer_count ?? 0, group_count: m.group_count ?? 0,
+      })));
+  }, [sections]);
+
+  const selectedMember = allMembers.find((m) => m.name === coord) || null;
+  const fromSection = selectedMember?.fromSection || '';
+
+  // Sections available as targets (exclude the member's current section)
+  const targetOptions = useMemo(() => {
+    return sections
+      .filter((s) => TRANSFERABLE_SECTIONS.includes(s.key) && s.key !== fromSection)
+      .map((s) => ({ key: s.key, label: s.label }));
+  }, [sections, fromSection]);
+
+  const canSimulate = !!coord && !!toSection;
+
+  const { data: sim, isFetching, isError, error, refetch } = useQuery({
+    queryKey: ['transfer-sim', coord, fromSection, toSection],
+    queryFn: async () => {
+      const res = await api.get('/org-chart/transfer-simulation', {
+        params: { coordinator: coord, fromSection, toSection },
+      });
+      return res.data;
+    },
+    enabled: false,  // run only on button click
+  });
+
+  return (
+    <div className="border-t-2 border-dashed border-gray-200 pt-8 mt-8">
+      <header className="mb-4 flex items-start gap-3">
+        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white">
+          <ArrowLeftRight className="w-5 h-5" />
+        </div>
+        <div>
+          <h2 className="text-lg font-bold text-gray-800">محاكاة نقل منسق</h2>
+          <p className="text-xs text-gray-500 mt-0.5">
+            اختار منسق وقسم جديد، السيستم يقترح إزاي المجموعات تتوزع — التوزيع متوازن حسب عدد العملاء، بريفيو فقط.
+          </p>
+        </div>
+      </header>
+
+      {/* Controls */}
+      <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-4 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {/* Coordinator */}
+          <div>
+            <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">
+              المنسق
+            </label>
+            <div className="relative">
+              <select
+                value={coord}
+                onChange={(e) => { setCoord(e.target.value); setToSection(''); }}
+                className="w-full appearance-none rounded-lg border border-gray-200 bg-white px-3 py-2 pr-8 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 outline-none"
+              >
+                <option value="">— اختار —</option>
+                {allMembers.map((m) => (
+                  <option key={`${m.fromSection}:${m.name}`} value={m.name}>
+                    {m.name} ({m.fromLabel})
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+            </div>
+          </div>
+
+          {/* To section */}
+          <div>
+            <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">
+              ينتقل إلى
+            </label>
+            <div className="relative">
+              <select
+                value={toSection}
+                onChange={(e) => setToSection(e.target.value)}
+                disabled={!coord}
+                className="w-full appearance-none rounded-lg border border-gray-200 bg-white px-3 py-2 pr-8 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 outline-none disabled:bg-gray-50 disabled:text-gray-400"
+              >
+                <option value="">— اختار قسم —</option>
+                {targetOptions.map((s) => (
+                  <option key={s.key} value={s.key}>{s.label}</option>
+                ))}
+              </select>
+              <ChevronDown className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+            </div>
+          </div>
+
+          {/* Run button */}
+          <div className="flex items-end">
+            <button
+              type="button"
+              onClick={() => refetch()}
+              disabled={!canSimulate || isFetching}
+              className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold text-sm px-4 py-2 hover:from-indigo-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+            >
+              {isFetching ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+              {isFetching ? 'جاري الحساب...' : 'محاكاة'}
+            </button>
+          </div>
+        </div>
+
+        {selectedMember && (
+          <div className="mt-3 pt-3 border-t border-gray-100 text-xs text-gray-500">
+            <span className="font-bold text-gray-700">{selectedMember.name}</span> حالياً في
+            <span className="mx-1 font-bold text-indigo-700">{selectedMember.fromLabel}</span>
+            بـ <span className="font-bold">{selectedMember.customer_count}</span> عميل عبر
+            <span className="font-bold">{selectedMember.group_count}</span> مجموعة.
+          </div>
+        )}
+      </div>
+
+      {isError && (
+        <div className="rounded-xl bg-red-50 border border-red-200 p-4 text-red-700 text-sm">
+          فشل المحاكاة: {error?.response?.data?.error || error?.message || 'خطأ غير معروف'}
+        </div>
+      )}
+
+      {sim && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <SourcePanel sim={sim} />
+          <TargetPanel sim={sim} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// LEFT: After Ali leaves source section
+function SourcePanel({ sim }) {
+  const { coordinator_name, from_section, ali_current, source } = sim;
+  const theme = COLUMN_THEMES[from_section.key] || COLUMN_THEMES.general;
+
+  return (
+    <div className={`rounded-2xl bg-white shadow-sm ring-1 ${theme.ring} overflow-hidden`}>
+      <div className={`${theme.headerBg} ${theme.headerText} px-4 py-3`}>
+        <h3 className="font-bold text-base flex items-center gap-2">
+          <ArrowRight className="w-4 h-4 rotate-180" />
+          بعد خروج {coordinator_name} من {from_section.label}
+        </h3>
+        <p className="text-xs text-white/80 mt-0.5">
+          {ali_current.group_count} مجموعة ({ali_current.customer_count} عميل) موزعة على {source.member_summary.length} موظف
+        </p>
+      </div>
+
+      {/* Groups → recipients */}
+      <div className="p-3 border-b border-gray-100">
+        <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">
+          مجموعات {coordinator_name} تذهب إلى
+        </div>
+        {source.assignments.length === 0 ? (
+          <p className="text-sm text-gray-400 italic text-center py-4">لا توجد مجموعات للتوزيع</p>
+        ) : (
+          <ul className="space-y-1.5 max-h-72 overflow-y-auto">
+            {source.assignments.map((a, idx) => (
+              <li key={`${a.group_name}|${idx}`} className="text-xs flex items-center justify-between gap-2 py-1 px-2 rounded hover:bg-gray-50">
+                <span className="truncate flex-1 text-gray-700" title={a.group_name}>{a.group_name}</span>
+                <span className="flex items-center gap-1 flex-shrink-0">
+                  <span className={`${theme.accent} font-semibold`}>{a.customer_count}</span>
+                  <ArrowRight className="w-3 h-3 text-gray-400" />
+                  <span className="font-bold text-gray-800">{a.recipient_name || 'غير محدد'}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {/* Member before/after */}
+      <div className="p-3">
+        <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">
+          عدد العملاء قبل و بعد
+        </div>
+        <BeforeAfterTable rows={source.member_summary.map((m) => ({
+          name: m.name,
+          before_count: m.before_count,
+          after_count: m.after_count,
+          before_groups: m.before_groups,
+          after_groups: m.after_groups,
+        }))} delta="positive" />
+      </div>
+    </div>
+  );
+}
+
+// RIGHT: After Ali joins target section
+function TargetPanel({ sim }) {
+  const { coordinator_name, to_section, target } = sim;
+  const theme = COLUMN_THEMES[to_section.key] || COLUMN_THEMES.private;
+
+  return (
+    <div className={`rounded-2xl bg-white shadow-sm ring-1 ${theme.ring} overflow-hidden`}>
+      <div className={`${theme.headerBg} ${theme.headerText} px-4 py-3`}>
+        <h3 className="font-bold text-base flex items-center gap-2">
+          <ArrowRight className="w-4 h-4" />
+          بعد انضمام {coordinator_name} إلى {to_section.label}
+        </h3>
+        <p className="text-xs text-white/80 mt-0.5">
+          متوسط التقسيم: {target.target_per_person} عميل لكل موظف · {coordinator_name} يستلم {target.ali_after_count} عميل
+        </p>
+      </div>
+
+      {/* Groups Ali receives */}
+      <div className="p-3 border-b border-gray-100">
+        <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">
+          {coordinator_name} يستلم
+        </div>
+        {target.ali_receives.length === 0 ? (
+          <p className="text-sm text-gray-400 italic text-center py-4">
+            لا حاجة لإعادة توزيع — الأحمال متوازنة بالفعل
+          </p>
+        ) : (
+          <ul className="space-y-1.5 max-h-72 overflow-y-auto">
+            {target.ali_receives.map((a, idx) => (
+              <li key={`${a.group_name}|${idx}`} className="text-xs flex items-center justify-between gap-2 py-1 px-2 rounded hover:bg-gray-50">
+                <span className="truncate flex-1 text-gray-700" title={a.group_name}>{a.group_name}</span>
+                <span className="flex items-center gap-1 flex-shrink-0">
+                  <span className="font-bold text-gray-800">{a.donor_name}</span>
+                  <ArrowRight className="w-3 h-3 text-gray-400" />
+                  <span className={`${theme.accent} font-semibold`}>{a.customer_count}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {/* Member before/after */}
+      <div className="p-3">
+        <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">
+          عدد العملاء قبل و بعد
+        </div>
+        <BeforeAfterTable
+          rows={[
+            // Ali first
+            { name: coordinator_name, before_count: 0, after_count: target.ali_after_count, before_groups: 0, after_groups: target.ali_receives.length, isNew: true },
+            ...target.member_summary.map((m) => ({
+              name: m.name,
+              before_count: m.before_count,
+              after_count: m.after_count,
+              before_groups: m.before_groups,
+              after_groups: m.after_groups,
+            })),
+          ]}
+          delta="negative"
+        />
+      </div>
+    </div>
+  );
+}
+
+function BeforeAfterTable({ rows, delta }) {
+  if (!rows.length) return <p className="text-sm text-gray-400 italic text-center py-4">—</p>;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-gray-400 border-b border-gray-100">
+            <th className="text-right py-1.5 font-semibold">الموظف</th>
+            <th className="text-center py-1.5 font-semibold">عملاء قبل</th>
+            <th className="text-center py-1.5 font-semibold">عملاء بعد</th>
+            <th className="text-center py-1.5 font-semibold">مجموعات</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, idx) => {
+            const diff = r.after_count - r.before_count;
+            const isGain = diff > 0;
+            const isLoss = diff < 0;
+            return (
+              <tr key={`${r.name}|${idx}`} className="border-b border-gray-50 hover:bg-gray-50">
+                <td className="py-1.5 font-semibold text-gray-700">
+                  {r.name}
+                  {r.isNew && <span className="text-[10px] text-indigo-600 mx-1 font-bold">(جديد)</span>}
+                </td>
+                <td className="text-center py-1.5 text-gray-500">{r.before_count}</td>
+                <td className={`text-center py-1.5 font-bold ${isGain ? 'text-emerald-600' : isLoss ? 'text-rose-600' : 'text-gray-700'}`}>
+                  {r.after_count}
+                  {diff !== 0 && (
+                    <span className="text-[10px] mx-1 font-normal">
+                      ({diff > 0 ? '+' : ''}{diff})
+                    </span>
+                  )}
+                </td>
+                <td className="text-center py-1.5 text-gray-500">
+                  {r.before_groups} <span className="text-gray-300">→</span> <span className="font-semibold text-gray-700">{r.after_groups}</span>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 export default function OrgChart() {
   const [activeTab, setActiveTab] = useState('customer_services');
@@ -180,6 +491,11 @@ export default function OrgChart() {
                 <ColumnCard key={s.key} section={s} />
               ))}
             </div>
+          )}
+
+          {/* ── Bottom half: Transfer Simulator ─────────────────────────── */}
+          {data?.sections && (
+            <TransferSimulator sections={data.sections} />
           )}
         </>
       )}
