@@ -31,11 +31,16 @@ router.use(authenticate, requireRole('leader'));
 //   • leader → only the section matching their users.department.
 router.get('/customer-services', (req, res) => {
   try {
+    // tm_line filter (when set) restricts the members query to a specific
+    // operational line — used to split "خاص" into main + Dardasha columns.
+    // The leader (Mostafa for Private) appears at the top of BOTH columns
+    // since one leader oversees the whole Private dept regardless of line.
     const sections = [
-      { key: 'general',      label: 'عام',     dept_users: 'General',     tm_dept: 'customer_services', tm_section: 'general' },
-      { key: 'private',      label: 'خاص',     dept_users: 'Private',     tm_dept: 'customer_services', tm_section: 'private' },
-      { key: 'semi',         label: 'شبه خاص', dept_users: 'Semi',        tm_dept: 'customer_services', tm_section: 'semi'    },
-      { key: 'appointments', label: 'مواعيد',  dept_users: 'Appointments',tm_dept: 'appointments',      tm_section: null      },
+      { key: 'general',          label: 'عام',         dept_users: 'General',     tm_dept: 'customer_services', tm_section: 'general', tm_line: 'Ahmed Hassan' },
+      { key: 'private',          label: 'خاص',         dept_users: 'Private',     tm_dept: 'customer_services', tm_section: 'private', tm_line: 'Ahmed Hassan' },
+      { key: 'private_dardasha', label: 'خاص دردشة',   dept_users: 'Private',     tm_dept: 'customer_services', tm_section: 'private', tm_line: 'Dardasha' },
+      { key: 'semi',             label: 'شبه خاص',     dept_users: 'Semi',        tm_dept: 'customer_services', tm_section: 'semi',    tm_line: 'Ahmed Hassan' },
+      { key: 'appointments',     label: 'مواعيد',      dept_users: 'Appointments',tm_dept: 'appointments',      tm_section: null,      tm_line: null           },
     ];
 
     // Filter to the leader's own section so each team-leader sees only the
@@ -58,6 +63,13 @@ router.get('/customer-services', (req, res) => {
         WHERE role='leader' AND is_active=1 AND department = ? COLLATE NOCASE
         ORDER BY id LIMIT 1`
     );
+    // Section + line variants: callers pick the right prepared statement
+    // based on whether a section / line filter applies.
+    const membersWithSectionAndLine = db.prepare(
+      `SELECT id, name, job_title FROM team_members
+        WHERE status='active' AND department = ? AND section = ? AND line = ?
+        ORDER BY name COLLATE NOCASE`
+    );
     const membersWithSection = db.prepare(
       `SELECT id, name, job_title FROM team_members
         WHERE status='active' AND department = ? AND section = ?
@@ -72,7 +84,9 @@ router.get('/customer-services', (req, res) => {
     const result = visibleSections.map((s) => {
       const leader = leaderStmt.get(s.dept_users) || null;
       const rawMembers = s.tm_section
-        ? membersWithSection.all(s.tm_dept, s.tm_section)
+        ? (s.tm_line
+            ? membersWithSectionAndLine.all(s.tm_dept, s.tm_section, s.tm_line)
+            : membersWithSection.all(s.tm_dept, s.tm_section))
         : membersNoSection.all(s.tm_dept);
 
       // If the section's leader is ALSO listed in team_members (registered in

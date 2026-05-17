@@ -191,6 +191,22 @@ initDb().then(db => {
     }
   });
 
+  // ── team_members.line: operational line (Ahmed Hassan / Dardasha / etc.)
+  // Lets the org chart split a section into line-specific columns
+  // (e.g. "خاص" main line vs "خاص دردشة" Dardasha line).
+  try {
+    const info = db._raw.exec(`PRAGMA table_info(team_members)`);
+    const cols = info[0]?.values.map(r => r[1]) || [];
+    if (cols.length > 0 && !cols.includes('line')) {
+      db._raw.run(`ALTER TABLE team_members ADD COLUMN line TEXT NOT NULL DEFAULT 'Ahmed Hassan'`);
+      db._raw.run(`CREATE INDEX IF NOT EXISTS idx_team_line ON team_members(line)`);
+      saveNow();
+      console.log('✅ Migration: added `line` column to team_members (default Ahmed Hassan)');
+    }
+  } catch (e) {
+    console.error('team_members.line migration error:', e.message);
+  }
+
   // ── team_members SAFETY: restore from snapshot if rows vanished ─────────
   // Runs after all team_members DDL (step 4a). If anything above wiped or
   // failed to preserve rows, this brings them back from the JSON snapshot

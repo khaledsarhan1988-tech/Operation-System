@@ -73,9 +73,13 @@ CREATE TABLE IF NOT EXISTS team_members (
   teachable_starter      INTEGER NOT NULL DEFAULT 3,  -- 0..3
   teachable_general      INTEGER NOT NULL DEFAULT 5,  -- 0..5
   teachable_conversation INTEGER NOT NULL DEFAULT 5,  -- 0..5
+  -- Operational line — used by the org chart to split a section into multiple
+  -- columns (e.g. "خاص" vs "خاص دردشة"). Defaults to the main Academy line.
+  line        TEXT NOT NULL DEFAULT 'Ahmed Hassan',
   created_at  TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
 );
 CREATE INDEX IF NOT EXISTS idx_team_dept_section ON team_members(department, section);
+CREATE INDEX IF NOT EXISTS idx_team_line         ON team_members(line);
 
 -- =============================================
 -- CLIENTS (from Active Batches Trainees.xlsx)

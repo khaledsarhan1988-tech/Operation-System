@@ -16,10 +16,11 @@ const TABS = [
 // Per-column visual treatment — distinct color for each section so users can
 // scan the chart at a glance.
 const COLUMN_THEMES = {
-  general:      { headerBg: 'bg-sky-600',     headerText: 'text-white', accent: 'text-sky-700',     ring: 'ring-sky-100',     softBg: 'bg-sky-50'     },
-  private:      { headerBg: 'bg-violet-600',  headerText: 'text-white', accent: 'text-violet-700',  ring: 'ring-violet-100',  softBg: 'bg-violet-50'  },
-  semi:         { headerBg: 'bg-amber-600',   headerText: 'text-white', accent: 'text-amber-700',   ring: 'ring-amber-100',   softBg: 'bg-amber-50'   },
-  appointments: { headerBg: 'bg-rose-600',    headerText: 'text-white', accent: 'text-rose-700',    ring: 'ring-rose-100',    softBg: 'bg-rose-50'    },
+  general:           { headerBg: 'bg-sky-600',     headerText: 'text-white', accent: 'text-sky-700',     ring: 'ring-sky-100',     softBg: 'bg-sky-50'     },
+  private:           { headerBg: 'bg-violet-600',  headerText: 'text-white', accent: 'text-violet-700',  ring: 'ring-violet-100',  softBg: 'bg-violet-50'  },
+  private_dardasha:  { headerBg: 'bg-fuchsia-600', headerText: 'text-white', accent: 'text-fuchsia-700', ring: 'ring-fuchsia-100', softBg: 'bg-fuchsia-50' },
+  semi:              { headerBg: 'bg-amber-600',   headerText: 'text-white', accent: 'text-amber-700',   ring: 'ring-amber-100',   softBg: 'bg-amber-50'   },
+  appointments:      { headerBg: 'bg-rose-600',    headerText: 'text-white', accent: 'text-rose-700',    ring: 'ring-rose-100',    softBg: 'bg-rose-50'    },
 };
 
 // ─── COLUMN CARD ──────────────────────────────────────────────────────────────
@@ -456,9 +457,12 @@ export default function OrgChart() {
   // no simulator (moving members between sections is an admin action).
   const isAdmin = data?.viewer_role === 'admin';
   const sectionCount = data?.sections?.length || 0;
+  // 1 column → centered card; 2-4 → up to 4 wide; 5+ → 5 wide on large screens.
   const gridCols = sectionCount === 1
     ? 'grid-cols-1 max-w-md mx-auto'
-    : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-4';
+    : sectionCount >= 5
+      ? 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5'
+      : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-4';
 
   return (
     <div className="space-y-6 pb-12">

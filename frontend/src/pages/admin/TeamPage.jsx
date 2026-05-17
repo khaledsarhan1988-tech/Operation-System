@@ -76,6 +76,7 @@ const SECTION_COLORS = {
 // ─── EMPTY FORM ───────────────────────────────────────────────────────────────
 const emptyForm = {
   name: '', department: 'customer_services', section: 'general',
+  line: 'Ahmed Hassan',
   shift: '', shift_start: '', shift_end: '', shift_rests: [], voice_notes: [],
   shift_start_date: '', shift_end_date: '',
   employment_type: '', work_days: '',
@@ -86,6 +87,11 @@ const emptyForm = {
   // Teachable courses — default = max level (all unlocked) so new trainers
   // can teach everything until explicitly limited.
   teachable_starter: 3, teachable_general: 5, teachable_conversation: 5,
+};
+
+const LINES = {
+  'Ahmed Hassan': 'Ahmed Hassan (الأكاديمية الرئيسية)',
+  'Dardasha':     'Dardasha (دردشة)',
 };
 
 // Safely parse a JSON-stored rests array — accepts string, array, or null/garbage.
@@ -523,6 +529,16 @@ function MemberModal({ initial, onSave, onClose, loading }) {
             <label className={labelCls}>القسم <span className="text-red-500">*</span></label>
             <select className={inputCls} value={form.section} onChange={e => set('section', e.target.value)}>
               {DEPT_SECTIONS[form.department].map(s => <option key={s} value={s}>{SECTIONS[s]}</option>)}
+            </select>
+          </div>
+
+          {/* Line — splits the org chart (e.g. Private → "خاص" vs "خاص دردشة") */}
+          <div>
+            <label className={labelCls}>الـ Line</label>
+            <select className={inputCls} value={form.line || 'Ahmed Hassan'} onChange={e => set('line', e.target.value)}>
+              {Object.entries(LINES).map(([key, label]) => (
+                <option key={key} value={key}>{label}</option>
+              ))}
             </select>
           </div>
 
