@@ -71,9 +71,18 @@ router.get('/customer-services', (req, res) => {
 
     const result = visibleSections.map((s) => {
       const leader = leaderStmt.get(s.dept_users) || null;
-      const members = s.tm_section
+      const rawMembers = s.tm_section
         ? membersWithSection.all(s.tm_dept, s.tm_section)
         : membersNoSection.all(s.tm_dept);
+
+      // If the section's leader is ALSO listed in team_members (registered in
+      // both users + directory), hide them from the members list — they
+      // already appear at the top as "القائد". Case-insensitive + trimmed
+      // match so minor formatting differences don't cause a duplicate.
+      const leaderKey = leader?.name ? String(leader.name).trim().toLowerCase() : null;
+      const members = leaderKey
+        ? rawMembers.filter((m) => String(m.name).trim().toLowerCase() !== leaderKey)
+        : rawMembers;
 
       const enriched = members.map((m) => {
         let customer_count = null;
