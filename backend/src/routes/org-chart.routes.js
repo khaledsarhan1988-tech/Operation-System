@@ -166,25 +166,34 @@ function getMemberCustomerCount(memberName) {
   return row?.cnt ?? 0;
 }
 
-// Active customer-services team members in a given section, excluding:
-//   1. the moving coordinator (excludeName)
-//   2. the section's team leader — leaders shouldn't be candidates to receive
-//      transferred groups, even if they're registered in team_members.
-function getSectionMembers(section, excludeName) {
-  const usersDept = SECTION_TO_USERS_DEPT[section] || null;
-  return db.prepare(
-    `SELECT tm.id, tm.name FROM team_members tm
-      WHERE tm.status='active' AND tm.department='customer_services' AND tm.section = ?
-        AND LOWER(TRIM(tm.name)) != LOWER(TRIM(?))
-        AND NOT EXISTS (
-          SELECT 1 FROM users u
-          WHERE u.role = 'leader'
-            AND u.is_active = 1
-            AND LOWER(TRIM(u.full_name)) = LOWER(TRIM(tm.name))
-            AND u.department = ?
-        )
-      ORDER BY tm.name COLLATE NOCASE`
-  ).all(section, excludeName, usersDept || '');
+// Fetch the team leader's name for a section using the SAME query pattern as
+// the org-chart column header — guarantees both views agree on who's the
+// leader (regardless of case/whitespace in users.department).
+function getSectionLeaderName(section) {
+  const usersDept = SECTION_TO_USERS_DEPT[section];
+  if (!usersDept) return null;
+  const row = db.prepare(
+    `SELECT full_name FROM users
+      WHERE role='leader' AND is_active=1 AND department = ? COLLATE NOCASE
+      ORDER BY id LIMIT 1`
+  ).get(usersDept);
+  return row?.full_name || null;
+}
+
+// Active customer-services team members in a given section, with optional
+// name-based exclusions (callers typically exclude the moving coordinator
+// AND the section's team leader so leaders never appear as transfer
+// recipients or donors).
+function getSectionMembers(section, excludeNames = []) {
+  const excludeSet = new Set(
+    excludeNames.filter(Boolean).map((n) => String(n).trim().toLowerCase())
+  );
+  const rows = db.prepare(
+    `SELECT id, name FROM team_members
+      WHERE status='active' AND department='customer_services' AND section = ?
+      ORDER BY name COLLATE NOCASE`
+  ).all(section);
+  return rows.filter((m) => !excludeSet.has(String(m.name).trim().toLowerCase()));
 }
 
 // Source-side: redistribute Ali's groups among remaining section members so
@@ -294,8 +303,13 @@ router.get('/transfer-simulation', (req, res) => {
 
   try {
     const aliGroups = getMemberBatches(aliName);
-    const remaining = getSectionMembers(fromSection, aliName);
-    const targetMembers = getSectionMembers(toSection, aliName);
+    // Exclude the section's leader on both sides — leaders are never valid
+    // transfer recipients or donors. Each side's leader is fetched via the
+    // same query the org-chart column uses, so both views stay consistent.
+    const sourceLeader = getSectionLeaderName(fromSection);
+    const targetLeader = getSectionLeaderName(toSection);
+    const remaining     = getSectionMembers(fromSection, [aliName, sourceLeader]);
+    const targetMembers = getSectionMembers(toSection,   [aliName, targetLeader]);
 
     const source = planSourceRedistribution(aliGroups, remaining);
     const target = planTargetRedistribution(aliName, targetMembers);
