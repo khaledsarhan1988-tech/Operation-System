@@ -28,39 +28,60 @@ const MONTH_MAP = {
 /**
  * Parse group name code to extract metadata
  * e.g. "Mar_30_Mon_9pm_Con_4_SP(Israa Hafiz)Amira"
+ *
+ * Department classification (priority order):
+ *   1. courseHint (Batches.xlsx "الدورة" column) — authoritative source of truth:
+ *        "Private <course>"  → Private
+ *        "P <course>"        → Semi
+ *        "SP <course>"       → Semi
+ *        otherwise           → General
+ *   2. Fallback to group_name parsing when courseHint is empty (legacy/missing data).
  */
-function parseGroupCode(groupName, trainerHint = '') {
+function classifyDeptFromCourse(courseHint) {
+  const c = (courseHint || '').trim();
+  if (!c) return null;
+  if (/^Private\b/i.test(c)) return 'Private';
+  if (/^SP\b/i.test(c))      return 'Semi';
+  if (/^P\b/i.test(c))       return 'Semi';
+  return 'General';
+}
+
+function parseGroupCode(groupName, trainerHint = '', courseHint = '') {
   if (!groupName || typeof groupName !== 'string') return {};
   try {
     const result = { dept_type: null, level_code: null, main_days: null, side_days: null, lecture_duration_min: null };
 
-    // Detect department type from group name segments (underscore-separated)
-    // We split by _ and check segments to avoid matching partial words like shoroukG → G
-    const segments = groupName.split('_').map(s => s.trim());
-
-    // Semi: explicit _SP segment (standalone or with leading digit like 1SP(), or keyword, or trainer hint
-    const hasSPSegment = segments.some(seg => /^\d*SP(\(|$)/i.test(seg));
-    const hasSemiKeyword = /\bsemi\b/i.test(groupName);
-    const trainerIsSemi = /\(semi\)/i.test(trainerHint) || /\(sp\)/i.test(trainerHint);
-
-    if (hasSPSegment || hasSemiKeyword || trainerIsSemi) {
-      result.dept_type = 'Semi';
-      result.lecture_duration_min = 60;
-
-    // Private: explicit segment or trainer hint "(private)" / "(p)"
-    } else if (/\bPrivate\b/i.test(groupName) || segments.some(seg => /^\d*P\(/.test(seg)) || /\(private\)/i.test(trainerHint)) {
-      result.dept_type = 'Private';
-      result.lecture_duration_min = 60;
-
-    // General: explicit keyword in group name
-    } else if (/\bGeneral\b/i.test(groupName) || trainerIsSemi === false && /\(general\)/i.test(trainerHint)) {
-      result.dept_type = 'General';
-      result.lecture_duration_min = 90;
-
+    // ── 1) Primary: classify from course column (clean, explicit, user-managed) ──
+    const fromCourse = classifyDeptFromCourse(courseHint);
+    if (fromCourse) {
+      result.dept_type = fromCourse;
+      result.lecture_duration_min = fromCourse === 'General' ? 90 : 60;
     } else {
-      // Default fallback — no reliable indicator found
-      result.dept_type = 'General';
-      result.lecture_duration_min = 90;
+      // ── 2) Fallback: legacy group_name segment parsing ──
+      // We split by _ and check segments to avoid matching partial words like shoroukG → G
+      const segments = groupName.split('_').map(s => s.trim());
+
+      const hasSPSegment = segments.some(seg => /^\d*SP(\(|$)/i.test(seg));
+      const hasSemiKeyword = /\bsemi\b/i.test(groupName);
+      const trainerIsSemi = /\(semi\)/i.test(trainerHint) || /\(sp\)/i.test(trainerHint);
+
+      if (hasSPSegment || hasSemiKeyword || trainerIsSemi) {
+        result.dept_type = 'Semi';
+        result.lecture_duration_min = 60;
+      } else if (
+        /\bPrivate\b/i.test(groupName) ||
+        segments.some(seg => /^\d*P\(/.test(seg)) ||
+        /\(private\)/i.test(trainerHint)
+      ) {
+        result.dept_type = 'Private';
+        result.lecture_duration_min = 60;
+      } else if (/\bGeneral\b/i.test(groupName) || /\(general\)/i.test(trainerHint)) {
+        result.dept_type = 'General';
+        result.lecture_duration_min = 90;
+      } else {
+        result.dept_type = 'General';
+        result.lecture_duration_min = 90;
+      }
     }
 
     // Extract level code (e.g. Con_4, General_3, conversation_2)
@@ -210,12 +231,13 @@ function parseBatches(buffer) {
     .filter(r => r[1])
     .map(r => {
       const groupName = String(r[1]).trim();
+      const courseStr  = r[2] ? String(r[2]).trim() : '';
       const trainersStr = r[4] ? String(r[4]).trim() : '';
-      const parsed = parseGroupCode(groupName, trainersStr);
+      const parsed = parseGroupCode(groupName, trainersStr, courseStr);
       return {
         external_id: r[0] ? Number(r[0]) : null,
         group_name: groupName,
-        course: r[2] ? String(r[2]).trim() : null,
+        course: courseStr || null,
         status: r[3] ? String(r[3]).trim() : null,
         trainers: trainersStr || null,
         trainee_count: r[5] ? Number(r[5]) : 0,
@@ -378,6 +400,7 @@ module.exports = {
   parseSideSessions,
   parseAbsent,
   parseGroupCode,
+  classifyDeptFromCourse,
   normalizeDuration,
   computeSlaDeadline,
 };

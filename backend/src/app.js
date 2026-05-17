@@ -982,6 +982,51 @@ initDb().then(db => {
     console.error('drive_sync_runs migration error:', e.message);
   }
 
+  // ── batches.dept_type re-classification from `course` column ─────────────
+  // Authoritative rule (per Ahmed Hassan Academy convention):
+  //   "Private <course>"  → Private
+  //   "P <course>" / "SP <course>" → Semi
+  //   otherwise              → General
+  // Why a migration: the legacy parser inferred dept_type from group_name
+  // segments and missed the "_P_Conversation" pattern (segment "P" not
+  // followed by "(") — those groups landed as General. This pass re-derives
+  // dept_type from the `course` column (the user-managed source of truth).
+  // Idempotent: only updates rows whose stored dept_type differs from what
+  // the rule produces, so reruns are no-ops once data is converged.
+  try {
+    const excelSvc = require('./services/excel.service');
+    const allBatches = db._raw.prepare(
+      `SELECT id, group_name, course, dept_type, lecture_duration_min FROM batches`
+    ).all();
+    const updateStmt = db._raw.prepare(
+      `UPDATE batches SET dept_type = ?, lecture_duration_min = ? WHERE id = ?`
+    );
+    let changed = 0;
+    const sample = [];
+    const tx = db._raw.transaction(() => {
+      for (const b of allBatches) {
+        const newDept = excelSvc.classifyDeptFromCourse(b.course);
+        if (!newDept) continue; // no course → keep legacy classification untouched
+        const newDuration = newDept === 'General' ? 90 : 60;
+        if (newDept !== b.dept_type || newDuration !== b.lecture_duration_min) {
+          updateStmt.run(newDept, newDuration, b.id);
+          changed += 1;
+          if (sample.length < 5) {
+            sample.push(`  • ${b.group_name} | course="${b.course}" | ${b.dept_type} → ${newDept}`);
+          }
+        }
+      }
+    });
+    tx();
+    if (changed > 0) {
+      saveNow();
+      console.log(`✅ Migration: batches.dept_type re-classified from course column (${changed} rows updated)`);
+      sample.forEach(s => console.log(s));
+    }
+  } catch (e) {
+    console.error('batches dept_type re-classification migration error:', e.message);
+  }
+
   // ── Auto-upsert admin user on every startup ───────────────────────────────
   // Ensures admin always exists even after DB reset (e.g. Railway redeploy).
   try {
