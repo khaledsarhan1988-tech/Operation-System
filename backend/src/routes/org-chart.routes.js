@@ -166,14 +166,25 @@ function getMemberCustomerCount(memberName) {
   return row?.cnt ?? 0;
 }
 
-// Active customer-services team members in a given section, excluding the moving coordinator.
+// Active customer-services team members in a given section, excluding:
+//   1. the moving coordinator (excludeName)
+//   2. the section's team leader — leaders shouldn't be candidates to receive
+//      transferred groups, even if they're registered in team_members.
 function getSectionMembers(section, excludeName) {
+  const usersDept = SECTION_TO_USERS_DEPT[section] || null;
   return db.prepare(
-    `SELECT id, name FROM team_members
-      WHERE status='active' AND department='customer_services' AND section = ?
-        AND LOWER(TRIM(name)) != LOWER(TRIM(?))
-      ORDER BY name COLLATE NOCASE`
-  ).all(section, excludeName);
+    `SELECT tm.id, tm.name FROM team_members tm
+      WHERE tm.status='active' AND tm.department='customer_services' AND tm.section = ?
+        AND LOWER(TRIM(tm.name)) != LOWER(TRIM(?))
+        AND NOT EXISTS (
+          SELECT 1 FROM users u
+          WHERE u.role = 'leader'
+            AND u.is_active = 1
+            AND LOWER(TRIM(u.full_name)) = LOWER(TRIM(tm.name))
+            AND u.department = ?
+        )
+      ORDER BY tm.name COLLATE NOCASE`
+  ).all(section, excludeName, usersDept || '');
 }
 
 // Source-side: redistribute Ali's groups among remaining section members so

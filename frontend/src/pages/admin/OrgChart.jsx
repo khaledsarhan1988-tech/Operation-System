@@ -128,13 +128,22 @@ function TransferSimulator({ sections }) {
   const [toSection, setToSection] = useState('');
 
   // Flatten members across transferable sections — each row knows where it is.
+  // Exclude section leaders: a leader shouldn't be transferred as a coordinator
+  // (and shouldn't receive transferred groups either — backend enforces the
+  // recipient side; frontend hides them from the moving-coordinator dropdown).
   const allMembers = useMemo(() => {
+    const norm = (s) => String(s || '').trim().toLowerCase();
     return sections
       .filter((s) => TRANSFERABLE_SECTIONS.includes(s.key))
-      .flatMap((s) => s.members.map((m) => ({
-        name: m.name, fromSection: s.key, fromLabel: s.label,
-        customer_count: m.customer_count ?? 0, group_count: m.group_count ?? 0,
-      })));
+      .flatMap((s) => {
+        const leaderName = norm(s.leader?.name);
+        return s.members
+          .filter((m) => !leaderName || norm(m.name) !== leaderName)
+          .map((m) => ({
+            name: m.name, fromSection: s.key, fromLabel: s.label,
+            customer_count: m.customer_count ?? 0, group_count: m.group_count ?? 0,
+          }));
+      });
   }, [sections]);
 
   const selectedMember = allMembers.find((m) => m.name === coord) || null;
