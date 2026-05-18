@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Camera, Trash2, Upload, ImagePlus } from 'lucide-react';
+import { Paperclip, Trash2, Upload, ImagePlus } from 'lucide-react';
 import Modal from './Modal';
 import ModernButton from './ModernButton';
 import UserAvatar, { avatarSrc } from './UserAvatar';
@@ -97,7 +97,7 @@ export default function AvatarUploadDialog({ open, onClose, name, avatarUrl, end
   const previewSrc = previewUrl || (avatarUrl ? avatarSrc(avatarUrl) : null);
 
   return (
-    <Modal open={open} onClose={handleClose} title="الصورة الشخصية" subtitle={name} icon={Camera} size="sm">
+    <Modal open={open} onClose={handleClose} title="الصورة الشخصية" subtitle={name} icon={Paperclip} size="sm">
       <div className="space-y-5" dir="rtl">
         <div className="flex flex-col items-center gap-3">
           {previewSrc ? (

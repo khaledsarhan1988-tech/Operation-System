@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Plus, Eye, EyeOff, Pencil, Trash2, ToggleLeft, ToggleRight, UserCog, Camera } from 'lucide-react';
+import { Plus, Eye, EyeOff, Pencil, Trash2, ToggleLeft, ToggleRight, UserCog, Paperclip } from 'lucide-react';
 import api from '../../api/axios';
 import DataTable from '../../components/ui/DataTable';
 import Modal from '../../components/ui/Modal';
@@ -247,9 +247,9 @@ export default function UserManagement() {
             <button
               onClick={e => { e.stopPropagation(); setAvatarTarget(row); }}
               className="p-1.5 rounded-lg hover:bg-accent/10 text-accent transition-colors"
-              title="تعديل الصورة الشخصية"
+              title="رفع/تعديل الصورة الشخصية (Attachment)"
             >
-              <Camera size={15} />
+              <Paperclip size={15} />
             </button>
           )}
           <button

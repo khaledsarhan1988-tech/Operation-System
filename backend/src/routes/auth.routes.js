@@ -1,7 +1,6 @@
 'use strict';
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const db = require('../config/database');
 const jwt = require('../config/jwt');
@@ -9,16 +8,6 @@ const { authenticate } = require('../middleware/auth');
 const avatarStorage = require('../utils/avatar-storage');
 
 const router = express.Router();
-
-// Multer for avatar uploads — in-memory, ≤2MB, image mime only
-const avatarUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: avatarStorage.MAX_BYTES },
-  fileFilter: (req, file, cb) => {
-    if (avatarStorage.isAllowedMime(file.mimetype)) return cb(null, true);
-    cb(new Error('Only JPEG, PNG, or WebP images are allowed'));
-  },
-});
 
 // ─── Rate limiter: max 5 login attempts per 15 minutes per IP ─────────────────
 const loginLimiter = rateLimit({
@@ -195,48 +184,8 @@ router.put('/me', authenticate, (req, res) => {
 });
 
 // ─── AVATAR (profile picture) ────────────────────────────────────────────────
-
-// POST /api/auth/me/avatar — upload my profile picture
-router.post('/me/avatar', authenticate, (req, res, next) => {
-  avatarUpload.single('avatar')(req, res, (err) => {
-    if (err) {
-      if (err.code === 'LIMIT_FILE_SIZE') {
-        return res.status(413).json({ error: 'حجم الصورة أكبر من 2 ميجابايت' });
-      }
-      return res.status(400).json({ error: err.message || 'تعذر رفع الصورة' });
-    }
-    if (!req.file) return res.status(400).json({ error: 'لم يتم اختيار صورة' });
-
-    try {
-      const current = db.prepare('SELECT avatar_url FROM users WHERE id = ?').get(req.user.id);
-      const newFilename = avatarStorage.saveBuffer(req.user.id, req.file.mimetype, req.file.buffer);
-      db.prepare("UPDATE users SET avatar_url = ?, updated_at = datetime('now', '+2 hours') WHERE id = ?")
-        .run(newFilename, req.user.id);
-      // Best-effort: delete the previous file after the new one is persisted
-      if (current?.avatar_url && current.avatar_url !== newFilename) {
-        avatarStorage.deleteFile(current.avatar_url);
-      }
-      return res.json({ avatar_url: newFilename });
-    } catch (e) {
-      console.error('[auth/me/avatar] upload failed:', e.message);
-      return res.status(500).json({ error: 'تعذر حفظ الصورة' });
-    }
-  });
-});
-
-// DELETE /api/auth/me/avatar — remove my profile picture
-router.delete('/me/avatar', authenticate, (req, res) => {
-  try {
-    const current = db.prepare('SELECT avatar_url FROM users WHERE id = ?').get(req.user.id);
-    if (current?.avatar_url) avatarStorage.deleteFile(current.avatar_url);
-    db.prepare("UPDATE users SET avatar_url = NULL, updated_at = datetime('now', '+2 hours') WHERE id = ?")
-      .run(req.user.id);
-    return res.json({ avatar_url: null });
-  } catch (e) {
-    console.error('[auth/me/avatar] delete failed:', e.message);
-    return res.status(500).json({ error: 'تعذر حذف الصورة' });
-  }
-});
+// Note: Upload/delete are admin-only — see /api/admin/users/:id/avatar.
+// Only the READ endpoint lives here so the frontend can render images.
 
 // GET /api/auth/avatars/:filename — serve avatar file (public, no auth — non-sensitive)
 router.get('/avatars/:filename', (req, res) => {
