@@ -24,38 +24,83 @@ export function avatarSrc(filename) {
   return `${API_BASE}/auth/avatars/${encodeURIComponent(filename)}`;
 }
 
+// Explicit pixel dimensions — we use inline styles instead of Tailwind size
+// classes because the .avatar utility uses `inline-flex`, which can let an
+// <img> child stretch the container to its natural size in some browsers /
+// table layouts. Inline width/height + display:block on the <img> guarantees
+// the rendered size regardless of the source image's intrinsic dimensions.
+const SIZE_MAP = {
+  sm:      { wh: 32,  text: 14 },
+  md:      { wh: 40,  text: 16 },
+  lg:      { wh: 48,  text: 18 },
+  xl:      { wh: 64,  text: 22 },
+  preview: { wh: 128, text: 44 },
+};
+
 /**
  * UserAvatar — renders the user's uploaded profile picture if available,
- * otherwise falls back to the existing gradient + first-initial circle.
+ * otherwise falls back to the gradient + first-initial circle.
  *
  * Props:
- *   name         — full_name (used for initial + deterministic gradient)
- *   avatarUrl    — filename from users.avatar_url (nullable)
- *   size         — 'sm' | 'md' | 'lg' | 'xl' (matches global .avatar-* classes)
- *   className    — extra classes
+ *   name      — full_name (used for initial + deterministic gradient)
+ *   avatarUrl — filename from users.avatar_url (nullable)
+ *   size      — 'sm' | 'md' | 'lg' | 'xl' | 'preview'
+ *   className — extra classes (NOT for sizing — pick a size prop instead)
  */
 export default function UserAvatar({ name = '', avatarUrl = null, size = 'md', className = '' }) {
   const [errored, setErrored] = useState(false);
   const initial = (name?.[0] || '?').toUpperCase();
   const gradient = gradientFor(name);
-  const sizeCls = `avatar-${size}`;
+  const { wh, text } = SIZE_MAP[size] || SIZE_MAP.md;
   const showImage = avatarUrl && !errored;
+
+  const wrapperStyle = {
+    width: wh,
+    height: wh,
+    minWidth: wh,
+    minHeight: wh,
+    maxWidth: wh,
+    maxHeight: wh,
+    borderRadius: '9999px',
+    overflow: 'hidden',
+    flexShrink: 0,
+    display: 'inline-block',
+    verticalAlign: 'middle',
+    boxSizing: 'border-box',
+  };
 
   if (showImage) {
     return (
-      <div className={`avatar ${sizeCls} overflow-hidden p-0 ${className}`}>
+      <span className={`ring-2 ring-white/30 shadow-sm ${className}`} style={wrapperStyle}>
         <img
           src={avatarSrc(avatarUrl)}
           alt={name}
-          className="w-full h-full object-cover"
+          draggable={false}
           onError={() => setErrored(true)}
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            display: 'block',
+          }}
         />
-      </div>
+      </span>
     );
   }
+
   return (
-    <div className={`avatar ${sizeCls} bg-gradient-to-br ${gradient} ${className}`}>
+    <span
+      className={`bg-gradient-to-br ${gradient} ring-2 ring-white/30 text-white font-extrabold select-none ${className}`}
+      style={{
+        ...wrapperStyle,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: text,
+        lineHeight: 1,
+      }}
+    >
       {initial}
-    </div>
+    </span>
   );
 }

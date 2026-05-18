@@ -101,11 +101,19 @@ export default function AvatarUploadDialog({ open, onClose, name, avatarUrl, end
       <div className="space-y-5" dir="rtl">
         <div className="flex flex-col items-center gap-3">
           {previewSrc ? (
-            <div className="h-32 w-32 rounded-full overflow-hidden ring-2 ring-primary/30 shadow-lg">
-              <img src={previewSrc} alt={name} className="w-full h-full object-cover" />
-            </div>
+            <span
+              className="rounded-full overflow-hidden ring-2 ring-primary/30 shadow-lg inline-block"
+              style={{ width: 128, height: 128, flexShrink: 0 }}
+            >
+              <img
+                src={previewSrc}
+                alt={name}
+                draggable={false}
+                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+              />
+            </span>
           ) : (
-            <UserAvatar name={name} size="xl" className="h-32 w-32 text-3xl shadow-lg" />
+            <UserAvatar name={name} size="preview" className="shadow-lg" />
           )}
           <p className="text-xs text-text-secondary">JPG / PNG / WebP — الحد الأقصى 2 ميجابايت</p>
         </div>
