@@ -329,6 +329,19 @@ async function syncMultipleLinesToday({ lines, userId = SYSTEM_USER_ID, force = 
   const perLine = [];
   for (const line of linesToSync) {
     try {
+      // Hourly safety net: ensure today's folders exist before trying to sync
+      // them. If the prep cron missed (e.g. server restart at 00:30), this
+      // catches it within an hour. Idempotent — existing folders are kept.
+      try {
+        const r = await drive.prepareDayFolders(line, today);
+        const made = r.folders.filter((f) => f.created).length;
+        if (made > 0) {
+          console.log(`📁 Auto-sync safety: created ${made} missing folders for ${line} ${r.date}`);
+        }
+      } catch (e) {
+        console.error(`Auto-sync safety prep ${line} failed:`, e.message);
+      }
+
       const r = await syncLineForDate({ line, date: today, userId, force });
       perLine.push(r);
     } catch (err) {
