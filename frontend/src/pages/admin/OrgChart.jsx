@@ -787,6 +787,288 @@ function ErrorBox({ isError, error }) {
   );
 }
 
+// ─── LEADER SIMULATION HUB ────────────────────────────────────────────────────
+// Same 5-modes pattern as the admin hub, but every operation is locked inside
+// the leader's own section. Reuses the shared SourcePanel/TargetPanel/widgets;
+// the backend endpoints already enforce the same scope via `checkSimAccess()`,
+// so the UI restrictions are purely there to remove confusing choices for the
+// leader (e.g. picking a section they can't actually access).
+const LEADER_SIM_MODES = [
+  { key: 'transfer_out', label: 'نقل لقسم آخر',       desc: 'منسق من فريقي بينتقل لقسم تاني — كيف يتوزع شغله على باقي الفريق', icon: ArrowRight },
+  { key: 'leave',        label: 'خروج من القسم',      desc: 'منسق من فريقي بيخرج خالص — مجموعاته تتوزع على باقي الفريق',       icon: ArrowLeftRight },
+  { key: 'add_new',      label: 'إضافة منسق',         desc: 'منسق جديد بينضم لفريقي — الموجودون يتنازلوا له عن جزء من الشغل',  icon: Sparkles },
+  { key: 'temporary',    label: 'غياب مؤقت',          desc: 'منسق من فريقي هيغيب لمدة محددة — توزيع مؤقت على باقي الفريق',     icon: AlertCircle },
+  { key: 'groups',       label: 'نقل مجموعات محددة',  desc: 'نقل مجموعات بعينها من منسق إلى منسق آخر داخل فريقي',               icon: Layers },
+];
+
+function LeaderSimulationHub({ sections }) {
+  const [mode, setMode] = useState('leave');
+  // Backend already filtered `sections` to the leader's own section. Members
+  // here = leader's coordinators only.
+  const allMembers = useAllMembers(sections);
+  const mySection = sections[0] || null;
+
+  if (!mySection) return null;
+
+  return (
+    <div className="border-t-2 border-dashed border-gray-200 pt-8 mt-8">
+      <header className="mb-4 flex items-start gap-3">
+        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white">
+          <ArrowLeftRight className="w-5 h-5" />
+        </div>
+        <div>
+          <h2 className="text-lg font-bold text-gray-800">محاكاة توزيع فريقي</h2>
+          <p className="text-xs text-gray-500 mt-0.5">
+            كل السيناريوهات بريفيو فقط — مفيش حفظ. مقصورة على فريق <b className="text-indigo-700">{mySection.label}</b>.
+          </p>
+        </div>
+      </header>
+
+      {/* Mode tabs */}
+      <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-2 mb-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2">
+          {LEADER_SIM_MODES.map((m) => {
+            const Icon = m.icon;
+            const isActive = mode === m.key;
+            return (
+              <button
+                key={m.key}
+                type="button"
+                onClick={() => setMode(m.key)}
+                className={`p-2.5 rounded-xl text-right transition border-2 ${
+                  isActive
+                    ? 'bg-gradient-to-br from-indigo-500 to-purple-600 text-white border-indigo-600 shadow-md'
+                    : 'bg-gray-50 border-gray-100 hover:border-indigo-200 hover:bg-indigo-50'
+                }`}
+              >
+                <div className="flex items-center gap-1.5 mb-1">
+                  <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-indigo-600'}`} />
+                  <span className={`text-xs font-bold ${isActive ? 'text-white' : 'text-gray-800'}`}>{m.label}</span>
+                </div>
+                <p className={`text-[10px] leading-tight ${isActive ? 'text-white/80' : 'text-gray-500'}`}>{m.desc}</p>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Mode body */}
+      {mode === 'transfer_out' && <LeaderTransferOutMode allMembers={allMembers} mySection={mySection} />}
+      {mode === 'leave'        && <LeaveMode             allMembers={allMembers} />}
+      {mode === 'add_new'      && <LeaderAddNewMode      mySection={mySection} />}
+      {mode === 'temporary'    && <TemporaryMode         allMembers={allMembers} />}
+      {mode === 'groups'       && <LeaderGroupsMode      allMembers={allMembers} />}
+    </div>
+  );
+}
+
+// Static catalog of section labels — leader doesn't have full sections list
+// (the backend filters their org-chart view to their own column only), so we
+// hard-code the destination labels for the "transfer out" mode.
+const ALL_SECTION_OPTIONS = [
+  { key: 'general', label: 'عام' },
+  { key: 'private', label: 'خاص' },
+  { key: 'semi',    label: 'شبه خاص' },
+];
+
+// ─── Leader Mode 1: Transfer Out (to another section) ────────────────────────
+// Same redistribution logic as "Leave" — the leader only cares about how their
+// own team adapts. The destination section is shown as context only (the
+// receiving section isn't visible to the leader at all).
+function LeaderTransferOutMode({ allMembers, mySection }) {
+  const [coord, setCoord]     = useState('');
+  const [destSection, setDst] = useState('');
+  const selected = allMembers.find((m) => m.name === coord) || null;
+
+  const destOptions = ALL_SECTION_OPTIONS.filter((s) => s.key !== mySection.key);
+
+  const { data: sim, isFetching, isError, error, refetch } = useQuery({
+    queryKey: ['sim-leader-transfer-out', coord, destSection],
+    queryFn: async () => (await api.get('/org-chart/simulate/leave', { params: { coordinator: coord } })).data,
+    enabled: false,
+  });
+
+  return (
+    <>
+      <ControlsCard>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <SelectField label="المنسق المنتقل" value={coord} onChange={setCoord}
+            options={allMembers.map((m) => ({ value: m.name, label: `${m.name}` }))}
+            placeholder="— اختار من فريقي —" />
+          <SelectField label="ينتقل إلى (للعلم فقط)" value={destSection} onChange={setDst}
+            options={destOptions.map((s) => ({ value: s.key, label: s.label }))}
+            placeholder="— اختار قسم —" />
+          <RunButton onClick={() => refetch()} disabled={!coord || isFetching} isFetching={isFetching} />
+        </div>
+        {selected && (
+          <InfoLine>
+            <b>{selected.name}</b> هيخرج من <b className="text-indigo-700">{mySection.label}</b>
+            {destSection && <> وهينتقل إلى <b className="text-indigo-700">{destOptions.find((s) => s.key === destSection)?.label}</b></>}
+            . شغله ({selected.customer_count} عميل / {selected.group_count} مجموعة) هيتوزع على باقي فريقي.
+          </InfoLine>
+        )}
+      </ControlsCard>
+      <ErrorBox isError={isError} error={error} />
+      {sim && (
+        <div className="max-w-3xl mx-auto space-y-3">
+          {destSection && (
+            <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 text-xs text-indigo-800 font-bold">
+              ➜ ينتقل إلى قسم: {destOptions.find((s) => s.key === destSection)?.label}
+            </div>
+          )}
+          <SourcePanel sim={sim} />
+        </div>
+      )}
+    </>
+  );
+}
+
+// ─── Leader Mode 3: Add New (locked to leader's own section) ─────────────────
+function LeaderAddNewMode({ mySection }) {
+  const [name, setName] = useState('');
+  const [type, setType] = useState('standard');
+
+  const { data: typesData } = useQuery({
+    queryKey: ['org-chart', 'coordinator-types'],
+    queryFn: async () => (await api.get('/org-chart/coordinator-types')).data,
+    staleTime: 60 * 60 * 1000,
+  });
+  const typeOptions = typesData?.types || [];
+
+  const { data: sim, isFetching, isError, error, refetch } = useQuery({
+    queryKey: ['sim-leader-add-new', name, mySection.key, type],
+    queryFn: async () => (await api.get('/org-chart/simulate/add-new', {
+      params: { name, toSection: mySection.key, type },
+    })).data,
+    enabled: false,
+  });
+
+  const adapted = sim ? {
+    coordinator_name: sim.newcomer.name,
+    to_section: sim.to_section,
+    target: sim.target,
+  } : null;
+
+  return (
+    <>
+      <ControlsCard>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">الاسم</label>
+            <input type="text" value={name} onChange={(e) => setName(e.target.value)}
+              placeholder="موظف جديد أو موجود..."
+              className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 outline-none" />
+          </div>
+          <SelectField label="نوع المنسق" value={type} onChange={setType}
+            options={typeOptions.map((t) => ({ value: t.code, label: `${t.label_ar} (${t.capacity_min}-${t.capacity_max})` }))} />
+          <RunButton onClick={() => refetch()} disabled={!name.trim() || isFetching} isFetching={isFetching} />
+        </div>
+        <InfoLine>
+          المنسق الجديد هيتضاف لقسم <b className="text-indigo-700">{mySection.label}</b>،
+          والموجودين هيتنازلوا له عن شغل عشان يوصل لمتوسط القسم.
+        </InfoLine>
+      </ControlsCard>
+      <ErrorBox isError={isError} error={error} />
+      {adapted && (
+        <div className="max-w-3xl mx-auto">
+          <TargetPanel sim={adapted} />
+        </div>
+      )}
+    </>
+  );
+}
+
+// ─── Leader Mode 5: Specific Groups (within same team) ───────────────────────
+// Identical to admin's GroupsMode but the "to" dropdown is restricted to
+// coordinators in the leader's team (which is what `allMembers` already is).
+function LeaderGroupsMode({ allMembers }) {
+  const [from, setFrom] = useState('');
+  const [to, setTo]     = useState('');
+  const [selectedGroups, setSelectedGroups] = useState([]);
+
+  const fromMember = allMembers.find((m) => m.name === from);
+  const toOptions = from ? allMembers.filter((m) => m.name !== from) : allMembers;
+
+  const { data: groupsData } = useQuery({
+    queryKey: ['groups-of', from],
+    queryFn: async () => (await api.get('/org-chart/simulate/leave', { params: { coordinator: from } })).data,
+    enabled: !!from,
+  });
+  const availableGroups = groupsData?.ali_current?.groups || [];
+
+  useEffect(() => { setSelectedGroups([]); }, [from]);
+
+  const toggleGroup = (g) => {
+    const key = `${g.group_name}|${g.line}`;
+    setSelectedGroups((prev) => prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]);
+  };
+
+  const { mutate: runSim, data: sim, isPending, isError, error } = useMutation({
+    mutationFn: () => api.post('/org-chart/simulate/groups', {
+      fromCoordinator: from,
+      toCoordinator:   to,
+      groups: selectedGroups.map((k) => {
+        const [gn, ln] = k.split('|');
+        return { group_name: gn, line: ln };
+      }),
+    }),
+  });
+  const simData = sim?.data;
+
+  return (
+    <>
+      <ControlsCard>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <SelectField label="من منسق (في فريقي)" value={from} onChange={(v) => { setFrom(v); setTo(''); }}
+            options={allMembers.map((m) => ({ value: m.name, label: m.name }))}
+            placeholder="— اختار منسق —" />
+          <SelectField label="إلى منسق (في فريقي)" value={to} onChange={setTo} disabled={!from}
+            options={toOptions.map((m) => ({ value: m.name, label: m.name }))}
+            placeholder="— اختار منسق —" />
+          <RunButton onClick={() => runSim()} disabled={!from || !to || selectedGroups.length === 0 || isPending} isFetching={isPending} />
+        </div>
+        {fromMember && (
+          <InfoLine>
+            <b>{fromMember.name}</b> عنده <b>{availableGroups.length}</b> مجموعة — اختار اللى عاوز تنقلها
+          </InfoLine>
+        )}
+
+        {from && availableGroups.length > 0 && (
+          <div className="mt-3 border-t border-gray-100 pt-3">
+            <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2 flex items-center justify-between">
+              <span>اختار المجموعات ({selectedGroups.length} مختارة)</span>
+              <button type="button"
+                onClick={() => setSelectedGroups(
+                  selectedGroups.length === availableGroups.length
+                    ? []
+                    : availableGroups.map((g) => `${g.group_name}|${g.line}`)
+                )}
+                className="text-indigo-600 hover:underline font-bold">
+                {selectedGroups.length === availableGroups.length ? 'إلغاء الكل' : 'اختيار الكل'}
+              </button>
+            </div>
+            <div className="max-h-60 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-1">
+              {availableGroups.map((g) => {
+                const key = `${g.group_name}|${g.line}`;
+                const checked = selectedGroups.includes(key);
+                return (
+                  <label key={key} className={`flex items-center gap-2 p-2 rounded cursor-pointer text-xs ${checked ? 'bg-indigo-50 border border-indigo-200' : 'border border-gray-100 hover:bg-gray-50'}`}>
+                    <input type="checkbox" checked={checked} onChange={() => toggleGroup(g)} className="w-4 h-4 accent-indigo-500" />
+                    <span className="truncate flex-1" title={g.group_name}>{g.group_name}</span>
+                    <span className="text-gray-500 font-bold">{g.customer_count}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </ControlsCard>
+      <ErrorBox isError={isError} error={error} />
+      {simData && <GroupsResultPanel sim={simData} />}
+    </>
+  );
+}
+
 // LEFT: After Ali leaves source section
 function SourcePanel({ sim }) {
   const { coordinator_name, from_section, ali_current, source } = sim;
@@ -1176,9 +1458,12 @@ export default function OrgChart() {
             </div>
           )}
 
-          {/* ── Bottom half: Simulation Hub (admin only) ─────────────────── */}
+          {/* ── Bottom half: Simulation Hub (admin = full / leader = team-only) */}
           {isAdmin && data?.sections && data.sections.length > 0 && (
             <SimulationHub sections={data.sections} />
+          )}
+          {!isAdmin && data?.viewer_role === 'leader' && data?.sections && data.sections.length > 0 && (
+            <LeaderSimulationHub sections={data.sections} />
           )}
         </>
       )}

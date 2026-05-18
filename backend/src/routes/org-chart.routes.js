@@ -478,6 +478,43 @@ function findCoordinatorSection(name) {
 
 const SECTION_LABELS = { general: 'عام', private: 'خاص', semi: 'شبه خاص' };
 
+// Map a user's `department` (e.g. 'General') to the team_members section key
+// (e.g. 'general'). Used to verify a leader is acting on their OWN section.
+function userDeptToSection(dept) {
+  const norm = String(dept || '').trim().toLowerCase();
+  for (const [section, usersDept] of Object.entries(SECTION_TO_USERS_DEPT)) {
+    if (usersDept.toLowerCase() === norm) return section;
+  }
+  return null;
+}
+
+// Allow:
+//   • admin    → any section
+//   • leader   → only their own section (matched via users.department)
+// Returns null if allowed, OR { status, error } if denied.
+function checkSimAccess(user, options = {}) {
+  if (user?.role === 'admin') return null;
+  if (user?.role !== 'leader') {
+    return { status: 403, error: 'صلاحية المحاكاة للمدير أو القائد فقط' };
+  }
+  const leaderSection = userDeptToSection(user.department);
+  if (!leaderSection) {
+    return { status: 403, error: `لا يوجد قسم يطابق صلاحية القائد (${user.department})` };
+  }
+  // If a specific coordinator is named, they MUST be in the leader's section.
+  for (const name of (options.coordinatorNames || [])) {
+    const coordSection = findCoordinatorSection(name);
+    if (coordSection !== leaderSection) {
+      return { status: 403, error: `المنسق "${name}" ليس في قسمك (${SECTION_LABELS[leaderSection] || leaderSection})` };
+    }
+  }
+  // If a target section is named, it MUST equal the leader's section.
+  if (options.targetSection && options.targetSection !== leaderSection) {
+    return { status: 403, error: `يمكنك فقط الإضافة لقسمك (${SECTION_LABELS[leaderSection] || leaderSection})` };
+  }
+  return null;
+}
+
 // Variant of planSourceRedistribution that accepts explicit starting loads.
 // Used by Swap mode where one of the recipients is the incoming counterpart
 // (who arrives WITHOUT their old section's groups → startCount/startGroups = 0).
@@ -526,9 +563,10 @@ function planRedistributionFlexible(groups, recipients) {
 //
 // Query: ?coordinator=Ali Hashem
 router.get('/simulate/leave', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'صلاحية المحاكاة للمدير فقط' });
   const aliName = String(req.query.coordinator || '').trim();
   if (!aliName) return res.status(400).json({ error: 'coordinator is required' });
+  const access = checkSimAccess(req.user, { coordinatorNames: [aliName] });
+  if (access) return res.status(access.status).json({ error: access.error });
 
   try {
     const section = findCoordinatorSection(aliName);
@@ -632,7 +670,6 @@ router.get('/simulate/swap', (req, res) => {
 //
 // Query: ?name=Khaled&toSection=general&type=standard
 router.get('/simulate/add-new', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'صلاحية المحاكاة للمدير فقط' });
   const name = String(req.query.name || '').trim();
   const toSection = String(req.query.toSection || '').trim();
   const coordinatorType = String(req.query.type || 'standard').trim();
@@ -641,6 +678,8 @@ router.get('/simulate/add-new', (req, res) => {
   if (!VALID_TYPES.includes(coordinatorType)) {
     return res.status(400).json({ error: `type must be one of ${VALID_TYPES.join(', ')}` });
   }
+  const access = checkSimAccess(req.user, { targetSection: toSection });
+  if (access) return res.status(access.status).json({ error: access.error });
 
   try {
     const targetLeader = getSectionLeaderName(toSection);
@@ -673,11 +712,12 @@ router.get('/simulate/add-new', (req, res) => {
 //
 // Query: ?coordinator=...&dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD
 router.get('/simulate/temporary', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'صلاحية المحاكاة للمدير فقط' });
   const aliName  = String(req.query.coordinator || '').trim();
   const dateFrom = String(req.query.dateFrom || '').trim() || null;
   const dateTo   = String(req.query.dateTo   || '').trim() || null;
   if (!aliName) return res.status(400).json({ error: 'coordinator is required' });
+  const access = checkSimAccess(req.user, { coordinatorNames: [aliName] });
+  if (access) return res.status(access.status).json({ error: access.error });
 
   try {
     const section = findCoordinatorSection(aliName);
@@ -718,7 +758,6 @@ router.get('/simulate/temporary', (req, res) => {
 //   groups: [ { group_name: '...', line: 'Ahmed Hassan' }, ... ]
 // }
 router.post('/simulate/groups', express.json(), (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'صلاحية المحاكاة للمدير فقط' });
   const fromName = String(req.body?.fromCoordinator || '').trim();
   const toName   = String(req.body?.toCoordinator   || '').trim();
   const selected = Array.isArray(req.body?.groups) ? req.body.groups : [];
@@ -728,6 +767,10 @@ router.post('/simulate/groups', express.json(), (req, res) => {
     return res.status(400).json({ error: 'fromCoordinator and toCoordinator must differ' });
   }
   if (selected.length === 0) return res.status(400).json({ error: 'يجب اختيار مجموعة واحدة على الأقل' });
+  // Leaders can only act within their own team. Both endpoints of the move
+  // must belong to their section.
+  const access = checkSimAccess(req.user, { coordinatorNames: [fromName, toName] });
+  if (access) return res.status(access.status).json({ error: access.error });
 
   try {
     const fromGroups = getMemberBatches(fromName);
