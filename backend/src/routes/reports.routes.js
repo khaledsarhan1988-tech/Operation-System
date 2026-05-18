@@ -3686,7 +3686,11 @@ router.get('/team-summary', (req, res) => {
   const { deptF, dateA, dateL } = tsFilters(req.query);
   const dateRBase = from_date ? ` AND added_at >= '${from_date}'` : '';
   const dateREnd  = to_date   ? ` AND added_at <= '${to_date}'`   : '';
-  const deptFNoB  = deptF.replace('b.dept_type','dept_type').replace('AND b.','AND ');
+  // deptFNoB: strip ALL "b." prefixes from deptF so the filter can be used
+  // in queries that reference `batches` without an alias. Bug fix: the old
+  // version only handled one occurrence and missed `b.coordinators` inside
+  // the EXISTS subquery → "no such column: b.coordinators" 500 error.
+  const deptFNoB  = deptF.replace(/\bb\./g, '');
 
   try {
     // Filter team members by name if employee filter set
