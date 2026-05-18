@@ -223,9 +223,16 @@ router.get('/', (req, res) => {
     const { where, params } = buildListWhere(scope, req.query);
     // Hide template todos from the main list — only their daily instances
     // should appear. Caller can pass ?include_templates=1 to see templates.
-    const templateClause = includeTemplates
+    let templateClause = includeTemplates
       ? ''
       : ` AND NOT (t.is_recurring = 1 AND t.parent_todo_id IS NULL)`;
+    // ?task_kind=extra → only manual (non-workflow) tasks
+    // ?task_kind=workflow → only workflow instances (recurring children)
+    if (req.query.task_kind === 'extra') {
+      templateClause += ` AND t.is_recurring = 0 AND t.parent_todo_id IS NULL`;
+    } else if (req.query.task_kind === 'workflow') {
+      templateClause += ` AND t.parent_todo_id IS NOT NULL`;
+    }
     const sort = (req.query.sort || 'smart').toString();
     let orderBy;
     switch (sort) {
@@ -342,7 +349,15 @@ router.get('/team-summary', (req, res) => {
         SUM(CASE WHEN t.status NOT IN ('completed','cancelled')
                   AND t.due_date IS NOT NULL AND t.due_date < ? THEN 1 ELSE 0 END) AS overdue,
         SUM(CASE WHEN t.status NOT IN ('completed','cancelled') THEN 1 ELSE 0 END) AS open_count,
-        SUM(CASE WHEN t.priority='urgent' AND t.status NOT IN ('completed','cancelled') THEN 1 ELSE 0 END) AS urgent_open
+        SUM(CASE WHEN t.priority='urgent' AND t.status NOT IN ('completed','cancelled') THEN 1 ELSE 0 END) AS urgent_open,
+        -- "Extra" tasks: ones that are NOT workflow templates nor instances —
+        -- i.e. created manually (one-off tasks added by admin/leader/agent).
+        SUM(CASE WHEN t.is_recurring = 0 AND t.parent_todo_id IS NULL THEN 1 ELSE 0 END) AS extra_count,
+        SUM(CASE WHEN t.is_recurring = 0 AND t.parent_todo_id IS NULL
+                  AND t.status NOT IN ('completed','cancelled') THEN 1 ELSE 0 END) AS extra_open,
+        -- "Workflow" tasks: daily instances generated from recurring templates
+        SUM(CASE WHEN t.parent_todo_id IS NOT NULL THEN 1 ELSE 0 END) AS workflow_count,
+        SUM(CASE WHEN t.parent_todo_id IS NOT NULL AND t.status='completed' THEN 1 ELSE 0 END) AS workflow_completed
       FROM todos t
       LEFT JOIN users u ON u.id = t.assigned_to
       WHERE ${where} AND t.assigned_to IS NOT NULL

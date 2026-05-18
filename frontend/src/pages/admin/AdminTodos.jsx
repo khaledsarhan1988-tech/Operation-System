@@ -49,6 +49,7 @@ export default function AdminTodos() {
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterPriority, setFilterPriority] = useState('');
+  const [filterKind, setFilterKind] = useState('');  // '' = all | 'extra' | 'workflow'
   const [filterAssignee, setFilterAssignee] = useState('');
   const [openId, setOpenId] = useState(null);
   const [creating, setCreating] = useState(false);
@@ -58,8 +59,10 @@ export default function AdminTodos() {
   const qc = useQueryClient();
 
   const { data: todosData, isLoading } = useQuery({
-    queryKey: ['todos', 'admin-all'],
-    queryFn: () => api.get('/todos', { params: { limit: 1000 } }).then(r => r.data),
+    queryKey: ['todos', 'admin-all', filterKind],
+    queryFn: () => api.get('/todos', {
+      params: { limit: 1000, ...(filterKind ? { task_kind: filterKind } : {}) },
+    }).then(r => r.data),
     staleTime: 30 * 1000,
   });
 
@@ -294,6 +297,8 @@ export default function AdminTodos() {
                   <th className="px-3 py-2 text-start font-semibold text-gray-700">#</th>
                   <th className="px-3 py-2 text-start font-semibold text-gray-700">الموظف</th>
                   <th className="px-3 py-2 text-start font-semibold text-gray-700">الإجمالي</th>
+                  <th className="px-3 py-2 text-start font-semibold text-gray-700" title="مهام يدوية مضافة بعد القوالب">إضافية</th>
+                  <th className="px-3 py-2 text-start font-semibold text-gray-700" title="instances الـ workflow اليومي">قوالب اليوم</th>
                   <th className="px-3 py-2 text-start font-semibold text-gray-700">المفتوحة</th>
                   <th className="px-3 py-2 text-start font-semibold text-gray-700">المكتملة</th>
                   <th className="px-3 py-2 text-start font-semibold text-gray-700">العاجلة</th>
@@ -304,15 +309,44 @@ export default function AdminTodos() {
               <tbody>
                 {summary.rows.map((r, i) => {
                   const rate = r.total > 0 ? Math.round((r.completed / r.total) * 100) : 0;
+                  const wfRate = r.workflow_count > 0 ? Math.round(((r.workflow_completed || 0) / r.workflow_count) * 100) : 0;
                   return (
-                    <tr key={r.assigned_to} className="border-t border-gray-100 hover:bg-violet-50/30 cursor-pointer"
-                        onClick={() => setFilterAssignee(String(r.assigned_to))}>
+                    <tr key={r.assigned_to} className="border-t border-gray-100 hover:bg-violet-50/30">
                       <td className="px-3 py-2 font-bold text-gray-500">{i + 1}</td>
-                      <td className="px-3 py-2 font-semibold flex items-center gap-1.5">
-                        <UserCircle size={14} className="text-gray-400" />
-                        {r.assigned_to_name}
+                      <td className="px-3 py-2 font-semibold cursor-pointer"
+                          onClick={() => { setFilterAssignee(String(r.assigned_to)); setFilterKind(''); }}>
+                        <span className="inline-flex items-center gap-1.5">
+                          <UserCircle size={14} className="text-gray-400" />
+                          {r.assigned_to_name}
+                        </span>
                       </td>
                       <td className="px-3 py-2">{r.total}</td>
+                      <td className="px-3 py-2">
+                        {(r.extra_count || 0) > 0 ? (
+                          <button
+                            onClick={() => { setFilterAssignee(String(r.assigned_to)); setFilterKind('extra'); }}
+                            className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 text-xs font-bold hover:bg-orange-200 transition"
+                            title="اضغط لعرضها في الجدول السفلي"
+                          >
+                            {r.extra_count}
+                            {(r.extra_open || 0) > 0 && (
+                              <span className="text-[10px] mr-1 opacity-70">({r.extra_open} مفتوحة)</span>
+                            )}
+                          </button>
+                        ) : <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="px-3 py-2">
+                        {(r.workflow_count || 0) > 0 ? (
+                          <button
+                            onClick={() => { setFilterAssignee(String(r.assigned_to)); setFilterKind('workflow'); }}
+                            className="px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 text-xs font-bold hover:bg-violet-200 transition"
+                            title="اضغط لعرضها"
+                          >
+                            {r.workflow_completed || 0} / {r.workflow_count}
+                            <span className="text-[10px] mr-1 opacity-70">({wfRate}%)</span>
+                          </button>
+                        ) : <span className="text-gray-300">—</span>}
+                      </td>
                       <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs font-bold">{r.open_count}</span></td>
                       <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-xs font-bold">{r.completed}</span></td>
                       <td className="px-3 py-2">{r.urgent_open > 0 ? <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-xs font-bold">{r.urgent_open}</span> : '—'}</td>
@@ -332,6 +366,9 @@ export default function AdminTodos() {
               </tbody>
             </table>
           </div>
+          <p className="text-[10px] text-gray-500 mt-2 px-2">
+            💡 اضغط على رقم "إضافية" أو "قوالب اليوم" لفلترة الجدول السفلي على هذا الموظف وهذا النوع.
+          </p>
         </div>
       )}
 
@@ -361,8 +398,14 @@ export default function AdminTodos() {
               <option value="">كل الموظفين</option>
               {(usersData?.users || []).map(u => (<option key={u.id} value={u.id}>{u.full_name}</option>))}
             </select>
-            {activeFilters > 0 && (
-              <button onClick={() => { setSearch(''); setFilterStatus(''); setFilterPriority(''); setFilterAssignee(''); }}
+            <select value={filterKind} onChange={e => setFilterKind(e.target.value)}
+              className={`px-2 py-1.5 rounded-lg border text-sm font-bold ${filterKind === 'extra' ? 'bg-orange-50 border-orange-300 text-orange-700' : filterKind === 'workflow' ? 'bg-violet-50 border-violet-300 text-violet-700' : 'bg-white border-gray-300'}`}>
+              <option value="">كل الأنواع</option>
+              <option value="extra">إضافية فقط</option>
+              <option value="workflow">قوالب اليوم فقط</option>
+            </select>
+            {(activeFilters > 0 || filterKind) && (
+              <button onClick={() => { setSearch(''); setFilterStatus(''); setFilterPriority(''); setFilterAssignee(''); setFilterKind(''); }}
                 className="px-2 py-1.5 rounded-lg text-xs text-violet-600 hover:bg-violet-50">مسح</button>
             )}
             <button onClick={exportCsv} disabled={!filtered.length}
