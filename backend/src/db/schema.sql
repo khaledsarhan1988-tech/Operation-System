@@ -758,7 +758,8 @@ CREATE TABLE IF NOT EXISTS todos (
                   CHECK(status IN ('new','in_progress','on_hold','completed','cancelled')),
   priority        TEXT NOT NULL DEFAULT 'normal'
                   CHECK(priority IN ('urgent','high','normal','low')),
-  due_date        TEXT,            -- YYYY-MM-DD
+  due_date        TEXT,            -- YYYY-MM-DD (START of the date range)
+  due_date_end    TEXT,            -- YYYY-MM-DD (END of date range; NULL = single-day task)
   due_time        TEXT,            -- HH:MM optional
   created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
   assigned_to     INTEGER REFERENCES users(id) ON DELETE SET NULL,

@@ -331,7 +331,9 @@ function ExtraTasksSection({ todos, onCardClick, onEdit }) {
 
 function ExtraCard({ todo, onClick, onEdit }) {
   const p = PRIORITY_CFG[todo.priority] || PRIORITY_CFG.normal;
-  const overdue = todo.status !== 'completed' && todo.due_date && todo.due_date < todayStr();
+  // Effective end of the date range (end if multi-day, else start)
+  const effectiveEnd = todo.due_date_end || todo.due_date;
+  const overdue = todo.status !== 'completed' && effectiveEnd && effectiveEnd < todayStr();
   const statusCfg = {
     new:         { label: 'جديدة',       cls: 'bg-blue-100 text-blue-700' },
     in_progress: { label: 'قيد التنفيذ', cls: 'bg-amber-100 text-amber-700' },
@@ -366,7 +368,10 @@ function ExtraCard({ todo, onClick, onEdit }) {
             )}
             {todo.due_date && (
               <span className={`inline-flex items-center gap-0.5 ${overdue ? 'text-red-600 font-bold' : ''}`}>
-                <Calendar size={10} /> {todo.due_date}
+                <Calendar size={10} />
+                {todo.due_date_end && todo.due_date_end !== todo.due_date
+                  ? <>{todo.due_date} → {todo.due_date_end}</>
+                  : todo.due_date}
               </span>
             )}
             {todo.due_time && (
@@ -394,7 +399,9 @@ function ExtraCard({ todo, onClick, onEdit }) {
 // ─── Kanban Card ──────────────────────────────────────────────────────────────
 function KanbanCard({ todo, onDragStart, onClick, onEdit }) {
   const p = PRIORITY_CFG[todo.priority] || PRIORITY_CFG.normal;
-  const overdue = todo.status !== 'completed' && todo.due_date && todo.due_date < todayStr();
+  // Effective end of the date range (end if multi-day, else start)
+  const effectiveEnd = todo.due_date_end || todo.due_date;
+  const overdue = todo.status !== 'completed' && effectiveEnd && effectiveEnd < todayStr();
   return (
     <div
       draggable
@@ -423,7 +430,10 @@ function KanbanCard({ todo, onDragStart, onClick, onEdit }) {
             )}
             {todo.due_date && (
               <span className={`inline-flex items-center gap-0.5 ${overdue ? 'text-red-600 font-bold' : ''}`}>
-                <Calendar size={10} /> {todo.due_date}
+                <Calendar size={10} />
+                {todo.due_date_end && todo.due_date_end !== todo.due_date
+                  ? <>{todo.due_date} → {todo.due_date_end}</>
+                  : todo.due_date}
               </span>
             )}
             {todo.due_time && (
@@ -460,6 +470,8 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
   const [priority, setPriority] = useState(todo?.priority || 'normal');
   const [status, setStatus] = useState(todo?.status || 'new');
   const [dueDate, setDueDate] = useState(todo?.due_date || '');
+  // Multi-day range: empty end-date = single-day task
+  const [dueDateEnd, setDueDateEnd] = useState(todo?.due_date_end || '');
   const [dueTime, setDueTime] = useState(todo?.due_time || '');
   const [assignedTo, setAssignedTo] = useState(todo?.assigned_to || '');
   const [isRecurring, setIsRecurring] = useState(todo?.is_recurring === 1);
@@ -473,7 +485,9 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
     try {
       const body = {
         title, description, priority, status,
-        due_date: dueDate || null, due_time: dueTime || null,
+        due_date: dueDate || null,
+        due_date_end: dueDateEnd || null,
+        due_time: dueTime || null,
         assigned_to: assignedTo || null,
         is_recurring: isRecurring && !isInstance ? 1 : 0,
         recurrence_pattern: isRecurring && !isInstance ? recurrencePattern : null,
@@ -518,14 +532,24 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
               </select>
             </Field>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="تاريخ الاستحقاق">
+          <div className="grid grid-cols-3 gap-3">
+            <Field label="من تاريخ">
               <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" />
+            </Field>
+            <Field label="إلى تاريخ (اختياري)">
+              <input type="date" value={dueDateEnd} onChange={e => setDueDateEnd(e.target.value)}
+                min={dueDate || undefined} disabled={!dueDate}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm disabled:bg-gray-50 disabled:text-gray-400" />
             </Field>
             <Field label="الوقت">
               <input type="time" value={dueTime} onChange={e => setDueTime(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" />
             </Field>
           </div>
+          {dueDate && dueDateEnd && (
+            <p className="text-[11px] text-indigo-700 bg-indigo-50 border border-indigo-200 rounded px-2 py-1">
+              💡 المهمة هتظهر للمنسق طوال الفترة من <b>{dueDate}</b> إلى <b>{dueDateEnd}</b>
+            </p>
+          )}
           <Field label="مُكلّف لـ *">
             <select value={assignedTo} onChange={e => setAssignedTo(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white">
               <option value="">— اختار —</option>

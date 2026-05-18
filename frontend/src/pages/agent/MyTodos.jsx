@@ -316,7 +316,9 @@ function MiniStat({ label, value, icon: Icon, color }) {
 function TodoCard({ todo, onToggle, onEdit, onOpen }) {
   const p = PRIORITY_CFG[todo.priority] || PRIORITY_CFG.normal;
   const done = todo.status === 'completed';
-  const overdue = !done && todo.due_date && todo.due_date < todayStr();
+  // Overdue uses the EFFECTIVE end of the date range (end if set, else start)
+  const effectiveEnd = todo.due_date_end || todo.due_date;
+  const overdue = !done && effectiveEnd && effectiveEnd < todayStr();
 
   return (
     <div className={`bg-white rounded-xl border ${overdue ? 'border-red-200' : 'border-gray-100'} hover:border-rose-300 hover:shadow-sm transition group p-3 flex items-center gap-3`}>
@@ -352,7 +354,9 @@ function TodoCard({ todo, onToggle, onEdit, onOpen }) {
           {todo.due_date && (
             <span className={`inline-flex items-center gap-1 ${overdue ? 'text-red-600 font-bold' : ''}`}>
               <Calendar size={11} />
-              {todo.due_date}
+              {todo.due_date_end && todo.due_date_end !== todo.due_date
+                ? <>{todo.due_date} → {todo.due_date_end}</>
+                : todo.due_date}
               {todo.due_time && ` • ${todo.due_time}`}
             </span>
           )}
@@ -403,6 +407,8 @@ function TodoEditModal({ todo, onClose, onSaved }) {
   const [priority, setPriority] = useState(todo?.priority || 'normal');
   const [status, setStatus] = useState(todo?.status || 'new');
   const [dueDate, setDueDate] = useState(todo?.due_date || '');
+  // Multi-day tasks: optional end date. Empty = single-day (server stores NULL).
+  const [dueDateEnd, setDueDateEnd] = useState(todo?.due_date_end || '');
   const [dueTime, setDueTime] = useState(todo?.due_time || '');
   const [assignedTo, setAssignedTo] = useState(todo?.assigned_to || '');
   const [isRecurring, setIsRecurring] = useState(todo?.is_recurring === 1);
@@ -438,6 +444,7 @@ function TodoEditModal({ todo, onClose, onSaved }) {
       const body = {
         title, description, priority, status,
         due_date: dueDate || null,
+        due_date_end: dueDateEnd || null,
         due_time: dueTime || null,
         assigned_to: assignedTo || null,
         is_recurring: isRecurring && !isInstance ? 1 : 0,
@@ -495,16 +502,27 @@ function TodoEditModal({ todo, onClose, onSaved }) {
             </Field>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="تاريخ الاستحقاق">
+          <div className="grid grid-cols-3 gap-3">
+            <Field label="من تاريخ">
               <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)}
                 className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" />
+            </Field>
+            <Field label="إلى تاريخ (اختياري)">
+              <input type="date" value={dueDateEnd} onChange={e => setDueDateEnd(e.target.value)}
+                min={dueDate || undefined}
+                disabled={!dueDate}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm disabled:bg-gray-50 disabled:text-gray-400" />
             </Field>
             <Field label="الوقت (اختياري)">
               <input type="time" value={dueTime} onChange={e => setDueTime(e.target.value)}
                 className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" />
             </Field>
           </div>
+          {dueDate && dueDateEnd && (
+            <p className="text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded px-2 py-1">
+              💡 المهمة هتظهر للموظف والقائد من <b>{dueDate}</b> إلى <b>{dueDateEnd}</b> (يومياً)
+            </p>
+          )}
 
           {usersData?.users && usersData.users.length > 1 && (
             <Field label="مُكلّف لـ">
@@ -637,7 +655,13 @@ function TodoDetailModal({ id, onClose, onEdit, onDeleted }) {
           )}
 
           <div className="grid grid-cols-2 gap-3 text-sm">
-            <DetailRow label="تاريخ الاستحقاق" value={t.due_date ? `${t.due_date}${t.due_time ? ' ' + t.due_time : ''}` : '—'} />
+            <DetailRow label="تاريخ الاستحقاق" value={
+              t.due_date
+                ? (t.due_date_end && t.due_date_end !== t.due_date
+                    ? `${t.due_date} → ${t.due_date_end}${t.due_time ? ' ' + t.due_time : ''}`
+                    : `${t.due_date}${t.due_time ? ' ' + t.due_time : ''}`)
+                : '—'
+            } />
             <DetailRow label="المُكلّف بها" value={t.assigned_to_name || '—'} />
             <DetailRow label="أنشأها" value={t.created_by_name || '—'} />
             <DetailRow label="أُنشئت في" value={t.created_at?.replace('T', ' ').slice(0, 16) || '—'} />

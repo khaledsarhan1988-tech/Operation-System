@@ -106,28 +106,39 @@ function buildListWhere(scope, query) {
     params.push(s, s, s);
   }
   if (query.bucket) {
-    // Temporal buckets used by My-Day UI
+    // Temporal buckets used by My-Day UI.
+    //
+    // Multi-day tasks: due_date = range start, due_date_end = range end (may be
+    // NULL for single-day tasks). The "effective end" of any task is
+    // COALESCE(due_date_end, due_date), so a single-day task with date X is
+    // treated as the range [X..X].
+    //
+    // A task is ACTIVE on a given date D when:  due_date <= D <= effective_end
+    // It is OVERDUE on D when:                  effective_end < D
     const today = todayCairo();
     const tomorrow = addDaysCairo(1);
     const weekEnd = addDaysCairo(7);
     switch (query.bucket) {
       case 'overdue':
-        wheres.push("(t.status NOT IN ('completed','cancelled') AND t.due_date IS NOT NULL AND t.due_date < ?)");
+        wheres.push("(t.status NOT IN ('completed','cancelled') AND t.due_date IS NOT NULL AND COALESCE(t.due_date_end, t.due_date) < ?)");
         params.push(today);
         break;
       case 'today':
-        wheres.push("(t.status NOT IN ('completed','cancelled') AND t.due_date = ?)");
-        params.push(today);
+        // Active today: today within [due_date, COALESCE(due_date_end, due_date)]
+        wheres.push("(t.status NOT IN ('completed','cancelled') AND t.due_date <= ? AND COALESCE(t.due_date_end, t.due_date) >= ?)");
+        params.push(today, today);
         break;
       case 'tomorrow':
-        wheres.push("(t.status NOT IN ('completed','cancelled') AND t.due_date = ?)");
-        params.push(tomorrow);
+        wheres.push("(t.status NOT IN ('completed','cancelled') AND t.due_date <= ? AND COALESCE(t.due_date_end, t.due_date) >= ?)");
+        params.push(tomorrow, tomorrow);
         break;
       case 'this_week':
-        wheres.push("(t.status NOT IN ('completed','cancelled') AND t.due_date BETWEEN ? AND ?)");
-        params.push(today, weekEnd);
+        // Range overlaps with [today..weekEnd]
+        wheres.push("(t.status NOT IN ('completed','cancelled') AND t.due_date <= ? AND COALESCE(t.due_date_end, t.due_date) >= ?)");
+        params.push(weekEnd, today);
         break;
       case 'later':
+        // Starts after the week ends, or has no date at all
         wheres.push("(t.status NOT IN ('completed','cancelled') AND (t.due_date IS NULL OR t.due_date > ?))");
         params.push(weekEnd);
         break;
@@ -330,6 +341,9 @@ router.get('/stats', (req, res) => {
     const { where, params } = buildListWhere(scope, {});
     const today = todayCairo();
 
+    // Stats use range-aware logic: COALESCE(due_date_end, due_date) is the
+    // task's effective last day. A task is overdue if that's already past,
+    // and counted as "due today" if today falls inside [due_date..effective_end].
     const stats = db.prepare(`
       SELECT
         COUNT(*) AS total,
@@ -338,13 +352,17 @@ router.get('/stats', (req, res) => {
         SUM(CASE WHEN t.status='on_hold'     THEN 1 ELSE 0 END) AS on_hold_count,
         SUM(CASE WHEN t.status='completed'   THEN 1 ELSE 0 END) AS completed_count,
         SUM(CASE WHEN t.status NOT IN ('completed','cancelled')
-                  AND t.due_date IS NOT NULL AND t.due_date < ? THEN 1 ELSE 0 END) AS overdue_count,
-        SUM(CASE WHEN t.due_date = ? AND t.status NOT IN ('completed','cancelled') THEN 1 ELSE 0 END) AS due_today_count,
+                  AND t.due_date IS NOT NULL
+                  AND COALESCE(t.due_date_end, t.due_date) < ? THEN 1 ELSE 0 END) AS overdue_count,
+        SUM(CASE WHEN t.status NOT IN ('completed','cancelled')
+                  AND t.due_date IS NOT NULL
+                  AND t.due_date <= ?
+                  AND COALESCE(t.due_date_end, t.due_date) >= ? THEN 1 ELSE 0 END) AS due_today_count,
         SUM(CASE WHEN t.priority='urgent' AND t.status NOT IN ('completed','cancelled') THEN 1 ELSE 0 END) AS urgent_open
       FROM todos t
       WHERE ${where}
         AND NOT (t.is_recurring = 1 AND t.parent_todo_id IS NULL)
-    `).get(today, today, ...params);
+    `).get(today, today, today, ...params);
 
     return res.json(stats || {});
   } catch (err) {
@@ -753,19 +771,30 @@ router.post('/', express.json(), (req, res) => {
     let assignedTo = Number(b.assigned_to) || scope.id;
     if (scope.role === 'agent') assignedTo = scope.id;
 
+    // Normalize date range: if due_date_end < due_date, swap to keep the
+    // invariant (start <= end). Both can be NULL.
+    let dueDate    = b.due_date    || null;
+    let dueDateEnd = b.due_date_end || null;
+    if (dueDate && dueDateEnd && dueDateEnd < dueDate) {
+      [dueDate, dueDateEnd] = [dueDateEnd, dueDate];
+    }
+    // Single-day task → store NULL for end (signals "no range")
+    if (dueDateEnd && dueDate && dueDateEnd === dueDate) dueDateEnd = null;
+
     const result = db.prepare(`
       INSERT INTO todos
-        (title, description, status, priority, due_date, due_time,
+        (title, description, status, priority, due_date, due_date_end, due_time,
          created_by, assigned_to, department, management,
          related_remark_id, tags, is_recurring, recurrence_pattern,
          parent_todo_id, line)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       String(b.title).trim(),
       b.description || null,
       b.status || 'new',
       b.priority || 'normal',
-      b.due_date || null,
+      dueDate,
+      dueDateEnd,
       b.due_time || null,
       scope.id,
       assignedTo,
@@ -796,9 +825,24 @@ router.patch('/:id', express.json(), (req, res) => {
     if (!canMutateTodo(scope, existing)) return res.status(403).json({ error: 'صلاحية غير كافية' });
 
     const b = req.body || {};
+    // Normalize range if both ends are being updated. We do it BEFORE the
+    // loop so the swap shows up in the SET clause.
+    if ('due_date' in b || 'due_date_end' in b) {
+      const newStart = ('due_date'     in b) ? (b.due_date     || null) : existing.due_date;
+      let   newEnd   = ('due_date_end' in b) ? (b.due_date_end || null) : existing.due_date_end;
+      if (newStart && newEnd && newEnd < newStart) {
+        // Swap so start <= end
+        b.due_date = newEnd;
+        b.due_date_end = newStart;
+      }
+      // Collapse equal pair to single-day
+      const finalStart = b.due_date ?? newStart;
+      const finalEnd   = b.due_date_end ?? newEnd;
+      if (finalStart && finalEnd && finalStart === finalEnd) b.due_date_end = null;
+    }
     const fields = [];
     const params = [];
-    const allowed = ['title', 'description', 'status', 'priority', 'due_date', 'due_time',
+    const allowed = ['title', 'description', 'status', 'priority', 'due_date', 'due_date_end', 'due_time',
                      'assigned_to', 'department', 'management', 'related_remark_id',
                      'tags', 'is_recurring', 'recurrence_pattern', 'parent_todo_id'];
 

@@ -443,7 +443,9 @@ export default function AdminTodos() {
               ) : filtered.map(t => {
                 const p = PRIORITY_CFG[t.priority] || PRIORITY_CFG.normal;
                 const s = STATUS_CFG[t.status] || STATUS_CFG.new;
-                const overdue = t.status !== 'completed' && t.due_date && t.due_date < todayStr();
+                // Multi-day: effective end is due_date_end (if any) else due_date
+                const effectiveEnd = t.due_date_end || t.due_date;
+                const overdue = t.status !== 'completed' && effectiveEnd && effectiveEnd < todayStr();
                 return (
                   <tr key={t.id} className="border-t border-gray-100 hover:bg-violet-50/30 cursor-pointer" onClick={() => setOpenId(t.id)}>
                     <td className="px-3 py-2 font-mono text-xs text-gray-500">#{t.id}</td>
@@ -461,7 +463,11 @@ export default function AdminTodos() {
                     <td className="px-3 py-2 text-xs">{t.assigned_to_name || '—'}</td>
                     <td className="px-3 py-2 text-xs">{t.created_by_name || '—'}</td>
                     <td className={`px-3 py-2 text-xs ${overdue ? 'text-red-600 font-bold' : ''}`}>
-                      {t.due_date || '—'}
+                      {t.due_date
+                        ? (t.due_date_end && t.due_date_end !== t.due_date
+                            ? <>{t.due_date} → {t.due_date_end}</>
+                            : t.due_date)
+                        : '—'}
                     </td>
                     <td className="px-3 py-2 text-end">
                       <button onClick={(e) => { e.stopPropagation(); setEditing(t); }}
@@ -962,6 +968,8 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
   const [priority, setPriority] = useState(todo?.priority || 'normal');
   const [status, setStatus] = useState(todo?.status || 'new');
   const [dueDate, setDueDate] = useState(todo?.due_date || '');
+  // Multi-day range: empty end-date = single-day task
+  const [dueDateEnd, setDueDateEnd] = useState(todo?.due_date_end || '');
   const [dueTime, setDueTime] = useState(todo?.due_time || '');
   const [assignedTo, setAssignedTo] = useState(todo?.assigned_to || '');
   const [isRecurring, setIsRecurring] = useState(todo?.is_recurring === 1);
@@ -974,7 +982,11 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
     setSubmitting(true); setError(null);
     try {
       const body = {
-        title, description, priority, status, due_date: dueDate || null, due_time: dueTime || null, assigned_to: assignedTo || null,
+        title, description, priority, status,
+        due_date: dueDate || null,
+        due_date_end: dueDateEnd || null,
+        due_time: dueTime || null,
+        assigned_to: assignedTo || null,
         is_recurring: isRecurring && !isInstance ? 1 : 0,
         recurrence_pattern: isRecurring && !isInstance ? recurrencePattern : null,
       };
@@ -1018,16 +1030,27 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
               </select>
             </label>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <label className="block">
-              <span className="text-xs font-bold text-gray-600 block mb-1">تاريخ</span>
+              <span className="text-xs font-bold text-gray-600 block mb-1">من تاريخ</span>
               <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" />
+            </label>
+            <label className="block">
+              <span className="text-xs font-bold text-gray-600 block mb-1">إلى تاريخ (اختياري)</span>
+              <input type="date" value={dueDateEnd} onChange={e => setDueDateEnd(e.target.value)}
+                min={dueDate || undefined} disabled={!dueDate}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm disabled:bg-gray-50 disabled:text-gray-400" />
             </label>
             <label className="block">
               <span className="text-xs font-bold text-gray-600 block mb-1">الوقت</span>
               <input type="time" value={dueTime} onChange={e => setDueTime(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" />
             </label>
           </div>
+          {dueDate && dueDateEnd && (
+            <p className="text-[11px] text-violet-700 bg-violet-50 border border-violet-200 rounded px-2 py-1">
+              💡 المهمة هتظهر للموظف والقائد من <b>{dueDate}</b> إلى <b>{dueDateEnd}</b>
+            </p>
+          )}
           <label className="block">
             <span className="text-xs font-bold text-gray-600 block mb-1">مُكلّف لـ</span>
             <select value={assignedTo} onChange={e => setAssignedTo(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white">
@@ -1111,7 +1134,13 @@ function TodoDetailModal({ id, onClose, onEdit, onDeleted }) {
           <div className="grid grid-cols-2 gap-3 text-xs">
             <div><span className="text-gray-500">المسؤول: </span><strong>{t.assigned_to_name || '—'}</strong></div>
             <div><span className="text-gray-500">المُنشئ: </span><strong>{t.created_by_name || '—'}</strong></div>
-            <div><span className="text-gray-500">الاستحقاق: </span><strong>{t.due_date || '—'}</strong></div>
+            <div><span className="text-gray-500">الاستحقاق: </span><strong>
+              {t.due_date
+                ? (t.due_date_end && t.due_date_end !== t.due_date
+                    ? <>{t.due_date} → {t.due_date_end}</>
+                    : t.due_date)
+                : '—'}
+            </strong></div>
             <div><span className="text-gray-500">الحالة: </span><strong>{STATUS_CFG[t.status]?.label}</strong></div>
           </div>
           <div className="border-t pt-3">

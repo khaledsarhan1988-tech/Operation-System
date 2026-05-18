@@ -233,6 +233,23 @@ initDb().then(db => {
     console.error('team_members.coordinator_type migration error:', e.message);
   }
 
+  // ── todos.due_date_end: support multi-day tasks (date ranges) ─────────────
+  // A task can now span a date range. due_date = start, due_date_end = end.
+  // NULL due_date_end means a single-day task (backward-compatible with all
+  // existing rows). Bucket filters & "today" matching use range overlap.
+  try {
+    const info = db._raw.exec(`PRAGMA table_info(todos)`);
+    const cols = info[0]?.values.map(r => r[1]) || [];
+    if (cols.length > 0 && !cols.includes('due_date_end')) {
+      db._raw.run(`ALTER TABLE todos ADD COLUMN due_date_end TEXT`);
+      db._raw.run(`CREATE INDEX IF NOT EXISTS idx_todos_due_end ON todos(due_date_end)`);
+      saveNow();
+      console.log('✅ Migration: added `due_date_end` column to todos (NULL = single-day)');
+    }
+  } catch (e) {
+    console.error('todos.due_date_end migration error:', e.message);
+  }
+
   // ── team_members SAFETY: restore from snapshot if rows vanished ─────────
   // Runs after all team_members DDL (step 4a). If anything above wiped or
   // failed to preserve rows, this brings them back from the JSON snapshot
