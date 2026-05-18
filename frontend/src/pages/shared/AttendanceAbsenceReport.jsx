@@ -138,7 +138,9 @@ export default function AttendanceAbsenceReport() {
     staleTime: 60 * 1000,
   });
 
-  // Split multi-name coordinator fields (e.g. "Mostafa, fouad") per row
+  // Split multi-name coordinator fields (e.g. "Mostafa, fouad") per row.
+  // current_department arrives as a comma-separated string matching the
+  // order of coordinator names — we split it in parallel.
   const data = useMemo(() => {
     if (!raw) return [];
     const map = new Map();
@@ -146,13 +148,17 @@ export default function AttendanceAbsenceReport() {
       const coords = (r.coordinator || '--').includes(',')
         ? r.coordinator.split(',').map(c => c.trim()).filter(Boolean)
         : [r.coordinator?.trim() || '--'];
-      coords.forEach(c => {
+      const depts = (r.current_department || '').split(',').map(d => d.trim());
+      coords.forEach((c, i) => {
         if (!map.has(c)) {
           map.set(c, {
             coordinator: c,
+            current_department: depts[i] || '',
             main_expected: 0, main_absent: 0,
             zoom_expected: 0, zoom_absent: 0,
           });
+        } else if (depts[i] && !map.get(c).current_department) {
+          map.get(c).current_department = depts[i];
         }
         const row = map.get(c);
         row.main_expected += r.main_expected || 0;
@@ -393,7 +399,16 @@ export default function AttendanceAbsenceReport() {
                         {d.coordinators || 0} منسق
                       </span>
                     </div>
-                    <div className="mb-2">
+                    {/* غياب أساسي — clickable */}
+                    <button
+                      type="button"
+                      onClick={() => d.main_absent > 0 && setDetail({ scope: 'dept', dept: d.department, type: 'main', count: d.main_absent })}
+                      disabled={d.main_absent === 0}
+                      title={d.main_absent > 0 ? 'اضغط لعرض تفاصيل الغياب الأساسي لهذا القسم' : ''}
+                      className={`block w-full text-right mb-2 -mx-1 px-1 py-0.5 rounded-md transition-all ${
+                        d.main_absent > 0 ? 'hover:bg-white/50 cursor-pointer' : 'cursor-default'
+                      }`}
+                    >
                       <div className="flex items-center justify-between mb-0.5">
                         <span className="text-[10px] font-bold text-gray-600 inline-flex items-center gap-1">
                           <UserX size={10} className="text-rose-500" /> غياب أساسي
@@ -405,8 +420,17 @@ export default function AttendanceAbsenceReport() {
                       <div className="text-[10px] text-gray-500 font-mono">
                         {d.main_absent.toLocaleString('en-US')} / {d.main_expected.toLocaleString('en-US')}
                       </div>
-                    </div>
-                    <div>
+                    </button>
+                    {/* غياب زووم — clickable */}
+                    <button
+                      type="button"
+                      onClick={() => d.zoom_absent > 0 && setDetail({ scope: 'dept', dept: d.department, type: 'zoom', count: d.zoom_absent })}
+                      disabled={d.zoom_absent === 0}
+                      title={d.zoom_absent > 0 ? 'اضغط لعرض تفاصيل غياب الزووم كولز لهذا القسم' : ''}
+                      className={`block w-full text-right -mx-1 px-1 py-0.5 rounded-md transition-all ${
+                        d.zoom_absent > 0 ? 'hover:bg-white/50 cursor-pointer' : 'cursor-default'
+                      }`}
+                    >
                       <div className="flex items-center justify-between mb-0.5">
                         <span className="text-[10px] font-bold text-gray-600 inline-flex items-center gap-1">
                           <TrendingDown size={10} className="text-violet-500" /> غياب زووم
@@ -418,7 +442,7 @@ export default function AttendanceAbsenceReport() {
                       <div className="text-[10px] text-gray-500 font-mono">
                         {d.zoom_absent.toLocaleString('en-US')} / {d.zoom_expected.toLocaleString('en-US')}
                       </div>
-                    </div>
+                    </button>
                   </div>
                 );
               })}
@@ -500,14 +524,26 @@ export default function AttendanceAbsenceReport() {
                 const zoomC = rateColor(r.zoom_absence_rate);
                 return (
                   <tr key={i} className="hover:bg-gray-50/60 transition-colors">
-                    {/* Coordinator cell — avatar + name */}
+                    {/* Coordinator cell — avatar + name + "moved" badge */}
                     <td className="px-5 py-3.5 sticky right-0 bg-white hover:bg-gray-50/60 z-10">
                       <div className="flex items-center gap-2.5">
                         <div className={`w-9 h-9 rounded-full ${colorFromName(r.coordinator)} text-white font-bold text-xs flex items-center justify-center flex-shrink-0 shadow-sm`}>
                           {initialsOf(r.coordinator)}
                         </div>
                         <div className="min-w-0">
-                          <p className="font-bold text-gray-900 text-sm truncate">{r.coordinator}</p>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="font-bold text-gray-900 text-sm truncate">{r.coordinator}</p>
+                            {/* Show "moved to X" badge if filtered dept and current_department differs */}
+                            {department && r.current_department && r.current_department !== department && (
+                              <span
+                                title={`المنسق دلوقتي في قسم ${r.current_department} — البيانات دي من فترة كان فيها في ${department}`}
+                                className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-amber-50 text-amber-700 border border-amber-200 whitespace-nowrap"
+                              >
+                                <AlertTriangle size={9} />
+                                انتقل إلى {r.current_department}
+                              </span>
+                            )}
+                          </div>
                           <p className="text-[10px] text-gray-400">
                             إجمالي الغياب: {r.main_absent + r.zoom_absent}
                           </p>
@@ -524,7 +560,7 @@ export default function AttendanceAbsenceReport() {
                       {r.main_absent > 0 ? (
                         <button
                           type="button"
-                          onClick={() => setDetail({ coordinator: r.coordinator, type: 'main', count: r.main_absent })}
+                          onClick={() => setDetail({ scope: 'coord', coordinator: r.coordinator, type: 'main', count: r.main_absent })}
                           title="اضغط لعرض تفاصيل الغياب"
                           className={`inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-black border tabular-nums cursor-pointer hover:shadow-md hover:scale-105 transition-all ${mainC.bg} ${mainC.text} ${mainC.border}`}
                         >
@@ -550,7 +586,7 @@ export default function AttendanceAbsenceReport() {
                       {r.zoom_absent > 0 ? (
                         <button
                           type="button"
-                          onClick={() => setDetail({ coordinator: r.coordinator, type: 'zoom', count: r.zoom_absent })}
+                          onClick={() => setDetail({ scope: 'coord', coordinator: r.coordinator, type: 'zoom', count: r.zoom_absent })}
                           title="اضغط لعرض تفاصيل غياب الزووم"
                           className={`inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-black border tabular-nums cursor-pointer hover:shadow-md hover:scale-105 transition-all ${zoomC.bg} ${zoomC.text} ${zoomC.border}`}
                         >
@@ -599,10 +635,12 @@ export default function AttendanceAbsenceReport() {
         </div>
       )}
 
-      {/* Detail modal — opened by clicking an absent number */}
+      {/* Detail modal — opened by clicking an absent number or a dept absence row */}
       {detail && (
         <AbsenceDetailModal
+          scope={detail.scope}
           coordinator={detail.coordinator}
+          deptOverride={detail.dept}
           type={detail.type}
           count={detail.count}
           from={effective.from}
@@ -616,16 +654,21 @@ export default function AttendanceAbsenceReport() {
 }
 
 /* ─── Absence Detail Modal ─────────────────────────────────────────────────── */
-function AbsenceDetailModal({ coordinator, type, count, from, to, department, onClose }) {
+// Two scopes:
+//   - 'coord': filter by specific coordinator (existing behavior)
+//   - 'dept':  filter by department only (no coordinator filter) — shows the
+//             coordinator column so the user can see WHO had each absence
+function AbsenceDetailModal({ scope = 'coord', coordinator, deptOverride, type, count, from, to, department, onClose }) {
   const endpoint = type === 'main' ? '/reports/absent-list' : '/reports/absent-side-list';
+  const effectiveDept = scope === 'dept' ? (deptOverride || department) : department;
   const { data, isLoading } = useQuery({
-    queryKey: ['absence-detail', endpoint, coordinator, from, to, department],
+    queryKey: ['absence-detail', endpoint, scope, coordinator, deptOverride, from, to, effectiveDept],
     queryFn: () => api.get(endpoint, {
       params: {
-        coordinator,
+        coordinator: scope === 'coord' ? coordinator : undefined,
         from_date: from || undefined,
         to_date:   to   || undefined,
-        department: department || undefined,
+        department: effectiveDept || undefined,
         page: 1,
         limit: 1000,
       },
@@ -638,10 +681,16 @@ function AbsenceDetailModal({ coordinator, type, count, from, to, department, on
   const typeLabel = type === 'main' ? 'الجلسات الأساسية' : 'الزووم كولز';
   const accentCls = type === 'main' ? 'bg-sky-500' : 'bg-indigo-500';
   const accentTone = type === 'main' ? 'bg-sky-50 text-sky-700 border-sky-200' : 'bg-indigo-50 text-indigo-700 border-indigo-200';
+  const headerTitle = scope === 'dept'
+    ? `تفاصيل غياب قسم ${effectiveDept} — ${typeLabel}`
+    : `تفاصيل الغياب — ${typeLabel}`;
+  const headerSubtitle = scope === 'dept'
+    ? `إجمالي: ${count || 0}`
+    : `المنسق: ${coordinator} · إجمالي: ${count || 0}`;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" dir="rtl">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-gray-50/40">
           <div className="flex items-center gap-3">
@@ -649,11 +698,9 @@ function AbsenceDetailModal({ coordinator, type, count, from, to, department, on
               {type === 'main' ? <Users size={18} /> : <Video size={18} />}
             </div>
             <div>
-              <div className="text-sm font-bold text-gray-900">تفاصيل الغياب — {typeLabel}</div>
+              <div className="text-sm font-bold text-gray-900">{headerTitle}</div>
               <div className="text-[11px] text-gray-500 mt-0.5">
-                المنسق: <span className="font-semibold text-gray-700">{coordinator}</span>
-                {' · '}
-                إجمالي: <span className="font-bold text-rose-700">{count}</span>
+                {headerSubtitle}
                 {total !== count && total < count && (
                   <span className="text-amber-600 mr-1">(عرض {total})</span>
                 )}
@@ -694,6 +741,9 @@ function AbsenceDetailModal({ coordinator, type, count, from, to, department, on
                   <th className="px-3 py-2 text-right font-bold text-gray-600">المجموعة</th>
                   <th className="px-3 py-2 text-right font-bold text-gray-600">التاريخ</th>
                   <th className="px-3 py-2 text-right font-bold text-gray-600 hidden sm:table-cell">الوقت</th>
+                  {scope === 'dept' && (
+                    <th className="px-3 py-2 text-right font-bold text-gray-600">المنسق</th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -728,6 +778,11 @@ function AbsenceDetailModal({ coordinator, type, count, from, to, department, on
                         {r.time || '—'}
                       </span>
                     </td>
+                    {scope === 'dept' && (
+                      <td className="px-3 py-2.5 text-gray-700 max-w-[140px] truncate" title={r.coordinators}>
+                        {r.coordinators || '—'}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

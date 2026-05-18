@@ -4239,24 +4239,39 @@ router.get('/attendance-absence', (req, res) => {
     : to_date   ? ` AND resolved_date <= '${to_date}'` : '';
 
   try {
+    // Date-aware coordinator expression — looks up coordinator_history for the
+    // event's date and falls back to current b.coordinators if no record covers it.
+    // This ensures historical coordinators (e.g. Hanaa who moved depts) still
+    // attribute their absences correctly even after the batch is reassigned.
+    const dateAwareCoord = (batchAlias, dateExpr) => `COALESCE(
+      (SELECT GROUP_CONCAT(ch.coordinator, ', ')
+         FROM coordinator_history ch
+        WHERE ch.group_name = ${batchAlias}.group_name
+          AND ch.line       = ${batchAlias}.line
+          AND DATE(ch.effective_from) <= ${dateExpr}
+          AND (ch.effective_to IS NULL OR DATE(ch.effective_to) > ${dateExpr})),
+      ${batchAlias}.coordinators,
+      '--'
+    )`;
+
     // ─── MAIN EXPECTED per coordinator ─────────────────────────────────────
     // Student-slot count: SUM(trainee_count) across main lectures in window.
     // This is the correct denominator for student-level absences (Part1+Part2).
     const mainExpectedRows = db.prepare(`
-      SELECT COALESCE(b.coordinators, '--') AS coordinator,
+      SELECT ${dateAwareCoord('b', 'l.date')} AS coordinator,
         COALESCE(SUM(b.trainee_count), 0) AS cnt
       FROM lectures l
       INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
       WHERE l.session_type = 'main' AND l.status != 'غير مؤكدة'
       ${dateFilterL}${deptFilterB}${coordFilterB}${lineL}
-      GROUP BY b.coordinators
+      GROUP BY coordinator
     `).all();
 
     // ─── MAIN ABSENT per coordinator (dashboard Part1 + Part2) ─────────────
     // Part1: absent_students records with resolved name & date.
     const mainAbsentPart1 = db.prepare(`
       SELECT coordinator, COUNT(*) AS cnt FROM (
-        SELECT COALESCE(b.coordinators, '--') AS coordinator,
+        SELECT ${dateAwareCoord('b', `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`)} AS coordinator,
           COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS resolved_date
         FROM absent_students a
         LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
@@ -4282,7 +4297,7 @@ router.get('/attendance-absence', (req, res) => {
 
     // Part2: main lectures with empty attendance + client exists + no absent record.
     const mainAbsentPart2 = db.prepare(`
-      SELECT COALESCE(b2.coordinators, '--') AS coordinator, COUNT(*) AS cnt
+      SELECT ${dateAwareCoord('b2', 'l.date')} AS coordinator, COUNT(*) AS cnt
       FROM lectures l
       INNER JOIN batches b2 ON l.group_name = b2.group_name${line ? ' AND b2.line = l.line' : ''}
       INNER JOIN clients c ON c.group_name = l.group_name${line ? ' AND c.line = l.line' : ''}
@@ -4296,7 +4311,7 @@ router.get('/attendance-absence', (req, res) => {
           WHERE a2.group_name = l.group_name AND a2.date = l.date${line ? ' AND a2.line = l.line' : ''}
         )
       ${dateFilterL}${deptFilterB2}${coordFilterB2}${lineL}
-      GROUP BY b2.coordinators
+      GROUP BY coordinator
     `).all();
 
     // ─── ZOOM EXPECTED per coordinator ─────────────────────────────────────
@@ -4328,7 +4343,7 @@ router.get('/attendance-absence', (req, res) => {
 
     const zoomExpectedRows = db.prepare(`
       SELECT coordinator, COALESCE(SUM(expected_slots), 0) AS cnt FROM (
-        SELECT COALESCE(b.coordinators, '--') AS coordinator,
+        SELECT ${dateAwareCoord('b', 'l.date')} AS coordinator,
           COUNT(*) AS expected_slots
         FROM lectures l
         INNER JOIN ${zoomBatchSubQ} b ON l.group_name = b.group_name AND l.line = b.line
@@ -4336,7 +4351,7 @@ router.get('/attendance-absence', (req, res) => {
           AND l.status = 'مؤكدة'
           AND (l.duration IS NULL OR l.duration <= '00:15')
         ${dateFilterL}${deptFilterB}${coordFilterB}
-        GROUP BY b.coordinators, l.group_name, l.date
+        GROUP BY coordinator, l.group_name, l.date
       ) sub
       GROUP BY coordinator
     `).all();
@@ -4345,7 +4360,7 @@ router.get('/attendance-absence', (req, res) => {
     // absent = COUNT(*) - present(attendance>0). See comment above.
     const zoomAbsentRows = db.prepare(`
       SELECT coordinator, COALESCE(SUM(absent_count), 0) AS cnt FROM (
-        SELECT COALESCE(b.coordinators, '--') AS coordinator,
+        SELECT ${dateAwareCoord('b', 'l.date')} AS coordinator,
           COUNT(*) -
             SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != ''
                      AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END)
@@ -4356,7 +4371,7 @@ router.get('/attendance-absence', (req, res) => {
           AND l.status = 'مؤكدة'
           AND (l.duration IS NULL OR l.duration <= '00:15')
         ${dateFilterL}${deptFilterB}${coordFilterB}
-        GROUP BY b.coordinators, l.group_name, l.date
+        GROUP BY coordinator, l.group_name, l.date
         HAVING absent_count > 0
       ) sub
       GROUP BY coordinator
@@ -4406,6 +4421,43 @@ router.get('/attendance-absence', (req, res) => {
       .sort((a, b) =>
         (b.main_absent + b.zoom_absent) - (a.main_absent + a.zoom_absent)
       );
+
+    // ─── Current-department lookup ─────────────────────────────────────────
+    // For each coordinator name (split on commas to handle multi-coord rows),
+    // look up their CURRENT users.department. The frontend uses this to show
+    // a "moved to X" badge when the coordinator no longer belongs to the
+    // filtered dept. Names not found in users (e.g. external/unregistered
+    // coordinators) get null.
+    const allCoordNames = new Set();
+    result.forEach(r => {
+      String(r.coordinator || '').split(',').forEach(c => {
+        const t = c.trim();
+        if (t && t !== '--') allCoordNames.add(t.toLowerCase());
+      });
+    });
+    const deptByName = {};
+    if (allCoordNames.size > 0) {
+      const arr = Array.from(allCoordNames);
+      const placeholders = arr.map(() => '?').join(',');
+      try {
+        const userRows = db.prepare(
+          `SELECT LOWER(TRIM(full_name)) AS lname, department
+             FROM users
+            WHERE department IS NOT NULL AND department != 'All'
+              AND LOWER(TRIM(full_name)) IN (${placeholders})`
+        ).all(...arr);
+        userRows.forEach(u => { if (u.lname) deptByName[u.lname] = u.department; });
+      } catch (_) { /* lookup failure is non-fatal */ }
+    }
+    // Add a parallel current_department string (comma-separated, same order as
+    // coordinator field). Empty slot = unknown/unregistered.
+    result.forEach(r => {
+      const depts = String(r.coordinator || '').split(',').map(c => {
+        const k = c.trim().toLowerCase();
+        return deptByName[k] || '';
+      });
+      r.current_department = depts.join(',');
+    });
 
     return res.json(result);
   } catch (err) {
