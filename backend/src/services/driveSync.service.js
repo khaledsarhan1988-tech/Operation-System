@@ -31,6 +31,24 @@ const ANOMALY_SURGE_MULT     = 4;    // > 4x previous = anomaly
 const SYSTEM_USER_ID = 0; // sentinel for cron-initiated syncs
 
 /**
+ * Returns "today" in a specific IANA timezone, as a Date object positioned at
+ * noon UTC of that calendar day. Using noon UTC avoids midnight-boundary
+ * ambiguity when prepareDayFolders() / sync logic later extracts year/month/day
+ * via getFullYear()/getMonth()/getDate() — even on a UTC server, noon UTC
+ * always falls within the same calendar day in both UTC and Cairo.
+ *
+ * Necessary because cron-fired jobs that schedule in Cairo time still receive
+ * `new Date()` in the SERVER's local time (UTC on Railway), so the calendar
+ * date can drift by one day between the cron firing time and the date used
+ * for folder names.
+ */
+function todayInTimezone(timeZone = 'Africa/Cairo') {
+  // 'en-CA' gives YYYY-MM-DD format
+  const dateStr = new Date().toLocaleDateString('en-CA', { timeZone });
+  return new Date(`${dateStr}T12:00:00Z`);
+}
+
+/**
  * Returns metadata about the most-recent successful import for (fileType, line):
  *   { timeMs: number, driveFileId: string|null }
  *
@@ -304,7 +322,10 @@ async function syncMultipleLinesToday({ lines, userId = SYSTEM_USER_ID, force = 
   const linesToSync = (Array.isArray(lines) && lines.length > 0 ? lines : VALID_LINES)
     .filter((l) => VALID_LINES.includes(l));
 
-  const today = new Date();
+  // Use Cairo's "today" so the calendar date is consistent with how the team
+  // organizes Drive folders. Without this, a cron that fires between 00:00 and
+  // 03:00 Cairo (21:00-00:00 UTC of prev day) would look at YESTERDAY's folder.
+  const today = todayInTimezone('Africa/Cairo');
   const perLine = [];
   for (const line of linesToSync) {
     try {
@@ -401,5 +422,6 @@ module.exports = {
   getLastImportTime,
   detectAnomaly,
   countRowsInXlsx,
+  todayInTimezone,
   SYSTEM_USER_ID,
 };

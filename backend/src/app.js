@@ -1310,7 +1310,12 @@ initDb().then(db => {
         console.error(`Drive prep-folders: invalid cron expression "${cronExpr}", skipping schedule.`);
       } else {
         cron.schedule(cronExpr, async () => {
-          const today = new Date();
+          // Compute "today" in the cron's configured timezone, not the
+          // server's local time. Without this, a cron firing at 00:30 Cairo
+          // (= 21:30 UTC prev day) on a UTC server would create yesterday's
+          // folder instead of today's.
+          const driveSyncSvc = require('./services/driveSync.service');
+          const today = driveSyncSvc.todayInTimezone(tz);
           for (const line of prepLines) {
             try {
               const r = await googleDrive.prepareDayFolders(line, today);
