@@ -328,8 +328,11 @@ router.get('/team-summary', (req, res) => {
     if (scope.role !== 'admin' && scope.role !== 'leader') {
       return res.status(403).json({ error: 'صلاحية للقادة والمدراء فقط' });
     }
+    ensureTodayRecurringInstances(scope);
     const { where, params } = buildListWhere(scope, {});
     const today = todayCairo();
+    // Exclude templates (recurring + no parent) — they shouldn't be counted
+    // as "tasks". Only count actual instances/regular todos.
     const rows = db.prepare(`
       SELECT
         t.assigned_to,
@@ -343,12 +346,195 @@ router.get('/team-summary', (req, res) => {
       FROM todos t
       LEFT JOIN users u ON u.id = t.assigned_to
       WHERE ${where} AND t.assigned_to IS NOT NULL
+        AND NOT (t.is_recurring = 1 AND t.parent_todo_id IS NULL)
       GROUP BY t.assigned_to
       ORDER BY open_count DESC, urgent_open DESC
     `).all(today, ...params);
     return res.json({ rows });
   } catch (err) {
     console.error('[todos] team-summary error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/todos/templates-performance — Matrix of employees × templates
+// with today's status + historical completion rates. Used by the admin
+// "Daily Workflow Monitoring" view.
+//
+// Query params:
+//   ?days=7         → window for historical stats (1-90, default 7)
+//   ?line=...       → for super-admins
+//
+// Returns:
+//   {
+//     date: "YYYY-MM-DD",  // today
+//     employees: [
+//       {
+//         user_id, user_name,
+//         today_completed, today_total, today_rate,
+//         templates: [
+//           {
+//             template_id, title, due_time, priority,
+//             today: { instance_id, status, completed_at, is_overdue },
+//             stats_window: { total, completed, missed, rate }
+//           }, ...
+//         ]
+//       }, ...
+//     ],
+//     templates_summary: [
+//       { title, due_time, completed_today, total_assigned, completion_rate }, ...
+//     ]
+//   }
+router.get('/templates-performance', (req, res) => {
+  try {
+    const scope = userScope(req);
+    if (scope.role !== 'admin' && scope.role !== 'leader') {
+      return res.status(403).json({ error: 'صلاحية للقادة والمدراء فقط' });
+    }
+
+    ensureTodayRecurringInstances(scope);
+
+    const today = todayCairo();
+    const windowDays = Math.min(Math.max(parseInt(req.query.days, 10) || 7, 1), 90);
+    const windowStart = addDaysCairo(-windowDays + 1);
+
+    const { where, params } = buildListWhere(scope, {});
+
+    // 1. Get all templates visible to this user, grouped per assignee
+    const templates = db.prepare(`
+      SELECT t.id, t.title, t.description, t.due_time, t.priority, t.assigned_to,
+             u.full_name AS assigned_to_name,
+             u.department AS assigned_to_dept
+        FROM todos t
+        LEFT JOIN users u ON u.id = t.assigned_to
+       WHERE ${where}
+         AND t.is_recurring = 1 AND t.parent_todo_id IS NULL
+         AND t.assigned_to IS NOT NULL
+       ORDER BY u.full_name COLLATE NOCASE, t.due_time, t.id
+    `).all(...params);
+
+    // Helper to find a single template's today instance
+    const getTodayInstance = db.prepare(`
+      SELECT id, status, completed_at, due_time
+        FROM todos
+       WHERE parent_todo_id = ? AND due_date = ?
+       ORDER BY id ASC LIMIT 1
+    `);
+
+    // Helper for window stats
+    const getWindowStats = db.prepare(`
+      SELECT COUNT(*) AS total,
+             SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed
+        FROM todos
+       WHERE parent_todo_id = ?
+         AND due_date BETWEEN ? AND ?
+    `);
+
+    // Build "now HH:MM" for overdue detection
+    const nowParts = new Date(Date.now() + 2 * 3600 * 1000);  // Cairo offset
+    const nowMinutes = nowParts.getUTCHours() * 60 + nowParts.getUTCMinutes();
+
+    function timeToMinutes(t) {
+      if (!t) return null;
+      const m = String(t).match(/^(\d{1,2}):(\d{2})/);
+      if (!m) return null;
+      return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+    }
+
+    // 2. Group by employee
+    const byEmployee = new Map();
+    const templateAgg = new Map(); // by title — for overall summary
+
+    for (const t of templates) {
+      // Today's instance
+      const inst = getTodayInstance.get(t.id, today);
+      const dueMin = timeToMinutes(t.due_time);
+      const isOverdue =
+        dueMin != null &&
+        nowMinutes > dueMin &&
+        (!inst || (inst.status !== 'completed' && inst.status !== 'cancelled'));
+
+      // Window stats
+      const ws = getWindowStats.get(t.id, windowStart, today) || { total: 0, completed: 0 };
+
+      const todayInfo = inst
+        ? { instance_id: inst.id, status: inst.status, completed_at: inst.completed_at, is_overdue: isOverdue }
+        : { instance_id: null, status: 'missing', completed_at: null, is_overdue: isOverdue };
+
+      const statsInfo = {
+        total: ws.total || 0,
+        completed: ws.completed || 0,
+        missed: (ws.total || 0) - (ws.completed || 0),
+        rate: ws.total > 0 ? Math.round((ws.completed / ws.total) * 100) : 0,
+        window_days: windowDays,
+      };
+
+      // Accumulate per-employee
+      if (!byEmployee.has(t.assigned_to)) {
+        byEmployee.set(t.assigned_to, {
+          user_id: t.assigned_to,
+          user_name: t.assigned_to_name,
+          department: t.assigned_to_dept,
+          templates: [],
+          today_completed: 0,
+          today_total: 0,
+        });
+      }
+      const emp = byEmployee.get(t.assigned_to);
+      emp.templates.push({
+        template_id: t.id,
+        title: t.title,
+        description: t.description,
+        due_time: t.due_time,
+        priority: t.priority,
+        today: todayInfo,
+        stats_window: statsInfo,
+      });
+      emp.today_total++;
+      if (todayInfo.status === 'completed') emp.today_completed++;
+
+      // Accumulate per-template (across employees)
+      const key = `${t.title}|${t.due_time || ''}`;
+      if (!templateAgg.has(key)) {
+        templateAgg.set(key, {
+          title: t.title,
+          due_time: t.due_time,
+          priority: t.priority,
+          completed_today: 0,
+          total_assigned: 0,
+        });
+      }
+      const tagg = templateAgg.get(key);
+      tagg.total_assigned++;
+      if (todayInfo.status === 'completed') tagg.completed_today++;
+    }
+
+    // Compute per-employee rate
+    const employees = Array.from(byEmployee.values()).map(e => ({
+      ...e,
+      today_rate: e.today_total > 0 ? Math.round((e.today_completed / e.today_total) * 100) : 0,
+    }));
+
+    // Sort employees by completion rate (highest first)
+    employees.sort((a, b) => (b.today_rate || 0) - (a.today_rate || 0) || (b.today_completed - a.today_completed));
+
+    const templates_summary = Array.from(templateAgg.values()).map(t => ({
+      ...t,
+      completion_rate: t.total_assigned > 0
+        ? Math.round((t.completed_today / t.total_assigned) * 100) : 0,
+    })).sort((a, b) => String(a.due_time || '').localeCompare(String(b.due_time || '')));
+
+    return res.json({
+      date: today,
+      window_days: windowDays,
+      window_start: windowStart,
+      employees,
+      templates_summary,
+      total_employees: employees.length,
+      total_templates: templates.length,
+    });
+  } catch (err) {
+    console.error('[todos] templates-performance error:', err);
     return res.status(500).json({ error: err.message });
   }
 });
