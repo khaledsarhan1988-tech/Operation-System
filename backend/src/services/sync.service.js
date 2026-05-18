@@ -281,6 +281,23 @@ function parseCoordinatorList(coordField) {
   return map;
 }
 
+// Extract the "stable identifier" of a group code by stripping the trailing
+// coordinator suffix. Examples:
+//   "May_10_Sun_10PM_Con2_P(Asmaa)hanaa"  → "may_10_sun_10pm_con2_p(asmaa)"
+//   "May_10_Sun_10PM_Con2_P(Asmaa) doha"  → "may_10_sun_10pm_con2_p(asmaa)"
+//   "Apr_29_Sat_9Pm_General3(Ali Hashem)" → "apr_29_sat_9pm_general3(ali hashem)"
+//   "no_parens_code"                        → null (can't reliably split)
+// Returns lowercased + trimmed so two slightly-different casings still match.
+function getStableIdentifier(groupName) {
+  if (!groupName) return null;
+  const s = String(groupName).trim();
+  // Match everything up to and including the LAST `)`. The trailing part
+  // (after the `)`) is the coordinator suffix that varies on renames.
+  const m = s.match(/^(.+\))[\s_]*[^)]*$/);
+  if (!m) return null;
+  return m[1].toLowerCase().replace(/\s+/g, ' ');
+}
+
 function syncBatches(buffer, line) {
   const rows = excel.parseBatches(buffer);
   const uniqueGroups = [...new Set(rows.map(r => r.group_name))];
@@ -297,13 +314,6 @@ function syncBatches(buffer, line) {
     const oldByGroup = new Map(oldCoords.map(r => [r.group_name, r.coordinators]));
 
     const nowIso = new Date().toISOString();
-    // For "new groups" (never existed in batches before — could be a fresh
-    // group OR a rename of an existing one), use the same far-past date as
-    // the initial bootstrap so historical events with the new group_name
-    // attribute correctly to the current coordinator instead of being
-    // filtered out by date comparison.
-    const FAR_PAST = '2000-01-01';
-
     const closeStmt = db.prepare(
       `UPDATE coordinator_history
           SET effective_to = ?
@@ -317,26 +327,78 @@ function syncBatches(buffer, line) {
     let closed = 0, opened = 0;
     for (const r of rows) {
       const oldField = oldByGroup.get(r.group_name);
-      const isNewGroup = !oldByGroup.has(r.group_name);
       const oldMap   = parseCoordinatorList(oldField);
       const newMap   = parseCoordinatorList(r.coordinators);
 
-      // removed (only relevant for existing groups whose coordinators changed)
+      // removed
       for (const [key, original] of oldMap) {
         if (!newMap.has(key)) {
           closeStmt.run(nowIso, r.group_name, line, original);
           closed += 1;
         }
       }
-      // added — far-past for brand-new groups, NOW for true transitions
-      // on existing groups (so we can tell exactly when the transfer happened).
+      // added — always use sync time (nowIso). Date-aware attribution of
+      // historical events is handled separately via the `group_renames`
+      // table, which links new group_names to their old form when a group
+      // is renamed (e.g., when coordinator suffix changes). This preserves
+      // proper per-coordinator history without per-row backfill heuristics.
       for (const [key, original] of newMap) {
         if (!oldMap.has(key)) {
-          const effectiveFrom = isNewGroup ? FAR_PAST : nowIso;
-          openStmt.run(r.group_name, line, original, effectiveFrom);
+          openStmt.run(r.group_name, line, original, nowIso);
           opened += 1;
         }
       }
+    }
+
+    // ── RENAME DETECTION via stable identifier ───────────────────────────
+    // Group codes follow the pattern: `<stable>...<coordinator>` where
+    // <stable> usually ends with `)`. When the coordinator suffix changes
+    // (e.g., `...P(Asmaa)hanaa` → `...P(Asmaa) doha`), the system normally
+    // sees this as a new group. Here we detect it: if an OLD group_name
+    // and a NEW group_name share the same stable prefix but neither
+    // exists in the other set, it's a rename. We record it in group_renames
+    // so date-aware filters can attribute pre-rename events to the OLD name.
+    try {
+      const oldStable = new Map();
+      const newStable = new Map();
+      for (const [oldName] of oldByGroup) {
+        const s = getStableIdentifier(oldName);
+        if (s) {
+          if (!oldStable.has(s)) oldStable.set(s, []);
+          oldStable.get(s).push(oldName);
+        }
+      }
+      for (const r of rows) {
+        const s = getStableIdentifier(r.group_name);
+        if (s) {
+          if (!newStable.has(s)) newStable.set(s, []);
+          newStable.get(s).push(r.group_name);
+        }
+      }
+      const insertRename = db.prepare(`
+        INSERT OR IGNORE INTO group_renames
+          (old_group_name, new_group_name, line, renamed_on, detected_by)
+        VALUES (?, ?, ?, DATE('now', '+2 hours'), 'auto-sync')
+      `);
+      let renames = 0;
+      for (const [stable, oldNames] of oldStable) {
+        const newNames = newStable.get(stable) || [];
+        // For each OLD name no longer present, find a NEW name with same
+        // stable that's not in the old set → that's the rename target.
+        for (const oldName of oldNames) {
+          if (newNames.includes(oldName)) continue;
+          const target = newNames.find(n => !oldNames.includes(n));
+          if (target) {
+            insertRename.run(oldName, target, line);
+            renames += 1;
+          }
+        }
+      }
+      if (renames > 0) {
+        console.log(`[syncBatches] group_renames: detected ${renames} renames for line=${line}`);
+      }
+    } catch (e) {
+      console.error('[syncBatches] rename detection error:', e.message);
     }
     if (closed > 0 || opened > 0) {
       console.log(`[syncBatches] coordinator_history: ${opened} opened, ${closed} closed for line=${line}`);
@@ -432,11 +494,6 @@ function syncRemarks(buffer, line, warnings) {
   const run = db.transaction(() => {
     // ── apply assignment-history diff ─────────────────────────────────
     const nowIso = new Date().toISOString();
-    // For "new remarks" (never seen before), use the same far-past date
-    // as the bootstrap so historical assignment data attributes correctly
-    // (instead of being filtered out because effective_from > event_date).
-    const FAR_PAST = '2000-01-01';
-
     const closeAssignStmt = db.prepare(
       `UPDATE remark_assignment_history
           SET effective_to = ?
@@ -453,15 +510,13 @@ function syncRemarks(buffer, line, warnings) {
       if (r.external_id == null || !Number.isFinite(r.external_id)) continue;
       const oldVal = (oldAssignByExt.get(r.external_id) || '').trim();
       const newVal = (r.assigned_to || '').trim();
-      const isNewRemark = !oldAssignByExt.has(r.external_id);
       if (oldVal === newVal) continue;
       if (oldVal) {
         closeAssignStmt.run(nowIso, r.external_id, line, oldVal);
         aClosed += 1;
       }
       if (newVal) {
-        const effectiveFrom = isNewRemark ? FAR_PAST : nowIso;
-        openAssignStmt.run(r.external_id, line, newVal, effectiveFrom);
+        openAssignStmt.run(r.external_id, line, newVal, nowIso);
         aOpened += 1;
       }
     }

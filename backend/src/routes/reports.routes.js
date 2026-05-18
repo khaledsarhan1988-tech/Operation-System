@@ -75,17 +75,31 @@ function buildCoordFilter(table, value) {
  * Filter clause: keep events whose coordinator-at-date matches `value`.
  * Use inside WHERE clauses alongside an event row that has group/line/date.
  */
+// Returns SQL that gives the group_name as it was on the event's date,
+// honoring renames recorded in `group_renames`. If the event date is BEFORE
+// a recorded rename for this group, we fall back to the old group_name —
+// so coord_history lookups attribute the event to the OLD coordinator.
+function effectiveGroupNameAtDate(groupExpr, lineExpr, dateExpr) {
+  return `COALESCE(
+    (SELECT gr.old_group_name FROM group_renames gr
+      WHERE gr.new_group_name = ${groupExpr}
+        AND gr.line           = ${lineExpr}
+        AND DATE(gr.renamed_on) > ${dateExpr}
+      ORDER BY DATE(gr.renamed_on) ASC LIMIT 1),
+    ${groupExpr}
+  )`;
+}
+
 function coordFilterAtDate(groupExpr, lineExpr, dateExpr, value) {
   if (!value) return '';
   const safe = String(value).replace(/'/g, "''").trim();
   if (!safe) return '';
-  // DATE() wrapper: compare on day-level. Handles both legacy datetime values
-  // (ISO with time) and pure date values without lexicographic ordering bugs.
-  // e.g. '2026-05-17T13:42:00.000Z' > '2026-05-17' as strings, but
-  //      DATE('2026-05-17T13:42:00.000Z') = '2026-05-17' which compares correctly.
+  // DATE() wrapper + rename-aware group resolution: for events whose date
+  // is before a recorded rename, look up history under the OLD group_name.
+  const effG = effectiveGroupNameAtDate(groupExpr, lineExpr, dateExpr);
   return ` AND EXISTS (
     SELECT 1 FROM coordinator_history ch_f
-    WHERE ch_f.group_name = ${groupExpr}
+    WHERE ch_f.group_name = ${effG}
       AND ch_f.line       = ${lineExpr}
       AND DATE(ch_f.effective_from) <= ${dateExpr}
       AND (ch_f.effective_to IS NULL OR DATE(ch_f.effective_to) > ${dateExpr})
@@ -100,9 +114,10 @@ function coordFilterAtDate(groupExpr, lineExpr, dateExpr, value) {
  * applies (no empty-string shortcut).
  */
 function coordFilterAtDatePrepared(groupExpr, lineExpr, dateExpr) {
+  const effG = effectiveGroupNameAtDate(groupExpr, lineExpr, dateExpr);
   return ` AND EXISTS (
     SELECT 1 FROM coordinator_history ch_f
-    WHERE ch_f.group_name = ${groupExpr}
+    WHERE ch_f.group_name = ${effG}
       AND ch_f.line       = ${lineExpr}
       AND DATE(ch_f.effective_from) <= ${dateExpr}
       AND (ch_f.effective_to IS NULL OR DATE(ch_f.effective_to) > ${dateExpr})
@@ -116,9 +131,10 @@ function coordFilterAtDatePrepared(groupExpr, lineExpr, dateExpr) {
  * that date — caller can COALESCE with the current batches.coordinators.
  */
 function coordinatorAtDateExpr(groupExpr, lineExpr, dateExpr) {
+  const effG = effectiveGroupNameAtDate(groupExpr, lineExpr, dateExpr);
   return `(SELECT GROUP_CONCAT(ch_d.coordinator, ', ')
              FROM coordinator_history ch_d
-            WHERE ch_d.group_name = ${groupExpr}
+            WHERE ch_d.group_name = ${effG}
               AND ch_d.line       = ${lineExpr}
               AND DATE(ch_d.effective_from) <= ${dateExpr}
               AND (ch_d.effective_to IS NULL OR DATE(ch_d.effective_to) > ${dateExpr}))`;

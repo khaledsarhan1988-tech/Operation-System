@@ -796,4 +796,99 @@ router.get('/backup/download', (req, res) => {
   }
 });
 
+// ─── GROUP RENAMES MANAGEMENT ─────────────────────────────────────────────────
+// Manages the `group_renames` table that links new group_names to their old
+// form when a group is renamed (e.g., coordinator suffix changes). Date-aware
+// reports use this to attribute pre-rename events to the OLD coordinator.
+
+// GET /api/admin/renames — list (optionally filter by line/search)
+router.get('/renames', (req, res) => {
+  const line = effectiveLine(req);
+  const search = (req.query.search || '').trim();
+  const wheres = [];
+  const params = [];
+  if (line && line !== 'All') { wheres.push('line = ?'); params.push(line); }
+  if (search) {
+    wheres.push('(old_group_name LIKE ? OR new_group_name LIKE ?)');
+    params.push(`%${search}%`, `%${search}%`);
+  }
+  const where = wheres.length ? `WHERE ${wheres.join(' AND ')}` : '';
+  try {
+    const rows = db.prepare(`
+      SELECT id, old_group_name, new_group_name, line, renamed_on,
+             detected_by, notes, detected_at
+        FROM group_renames
+        ${where}
+       ORDER BY renamed_on DESC, id DESC
+       LIMIT 500
+    `).all(...params);
+    return res.json({ renames: rows, total: rows.length });
+  } catch (err) {
+    console.error('[admin/renames] list error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/renames — add a rename entry manually
+router.post('/renames', express.json(), (req, res) => {
+  const userLine = req.user?.line || 'Ahmed Hassan';
+  const { old_group_name, new_group_name, renamed_on, notes } = req.body || {};
+  let line = (req.body && req.body.line) || userLine;
+  if (userLine !== 'All') line = userLine;
+  if (!old_group_name || !new_group_name || !renamed_on) {
+    return res.status(400).json({ error: 'الحقول المطلوبة: old_group_name, new_group_name, renamed_on' });
+  }
+  try {
+    const result = db.prepare(`
+      INSERT INTO group_renames (old_group_name, new_group_name, line, renamed_on, detected_by, notes)
+      VALUES (?, ?, ?, ?, 'manual', ?)
+    `).run(
+      String(old_group_name).trim(),
+      String(new_group_name).trim(),
+      line,
+      renamed_on,
+      notes || null,
+    );
+    return res.status(201).json({
+      message: 'تم إضافة الـ rename بنجاح',
+      id: result.lastInsertRowid,
+    });
+  } catch (err) {
+    console.error('[admin/renames] create error:', err);
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+// PATCH /api/admin/renames/:id — edit (typically just renamed_on date)
+router.patch('/renames/:id', express.json(), (req, res) => {
+  const { renamed_on, notes } = req.body || {};
+  const fields = [];
+  const params = [];
+  if (renamed_on != null) { fields.push('renamed_on = ?'); params.push(renamed_on); }
+  if (notes != null)      { fields.push('notes = ?');      params.push(notes);      }
+  if (fields.length === 0) return res.status(400).json({ error: 'لا يوجد تعديل' });
+  try {
+    const result = db.prepare(
+      `UPDATE group_renames SET ${fields.join(', ')} WHERE id = ?`
+    ).run(...params, req.params.id);
+    if (result.changes === 0) return res.status(404).json({ error: 'غير موجود' });
+    return res.json({ message: 'تم التعديل', id: req.params.id });
+  } catch (err) {
+    console.error('[admin/renames] update error:', err);
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+// DELETE /api/admin/renames/:id — remove a rename entry
+router.delete('/renames/:id', (req, res) => {
+  try {
+    const result = db.prepare(`DELETE FROM group_renames WHERE id = ?`).run(req.params.id);
+    if (result.changes === 0) return res.status(404).json({ error: 'غير موجود' });
+    return res.json({ message: 'تم الحذف', id: req.params.id });
+  } catch (err) {
+    console.error('[admin/renames] delete error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

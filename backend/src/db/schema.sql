@@ -365,6 +365,29 @@ CREATE INDEX IF NOT EXISTS idx_ch_dates        ON coordinator_history(effective_
 CREATE INDEX IF NOT EXISTS idx_ch_open         ON coordinator_history(group_name, line, effective_to);
 
 -- =============================================
+-- GROUP RENAMES — links new group_name to its previous form
+-- =============================================
+-- When a group_name changes (typically because its coordinator suffix
+-- changed in the Excel code, e.g. `..._P(Asmaa)hanaa` → `..._P(Asmaa) doha`),
+-- this table records the rename. Date-aware reports use it to attribute
+-- pre-rename events (e.g. absences with dates before renamed_on) to the
+-- coordinator history of the OLD group_name instead of the new one.
+CREATE TABLE IF NOT EXISTS group_renames (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  old_group_name  TEXT NOT NULL,
+  new_group_name  TEXT NOT NULL,
+  line            TEXT NOT NULL DEFAULT 'Ahmed Hassan',
+  renamed_on      TEXT NOT NULL,                          -- YYYY-MM-DD
+  detected_by     TEXT NOT NULL DEFAULT 'auto-sync',      -- 'auto-sync' | 'drive-scan' | 'manual'
+  notes           TEXT,
+  detected_at     TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+  UNIQUE(new_group_name, line, renamed_on)
+);
+CREATE INDEX IF NOT EXISTS idx_gr_new_line ON group_renames(new_group_name, line);
+CREATE INDEX IF NOT EXISTS idx_gr_old_line ON group_renames(old_group_name, line);
+CREATE INDEX IF NOT EXISTS idx_gr_date     ON group_renames(renamed_on);
+
+-- =============================================
 -- REMARK ASSIGNMENT HISTORY — date-aware assignee attribution per remark
 -- =============================================
 -- Same shape as coordinator_history but keyed by remark.external_id (stable
