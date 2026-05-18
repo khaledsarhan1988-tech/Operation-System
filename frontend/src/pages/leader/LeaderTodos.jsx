@@ -369,6 +369,11 @@ function ExtraCard({ todo, onClick, onEdit }) {
                 <Calendar size={10} /> {todo.due_date}
               </span>
             )}
+            {todo.due_time && (
+              <span className="inline-flex items-center gap-0.5 bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold">
+                <Clock size={10} /> {todo.due_time.slice(0, 5)}
+              </span>
+            )}
             {todo.priority === 'urgent' && (
               <span className="inline-flex items-center gap-0.5 bg-red-500 text-white px-1.5 py-0.5 rounded font-bold">
                 <Star size={9} /> عاجل
@@ -419,6 +424,11 @@ function KanbanCard({ todo, onDragStart, onClick, onEdit }) {
             {todo.due_date && (
               <span className={`inline-flex items-center gap-0.5 ${overdue ? 'text-red-600 font-bold' : ''}`}>
                 <Calendar size={10} /> {todo.due_date}
+              </span>
+            )}
+            {todo.due_time && (
+              <span className="inline-flex items-center gap-0.5 bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold">
+                <Clock size={10} /> {todo.due_time.slice(0, 5)}
               </span>
             )}
             {todo.priority === 'urgent' && (
