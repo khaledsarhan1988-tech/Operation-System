@@ -90,6 +90,20 @@ export default function MyTodos() {
 
   const todos = data?.todos || [];
 
+  // Split into 2 sections: daily workflow (recurring instances) vs extras
+  // (one-off manual tasks). Templates themselves (is_recurring=1 + no parent)
+  // are hidden by the API for this view.
+  const dailyTodos = useMemo(
+    () => todos.filter(t => t.parent_todo_id != null),
+    [todos]
+  );
+  const extraTodos = useMemo(
+    () => todos.filter(t =>
+      t.parent_todo_id == null && (t.is_recurring === 0 || t.is_recurring == null)
+    ),
+    [todos]
+  );
+
   return (
     <div className="space-y-5">
       <PageHero
@@ -154,24 +168,44 @@ export default function MyTodos() {
         })}
       </div>
 
-      {/* Todo list */}
-      <div className="space-y-2">
-        {isLoading ? (
-          <p className="text-center py-12 text-gray-400 text-sm">جاري التحميل...</p>
-        ) : todos.length === 0 ? (
-          <EmptyState bucket={activeBucket} />
-        ) : (
-          todos.map(t => (
-            <TodoCard
-              key={t.id}
-              todo={t}
-              onToggle={() => toggleMutation.mutate({ id: t.id, currentStatus: t.status })}
-              onEdit={() => setEditing(t)}
-              onOpen={() => setOpenId(t.id)}
-            />
-          ))
-        )}
-      </div>
+      {/* Split sections: daily workflow on top, extras below */}
+      {isLoading ? (
+        <p className="text-center py-12 text-gray-400 text-sm">جاري التحميل...</p>
+      ) : todos.length === 0 ? (
+        <EmptyState bucket={activeBucket} />
+      ) : (
+        <div className="grid grid-cols-1 gap-4">
+          {/* TOP: Daily recurring tasks */}
+          <SectionPanel
+            title="المهام اليومية المتكررة"
+            subtitle="مهامك الثابتة اللى بتتولد كل يوم تلقائياً"
+            icon="🔁"
+            tone="rose"
+            count={dailyTodos.length}
+            completedCount={dailyTodos.filter(t => t.status === 'completed').length}
+            todos={dailyTodos}
+            emptyText="مفيش مهام يومية في الفترة دي"
+            toggleMutation={toggleMutation}
+            setEditing={setEditing}
+            setOpenId={setOpenId}
+          />
+
+          {/* BOTTOM: Extra / new one-off tasks */}
+          <SectionPanel
+            title="المهام الجديدة (الإضافية)"
+            subtitle="مهام منفردة مكلّفة لك من المدير/القائد أو ضفتها بنفسك"
+            icon="⚡"
+            tone="violet"
+            count={extraTodos.length}
+            completedCount={extraTodos.filter(t => t.status === 'completed').length}
+            todos={extraTodos}
+            emptyText="مفيش مهام إضافية حالياً"
+            toggleMutation={toggleMutation}
+            setEditing={setEditing}
+            setOpenId={setOpenId}
+          />
+        </div>
+      )}
 
       {/* Modals */}
       {(creating || editing) && (
@@ -195,6 +229,73 @@ export default function MyTodos() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+// ─── Section Panel ────────────────────────────────────────────────────────────
+// Wraps a group of todos (daily-workflow OR extras) with a coloured header
+// + per-section completion progress bar.
+function SectionPanel({
+  title, subtitle, icon, tone,
+  count, completedCount, todos, emptyText,
+  toggleMutation, setEditing, setOpenId,
+}) {
+  const tones = {
+    rose:   { bar: 'from-rose-50 to-pink-50',     border: 'border-rose-200',   chip: 'bg-rose-100 text-rose-700',     dot: 'bg-rose-500'   },
+    violet: { bar: 'from-violet-50 to-indigo-50', border: 'border-violet-200', chip: 'bg-violet-100 text-violet-700', dot: 'bg-violet-500' },
+  }[tone] || { bar: 'from-gray-50 to-slate-50', border: 'border-gray-200', chip: 'bg-gray-100 text-gray-700', dot: 'bg-gray-500' };
+
+  const rate = count > 0 ? Math.round((completedCount / count) * 100) : 0;
+  const rateBar =
+    rate >= 80 ? 'bg-emerald-500' :
+    rate >= 50 ? 'bg-amber-500'   :
+    rate > 0   ? 'bg-orange-500'  : 'bg-gray-300';
+
+  return (
+    <div className={`bg-white rounded-2xl shadow-sm border ${tones.border} overflow-hidden`}>
+      <div className={`bg-gradient-to-r ${tones.bar} px-4 py-3 border-b ${tones.border}`}>
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-lg">{icon}</span>
+          <div className="flex-1 min-w-0">
+            <h3 className="font-bold text-gray-800 text-sm">{title}</h3>
+            <p className="text-[11px] text-gray-500">{subtitle}</p>
+          </div>
+          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${tones.chip}`}>{count} مهمة</span>
+          {completedCount > 0 && (
+            <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-700">
+              {completedCount} مكتمل
+            </span>
+          )}
+        </div>
+        {count > 0 && (
+          <div>
+            <div className="flex items-center justify-between text-[10px] mb-0.5">
+              <span className="text-gray-500">نسبة الإنجاز</span>
+              <span className="font-bold text-gray-700">{rate}%</span>
+            </div>
+            <div className="h-1.5 bg-white/70 rounded-full overflow-hidden">
+              <div className={`h-full ${rateBar} transition-all`} style={{ width: `${rate}%` }} />
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="p-3 space-y-2">
+        {todos.length === 0 ? (
+          <p className="text-center text-xs text-gray-400 py-6">{emptyText}</p>
+        ) : (
+          todos.map(t => (
+            <TodoCard
+              key={t.id}
+              todo={t}
+              onToggle={() => toggleMutation.mutate({ id: t.id, currentStatus: t.status })}
+              onEdit={() => setEditing(t)}
+              onOpen={() => setOpenId(t.id)}
+            />
+          ))
+        )}
+      </div>
     </div>
   );
 }
