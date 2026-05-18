@@ -74,14 +74,21 @@ export default function LeaderTodos() {
     });
   }, [todosData, filterPriority, filterAssignee, search]);
 
+  // Kanban shows DAILY WORKFLOW tasks only (instances of recurring templates).
+  // Manual/one-off "extra" tasks get their own dedicated section above the
+  // board so leaders don't have to hunt through ~143 daily cards to find them.
+  const kanbanTodos = useMemo(
+    () => filtered.filter(t => t.parent_todo_id != null),
+    [filtered]
+  );
   const byColumn = useMemo(() => {
     const map = Object.fromEntries(COLUMNS.map(c => [c.key, []]));
-    filtered.forEach(t => {
+    kanbanTodos.forEach(t => {
       const col = t.status === 'cancelled' ? 'on_hold' : t.status;
       if (map[col]) map[col].push(t);
     });
     return map;
-  }, [filtered]);
+  }, [kanbanTodos]);
 
   function onDragStart(e, todo) {
     e.dataTransfer.setData('todo-id', String(todo.id));
@@ -91,7 +98,7 @@ export default function LeaderTodos() {
   function onDrop(e, status) {
     e.preventDefault();
     const id = e.dataTransfer.getData('todo-id');
-    const todo = filtered.find(t => String(t.id) === id);
+    const todo = kanbanTodos.find(t => String(t.id) === id);
     if (!todo || todo.status === status) return;
     moveStatus.mutate({ id, status });
   }
@@ -148,36 +155,75 @@ export default function LeaderTodos() {
         </button>
       </div>
 
-      {/* Team Summary */}
+      {/* Team Summary — per-person card with completion-rate progress bar */}
       {summary?.rows && summary.rows.length > 0 && (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4">
           <div className="flex items-center gap-2 mb-3">
             <UsersIcon size={16} className="text-indigo-600" />
             <h3 className="font-bold text-gray-800 text-sm">ملخص الفريق</h3>
+            <span className="text-[10px] text-gray-400 mr-auto">
+              {summary.rows.length} موظف — اضغط على كارت لتصفية المهام
+            </span>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
-            {summary.rows.slice(0, 12).map(r => (
-              <button
-                key={r.assigned_to}
-                onClick={() => setFilterAssignee(String(r.assigned_to))}
-                className="bg-gray-50 hover:bg-indigo-50 border border-gray-200 hover:border-indigo-300 rounded-lg p-2 text-right transition"
-              >
-                <div className="flex items-center gap-1.5 mb-1">
-                  <UserCircle size={12} className="text-gray-400" />
-                  <span className="text-xs font-bold text-gray-700 truncate">{r.assigned_to_name || '—'}</span>
-                </div>
-                <div className="flex items-center gap-2 text-[10px]">
-                  <span className="text-blue-600 font-bold">{r.open_count} مفتوحة</span>
-                  {r.overdue > 0 && <span className="text-red-600 font-bold">{r.overdue} متأخر</span>}
-                  {r.urgent_open > 0 && <span className="text-orange-600 font-bold">{r.urgent_open} عاجل</span>}
-                </div>
-              </button>
-            ))}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-2">
+            {summary.rows.map(r => {
+              const rate = r.completion_rate ?? 0;
+              const rateColor =
+                rate >= 80 ? 'bg-emerald-500' :
+                rate >= 50 ? 'bg-amber-500'   :
+                rate > 0   ? 'bg-orange-500'  : 'bg-gray-300';
+              const isActive = String(filterAssignee) === String(r.assigned_to);
+              return (
+                <button
+                  key={r.assigned_to}
+                  onClick={() => setFilterAssignee(isActive ? '' : String(r.assigned_to))}
+                  className={`bg-gray-50 hover:bg-indigo-50 border rounded-lg p-2 text-right transition
+                    ${isActive ? 'border-indigo-500 ring-2 ring-indigo-200 bg-indigo-50' : 'border-gray-200 hover:border-indigo-300'}`}
+                >
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <UserCircle size={12} className="text-gray-400 flex-shrink-0" />
+                    <span className="text-xs font-bold text-gray-700 truncate">{r.assigned_to_name || '—'}</span>
+                  </div>
+                  {/* Completion-rate progress bar */}
+                  <div className="mb-1.5">
+                    <div className="flex items-center justify-between text-[10px] mb-0.5">
+                      <span className="text-gray-500">نسبة الإنجاز</span>
+                      <span className="font-bold text-gray-700">{rate}%</span>
+                    </div>
+                    <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                      <div className={`h-full ${rateColor} transition-all`} style={{ width: `${rate}%` }} />
+                    </div>
+                    <div className="text-[9px] text-gray-400 mt-0.5">
+                      {r.completed || 0} مكتمل من {r.total || 0}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[10px] flex-wrap">
+                    <span className="text-blue-600 font-bold">{r.open_count} مفتوحة</span>
+                    {r.extra_open > 0 && <span className="text-purple-600 font-bold">{r.extra_open} إضافية</span>}
+                    {r.overdue > 0 && <span className="text-red-600 font-bold">{r.overdue} متأخر</span>}
+                    {r.urgent_open > 0 && <span className="text-orange-600 font-bold">{r.urgent_open} عاجل</span>}
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
 
-      {/* Kanban Board */}
+      {/* Extra (non-daily) tasks — dedicated section above Kanban */}
+      <ExtraTasksSection
+        todos={filtered}
+        onCardClick={(id) => setOpenId(id)}
+        onEdit={(t) => setEditing(t)}
+      />
+
+      {/* Kanban Board — daily workflow tasks only */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-3">
+        <div className="flex items-center gap-2 mb-2 px-1">
+          <KanbanIcon size={16} className="text-indigo-600" />
+          <h3 className="font-bold text-gray-800 text-sm">المهام اليومية (Kanban)</h3>
+          <span className="text-[10px] text-gray-400">{kanbanTodos.length} مهمة</span>
+        </div>
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
         {COLUMNS.map(col => (
           <div key={col.key}
@@ -211,6 +257,7 @@ export default function LeaderTodos() {
           </div>
         ))}
       </div>
+      </div>
 
       {(creating || editing) && (
         <TodoEditModal todo={editing} usersData={usersData}
@@ -225,6 +272,116 @@ export default function LeaderTodos() {
           onDeleted={() => { qc.invalidateQueries({ queryKey: ['todos'] }); setOpenId(null); }}
         />
       )}
+    </div>
+  );
+}
+
+// ─── Extra Tasks Section ─────────────────────────────────────────────────────
+// Manual one-off tasks (NOT daily workflow). Lives above the Kanban so leaders
+// see new admin/manager-assigned work at a glance instead of hunting through
+// hundreds of recurring daily cards.
+function ExtraTasksSection({ todos, onCardClick, onEdit }) {
+  // Extras = one-off manual tasks. NOT recurring templates, NOT daily instances.
+  const extras = useMemo(
+    () => (todos || []).filter(t =>
+      (t.is_recurring === 0 || t.is_recurring == null) && t.parent_todo_id == null
+    ),
+    [todos]
+  );
+  // Quick split by status for clarity
+  const openExtras = extras.filter(t => t.status !== 'completed' && t.status !== 'cancelled');
+  const doneExtras = extras.filter(t => t.status === 'completed');
+
+  if (extras.length === 0) {
+    return (
+      <div className="bg-white rounded-2xl shadow-sm border border-purple-200 p-3">
+        <div className="flex items-center gap-2">
+          <Zap size={16} className="text-purple-600" />
+          <h3 className="font-bold text-gray-800 text-sm">المهام الإضافية (غير اليومية)</h3>
+          <span className="mr-auto text-[10px] text-gray-400">لا توجد مهام إضافية حالياً</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-gradient-to-br from-purple-50 to-indigo-50 rounded-2xl shadow-sm border border-purple-200 p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <Zap size={16} className="text-purple-600" />
+        <h3 className="font-bold text-gray-800 text-sm">المهام الإضافية (غير اليومية)</h3>
+        <span className="text-[10px] bg-purple-100 text-purple-700 font-bold px-2 py-0.5 rounded-full">
+          {openExtras.length} مفتوحة
+        </span>
+        {doneExtras.length > 0 && (
+          <span className="text-[10px] bg-emerald-100 text-emerald-700 font-bold px-2 py-0.5 rounded-full">
+            {doneExtras.length} مكتملة
+          </span>
+        )}
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+        {extras.map(t => (
+          <ExtraCard key={t.id} todo={t}
+            onClick={() => onCardClick(t.id)}
+            onEdit={() => onEdit(t)} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ExtraCard({ todo, onClick, onEdit }) {
+  const p = PRIORITY_CFG[todo.priority] || PRIORITY_CFG.normal;
+  const overdue = todo.status !== 'completed' && todo.due_date && todo.due_date < todayStr();
+  const statusCfg = {
+    new:         { label: 'جديدة',       cls: 'bg-blue-100 text-blue-700' },
+    in_progress: { label: 'قيد التنفيذ', cls: 'bg-amber-100 text-amber-700' },
+    on_hold:     { label: 'معلّقة',      cls: 'bg-gray-200 text-gray-700' },
+    completed:   { label: 'مكتملة',      cls: 'bg-emerald-100 text-emerald-700' },
+    cancelled:   { label: 'ملغاة',       cls: 'bg-red-100 text-red-700' },
+  }[todo.status] || { label: todo.status, cls: 'bg-gray-100 text-gray-700' };
+  return (
+    <div
+      onClick={onClick}
+      className={`bg-white rounded-lg border-2 ${p.cls} ${overdue ? 'ring-2 ring-red-300' : ''} p-2.5 cursor-pointer hover:shadow-md transition group`}
+    >
+      <div className="flex items-start gap-2">
+        <span className={`w-1 self-stretch ${p.dot} rounded-full flex-shrink-0`}></span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-baseline justify-between gap-1">
+            <h4 className="font-bold text-xs text-gray-800 line-clamp-2">{todo.title}</h4>
+            <button onClick={(e) => { e.stopPropagation(); onEdit(); }}
+              className="opacity-0 group-hover:opacity-100 transition p-0.5 hover:bg-gray-100 rounded">
+              <Edit3 size={11} className="text-gray-400" />
+            </button>
+          </div>
+          {todo.description && (
+            <p className="text-[10px] text-gray-500 line-clamp-2 mt-1">{todo.description}</p>
+          )}
+          <div className="flex items-center gap-1.5 mt-1.5 text-[10px] text-gray-500 flex-wrap">
+            <span className={`px-1.5 py-0.5 rounded font-bold ${statusCfg.cls}`}>{statusCfg.label}</span>
+            {todo.assigned_to_name && (
+              <span className="inline-flex items-center gap-0.5 bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded font-bold">
+                <UserCircle size={10} /> {todo.assigned_to_name}
+              </span>
+            )}
+            {todo.due_date && (
+              <span className={`inline-flex items-center gap-0.5 ${overdue ? 'text-red-600 font-bold' : ''}`}>
+                <Calendar size={10} /> {todo.due_date}
+              </span>
+            )}
+            {todo.priority === 'urgent' && (
+              <span className="inline-flex items-center gap-0.5 bg-red-500 text-white px-1.5 py-0.5 rounded font-bold">
+                <Star size={9} /> عاجل
+              </span>
+            )}
+            {todo.comment_count > 0 && (
+              <span className="inline-flex items-center gap-0.5">
+                <MessageSquare size={10} /> {todo.comment_count}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -47,6 +47,21 @@ function canMutateTodo(scope, todo) {
   return todo.assigned_to === scope.id || todo.created_by === scope.id;
 }
 
+// Get the IDs of the agents that belong to a leader's *direct* team.
+// Definition: any active user with role='agent' AND same department as the
+// leader. Other leaders / admins are excluded so they don't pollute the
+// team views (gehad shouldn't see doha's row, and vice versa).
+function leaderTeamMemberIds(scope) {
+  if (scope.role !== 'leader') return [];
+  const rows = db.prepare(`
+    SELECT id FROM users
+     WHERE is_active = 1
+       AND role = 'agent'
+       AND department = ?
+  `).all(scope.department || '');
+  return rows.map(r => r.id);
+}
+
 // Build a WHERE clause for list queries, respecting role.
 function buildListWhere(scope, query) {
   const wheres = ['t.line = ?'];
@@ -58,8 +73,23 @@ function buildListWhere(scope, query) {
       params.push(scope.management);
     }
   } else if (scope.role === 'leader') {
-    wheres.push('(t.assigned_to = ? OR t.created_by = ? OR t.department = ? OR t.management = ?)');
-    params.push(scope.id, scope.id, scope.department, scope.management);
+    // Leader sees: their own tasks + tasks assigned to anyone in their
+    // direct team (agents w/ same department). NOTE: we DON'T fall back to
+    // `t.management = ?` here — that net was too wide and pulled in tasks
+    // belonging to OTHER team leaders inside the same management.
+    const teamIds = leaderTeamMemberIds(scope);
+    const allIds = Array.from(new Set([scope.id, ...teamIds])).filter(Boolean);
+    if (allIds.length === 0) {
+      wheres.push('(t.assigned_to = ? OR t.created_by = ?)');
+      params.push(scope.id, scope.id);
+    } else {
+      const placeholders = allIds.map(() => '?').join(',');
+      wheres.push(`(
+        t.assigned_to IN (${placeholders})
+        OR t.created_by  IN (${placeholders})
+      )`);
+      params.push(...allIds, ...allIds);
+    }
   } else {
     wheres.push('(t.assigned_to = ? OR t.created_by = ?)');
     params.push(scope.id, scope.id);
@@ -165,12 +195,27 @@ function ensureTodayRecurringInstances(scope) {
           AND (management = ? OR management = 'All' OR management IS NULL)
       `).all(lineParam, scope.management);
     } else if (scope.role === 'leader') {
-      templates = db.prepare(`
-        SELECT * FROM todos
-        WHERE is_recurring = 1 AND parent_todo_id IS NULL
-          AND status NOT IN ('cancelled') AND line = ?
-          AND (assigned_to = ? OR created_by = ? OR department = ? OR management = ?)
-      `).all(lineParam, scope.id, scope.id, scope.department, scope.management);
+      // Leader = own templates + templates assigned to anyone in their team.
+      // Drop the wide `OR management = ?` net so we don't grab other teams'
+      // templates and start generating duplicate daily instances for them.
+      const teamIds = leaderTeamMemberIds(scope);
+      const allIds = Array.from(new Set([scope.id, ...teamIds])).filter(Boolean);
+      if (allIds.length === 0) {
+        templates = db.prepare(`
+          SELECT * FROM todos
+          WHERE is_recurring = 1 AND parent_todo_id IS NULL
+            AND status NOT IN ('cancelled') AND line = ?
+            AND (assigned_to = ? OR created_by = ?)
+        `).all(lineParam, scope.id, scope.id);
+      } else {
+        const placeholders = allIds.map(() => '?').join(',');
+        templates = db.prepare(`
+          SELECT * FROM todos
+          WHERE is_recurring = 1 AND parent_todo_id IS NULL
+            AND status NOT IN ('cancelled') AND line = ?
+            AND (assigned_to IN (${placeholders}) OR created_by IN (${placeholders}))
+        `).all(lineParam, ...allIds, ...allIds);
+      }
     } else {
       templates = db.prepare(`
         SELECT * FROM todos
@@ -333,6 +378,13 @@ router.get('/templates', (req, res) => {
 });
 
 // GET /api/todos/team-summary — per-assignee aggregate (for leader/admin)
+//
+// USERS-FIRST: we start from the user pool that should belong to this viewer's
+// team. This guarantees we only show the leader's *own* coordinators (not
+// other team leaders, not admins, and not coordinators outside her dept).
+// Previously this query started from todos and grouped by assigned_to, which
+// happily included anyone in the same `management` — that's why Gehad saw
+// doha (another team leader) and other teams' agents.
 router.get('/team-summary', (req, res) => {
   try {
     const scope = userScope(req);
@@ -340,35 +392,92 @@ router.get('/team-summary', (req, res) => {
       return res.status(403).json({ error: 'صلاحية للقادة والمدراء فقط' });
     }
     ensureTodayRecurringInstances(scope);
-    const { where, params } = buildListWhere(scope, {});
     const today = todayCairo();
-    // Exclude templates (recurring + no parent) — they shouldn't be counted
-    // as "tasks". Only count actual instances/regular todos.
-    const rows = db.prepare(`
+    const lineParam = scope.line === 'All' ? 'Ahmed Hassan' : scope.line;
+
+    // 1. Resolve the user pool to summarize.
+    let userRows;
+    if (scope.role === 'leader') {
+      userRows = db.prepare(`
+        SELECT id, full_name FROM users
+         WHERE is_active = 1
+           AND role = 'agent'
+           AND department = ?
+         ORDER BY full_name COLLATE NOCASE
+      `).all(scope.department || '');
+    } else if (scope.management === 'All') {
+      // Super-admin → every active agent
+      userRows = db.prepare(`
+        SELECT id, full_name FROM users
+         WHERE is_active = 1 AND role = 'agent'
+         ORDER BY full_name COLLATE NOCASE
+      `).all();
+    } else {
+      // Department manager admin → agents in their management
+      userRows = db.prepare(`
+        SELECT id, full_name FROM users
+         WHERE is_active = 1 AND role = 'agent' AND management = ?
+         ORDER BY full_name COLLATE NOCASE
+      `).all(scope.management);
+    }
+    if (userRows.length === 0) return res.json({ rows: [] });
+
+    const ids = userRows.map(u => u.id);
+    const placeholders = ids.map(() => '?').join(',');
+
+    // 2. Aggregate todos for those users only.
+    const aggRows = db.prepare(`
       SELECT
         t.assigned_to,
-        u.full_name AS assigned_to_name,
         COUNT(*) AS total,
         SUM(CASE WHEN t.status='completed' THEN 1 ELSE 0 END) AS completed,
         SUM(CASE WHEN t.status NOT IN ('completed','cancelled')
                   AND t.due_date IS NOT NULL AND t.due_date < ? THEN 1 ELSE 0 END) AS overdue,
         SUM(CASE WHEN t.status NOT IN ('completed','cancelled') THEN 1 ELSE 0 END) AS open_count,
         SUM(CASE WHEN t.priority='urgent' AND t.status NOT IN ('completed','cancelled') THEN 1 ELSE 0 END) AS urgent_open,
-        -- "Extra" tasks: ones that are NOT workflow templates nor instances —
-        -- i.e. created manually (one-off tasks added by admin/leader/agent).
         SUM(CASE WHEN t.is_recurring = 0 AND t.parent_todo_id IS NULL THEN 1 ELSE 0 END) AS extra_count,
         SUM(CASE WHEN t.is_recurring = 0 AND t.parent_todo_id IS NULL
                   AND t.status NOT IN ('completed','cancelled') THEN 1 ELSE 0 END) AS extra_open,
-        -- "Workflow" tasks: daily instances generated from recurring templates
         SUM(CASE WHEN t.parent_todo_id IS NOT NULL THEN 1 ELSE 0 END) AS workflow_count,
         SUM(CASE WHEN t.parent_todo_id IS NOT NULL AND t.status='completed' THEN 1 ELSE 0 END) AS workflow_completed
       FROM todos t
-      LEFT JOIN users u ON u.id = t.assigned_to
-      WHERE ${where} AND t.assigned_to IS NOT NULL
+      WHERE t.line = ?
+        AND t.assigned_to IN (${placeholders})
         AND NOT (t.is_recurring = 1 AND t.parent_todo_id IS NULL)
       GROUP BY t.assigned_to
-      ORDER BY open_count DESC, urgent_open DESC
-    `).all(today, ...params);
+    `).all(today, lineParam, ...ids);
+
+    const aggByUser = new Map(aggRows.map(r => [r.assigned_to, r]));
+
+    // 3. Merge: every user appears (even with zeros), with completion_rate.
+    const rows = userRows.map(u => {
+      const a = aggByUser.get(u.id) || {};
+      const total      = a.total      || 0;
+      const completed  = a.completed  || 0;
+      const completion_rate = total > 0 ? Math.round((completed / total) * 100) : 0;
+      const workflow_count     = a.workflow_count     || 0;
+      const workflow_completed = a.workflow_completed || 0;
+      const workflow_rate = workflow_count > 0
+        ? Math.round((workflow_completed / workflow_count) * 100) : 0;
+      return {
+        assigned_to: u.id,
+        assigned_to_name: u.full_name,
+        total,
+        completed,
+        overdue:     a.overdue     || 0,
+        open_count:  a.open_count  || 0,
+        urgent_open: a.urgent_open || 0,
+        extra_count: a.extra_count || 0,
+        extra_open:  a.extra_open  || 0,
+        workflow_count,
+        workflow_completed,
+        completion_rate,
+        workflow_rate,
+      };
+    }).sort((a, b) =>
+      (b.open_count - a.open_count) || (b.urgent_open - a.urgent_open)
+    );
+
     return res.json({ rows });
   } catch (err) {
     console.error('[todos] team-summary error:', err);
@@ -576,11 +685,17 @@ router.get('/assignable-users', (req, res) => {
           ORDER BY full_name COLLATE NOCASE`
       ).all(scope.management);
     } else if (scope.role === 'leader') {
+      // Leader can only assign to: themselves + agents in their direct team
+      // (same department). Other leaders and other teams' agents are excluded.
       rows = db.prepare(
         `SELECT id, full_name, role, department, management FROM users
-          WHERE is_active = 1 AND (department = ? OR id = ?) AND management = ?
+          WHERE is_active = 1
+            AND (
+              id = ?
+              OR (role = 'agent' AND department = ?)
+            )
           ORDER BY full_name COLLATE NOCASE`
-      ).all(scope.department, scope.id, scope.management);
+      ).all(scope.id, scope.department || '');
     } else {
       // agent — only themselves
       rows = db.prepare(
