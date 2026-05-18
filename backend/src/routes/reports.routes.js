@@ -79,12 +79,16 @@ function coordFilterAtDate(groupExpr, lineExpr, dateExpr, value) {
   if (!value) return '';
   const safe = String(value).replace(/'/g, "''").trim();
   if (!safe) return '';
+  // DATE() wrapper: compare on day-level. Handles both legacy datetime values
+  // (ISO with time) and pure date values without lexicographic ordering bugs.
+  // e.g. '2026-05-17T13:42:00.000Z' > '2026-05-17' as strings, but
+  //      DATE('2026-05-17T13:42:00.000Z') = '2026-05-17' which compares correctly.
   return ` AND EXISTS (
     SELECT 1 FROM coordinator_history ch_f
     WHERE ch_f.group_name = ${groupExpr}
       AND ch_f.line       = ${lineExpr}
-      AND ch_f.effective_from <= ${dateExpr}
-      AND (ch_f.effective_to IS NULL OR ch_f.effective_to > ${dateExpr})
+      AND DATE(ch_f.effective_from) <= ${dateExpr}
+      AND (ch_f.effective_to IS NULL OR DATE(ch_f.effective_to) > ${dateExpr})
       AND ch_f.coordinator = '${safe}' COLLATE NOCASE
   )`;
 }
@@ -100,8 +104,8 @@ function coordFilterAtDatePrepared(groupExpr, lineExpr, dateExpr) {
     SELECT 1 FROM coordinator_history ch_f
     WHERE ch_f.group_name = ${groupExpr}
       AND ch_f.line       = ${lineExpr}
-      AND ch_f.effective_from <= ${dateExpr}
-      AND (ch_f.effective_to IS NULL OR ch_f.effective_to > ${dateExpr})
+      AND DATE(ch_f.effective_from) <= ${dateExpr}
+      AND (ch_f.effective_to IS NULL OR DATE(ch_f.effective_to) > ${dateExpr})
       AND ch_f.coordinator = ? COLLATE NOCASE
   )`;
 }
@@ -116,8 +120,8 @@ function coordinatorAtDateExpr(groupExpr, lineExpr, dateExpr) {
              FROM coordinator_history ch_d
             WHERE ch_d.group_name = ${groupExpr}
               AND ch_d.line       = ${lineExpr}
-              AND ch_d.effective_from <= ${dateExpr}
-              AND (ch_d.effective_to IS NULL OR ch_d.effective_to > ${dateExpr}))`;
+              AND DATE(ch_d.effective_from) <= ${dateExpr}
+              AND (ch_d.effective_to IS NULL OR DATE(ch_d.effective_to) > ${dateExpr}))`;
 }
 
 /**
@@ -129,12 +133,13 @@ function remarkAssigneeFilterAtDate(externalIdExpr, lineExpr, dateExpr, value) {
   if (!value) return '';
   const safe = String(value).replace(/'/g, "''").trim();
   if (!safe) return '';
+  // Same day-level DATE() comparison as coordFilterAtDate — see comment there.
   return ` AND EXISTS (
     SELECT 1 FROM remark_assignment_history rah_f
     WHERE rah_f.remark_external_id = ${externalIdExpr}
       AND rah_f.line               = ${lineExpr}
-      AND rah_f.effective_from <= ${dateExpr}
-      AND (rah_f.effective_to IS NULL OR rah_f.effective_to > ${dateExpr})
+      AND DATE(rah_f.effective_from) <= ${dateExpr}
+      AND (rah_f.effective_to IS NULL OR DATE(rah_f.effective_to) > ${dateExpr})
       AND rah_f.assigned_to = '${safe}' COLLATE NOCASE
   )`;
 }

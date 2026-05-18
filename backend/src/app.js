@@ -1007,6 +1007,58 @@ initDb().then(db => {
   // NOTE: Use the wrapper `db.prepare(...)` (not `db._raw.prepare(...)`).
   // sql.js's raw Statement has no `.all()` method — only the wrapper provides
   // `.all()` / `.get()` / `.run()` that return plain JS values.
+  // ── ONE-TIME FIX: backfill orphan "new group" entries to far-past ──────
+  // Prior to the 2026-05-18 fix, syncBatches stored effective_from=NOW for
+  // newly-detected groups (including renamed groups). This broke filtering of
+  // events with the new group_name whose date is BEFORE the sync time.
+  //
+  // Backfill rule: any active entry (effective_to IS NULL) with a modern
+  // effective_from (after 2024-01-01) AND no related closed entry for the
+  // same group → treat as orphan-new-group → backfill to '2000-01-01'.
+  // (Real transitions have a closed entry for the previous coordinator on the
+  // same group_name, so they're preserved.)
+  try {
+    const fixedCh = db.prepare(`
+      UPDATE coordinator_history
+         SET effective_from = '2000-01-01'
+       WHERE effective_to IS NULL
+         AND effective_from > '2024-01-01'
+         AND NOT EXISTS (
+           SELECT 1 FROM coordinator_history ch2
+           WHERE ch2.group_name = coordinator_history.group_name
+             AND ch2.line       = coordinator_history.line
+             AND ch2.effective_to IS NOT NULL
+         )
+    `).run();
+    if (fixedCh.changes > 0) {
+      saveNow();
+      console.log(`✅ Migration: backfilled ${fixedCh.changes} orphan coordinator_history entries to 2000-01-01`);
+    }
+  } catch (e) {
+    console.error('coordinator_history backfill error:', e.message);
+  }
+
+  try {
+    const fixedRah = db.prepare(`
+      UPDATE remark_assignment_history
+         SET effective_from = '2000-01-01'
+       WHERE effective_to IS NULL
+         AND effective_from > '2024-01-01'
+         AND NOT EXISTS (
+           SELECT 1 FROM remark_assignment_history rah2
+           WHERE rah2.remark_external_id = remark_assignment_history.remark_external_id
+             AND rah2.line = remark_assignment_history.line
+             AND rah2.effective_to IS NOT NULL
+         )
+    `).run();
+    if (fixedRah.changes > 0) {
+      saveNow();
+      console.log(`✅ Migration: backfilled ${fixedRah.changes} orphan remark_assignment_history entries to 2000-01-01`);
+    }
+  } catch (e) {
+    console.error('remark_assignment_history backfill error:', e.message);
+  }
+
   try {
     const chCount = db.prepare(`SELECT COUNT(*) AS cnt FROM coordinator_history`).get();
     if (chCount && chCount.cnt === 0) {

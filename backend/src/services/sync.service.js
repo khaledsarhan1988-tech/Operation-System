@@ -297,6 +297,13 @@ function syncBatches(buffer, line) {
     const oldByGroup = new Map(oldCoords.map(r => [r.group_name, r.coordinators]));
 
     const nowIso = new Date().toISOString();
+    // For "new groups" (never existed in batches before — could be a fresh
+    // group OR a rename of an existing one), use the same far-past date as
+    // the initial bootstrap so historical events with the new group_name
+    // attribute correctly to the current coordinator instead of being
+    // filtered out by date comparison.
+    const FAR_PAST = '2000-01-01';
+
     const closeStmt = db.prepare(
       `UPDATE coordinator_history
           SET effective_to = ?
@@ -310,20 +317,23 @@ function syncBatches(buffer, line) {
     let closed = 0, opened = 0;
     for (const r of rows) {
       const oldField = oldByGroup.get(r.group_name);
+      const isNewGroup = !oldByGroup.has(r.group_name);
       const oldMap   = parseCoordinatorList(oldField);
       const newMap   = parseCoordinatorList(r.coordinators);
 
-      // removed
+      // removed (only relevant for existing groups whose coordinators changed)
       for (const [key, original] of oldMap) {
         if (!newMap.has(key)) {
           closeStmt.run(nowIso, r.group_name, line, original);
           closed += 1;
         }
       }
-      // added
+      // added — far-past for brand-new groups, NOW for true transitions
+      // on existing groups (so we can tell exactly when the transfer happened).
       for (const [key, original] of newMap) {
         if (!oldMap.has(key)) {
-          openStmt.run(r.group_name, line, original, nowIso);
+          const effectiveFrom = isNewGroup ? FAR_PAST : nowIso;
+          openStmt.run(r.group_name, line, original, effectiveFrom);
           opened += 1;
         }
       }
@@ -422,6 +432,11 @@ function syncRemarks(buffer, line, warnings) {
   const run = db.transaction(() => {
     // ── apply assignment-history diff ─────────────────────────────────
     const nowIso = new Date().toISOString();
+    // For "new remarks" (never seen before), use the same far-past date
+    // as the bootstrap so historical assignment data attributes correctly
+    // (instead of being filtered out because effective_from > event_date).
+    const FAR_PAST = '2000-01-01';
+
     const closeAssignStmt = db.prepare(
       `UPDATE remark_assignment_history
           SET effective_to = ?
@@ -438,13 +453,15 @@ function syncRemarks(buffer, line, warnings) {
       if (r.external_id == null || !Number.isFinite(r.external_id)) continue;
       const oldVal = (oldAssignByExt.get(r.external_id) || '').trim();
       const newVal = (r.assigned_to || '').trim();
+      const isNewRemark = !oldAssignByExt.has(r.external_id);
       if (oldVal === newVal) continue;
       if (oldVal) {
         closeAssignStmt.run(nowIso, r.external_id, line, oldVal);
         aClosed += 1;
       }
       if (newVal) {
-        openAssignStmt.run(r.external_id, line, newVal, nowIso);
+        const effectiveFrom = isNewRemark ? FAR_PAST : nowIso;
+        openAssignStmt.run(r.external_id, line, newVal, effectiveFrom);
         aOpened += 1;
       }
     }
