@@ -1,25 +1,11 @@
-import { Menu, Globe, Bell, Sun, Moon } from 'lucide-react';
+import { useState } from 'react';
+import { Menu, Globe, Bell, Sun, Moon, Camera } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../auth/AuthContext';
 import { useTheme } from '../../hooks/useTheme';
 import NotificationsBell from './NotificationsBell';
-
-const AVATAR_GRADIENTS = [
-  'from-indigo-500 to-purple-600',
-  'from-blue-500 to-cyan-600',
-  'from-emerald-500 to-teal-600',
-  'from-rose-500 to-pink-600',
-  'from-amber-500 to-orange-600',
-  'from-violet-500 to-fuchsia-600',
-  'from-sky-500 to-indigo-600',
-  'from-teal-500 to-emerald-600',
-];
-
-function gradientFor(name = '') {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
-  return AVATAR_GRADIENTS[Math.abs(hash) % AVATAR_GRADIENTS.length];
-}
+import UserAvatar from '../ui/UserAvatar';
+import AvatarUploadDialog from '../ui/AvatarUploadDialog';
 
 const ROLE_LABELS = {
   admin: 'Administrator',
@@ -40,12 +26,11 @@ function resolveRoleKey(user) {
 
 export default function Topbar({ onMenuClick }) {
   const { i18n } = useTranslation();
-  const { user, changeLanguage } = useAuth();
+  const { user, changeLanguage, patchUser } = useAuth();
   const { theme, toggleTheme } = useTheme();
+  const [avatarOpen, setAvatarOpen] = useState(false);
   const isAr = i18n.language === 'ar';
   const isDark = theme === 'dark';
-  const initial = user?.full_name?.[0]?.toUpperCase() || '?';
-  const gradient = gradientFor(user?.full_name);
 
   // Shared chip styling for the dark topbar — translucent surface that pops
   // against the deep gradient background.
@@ -130,11 +115,33 @@ export default function Topbar({ onMenuClick }) {
               {ROLE_LABELS[resolveRoleKey(user)] || user?.role}
             </p>
           </div>
-          <div className={`avatar avatar-md bg-gradient-to-br ${gradient}`}>
-            {initial}
-          </div>
+          <button
+            type="button"
+            onClick={() => setAvatarOpen(true)}
+            className="relative group rounded-full focus:outline-none focus:ring-2 focus:ring-white/50"
+            title="تغيير الصورة الشخصية"
+            aria-label="تغيير الصورة الشخصية"
+          >
+            <UserAvatar name={user?.full_name} avatarUrl={user?.avatar_url} size="md" />
+            <span
+              className="absolute -bottom-0.5 -end-0.5 inline-flex items-center justify-center h-5 w-5 rounded-full
+                         bg-white text-slate-800 shadow ring-2 ring-slate-900/40 opacity-0 group-hover:opacity-100
+                         transition-opacity"
+            >
+              <Camera size={11} strokeWidth={2.4} />
+            </span>
+          </button>
         </div>
       </div>
+
+      <AvatarUploadDialog
+        open={avatarOpen}
+        onClose={() => setAvatarOpen(false)}
+        name={user?.full_name}
+        avatarUrl={user?.avatar_url}
+        endpoint={{ upload: '/auth/me/avatar', remove: '/auth/me/avatar' }}
+        onSaved={(newUrl) => patchUser({ avatar_url: newUrl })}
+      />
     </header>
   );
 }

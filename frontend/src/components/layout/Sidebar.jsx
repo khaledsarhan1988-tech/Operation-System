@@ -7,8 +7,10 @@ import {
   Video, Users, BarChart2, Globe, UserCog, Upload, FileText,
   LogOut, Headphones, GraduationCap, ShieldCheck, AlertTriangle, Activity, Shuffle, Kanban,
   TrendingUp, Target, Settings, Award, Snowflake, Goal, Database, ChevronDown, Sparkles, BarChart3,
-  Cloud, History, Network, ListTodo
+  Cloud, History, Network, ListTodo, Camera
 } from 'lucide-react';
+import UserAvatar from '../ui/UserAvatar';
+import AvatarUploadDialog from '../ui/AvatarUploadDialog';
 
 // ─── COLOR PALETTE ─────────────────────────────────────────────────────────
 // Each link gets a brand color used for its icon container — this gives the
@@ -135,21 +137,7 @@ function getAdminLinks(user) {
   return [...base, ...reports, ...monitoring];
 }
 
-const AVATAR_GRADIENTS = [
-  'from-indigo-500 to-purple-600',
-  'from-blue-500 to-cyan-600',
-  'from-emerald-500 to-teal-600',
-  'from-rose-500 to-pink-600',
-  'from-amber-500 to-orange-600',
-  'from-violet-500 to-fuchsia-600',
-  'from-sky-500 to-indigo-600',
-  'from-teal-500 to-emerald-600',
-];
-function gradientFor(name = '') {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
-  return AVATAR_GRADIENTS[Math.abs(hash) % AVATAR_GRADIENTS.length];
-}
+// Avatar visuals are owned by the shared UserAvatar component now.
 
 // Build CSS variables for a colored link — used for icon container bg/glow
 function colorVars(color) {
@@ -163,8 +151,9 @@ function colorVars(color) {
 
 export default function Sidebar({ mobile, onClose }) {
   const { t } = useTranslation();
-  const { user, logout } = useAuth();
+  const { user, logout, patchUser } = useAuth();
   const navigate = useNavigate();
+  const [avatarOpen, setAvatarOpen] = useState(false);
   const location = useLocation();
   const links = user?.role === 'admin'
     ? getAdminLinks(user)
@@ -223,9 +212,6 @@ export default function Sidebar({ mobile, onClose }) {
     navigate('/login');
   };
 
-  const initial = user?.full_name?.[0]?.toUpperCase() || '?';
-  const gradient = gradientFor(user?.full_name);
-
   return (
     <div
       className="flex flex-col h-full w-72 relative overflow-hidden"
@@ -279,9 +265,22 @@ export default function Sidebar({ mobile, onClose }) {
             border: '1px solid rgba(255,255,255,0.08)',
           }}
         >
-          <div className={`avatar avatar-md bg-gradient-to-br ${gradient}`}>
-            {initial}
-          </div>
+          <button
+            type="button"
+            onClick={() => setAvatarOpen(true)}
+            className="relative group rounded-full focus:outline-none focus:ring-2 focus:ring-white/40"
+            title="تغيير الصورة الشخصية"
+            aria-label="تغيير الصورة الشخصية"
+          >
+            <UserAvatar name={user?.full_name} avatarUrl={user?.avatar_url} size="md" />
+            <span
+              className="absolute -bottom-0.5 -end-0.5 inline-flex items-center justify-center h-5 w-5 rounded-full
+                         bg-white text-slate-800 shadow ring-2 ring-slate-900/40 opacity-0 group-hover:opacity-100
+                         transition-opacity"
+            >
+              <Camera size={11} strokeWidth={2.4} />
+            </span>
+          </button>
           <div className="min-w-0 flex-1">
             <p className="text-white text-sm font-extrabold truncate leading-tight tracking-tight">
               {user?.full_name}
@@ -415,6 +414,15 @@ export default function Sidebar({ mobile, onClose }) {
           <span>{t('nav.logout')}</span>
         </button>
       </div>
+
+      <AvatarUploadDialog
+        open={avatarOpen}
+        onClose={() => setAvatarOpen(false)}
+        name={user?.full_name}
+        avatarUrl={user?.avatar_url}
+        endpoint={{ upload: '/auth/me/avatar', remove: '/auth/me/avatar' }}
+        onSaved={(newUrl) => patchUser({ avatar_url: newUrl })}
+      />
     </div>
   );
 }

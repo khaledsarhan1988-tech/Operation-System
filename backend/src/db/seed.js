@@ -45,6 +45,14 @@ initDb().then(db => {
     // Column already exists, ignore
   }
 
+  // Add avatar_url column for personal profile pictures (nullable — fallback to gradient+initial)
+  try {
+    db._raw.run(`ALTER TABLE users ADD COLUMN avatar_url TEXT`);
+    console.log('✅ Migration: added avatar_url column');
+  } catch(e) {
+    // Column already exists, ignore
+  }
+
   // Fix dept_type for existing batches where regex was wrong
   try {
     // Fix Semi: group names containing _SP( or _SP_ or _Sp etc.

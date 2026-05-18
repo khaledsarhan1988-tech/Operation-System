@@ -1,6 +1,7 @@
 'use strict';
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const db = require('../config/database');
@@ -8,6 +9,16 @@ const { saveNow } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { requireRole, requireSuperAdmin } = require('../middleware/roles');
 const { lineFilter } = require('../utils/lineFilter');
+const avatarStorage = require('../utils/avatar-storage');
+
+const avatarUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: avatarStorage.MAX_BYTES },
+  fileFilter: (req, file, cb) => {
+    if (avatarStorage.isAllowedMime(file.mimetype)) return cb(null, true);
+    cb(new Error('Only JPEG, PNG, or WebP images are allowed'));
+  },
+});
 
 const router = express.Router();
 router.use(authenticate, requireRole('leader'));
@@ -29,7 +40,7 @@ function effectiveLine(req) {
 // GET /api/admin/users
 router.get('/users', (req, res) => {
   const requesterLine = req.user.line || 'All';
-  let sql = 'SELECT id, username, full_name, role, department, management, line, language, is_active, created_at FROM users';
+  let sql = 'SELECT id, username, full_name, role, department, management, line, language, avatar_url, is_active, created_at FROM users';
   const params = [];
   if (requesterLine !== 'All') {
     sql += ' WHERE line = ?';
@@ -91,7 +102,7 @@ router.put('/users/:id', (req, res) => {
     db.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).run(...params, id);
   }
 
-  const updated = db.prepare('SELECT id, username, full_name, role, department, management, line, language, is_active FROM users WHERE id = ?').get(id);
+  const updated = db.prepare('SELECT id, username, full_name, role, department, management, line, language, avatar_url, is_active FROM users WHERE id = ?').get(id);
   return res.json(updated);
 });
 
@@ -110,10 +121,61 @@ router.patch('/users/:id/status', (req, res) => {
 router.delete('/users/:id', (req, res) => {
   const { id } = req.params;
   if (parseInt(id) === req.user.id) return res.status(400).json({ error: 'Cannot delete yourself' });
-  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
+  const user = db.prepare('SELECT id, avatar_url FROM users WHERE id = ?').get(id);
   if (!user) return res.status(404).json({ error: 'User not found' });
+  // Clean up avatar file if present (DB column will go with the row)
+  if (user.avatar_url) avatarStorage.deleteFile(user.avatar_url);
   db.prepare('DELETE FROM users WHERE id = ?').run(id);
   return res.json({ message: 'User deleted' });
+});
+
+// ─── ADMIN: manage avatars for any user (admin only) ─────────────────────────
+
+// POST /api/admin/users/:id/avatar
+router.post('/users/:id/avatar', requireRole('admin'), (req, res) => {
+  avatarUpload.single('avatar')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: 'حجم الصورة أكبر من 2 ميجابايت' });
+      }
+      return res.status(400).json({ error: err.message || 'تعذر رفع الصورة' });
+    }
+    if (!req.file) return res.status(400).json({ error: 'لم يتم اختيار صورة' });
+
+    const { id } = req.params;
+    const target = db.prepare('SELECT id, avatar_url FROM users WHERE id = ?').get(id);
+    if (!target) return res.status(404).json({ error: 'User not found' });
+
+    try {
+      const newFilename = avatarStorage.saveBuffer(target.id, req.file.mimetype, req.file.buffer);
+      db.prepare("UPDATE users SET avatar_url = ?, updated_at = datetime('now', '+2 hours') WHERE id = ?")
+        .run(newFilename, target.id);
+      if (target.avatar_url && target.avatar_url !== newFilename) {
+        avatarStorage.deleteFile(target.avatar_url);
+      }
+      return res.json({ avatar_url: newFilename });
+    } catch (e) {
+      console.error('[admin/users/:id/avatar] upload failed:', e.message);
+      return res.status(500).json({ error: 'تعذر حفظ الصورة' });
+    }
+  });
+});
+
+// DELETE /api/admin/users/:id/avatar
+router.delete('/users/:id/avatar', requireRole('admin'), (req, res) => {
+  const { id } = req.params;
+  const target = db.prepare('SELECT id, avatar_url FROM users WHERE id = ?').get(id);
+  if (!target) return res.status(404).json({ error: 'User not found' });
+
+  try {
+    if (target.avatar_url) avatarStorage.deleteFile(target.avatar_url);
+    db.prepare("UPDATE users SET avatar_url = NULL, updated_at = datetime('now', '+2 hours') WHERE id = ?")
+      .run(target.id);
+    return res.json({ avatar_url: null });
+  } catch (e) {
+    console.error('[admin/users/:id/avatar] delete failed:', e.message);
+    return res.status(500).json({ error: 'تعذر حذف الصورة' });
+  }
 });
 
 // ─── SIDE SESSION CHECKS — Admin only delete ─────────────────────────────────

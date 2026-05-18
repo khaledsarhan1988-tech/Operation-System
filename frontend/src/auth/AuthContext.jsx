@@ -67,8 +67,24 @@ export function AuthProvider({ children }) {
     setUser(prev => prev ? { ...prev, language: lang } : prev);
   }, []);
 
+  // Refresh local user state from /auth/me — used after profile changes like avatar upload
+  const refreshUser = useCallback(async () => {
+    try {
+      const { data } = await api.get('/auth/me');
+      setUser(data);
+      return data;
+    } catch (_) {
+      return null;
+    }
+  }, []);
+
+  // Patch a subset of user fields locally (faster than a full refetch)
+  const patchUser = useCallback((patch) => {
+    setUser(prev => prev ? { ...prev, ...patch } : prev);
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, changeLanguage, isAuthenticated: !!user }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, changeLanguage, refreshUser, patchUser, isAuthenticated: !!user }}>
       {children}
     </AuthContext.Provider>
   );

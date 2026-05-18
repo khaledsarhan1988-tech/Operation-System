@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Plus, Eye, EyeOff, Pencil, Trash2, ToggleLeft, ToggleRight, UserCog } from 'lucide-react';
+import { Plus, Eye, EyeOff, Pencil, Trash2, ToggleLeft, ToggleRight, UserCog, Camera } from 'lucide-react';
 import api from '../../api/axios';
 import DataTable from '../../components/ui/DataTable';
 import Modal from '../../components/ui/Modal';
@@ -9,6 +9,9 @@ import Badge from '../../components/ui/Badge';
 import PageHero from '../../components/ui/PageHero';
 import SectionCard from '../../components/ui/SectionCard';
 import ModernButton from '../../components/ui/ModernButton';
+import UserAvatar from '../../components/ui/UserAvatar';
+import AvatarUploadDialog from '../../components/ui/AvatarUploadDialog';
+import { useAuth } from '../../auth/AuthContext';
 
 const EMPTY_FORM = {
   username: '', password: '', full_name: '',
@@ -160,10 +163,13 @@ function UserModal({ open, onClose, user, onSaved }) {
 export default function UserManagement() {
   const { t } = useTranslation();
   const qc = useQueryClient();
+  const { user: currentUser, patchUser } = useAuth();
   const [selected, setSelected] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
   const [togglingId, setTogglingId] = useState(null);
+  const [avatarTarget, setAvatarTarget] = useState(null);
+  const isAdmin = currentUser?.role === 'admin';
 
   const { data: users, isLoading } = useQuery({
     queryKey: ['admin-users'],
@@ -196,6 +202,13 @@ export default function UserManagement() {
   };
 
   const columns = [
+    {
+      key: 'avatar_url',
+      label: 'الصورة',
+      render: (_, row) => (
+        <UserAvatar name={row.full_name} avatarUrl={row.avatar_url} size="sm" />
+      ),
+    },
     { key: 'username', label: t('admin.username') },
     { key: 'full_name', label: t('admin.fullName') },
     { key: 'role', label: t('admin.role'), render: (v, row) => {
@@ -230,6 +243,15 @@ export default function UserManagement() {
     {
       key: 'id', label: '', render: (_, row) => (
         <div className="flex items-center gap-1">
+          {isAdmin && (
+            <button
+              onClick={e => { e.stopPropagation(); setAvatarTarget(row); }}
+              className="p-1.5 rounded-lg hover:bg-accent/10 text-accent transition-colors"
+              title="تعديل الصورة الشخصية"
+            >
+              <Camera size={15} />
+            </button>
+          )}
           <button
             onClick={e => { e.stopPropagation(); setSelected(row); setShowModal(true); }}
             className="p-1.5 rounded-lg hover:bg-primary/10 text-primary transition-colors"
@@ -283,6 +305,24 @@ export default function UserManagement() {
         onClose={() => setShowModal(false)}
         onSaved={() => qc.invalidateQueries(['admin-users'])}
       />
+
+      {avatarTarget && (
+        <AvatarUploadDialog
+          open={!!avatarTarget}
+          onClose={() => setAvatarTarget(null)}
+          name={avatarTarget.full_name}
+          avatarUrl={avatarTarget.avatar_url}
+          endpoint={{
+            upload: `/admin/users/${avatarTarget.id}/avatar`,
+            remove: `/admin/users/${avatarTarget.id}/avatar`,
+          }}
+          onSaved={(newUrl) => {
+            qc.invalidateQueries(['admin-users']);
+            // If admin edited their own avatar, update auth context too
+            if (avatarTarget.id === currentUser?.id) patchUser({ avatar_url: newUrl });
+          }}
+        />
+      )}
     </div>
   );
 }
