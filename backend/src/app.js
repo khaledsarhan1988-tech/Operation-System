@@ -110,6 +110,11 @@ initDb().then(db => {
       saveNow();
       console.log('✅ Migration: added `line` column to users');
     }
+    if (!cols.includes('avatar_url')) {
+      db._raw.run(`ALTER TABLE users ADD COLUMN avatar_url TEXT`);
+      saveNow();
+      console.log('✅ Migration: added `avatar_url` column to users');
+    }
   } catch (e) {
     console.error('users.line migration error:', e.message);
   }
@@ -205,6 +210,27 @@ initDb().then(db => {
     }
   } catch (e) {
     console.error('team_members.line migration error:', e.message);
+  }
+
+  // ── team_members.coordinator_type: distinguishes "منسق" from "منسق متعدد المهام"
+  //   • 'standard'   → handles students only         (capacity 80..120)
+  //   • 'multi_task' → students + extra responsibilities (capacity 70..85)
+  //   • NULL         → not a coordinator (leaders, trainers, etc.)
+  //
+  // DEFAULT 'standard' — every existing team member becomes a regular
+  // "منسق" automatically, no data migration required. The admin reclassifies
+  // selected members to 'multi_task' from the Org Chart UI.
+  try {
+    const info = db._raw.exec(`PRAGMA table_info(team_members)`);
+    const cols = info[0]?.values.map(r => r[1]) || [];
+    if (cols.length > 0 && !cols.includes('coordinator_type')) {
+      db._raw.run(`ALTER TABLE team_members ADD COLUMN coordinator_type TEXT NOT NULL DEFAULT 'standard'`);
+      db._raw.run(`CREATE INDEX IF NOT EXISTS idx_team_coord_type ON team_members(coordinator_type)`);
+      saveNow();
+      console.log('✅ Migration: added `coordinator_type` column to team_members (default standard)');
+    }
+  } catch (e) {
+    console.error('team_members.coordinator_type migration error:', e.message);
   }
 
   // ── team_members SAFETY: restore from snapshot if rows vanished ─────────

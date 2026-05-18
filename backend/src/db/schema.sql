@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS users (
   management    TEXT NOT NULL DEFAULT 'Customer Services',
   line          TEXT NOT NULL DEFAULT 'Ahmed Hassan',
   language      TEXT NOT NULL DEFAULT 'ar' CHECK(language IN ('ar','en')),
+  avatar_url    TEXT,
   is_active     INTEGER NOT NULL DEFAULT 1,
   created_at    TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
   updated_at    TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
@@ -76,10 +77,16 @@ CREATE TABLE IF NOT EXISTS team_members (
   -- Operational line — used by the org chart to split a section into multiple
   -- columns (e.g. "خاص" vs "خاص دردشة"). Defaults to the main Academy line.
   line        TEXT NOT NULL DEFAULT 'Ahmed Hassan',
+  -- Coordinator type:
+  --   'standard'   → منسق (students only, capacity 80..120)
+  --   'multi_task' → منسق متعدد المهام (students + tasks, capacity 70..85)
+  --   (NULL allowed only on records that aren't coordinators — leaders, etc.)
+  coordinator_type TEXT NOT NULL DEFAULT 'standard',
   created_at  TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
 );
 CREATE INDEX IF NOT EXISTS idx_team_dept_section ON team_members(department, section);
 CREATE INDEX IF NOT EXISTS idx_team_line         ON team_members(line);
+CREATE INDEX IF NOT EXISTS idx_team_coord_type   ON team_members(coordinator_type);
 
 -- =============================================
 -- CLIENTS (from Active Batches Trainees.xlsx)

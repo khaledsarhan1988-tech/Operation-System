@@ -8,6 +8,47 @@ const { nameInListInline } = require('../utils/nameMatch');
 const router = express.Router();
 router.use(authenticate, requireRole('leader'));
 
+// ─── COORDINATOR TYPES + CAPACITY RULES ───────────────────────────────────────
+// Source of truth for the two coordinator categories the business defines:
+//
+//   • standard   → منسق (طلاب فقط)              — capacity 80..120
+//   • multi_task → منسق متعدد المهام (طلاب + تاسكات) — capacity 70..85
+//
+// Capacity status is computed from a member's current customer_count:
+//   • under → below the type's min
+//   • ok    → within [min, max]
+//   • over  → above the type's max
+//
+// We deliberately classify *only on customer_count* (not group_count) because
+// the business sets the limits in terms of trainees.
+const COORDINATOR_TYPES = {
+  standard: {
+    code:     'standard',
+    label_ar: 'منسق',
+    label_en: 'Coordinator',
+    capacity_min: 80,
+    capacity_max: 120,
+  },
+  multi_task: {
+    code:     'multi_task',
+    label_ar: 'منسق متعدد المهام',
+    label_en: 'Multi-task Coordinator',
+    capacity_min: 70,
+    capacity_max: 85,
+  },
+};
+const VALID_TYPES = Object.keys(COORDINATOR_TYPES);
+
+function classifyCapacity(type, customerCount) {
+  const cfg = COORDINATOR_TYPES[type];
+  if (!cfg) return { status: 'unknown', min: null, max: null };
+  const n = customerCount || 0;
+  let status = 'ok';
+  if (n < cfg.capacity_min) status = 'under';
+  else if (n > cfg.capacity_max) status = 'over';
+  return { status, min: cfg.capacity_min, max: cfg.capacity_max };
+}
+
 // ─── GET /api/org-chart/customer-services ─────────────────────────────────────
 // Returns the 4-column org chart for إدارة خدمة العملاء:
 //   عام (General) / خاص (Private) / شبه خاص (Semi) / مواعيد (Appointments)
@@ -66,17 +107,17 @@ router.get('/customer-services', (req, res) => {
     // Section + line variants: callers pick the right prepared statement
     // based on whether a section / line filter applies.
     const membersWithSectionAndLine = db.prepare(
-      `SELECT id, name, job_title FROM team_members
+      `SELECT id, name, job_title, coordinator_type FROM team_members
         WHERE status='active' AND department = ? AND section = ? AND line = ?
         ORDER BY name COLLATE NOCASE`
     );
     const membersWithSection = db.prepare(
-      `SELECT id, name, job_title FROM team_members
+      `SELECT id, name, job_title, coordinator_type FROM team_members
         WHERE status='active' AND department = ? AND section = ?
         ORDER BY name COLLATE NOCASE`
     );
     const membersNoSection = db.prepare(
-      `SELECT id, name, job_title FROM team_members
+      `SELECT id, name, job_title, coordinator_type FROM team_members
         WHERE status='active' AND department = ?
         ORDER BY name COLLATE NOCASE`
     );
@@ -121,10 +162,26 @@ router.get('/customer-services', (req, res) => {
           ).get();
           group_count = gRow?.cnt ?? 0;
         }
+
+        // Resolve coordinator_type (fall back to standard for legacy rows
+        // where the column might be NULL after restore from old snapshots).
+        const type = VALID_TYPES.includes(m.coordinator_type)
+          ? m.coordinator_type
+          : 'standard';
+        const typeCfg = COORDINATOR_TYPES[type];
+        const capacity = (s.key !== 'appointments')
+          ? classifyCapacity(type, customer_count)
+          : { status: null, min: null, max: null };
+
         return {
           id: m.id,
           name: m.name,
           job_title: m.job_title,
+          coordinator_type: type,
+          coordinator_label: typeCfg.label_ar,
+          capacity_min: capacity.min,
+          capacity_max: capacity.max,
+          capacity_status: capacity.status,  // 'under' | 'ok' | 'over' | null
           customer_count,
           group_count,
         };
@@ -397,6 +454,64 @@ router.get('/transfer-simulation', (req, res) => {
     });
   } catch (err) {
     console.error('[org-chart] transfer-simulation error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GET /api/org-chart/coordinator-types ─────────────────────────────────────
+// Returns the catalog of coordinator types + their capacity rules.
+// Used by the frontend dropdown so the labels/limits are sourced from one
+// place (no copy-paste between BE/FE).
+router.get('/coordinator-types', (req, res) => {
+  return res.json({
+    types: Object.values(COORDINATOR_TYPES).map((t) => ({
+      code:         t.code,
+      label_ar:     t.label_ar,
+      label_en:     t.label_en,
+      capacity_min: t.capacity_min,
+      capacity_max: t.capacity_max,
+    })),
+  });
+});
+
+// ─── PATCH /api/org-chart/members/:id/type ────────────────────────────────────
+// Admin-only. Updates a team_member's coordinator_type.
+// Body: { coordinator_type: 'standard' | 'multi_task' }
+router.patch('/members/:id/type', express.json(), (req, res) => {
+  try {
+    if (req.user?.role !== 'admin') {
+      return res.status(403).json({ error: 'صلاحية التعديل للمدير فقط' });
+    }
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).json({ error: 'invalid member id' });
+
+    const type = String(req.body?.coordinator_type || '').trim();
+    if (!VALID_TYPES.includes(type)) {
+      return res.status(400).json({
+        error: `coordinator_type must be one of: ${VALID_TYPES.join(', ')}`,
+      });
+    }
+
+    const existing = db.prepare(
+      `SELECT id, name, coordinator_type FROM team_members WHERE id = ?`
+    ).get(id);
+    if (!existing) return res.status(404).json({ error: 'member not found' });
+
+    db.prepare(
+      `UPDATE team_members SET coordinator_type = ? WHERE id = ?`
+    ).run(type, id);
+
+    const updated = db.prepare(
+      `SELECT id, name, coordinator_type FROM team_members WHERE id = ?`
+    ).get(id);
+
+    return res.json({
+      member: updated,
+      previous_type: existing.coordinator_type,
+      type_info: COORDINATOR_TYPES[type],
+    });
+  } catch (err) {
+    console.error('[org-chart] update coordinator_type error:', err);
     return res.status(500).json({ error: err.message });
   }
 });

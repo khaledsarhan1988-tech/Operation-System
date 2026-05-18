@@ -1,11 +1,29 @@
 import { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Network, Crown, User, Users, Layers, AlertCircle,
   ArrowRight, ArrowLeftRight, Sparkles, ChevronDown, RefreshCw,
+  Settings, X, Briefcase, CheckCircle2,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
+
+// ─── COORDINATOR TYPE VISUAL CONFIG ──────────────────────────────────────────
+// Matches the backend COORDINATOR_TYPES catalog. Colors are chosen so the two
+// types are visually distinct at a glance:
+//   • standard   → teal (calm, students-only)
+//   • multi_task → indigo (more responsibility)
+// Capacity-status colors are SEPARATE so a member can be e.g. "standard +
+// over-capacity" without the badge colors blending.
+const COORD_TYPE_VISUAL = {
+  standard:   { label: 'منسق',              badge: 'bg-teal-100 text-teal-700 border-teal-200',     dot: 'bg-teal-500'   },
+  multi_task: { label: 'منسق متعدد المهام', badge: 'bg-indigo-100 text-indigo-700 border-indigo-200', dot: 'bg-indigo-500' },
+};
+const CAPACITY_VISUAL = {
+  under:   { label: 'تحت الحد الأدنى', bar: 'bg-orange-400', text: 'text-orange-700', soft: 'bg-orange-50' },
+  ok:      { label: 'ضمن النطاق',     bar: 'bg-emerald-500', text: 'text-emerald-700', soft: 'bg-emerald-50' },
+  over:    { label: 'تجاوز الحد الأقصى', bar: 'bg-red-500',    text: 'text-red-700',    soft: 'bg-red-50' },
+};
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const TABS = [
@@ -24,7 +42,7 @@ const COLUMN_THEMES = {
 };
 
 // ─── COLUMN CARD ──────────────────────────────────────────────────────────────
-function ColumnCard({ section }) {
+function ColumnCard({ section, isAdmin, onEditMember }) {
   const theme = COLUMN_THEMES[section.key] || COLUMN_THEMES.general;
   const isAppointments = section.key === 'appointments';
 
@@ -64,39 +82,88 @@ function ColumnCard({ section }) {
             لا يوجد موظفين في هذا القسم
           </div>
         ) : (
-          section.members.map((m) => (
-            <div key={m.id} className="px-4 py-2.5 flex items-center justify-between hover:bg-gray-50 transition-colors">
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0">
-                  <User className="w-3.5 h-3.5 text-gray-500" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-gray-800 truncate">{m.name}</p>
-                  {m.job_title && (
-                    <p className="text-[10px] text-gray-400 truncate">{m.job_title}</p>
+          section.members.map((m) => {
+            const typeViz = COORD_TYPE_VISUAL[m.coordinator_type] || COORD_TYPE_VISUAL.standard;
+            const capViz  = m.capacity_status ? CAPACITY_VISUAL[m.capacity_status] : null;
+            // Visual progress: percentage of capacity_max (cap at 110% so an
+            // over-loaded bar stays visible on the row).
+            const pct = (!isAppointments && m.capacity_max)
+              ? Math.min(110, Math.round(((m.customer_count || 0) / m.capacity_max) * 100))
+              : 0;
+            return (
+              <div key={m.id} className="px-4 py-2.5 hover:bg-gray-50 transition-colors group">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0">
+                      <User className="w-3.5 h-3.5 text-gray-500" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-gray-800 truncate">{m.name}</p>
+                      {!isAppointments && (
+                        <span
+                          className={`inline-flex items-center gap-1 text-[10px] font-bold mt-0.5 px-1.5 py-0.5 rounded border ${typeViz.badge}`}
+                          title={typeViz.label}
+                        >
+                          <Briefcase className="w-2.5 h-2.5" />
+                          {typeViz.label}
+                        </span>
+                      )}
+                      {m.job_title && (
+                        <p className="text-[10px] text-gray-400 truncate mt-0.5">{m.job_title}</p>
+                      )}
+                    </div>
+                  </div>
+                  {!isAppointments && (
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <span
+                        title={`عدد العملاء (الحد ${m.capacity_min}-${m.capacity_max})`}
+                        className={`text-[11px] font-bold ${capViz ? capViz.text : theme.accent} ${capViz ? capViz.soft : theme.softBg} rounded-md px-1.5 py-0.5 flex items-center gap-1`}
+                      >
+                        <Users className="w-3 h-3" />
+                        {m.customer_count ?? 0}
+                      </span>
+                      <span
+                        title="عدد المجموعات"
+                        className="text-[11px] font-bold text-gray-700 bg-gray-100 rounded-md px-1.5 py-0.5 flex items-center gap-1"
+                      >
+                        <Layers className="w-3 h-3" />
+                        {m.group_count ?? 0}
+                      </span>
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => onEditMember && onEditMember(m)}
+                          className="opacity-0 group-hover:opacity-100 transition p-1 rounded hover:bg-indigo-100 text-gray-400 hover:text-indigo-600"
+                          title="تغيير نوع المنسق"
+                        >
+                          <Settings className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
+                {/* Capacity meter — full width line under the name row */}
+                {!isAppointments && m.capacity_max && (
+                  <div className="mt-1.5">
+                    <div className="flex items-center justify-between text-[9px] mb-0.5">
+                      <span className="text-gray-400">
+                        {m.capacity_min}-{m.capacity_max} طالب
+                      </span>
+                      {capViz && (
+                        <span className={`${capViz.text} font-bold`}>{capViz.label}</span>
+                      )}
+                    </div>
+                    <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full ${capViz ? capViz.bar : 'bg-gray-300'} transition-all`}
+                        style={{ width: `${Math.min(pct, 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
-              {!isAppointments && (
-                <div className="flex items-center gap-1.5 flex-shrink-0">
-                  <span
-                    title="عدد العملاء"
-                    className={`text-[11px] font-bold ${theme.accent} ${theme.softBg} rounded-md px-1.5 py-0.5 flex items-center gap-1`}
-                  >
-                    <Users className="w-3 h-3" />
-                    {m.customer_count ?? 0}
-                  </span>
-                  <span
-                    title="عدد المجموعات"
-                    className="text-[11px] font-bold text-gray-700 bg-gray-100 rounded-md px-1.5 py-0.5 flex items-center gap-1"
-                  >
-                    <Layers className="w-3 h-3" />
-                    {m.group_count ?? 0}
-                  </span>
-                </div>
-              )}
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
@@ -439,8 +506,134 @@ function BeforeAfterTable({ rows, delta }) {
 }
 
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
+// ─── EDIT MEMBER TYPE MODAL ──────────────────────────────────────────────────
+// Admin-only. Opens from the Settings icon on each member row. Shows the
+// current type and lets the admin switch between standard / multi_task.
+// The capacity rules per type are fetched live from the backend so frontend
+// numbers always match the server-side classification.
+function EditMemberTypeModal({ member, onClose }) {
+  const qc = useQueryClient();
+  const [selectedType, setSelectedType] = useState(member.coordinator_type || 'standard');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+
+  const { data: typesData } = useQuery({
+    queryKey: ['org-chart', 'coordinator-types'],
+    queryFn: async () => (await api.get('/org-chart/coordinator-types')).data,
+    staleTime: 60 * 60 * 1000,  // catalog rarely changes
+  });
+  const types = typesData?.types || [];
+
+  const mutation = useMutation({
+    mutationFn: () => api.patch(`/org-chart/members/${member.id}/type`, {
+      coordinator_type: selectedType,
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['org-chart'] });
+      onClose();
+    },
+    onError: (err) => setError(err.response?.data?.error || err.message),
+  });
+
+  async function save() {
+    if (selectedType === member.coordinator_type) {
+      onClose();
+      return;
+    }
+    setError(null);
+    setSubmitting(true);
+    try { await mutation.mutateAsync(); }
+    finally { setSubmitting(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-4 bg-gradient-to-r from-indigo-50 to-purple-50 border-b flex items-center justify-between">
+          <div>
+            <h3 className="font-bold text-gray-900 text-base">تغيير نوع المنسق</h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {member.name} • {member.sectionLabel}
+            </p>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-white rounded-lg">
+            <X size={18} className="text-gray-600" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-3">
+          {error && (
+            <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+              {error}
+            </div>
+          )}
+
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-gray-500">عدد العملاء الحاليّ</span>
+              <span className="font-bold text-gray-800">{member.customer_count ?? 0}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-gray-500">عدد المجموعات</span>
+              <span className="font-bold text-gray-800">{member.group_count ?? 0}</span>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-xs font-bold text-gray-600">اختر النوع:</p>
+            {types.map((t) => {
+              const viz = COORD_TYPE_VISUAL[t.code] || COORD_TYPE_VISUAL.standard;
+              const isSelected = selectedType === t.code;
+              const isCurrent  = member.coordinator_type === t.code;
+              return (
+                <button
+                  key={t.code}
+                  type="button"
+                  onClick={() => setSelectedType(t.code)}
+                  className={`w-full text-right p-3 rounded-lg border-2 transition ${
+                    isSelected
+                      ? 'border-indigo-500 bg-indigo-50 ring-2 ring-indigo-100'
+                      : 'border-gray-200 hover:border-gray-300 bg-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2.5 h-2.5 rounded-full ${viz.dot}`} />
+                    <span className="font-bold text-sm text-gray-800 flex-1">{t.label_ar}</span>
+                    {isSelected && <CheckCircle2 size={16} className="text-indigo-600" />}
+                    {isCurrent && !isSelected && (
+                      <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">الحالي</span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    الـ Capacity المثالية: <span className="font-bold">{t.capacity_min}-{t.capacity_max} طالب</span>
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="px-5 py-3 bg-gray-50 border-t flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-1.5 rounded-lg border border-gray-300 text-sm hover:bg-gray-100">
+            إلغاء
+          </button>
+          <button
+            onClick={save}
+            disabled={submitting}
+            className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 text-white text-sm font-bold disabled:opacity-50"
+          >
+            {submitting ? 'جاري الحفظ...' : 'حفظ'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function OrgChart() {
   const [activeTab, setActiveTab] = useState('customer_services');
+  // Which member is currently being re-classified by the admin (null = closed).
+  const [editingMember, setEditingMember] = useState(null);
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['org-chart', activeTab],
@@ -510,9 +703,21 @@ export default function OrgChart() {
           {data?.sections && data.sections.length > 0 && (
             <div className={`grid ${gridCols} gap-4`}>
               {data.sections.map((s) => (
-                <ColumnCard key={s.key} section={s} />
+                <ColumnCard
+                  key={s.key}
+                  section={s}
+                  isAdmin={isAdmin}
+                  onEditMember={(m) => setEditingMember({ ...m, sectionLabel: s.label })}
+                />
               ))}
             </div>
+          )}
+
+          {editingMember && (
+            <EditMemberTypeModal
+              member={editingMember}
+              onClose={() => setEditingMember(null)}
+            />
           )}
 
           {data?.sections && data.sections.length === 0 && (
