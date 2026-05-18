@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   UserX, Users, Video, CalendarDays, TrendingDown, XCircle,
   AlertTriangle, CheckCircle2, Activity, Search, Layers, Building2,
+  X, Phone, Hash,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -109,6 +110,8 @@ export default function AttendanceAbsenceReport() {
   const [dateTo, setDateTo] = useState('');
   const [coordQuery, setCoordQuery] = useState('');
   const [department, setDepartment] = useState('');  // '' = all
+  // Detail modal — opened by clicking an absent number cell
+  const [detail, setDetail] = useState(null); // { coordinator, type: 'main' | 'zoom', count, rateRow }
 
   const hasDateRange = dateFrom || dateTo;
   const effective = useMemo(() => {
@@ -516,13 +519,22 @@ export default function AttendanceAbsenceReport() {
                     <td className="px-4 py-3.5 text-gray-700 font-semibold tabular-nums border-r border-gray-100">
                       {r.main_expected.toLocaleString('en-US')}
                     </td>
-                    {/* Main — absent */}
+                    {/* Main — absent (clickable) */}
                     <td className="px-4 py-3.5">
-                      <span className={`inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-black border tabular-nums ${
-                        r.main_absent > 0 ? `${mainC.bg} ${mainC.text} ${mainC.border}` : 'bg-gray-50 text-gray-400 border-gray-100'
-                      }`}>
-                        {r.main_absent.toLocaleString('en-US')}
-                      </span>
+                      {r.main_absent > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setDetail({ coordinator: r.coordinator, type: 'main', count: r.main_absent })}
+                          title="اضغط لعرض تفاصيل الغياب"
+                          className={`inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-black border tabular-nums cursor-pointer hover:shadow-md hover:scale-105 transition-all ${mainC.bg} ${mainC.text} ${mainC.border}`}
+                        >
+                          {r.main_absent.toLocaleString('en-US')}
+                        </button>
+                      ) : (
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-black border tabular-nums bg-gray-50 text-gray-400 border-gray-100">
+                          0
+                        </span>
+                      )}
                     </td>
                     {/* Main — rate */}
                     <td className="px-4 py-3.5">
@@ -533,13 +545,22 @@ export default function AttendanceAbsenceReport() {
                     <td className="px-4 py-3.5 text-gray-700 font-semibold tabular-nums border-r border-gray-100">
                       {r.zoom_expected.toLocaleString('en-US')}
                     </td>
-                    {/* Zoom — absent */}
+                    {/* Zoom — absent (clickable) */}
                     <td className="px-4 py-3.5">
-                      <span className={`inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-black border tabular-nums ${
-                        r.zoom_absent > 0 ? `${zoomC.bg} ${zoomC.text} ${zoomC.border}` : 'bg-gray-50 text-gray-400 border-gray-100'
-                      }`}>
-                        {r.zoom_absent.toLocaleString('en-US')}
-                      </span>
+                      {r.zoom_absent > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setDetail({ coordinator: r.coordinator, type: 'zoom', count: r.zoom_absent })}
+                          title="اضغط لعرض تفاصيل غياب الزووم"
+                          className={`inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-black border tabular-nums cursor-pointer hover:shadow-md hover:scale-105 transition-all ${zoomC.bg} ${zoomC.text} ${zoomC.border}`}
+                        >
+                          {r.zoom_absent.toLocaleString('en-US')}
+                        </button>
+                      ) : (
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-black border tabular-nums bg-gray-50 text-gray-400 border-gray-100">
+                          0
+                        </span>
+                      )}
                     </td>
                     {/* Zoom — rate */}
                     <td className="px-4 py-3.5">
@@ -577,6 +598,160 @@ export default function AttendanceAbsenceReport() {
           </p>
         </div>
       )}
+
+      {/* Detail modal — opened by clicking an absent number */}
+      {detail && (
+        <AbsenceDetailModal
+          coordinator={detail.coordinator}
+          type={detail.type}
+          count={detail.count}
+          from={effective.from}
+          to={effective.to}
+          department={department}
+          onClose={() => setDetail(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ─── Absence Detail Modal ─────────────────────────────────────────────────── */
+function AbsenceDetailModal({ coordinator, type, count, from, to, department, onClose }) {
+  const endpoint = type === 'main' ? '/reports/absent-list' : '/reports/absent-side-list';
+  const { data, isLoading } = useQuery({
+    queryKey: ['absence-detail', endpoint, coordinator, from, to, department],
+    queryFn: () => api.get(endpoint, {
+      params: {
+        coordinator,
+        from_date: from || undefined,
+        to_date:   to   || undefined,
+        department: department || undefined,
+        page: 1,
+        limit: 1000,
+      },
+    }).then(r => r.data),
+    staleTime: 30 * 1000,
+  });
+
+  const rows = data?.rows || [];
+  const total = data?.total ?? rows.length;
+  const typeLabel = type === 'main' ? 'الجلسات الأساسية' : 'الزووم كولز';
+  const accentCls = type === 'main' ? 'bg-sky-500' : 'bg-indigo-500';
+  const accentTone = type === 'main' ? 'bg-sky-50 text-sky-700 border-sky-200' : 'bg-indigo-50 text-indigo-700 border-indigo-200';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" dir="rtl">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh]">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-gray-50/40">
+          <div className="flex items-center gap-3">
+            <div className={`${accentCls} w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm`}>
+              {type === 'main' ? <Users size={18} /> : <Video size={18} />}
+            </div>
+            <div>
+              <div className="text-sm font-bold text-gray-900">تفاصيل الغياب — {typeLabel}</div>
+              <div className="text-[11px] text-gray-500 mt-0.5">
+                المنسق: <span className="font-semibold text-gray-700">{coordinator}</span>
+                {' · '}
+                إجمالي: <span className="font-bold text-rose-700">{count}</span>
+                {total !== count && total < count && (
+                  <span className="text-amber-600 mr-1">(عرض {total})</span>
+                )}
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg transition-all">
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Filters summary */}
+        {(from || to) && (
+          <div className="px-5 py-2 bg-blue-50/40 border-b border-gray-100 text-[11px] text-gray-600 flex items-center gap-2">
+            <CalendarDays size={12} className="text-blue-500" />
+            الفترة: <span className="font-semibold" dir="ltr">{from || '...'} → {to || '...'}</span>
+          </div>
+        )}
+
+        {/* Body */}
+        <div className="overflow-y-auto flex-1">
+          {isLoading ? (
+            <div className="p-4 space-y-2">
+              {[1,2,3,4,5,6].map(i => <div key={i} className="h-12 bg-gray-100 animate-pulse rounded-lg" />)}
+            </div>
+          ) : rows.length === 0 ? (
+            <div className="py-12 text-center text-sm text-gray-400">
+              <UserX size={32} className="text-gray-300 mx-auto mb-2" />
+              مفيش تفاصيل غياب لـ {coordinator} في الفترة دي
+            </div>
+          ) : (
+            <table className="w-full text-xs">
+              <thead className="bg-gray-50/80 sticky top-0">
+                <tr>
+                  <th className="px-3 py-2 text-right font-bold text-gray-600 w-[40px]">#</th>
+                  <th className="px-3 py-2 text-right font-bold text-gray-600">اسم الطالب</th>
+                  <th className="px-3 py-2 text-right font-bold text-gray-600">رقم التليفون</th>
+                  <th className="px-3 py-2 text-right font-bold text-gray-600">المجموعة</th>
+                  <th className="px-3 py-2 text-right font-bold text-gray-600">التاريخ</th>
+                  <th className="px-3 py-2 text-right font-bold text-gray-600 hidden sm:table-cell">الوقت</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {rows.map((r, i) => (
+                  <tr key={r.id || i} className="hover:bg-slate-50/40 transition-colors">
+                    <td className="px-3 py-2.5 text-gray-400 tabular-nums">{i + 1}</td>
+                    <td className="px-3 py-2.5 font-semibold text-gray-900 max-w-[180px] truncate">
+                      {r.student_name || '—'}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      {r.phone ? (
+                        <a
+                          href={`tel:${r.phone}`}
+                          className="inline-flex items-center gap-1 text-blue-600 hover:underline font-mono"
+                          dir="ltr"
+                        >
+                          <Phone size={11} />
+                          {r.phone}
+                        </a>
+                      ) : <span className="text-gray-400">—</span>}
+                    </td>
+                    <td className="px-3 py-2.5 text-gray-600 max-w-[200px] truncate" title={r.group_name}>
+                      {r.group_name || '—'}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <span className="font-mono text-gray-700" dir="ltr">
+                        {r.date || '—'}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5 hidden sm:table-cell">
+                      <span className="font-mono text-gray-500" dir="ltr">
+                        {r.time || '—'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-3 bg-gray-50 border-t border-gray-100 flex items-center justify-between gap-3">
+          <span className="text-xs text-gray-500">
+            {rows.length} صف
+            <span className={`mr-2 text-[10px] px-2 py-0.5 rounded-full font-semibold border ${accentTone}`}>
+              <Hash size={9} className="inline ml-1 -mt-0.5" />
+              {typeLabel}
+            </span>
+          </span>
+          <button
+            onClick={onClose}
+            className="px-4 py-1.5 rounded-xl bg-gray-200 hover:bg-gray-300 text-xs font-semibold text-gray-700 transition-all"
+          >
+            إغلاق
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
