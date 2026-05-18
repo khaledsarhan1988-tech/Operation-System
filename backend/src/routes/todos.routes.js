@@ -234,11 +234,15 @@ router.get('/', (req, res) => {
       templateClause += ` AND t.parent_todo_id IS NOT NULL`;
     }
     const sort = (req.query.sort || 'smart').toString();
+    // NOTE: SQLite ORDER BY references the column alias `priority_rank` from
+    // the SELECT list — NOT `t.priority_rank` (that prefix breaks because the
+    // alias has no table qualifier). Previously caused
+    // "no such column: t.priority_rank" → entire endpoint returned 0 results.
     let orderBy;
     switch (sort) {
       case 'created_desc': orderBy = 't.created_at DESC'; break;
-      case 'due_asc':      orderBy = 't.due_date IS NULL, t.due_date ASC, t.priority_rank ASC'; break;
-      case 'priority':     orderBy = 't.priority_rank ASC, t.due_date IS NULL, t.due_date ASC'; break;
+      case 'due_asc':      orderBy = 't.due_date IS NULL, t.due_date ASC, priority_rank ASC'; break;
+      case 'priority':     orderBy = 'priority_rank ASC, t.due_date IS NULL, t.due_date ASC'; break;
       case 'smart':
       default:
         // smart = pending first, then by due_date, then by priority
@@ -246,7 +250,7 @@ router.get('/', (req, res) => {
           CASE t.status WHEN 'in_progress' THEN 0 WHEN 'new' THEN 1 WHEN 'on_hold' THEN 2
                        WHEN 'completed' THEN 3 ELSE 4 END,
           t.due_date IS NULL, t.due_date ASC,
-          t.priority_rank ASC,
+          priority_rank ASC,
           t.created_at DESC
         `;
         break;
