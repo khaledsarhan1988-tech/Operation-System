@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Network, Crown, User, Users, Layers, AlertCircle,
@@ -188,18 +188,25 @@ function ColumnCard({ section, isAdmin, onEditMember }) {
   );
 }
 
-// ─── TRANSFER SIMULATOR (bottom half) ─────────────────────────────────────────
-const TRANSFERABLE_SECTIONS = ['general', 'private', 'semi']; // 'appointments' excluded (no group/customer counts)
+// ─── SIMULATION HUB (bottom half) ─────────────────────────────────────────────
+// Wraps 6 different simulation modes the admin can run. Each mode lives in its
+// own sub-component with its own controls/query/result rendering, but they all
+// reuse the shared SourcePanel / TargetPanel / BeforeAfterTable widgets where
+// possible so the visual language stays consistent.
+const TRANSFERABLE_SECTIONS = ['general', 'private', 'semi']; // 'appointments' excluded
 
-function TransferSimulator({ sections }) {
-  const [coord, setCoord] = useState('');         // selected coordinator name
-  const [toSection, setToSection] = useState('');
+const SIM_MODES = [
+  { key: 'transfer',   label: 'نقل لقسم آخر',       desc: 'منسق ينتقل من قسمه إلى قسم تاني، السيستم يوزع شغله القديم ويلقّمه شغل من الجديد', icon: ArrowLeftRight },
+  { key: 'leave',      label: 'خروج من القسم',      desc: 'منسق يخرج من قسمه ومجموعاته تتوزع على الباقيين في نفس القسم',                  icon: ArrowRight },
+  { key: 'swap',       label: 'استبدال منسقين',     desc: 'منسقين من قسمين مختلفين يتبادلوا الأقسام',                                       icon: RefreshCw },
+  { key: 'add_new',    label: 'إضافة منسق',         desc: 'منسق جديد (موظف موجود أو تعيين جديد) ينضم لقسم، الموجودين يتنازلوا له عن شغل',  icon: Sparkles },
+  { key: 'temporary',  label: 'غياب مؤقت',          desc: 'إعادة توزيع مؤقت لمدة محددة (إجازة/سفر) — بعد المدة يرجع الشغل لصاحبه',         icon: AlertCircle },
+  { key: 'groups',     label: 'نقل مجموعات محددة',  desc: 'اختار مجموعات بعينها من منسق وانقلها لمنسق تاني',                                 icon: Layers },
+];
 
-  // Flatten members across transferable sections — each row knows where it is.
-  // Exclude section leaders: a leader shouldn't be transferred as a coordinator
-  // (and shouldn't receive transferred groups either — backend enforces the
-  // recipient side; frontend hides them from the moving-coordinator dropdown).
-  const allMembers = useMemo(() => {
+// Flat list of all coordinators (for dropdowns) — excludes section leaders.
+function useAllMembers(sections) {
+  return useMemo(() => {
     const norm = (s) => String(s || '').trim().toLowerCase();
     return sections
       .filter((s) => TRANSFERABLE_SECTIONS.includes(s.key))
@@ -208,34 +215,19 @@ function TransferSimulator({ sections }) {
         return s.members
           .filter((m) => !leaderName || norm(m.name) !== leaderName)
           .map((m) => ({
-            name: m.name, fromSection: s.key, fromLabel: s.label,
-            customer_count: m.customer_count ?? 0, group_count: m.group_count ?? 0,
+            id: m.id, name: m.name,
+            fromSection: s.key, fromLabel: s.label,
+            customer_count: m.customer_count ?? 0,
+            group_count:    m.group_count    ?? 0,
+            coordinator_type: m.coordinator_type,
           }));
       });
   }, [sections]);
+}
 
-  const selectedMember = allMembers.find((m) => m.name === coord) || null;
-  const fromSection = selectedMember?.fromSection || '';
-
-  // Sections available as targets (exclude the member's current section)
-  const targetOptions = useMemo(() => {
-    return sections
-      .filter((s) => TRANSFERABLE_SECTIONS.includes(s.key) && s.key !== fromSection)
-      .map((s) => ({ key: s.key, label: s.label }));
-  }, [sections, fromSection]);
-
-  const canSimulate = !!coord && !!toSection;
-
-  const { data: sim, isFetching, isError, error, refetch } = useQuery({
-    queryKey: ['transfer-sim', coord, fromSection, toSection],
-    queryFn: async () => {
-      const res = await api.get('/org-chart/transfer-simulation', {
-        params: { coordinator: coord, fromSection, toSection },
-      });
-      return res.data;
-    },
-    enabled: false,  // run only on button click
-  });
+function SimulationHub({ sections }) {
+  const [mode, setMode] = useState('transfer');
+  const allMembers = useAllMembers(sections);
 
   return (
     <div className="border-t-2 border-dashed border-gray-200 pt-8 mt-8">
@@ -244,95 +236,553 @@ function TransferSimulator({ sections }) {
           <ArrowLeftRight className="w-5 h-5" />
         </div>
         <div>
-          <h2 className="text-lg font-bold text-gray-800">محاكاة نقل منسق</h2>
+          <h2 className="text-lg font-bold text-gray-800">محاكاة توزيع المنسقين</h2>
           <p className="text-xs text-gray-500 mt-0.5">
-            اختار منسق وقسم جديد، السيستم يقترح إزاي المجموعات تتوزع — التوزيع متوازن حسب عدد العملاء، بريفيو فقط.
+            كل السيناريوهات بريفيو فقط — مفيش حفظ في قاعدة البيانات
           </p>
         </div>
       </header>
 
-      {/* Controls */}
-      <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-4 mb-4">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {/* Coordinator */}
-          <div>
-            <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">
-              المنسق
-            </label>
-            <div className="relative">
-              <select
-                value={coord}
-                onChange={(e) => { setCoord(e.target.value); setToSection(''); }}
-                className="w-full appearance-none rounded-lg border border-gray-200 bg-white px-3 py-2 pr-8 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 outline-none"
+      {/* Mode tabs */}
+      <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-2 mb-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
+          {SIM_MODES.map((m) => {
+            const Icon = m.icon;
+            const isActive = mode === m.key;
+            return (
+              <button
+                key={m.key}
+                type="button"
+                onClick={() => setMode(m.key)}
+                className={`p-2.5 rounded-xl text-right transition border-2 ${
+                  isActive
+                    ? 'bg-gradient-to-br from-indigo-500 to-purple-600 text-white border-indigo-600 shadow-md'
+                    : 'bg-gray-50 border-gray-100 hover:border-indigo-200 hover:bg-indigo-50'
+                }`}
               >
-                <option value="">— اختار —</option>
-                {allMembers.map((m) => (
-                  <option key={`${m.fromSection}:${m.name}`} value={m.name}>
-                    {m.name} ({m.fromLabel})
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-            </div>
-          </div>
-
-          {/* To section */}
-          <div>
-            <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">
-              ينتقل إلى
-            </label>
-            <div className="relative">
-              <select
-                value={toSection}
-                onChange={(e) => setToSection(e.target.value)}
-                disabled={!coord}
-                className="w-full appearance-none rounded-lg border border-gray-200 bg-white px-3 py-2 pr-8 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 outline-none disabled:bg-gray-50 disabled:text-gray-400"
-              >
-                <option value="">— اختار قسم —</option>
-                {targetOptions.map((s) => (
-                  <option key={s.key} value={s.key}>{s.label}</option>
-                ))}
-              </select>
-              <ChevronDown className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-            </div>
-          </div>
-
-          {/* Run button */}
-          <div className="flex items-end">
-            <button
-              type="button"
-              onClick={() => refetch()}
-              disabled={!canSimulate || isFetching}
-              className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold text-sm px-4 py-2 hover:from-indigo-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-            >
-              {isFetching ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-              {isFetching ? 'جاري الحساب...' : 'محاكاة'}
-            </button>
-          </div>
+                <div className="flex items-center gap-1.5 mb-1">
+                  <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-indigo-600'}`} />
+                  <span className={`text-xs font-bold ${isActive ? 'text-white' : 'text-gray-800'}`}>{m.label}</span>
+                </div>
+                <p className={`text-[10px] leading-tight ${isActive ? 'text-white/80' : 'text-gray-500'}`}>{m.desc}</p>
+              </button>
+            );
+          })}
         </div>
-
-        {selectedMember && (
-          <div className="mt-3 pt-3 border-t border-gray-100 text-xs text-gray-500">
-            <span className="font-bold text-gray-700">{selectedMember.name}</span> حالياً في
-            <span className="mx-1 font-bold text-indigo-700">{selectedMember.fromLabel}</span>
-            بـ <span className="font-bold">{selectedMember.customer_count}</span> عميل عبر
-            <span className="font-bold">{selectedMember.group_count}</span> مجموعة.
-          </div>
-        )}
       </div>
 
-      {isError && (
-        <div className="rounded-xl bg-red-50 border border-red-200 p-4 text-red-700 text-sm">
-          فشل المحاكاة: {error?.response?.data?.error || error?.message || 'خطأ غير معروف'}
-        </div>
-      )}
+      {/* Mode body */}
+      {mode === 'transfer'  && <TransferMode  sections={sections} allMembers={allMembers} />}
+      {mode === 'leave'     && <LeaveMode     allMembers={allMembers} />}
+      {mode === 'swap'      && <SwapMode      allMembers={allMembers} />}
+      {mode === 'add_new'   && <AddNewMode    sections={sections} />}
+      {mode === 'temporary' && <TemporaryMode allMembers={allMembers} />}
+      {mode === 'groups'    && <GroupsMode    allMembers={allMembers} />}
+    </div>
+  );
+}
 
+// ─── MODE 1: Transfer (original) ──────────────────────────────────────────────
+function TransferMode({ sections, allMembers }) {
+  const [coord, setCoord] = useState('');
+  const [toSection, setToSection] = useState('');
+
+  const selectedMember = allMembers.find((m) => m.name === coord) || null;
+  const fromSection = selectedMember?.fromSection || '';
+
+  const targetOptions = useMemo(() => sections
+    .filter((s) => TRANSFERABLE_SECTIONS.includes(s.key) && s.key !== fromSection)
+    .map((s) => ({ key: s.key, label: s.label })), [sections, fromSection]);
+
+  const { data: sim, isFetching, isError, error, refetch } = useQuery({
+    queryKey: ['sim-transfer', coord, fromSection, toSection],
+    queryFn: async () => (await api.get('/org-chart/transfer-simulation', {
+      params: { coordinator: coord, fromSection, toSection },
+    })).data,
+    enabled: false,
+  });
+
+  return (
+    <>
+      <ControlsCard>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <SelectField label="المنسق" value={coord} onChange={(v) => { setCoord(v); setToSection(''); }}
+            options={allMembers.map((m) => ({ value: m.name, label: `${m.name} (${m.fromLabel})` }))}
+            placeholder="— اختار —" />
+          <SelectField label="ينتقل إلى" value={toSection} onChange={setToSection} disabled={!coord}
+            options={targetOptions.map((s) => ({ value: s.key, label: s.label }))}
+            placeholder="— اختار قسم —" />
+          <RunButton onClick={() => refetch()} disabled={!coord || !toSection || isFetching} isFetching={isFetching} />
+        </div>
+        {selectedMember && (
+          <InfoLine>
+            <b>{selectedMember.name}</b> حالياً في <b className="text-indigo-700">{selectedMember.fromLabel}</b>
+            بـ <b>{selectedMember.customer_count}</b> عميل عبر <b>{selectedMember.group_count}</b> مجموعة.
+          </InfoLine>
+        )}
+      </ControlsCard>
+      <ErrorBox isError={isError} error={error} />
       {sim && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <SourcePanel sim={sim} />
           <TargetPanel sim={sim} />
         </div>
       )}
+    </>
+  );
+}
+
+// ─── MODE 2: Leave ────────────────────────────────────────────────────────────
+function LeaveMode({ allMembers }) {
+  const [coord, setCoord] = useState('');
+  const selected = allMembers.find((m) => m.name === coord) || null;
+
+  const { data: sim, isFetching, isError, error, refetch } = useQuery({
+    queryKey: ['sim-leave', coord],
+    queryFn: async () => (await api.get('/org-chart/simulate/leave', { params: { coordinator: coord } })).data,
+    enabled: false,
+  });
+
+  return (
+    <>
+      <ControlsCard>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <SelectField label="المنسق الخارج" value={coord} onChange={setCoord}
+            options={allMembers.map((m) => ({ value: m.name, label: `${m.name} (${m.fromLabel})` }))}
+            placeholder="— اختار منسق —" />
+          <RunButton onClick={() => refetch()} disabled={!coord || isFetching} isFetching={isFetching} />
+        </div>
+        {selected && (
+          <InfoLine>
+            <b>{selected.name}</b> هيخرج من <b className="text-indigo-700">{selected.fromLabel}</b>
+            ، شغله ({selected.customer_count} عميل / {selected.group_count} مجموعة) هيتوزع على باقي القسم.
+          </InfoLine>
+        )}
+      </ControlsCard>
+      <ErrorBox isError={isError} error={error} />
+      {sim && (
+        <div className="max-w-3xl mx-auto">
+          <SourcePanel sim={sim} />
+        </div>
+      )}
+    </>
+  );
+}
+
+// ─── MODE 3: Swap ─────────────────────────────────────────────────────────────
+function SwapMode({ allMembers }) {
+  const [a, setA] = useState('');
+  const [b, setB] = useState('');
+  const aMember = allMembers.find((m) => m.name === a);
+  const bMember = allMembers.find((m) => m.name === b);
+  // Section B options exclude same-section as A.
+  const bOptions = aMember ? allMembers.filter((m) => m.fromSection !== aMember.fromSection) : allMembers;
+
+  const { data: sim, isFetching, isError, error, refetch } = useQuery({
+    queryKey: ['sim-swap', a, b],
+    queryFn: async () => (await api.get('/org-chart/simulate/swap', {
+      params: { coordinatorA: a, coordinatorB: b },
+    })).data,
+    enabled: false,
+  });
+
+  return (
+    <>
+      <ControlsCard>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <SelectField label="المنسق الأول" value={a} onChange={(v) => { setA(v); setB(''); }}
+            options={allMembers.map((m) => ({ value: m.name, label: `${m.name} (${m.fromLabel})` }))}
+            placeholder="— اختار منسق —" />
+          <SelectField label="المنسق التاني (قسم مختلف)" value={b} onChange={setB} disabled={!a}
+            options={bOptions.map((m) => ({ value: m.name, label: `${m.name} (${m.fromLabel})` }))}
+            placeholder="— اختار منسق —" />
+          <RunButton onClick={() => refetch()} disabled={!a || !b || isFetching} isFetching={isFetching} />
+        </div>
+        {aMember && bMember && (
+          <InfoLine>
+            <b>{aMember.name}</b> ({aMember.fromLabel}) ↔ <b>{bMember.name}</b> ({bMember.fromLabel})
+            — كل واحد فيهم هيروح قسم التاني وشغل كل واحد هيتوزع في قسمه الأصلي مع وصول الطرف التاني.
+          </InfoLine>
+        )}
+      </ControlsCard>
+      <ErrorBox isError={isError} error={error} />
+      {sim && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <SwapHalfPanel half={sim.section_a_plan} title={`${sim.coordinator_a.name} يخرج من ${sim.coordinator_a.section.label}`}
+            subtitle={`${sim.coordinator_a.group_count} مجموعة (${sim.coordinator_a.customer_count} عميل) موزعة على ${sim.section_a_plan.member_summary.length} موظف`}
+            sectionKey={sim.coordinator_a.section.key} sourceName={sim.coordinator_a.name} />
+          <SwapHalfPanel half={sim.section_b_plan} title={`${sim.coordinator_b.name} يخرج من ${sim.coordinator_b.section.label}`}
+            subtitle={`${sim.coordinator_b.group_count} مجموعة (${sim.coordinator_b.customer_count} عميل) موزعة على ${sim.section_b_plan.member_summary.length} موظف`}
+            sectionKey={sim.coordinator_b.section.key} sourceName={sim.coordinator_b.name} />
+        </div>
+      )}
+    </>
+  );
+}
+
+function SwapHalfPanel({ half, title, subtitle, sectionKey, sourceName }) {
+  const theme = COLUMN_THEMES[sectionKey] || COLUMN_THEMES.general;
+  return (
+    <div className={`rounded-2xl bg-white shadow-sm ring-1 ${theme.ring} overflow-hidden`}>
+      <div className={`${theme.headerBg} ${theme.headerText} px-4 py-3`}>
+        <h3 className="font-bold text-base flex items-center gap-2">
+          <ArrowLeftRight className="w-4 h-4" />
+          {title}
+        </h3>
+        <p className="text-xs text-white/80 mt-0.5">{subtitle}</p>
+      </div>
+      <div className="p-3 border-b border-gray-100">
+        <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">مجموعات {sourceName} → المستلمين</div>
+        {half.assignments.length === 0 ? (
+          <p className="text-sm text-gray-400 italic text-center py-4">لا توجد مجموعات للتوزيع</p>
+        ) : (
+          <ul className="space-y-1.5 max-h-72 overflow-y-auto">
+            {half.assignments.map((a, idx) => (
+              <li key={`${a.group_name}|${idx}`} className="text-xs flex items-center justify-between gap-2 py-1 px-2 rounded hover:bg-gray-50">
+                <span className="truncate flex-1 text-gray-700" title={a.group_name}>{a.group_name}</span>
+                <span className="flex items-center gap-1 flex-shrink-0">
+                  <span className={`${theme.accent} font-semibold`}>{a.customer_count}</span>
+                  <ArrowRight className="w-3 h-3 text-gray-400" />
+                  <span className="font-bold text-gray-800">{a.recipient_name || 'غير محدد'}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className="p-3">
+        <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">قبل و بعد</div>
+        <BeforeAfterTable rows={half.member_summary.map((m) => ({
+          name: m.name + (m.is_newcomer ? ' (قادم)' : ''),
+          before_count: m.before_count,
+          after_count: m.after_count,
+          before_groups: m.before_groups,
+          after_groups: m.after_groups,
+          isNew: !!m.is_newcomer,
+        }))} delta="positive" />
+      </div>
+    </div>
+  );
+}
+
+// ─── MODE 4: Add New Coordinator ──────────────────────────────────────────────
+function AddNewMode({ sections }) {
+  const [name, setName] = useState('');
+  const [toSection, setToSection] = useState('');
+  const [type, setType] = useState('standard');
+
+  const sectionOptions = sections
+    .filter((s) => TRANSFERABLE_SECTIONS.includes(s.key))
+    .map((s) => ({ key: s.key, label: s.label }));
+
+  const { data: typesData } = useQuery({
+    queryKey: ['org-chart', 'coordinator-types'],
+    queryFn: async () => (await api.get('/org-chart/coordinator-types')).data,
+    staleTime: 60 * 60 * 1000,
+  });
+  const typeOptions = typesData?.types || [];
+
+  const { data: sim, isFetching, isError, error, refetch } = useQuery({
+    queryKey: ['sim-add-new', name, toSection, type],
+    queryFn: async () => (await api.get('/org-chart/simulate/add-new', {
+      params: { name, toSection, type },
+    })).data,
+    enabled: false,
+  });
+
+  // Adapt response to TargetPanel's expected sim shape
+  const adapted = sim ? {
+    coordinator_name: sim.newcomer.name,
+    to_section: sim.to_section,
+    target: sim.target,
+  } : null;
+
+  return (
+    <>
+      <ControlsCard>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div>
+            <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">الاسم</label>
+            <input type="text" value={name} onChange={(e) => setName(e.target.value)}
+              placeholder="موظف جديد أو موجود..."
+              className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 outline-none" />
+          </div>
+          <SelectField label="القسم" value={toSection} onChange={setToSection}
+            options={sectionOptions.map((s) => ({ value: s.key, label: s.label }))}
+            placeholder="— اختار قسم —" />
+          <SelectField label="نوع المنسق" value={type} onChange={setType}
+            options={typeOptions.map((t) => ({ value: t.code, label: `${t.label_ar} (${t.capacity_min}-${t.capacity_max})` }))} />
+          <RunButton onClick={() => refetch()} disabled={!name.trim() || !toSection || isFetching} isFetching={isFetching} />
+        </div>
+        {name && toSection && (
+          <InfoLine>
+            <b>{name}</b> هينضم لـ <b className="text-indigo-700">{sectionOptions.find((s) => s.key === toSection)?.label}</b>
+            كـ <b>{typeOptions.find((t) => t.code === type)?.label_ar || type}</b>،
+            الباقيين هيتنازلوا له عن شغل عشان يوصل لمتوسط القسم.
+          </InfoLine>
+        )}
+      </ControlsCard>
+      <ErrorBox isError={isError} error={error} />
+      {adapted && (
+        <div className="max-w-3xl mx-auto">
+          <TargetPanel sim={adapted} />
+        </div>
+      )}
+    </>
+  );
+}
+
+// ─── MODE 5: Temporary Redistribution ─────────────────────────────────────────
+function TemporaryMode({ allMembers }) {
+  const [coord, setCoord]   = useState('');
+  const [dateFrom, setFrom] = useState('');
+  const [dateTo, setTo]     = useState('');
+  const selected = allMembers.find((m) => m.name === coord) || null;
+
+  const { data: sim, isFetching, isError, error, refetch } = useQuery({
+    queryKey: ['sim-temporary', coord, dateFrom, dateTo],
+    queryFn: async () => (await api.get('/org-chart/simulate/temporary', {
+      params: { coordinator: coord, dateFrom, dateTo },
+    })).data,
+    enabled: false,
+  });
+
+  return (
+    <>
+      <ControlsCard>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <SelectField label="المنسق الغايب" value={coord} onChange={setCoord}
+            options={allMembers.map((m) => ({ value: m.name, label: `${m.name} (${m.fromLabel})` }))}
+            placeholder="— اختار منسق —" />
+          <div>
+            <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">من تاريخ</label>
+            <input type="date" value={dateFrom} onChange={(e) => setFrom(e.target.value)}
+              className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 outline-none" />
+          </div>
+          <div>
+            <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">إلى تاريخ</label>
+            <input type="date" value={dateTo} onChange={(e) => setTo(e.target.value)}
+              className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 outline-none" />
+          </div>
+          <RunButton onClick={() => refetch()} disabled={!coord || isFetching} isFetching={isFetching} />
+        </div>
+        {selected && (
+          <InfoLine>
+            <b>{selected.name}</b> هيكون متغيب من <b className="text-indigo-700">{selected.fromLabel}</b>
+            {dateFrom && dateTo ? <> ({dateFrom} → {dateTo})</> : null}
+            ، شغله المؤقت هيتوزع على الباقيين.
+          </InfoLine>
+        )}
+      </ControlsCard>
+      <ErrorBox isError={isError} error={error} />
+      {sim && (
+        <div className="max-w-3xl mx-auto space-y-3">
+          {(sim.date_from || sim.date_to) && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 text-xs text-amber-800 font-bold">
+              ⏰ توزيع مؤقت من {sim.date_from || '—'} إلى {sim.date_to || '—'}
+            </div>
+          )}
+          <SourcePanel sim={sim} />
+        </div>
+      )}
+    </>
+  );
+}
+
+// ─── MODE 6: Specific Groups ──────────────────────────────────────────────────
+function GroupsMode({ allMembers }) {
+  const [from, setFrom] = useState('');
+  const [to, setTo]     = useState('');
+  const [selectedGroups, setSelectedGroups] = useState([]);   // array of "group_name|line"
+
+  const fromMember = allMembers.find((m) => m.name === from);
+  // Possible destinations: any other coordinator (any section)
+  const toOptions = from ? allMembers.filter((m) => m.name !== from) : allMembers;
+
+  // Fetch source coordinator's groups via the existing transfer-simulation
+  // endpoint (it returns ali_current.groups for the chosen coord). We use
+  // /simulate/leave because it doesn't require a destination.
+  const { data: groupsData, refetch: refetchGroups } = useQuery({
+    queryKey: ['groups-of', from],
+    queryFn: async () => (await api.get('/org-chart/simulate/leave', { params: { coordinator: from } })).data,
+    enabled: !!from,
+  });
+  const availableGroups = groupsData?.ali_current?.groups || [];
+
+  // Reset selection when "from" changes
+  useEffect(() => { setSelectedGroups([]); }, [from]);
+
+  const toggleGroup = (g) => {
+    const key = `${g.group_name}|${g.line}`;
+    setSelectedGroups((prev) => prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]);
+  };
+
+  const { mutate: runSim, data: sim, isPending, isError, error } = useMutation({
+    mutationFn: () => api.post('/org-chart/simulate/groups', {
+      fromCoordinator: from,
+      toCoordinator:   to,
+      groups: selectedGroups.map((k) => {
+        const [gn, ln] = k.split('|');
+        return { group_name: gn, line: ln };
+      }),
+    }),
+    onSuccess: () => { /* noop, render uses sim */ },
+  });
+  const simData = sim?.data;
+
+  return (
+    <>
+      <ControlsCard>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <SelectField label="من منسق" value={from} onChange={(v) => { setFrom(v); setTo(''); }}
+            options={allMembers.map((m) => ({ value: m.name, label: `${m.name} (${m.fromLabel})` }))}
+            placeholder="— اختار منسق —" />
+          <SelectField label="إلى منسق" value={to} onChange={setTo} disabled={!from}
+            options={toOptions.map((m) => ({ value: m.name, label: `${m.name} (${m.fromLabel})` }))}
+            placeholder="— اختار منسق —" />
+          <RunButton onClick={() => runSim()} disabled={!from || !to || selectedGroups.length === 0 || isPending} isFetching={isPending} />
+        </div>
+        {fromMember && (
+          <InfoLine>
+            <b>{fromMember.name}</b> عنده <b>{availableGroups.length}</b> مجموعة — اختار اللى عاوز تنقلها
+          </InfoLine>
+        )}
+
+        {from && availableGroups.length > 0 && (
+          <div className="mt-3 border-t border-gray-100 pt-3">
+            <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2 flex items-center justify-between">
+              <span>اختار المجموعات ({selectedGroups.length} مختارة)</span>
+              <button type="button"
+                onClick={() => setSelectedGroups(
+                  selectedGroups.length === availableGroups.length
+                    ? []
+                    : availableGroups.map((g) => `${g.group_name}|${g.line}`)
+                )}
+                className="text-indigo-600 hover:underline font-bold">
+                {selectedGroups.length === availableGroups.length ? 'إلغاء الكل' : 'اختيار الكل'}
+              </button>
+            </div>
+            <div className="max-h-60 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-1">
+              {availableGroups.map((g) => {
+                const key = `${g.group_name}|${g.line}`;
+                const checked = selectedGroups.includes(key);
+                return (
+                  <label key={key} className={`flex items-center gap-2 p-2 rounded cursor-pointer text-xs ${checked ? 'bg-indigo-50 border border-indigo-200' : 'border border-gray-100 hover:bg-gray-50'}`}>
+                    <input type="checkbox" checked={checked} onChange={() => toggleGroup(g)} className="w-4 h-4 accent-indigo-500" />
+                    <span className="truncate flex-1" title={g.group_name}>{g.group_name}</span>
+                    <span className="text-gray-500 font-bold">{g.customer_count}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </ControlsCard>
+      <ErrorBox isError={isError} error={error} />
+      {simData && <GroupsResultPanel sim={simData} />}
+    </>
+  );
+}
+
+function GroupsResultPanel({ sim }) {
+  const fromTheme = COLUMN_THEMES[sim.from.section?.key] || COLUMN_THEMES.general;
+  const toTheme   = COLUMN_THEMES[sim.to.section?.key]   || COLUMN_THEMES.private;
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className={`rounded-2xl bg-white shadow-sm ring-1 ${fromTheme.ring} overflow-hidden`}>
+        <div className={`${fromTheme.headerBg} ${fromTheme.headerText} px-4 py-3`}>
+          <h3 className="font-bold text-base">{sim.from.name} (يفقد)</h3>
+          {sim.from.section && <p className="text-xs text-white/80 mt-0.5">{sim.from.section.label}</p>}
+        </div>
+        <div className="p-4">
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <BeforeAfterStat label="عملاء" before={sim.from.before.customer_count} after={sim.from.after.customer_count} />
+            <BeforeAfterStat label="مجموعات" before={sim.from.before.group_count}    after={sim.from.after.group_count} />
+          </div>
+        </div>
+      </div>
+      <div className={`rounded-2xl bg-white shadow-sm ring-1 ${toTheme.ring} overflow-hidden`}>
+        <div className={`${toTheme.headerBg} ${toTheme.headerText} px-4 py-3`}>
+          <h3 className="font-bold text-base">{sim.to.name} (يستلم)</h3>
+          {sim.to.section && <p className="text-xs text-white/80 mt-0.5">{sim.to.section.label}</p>}
+        </div>
+        <div className="p-4">
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <BeforeAfterStat label="عملاء" before={sim.to.before.customer_count} after={sim.to.after.customer_count} />
+            <BeforeAfterStat label="مجموعات" before={sim.to.before.group_count}    after={sim.to.after.group_count} />
+          </div>
+        </div>
+      </div>
+      <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-4">
+        <h4 className="text-sm font-bold text-gray-800 mb-2">المجموعات المنقولة ({sim.moved_groups.length})</h4>
+        <ul className="space-y-1 max-h-60 overflow-y-auto text-xs">
+          {sim.moved_groups.map((g, i) => (
+            <li key={`${g.group_name}|${i}`} className="flex justify-between items-center py-1 px-2 hover:bg-gray-50 rounded">
+              <span className="truncate flex-1" title={g.group_name}>{g.group_name}</span>
+              <span className="font-bold text-gray-700">{g.customer_count} عميل</span>
+            </li>
+          ))}
+        </ul>
+        {sim.missing_groups?.length > 0 && (
+          <div className="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+            ⚠️ {sim.missing_groups.length} مجموعة مش موجودة عند المنسق المصدر — اتجاهلت
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BeforeAfterStat({ label, before, after }) {
+  const diff = after - before;
+  const color = diff > 0 ? 'text-emerald-600' : diff < 0 ? 'text-red-600' : 'text-gray-500';
+  return (
+    <div className="bg-gray-50 rounded-lg p-3 text-center">
+      <p className="text-[10px] text-gray-500 font-bold">{label}</p>
+      <p className="text-lg font-black text-gray-800">{before} → {after}</p>
+      <p className={`text-xs font-bold ${color}`}>{diff > 0 ? '+' : ''}{diff}</p>
+    </div>
+  );
+}
+
+// ─── Shared UI bits used across all modes ────────────────────────────────────
+function ControlsCard({ children }) {
+  return <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 p-4 mb-4">{children}</div>;
+}
+function InfoLine({ children }) {
+  return <div className="mt-3 pt-3 border-t border-gray-100 text-xs text-gray-500">{children}</div>;
+}
+function SelectField({ label, value, onChange, options, placeholder, disabled }) {
+  return (
+    <div>
+      <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">{label}</label>
+      <div className="relative">
+        <select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled}
+          className="w-full appearance-none rounded-lg border border-gray-200 bg-white px-3 py-2 pr-8 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 outline-none disabled:bg-gray-50 disabled:text-gray-400">
+          {placeholder && <option value="">{placeholder}</option>}
+          {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+        <ChevronDown className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+      </div>
+    </div>
+  );
+}
+function RunButton({ onClick, disabled, isFetching }) {
+  return (
+    <div className="flex items-end">
+      <button type="button" onClick={onClick} disabled={disabled}
+        className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold text-sm px-4 py-2 hover:from-indigo-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all">
+        {isFetching ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+        {isFetching ? 'جاري الحساب...' : 'محاكاة'}
+      </button>
+    </div>
+  );
+}
+function ErrorBox({ isError, error }) {
+  if (!isError) return null;
+  return (
+    <div className="rounded-xl bg-red-50 border border-red-200 p-4 text-red-700 text-sm mb-4">
+      فشل المحاكاة: {error?.response?.data?.error || error?.message || 'خطأ غير معروف'}
     </div>
   );
 }
@@ -726,9 +1176,9 @@ export default function OrgChart() {
             </div>
           )}
 
-          {/* ── Bottom half: Transfer Simulator (admin only) ────────────── */}
+          {/* ── Bottom half: Simulation Hub (admin only) ─────────────────── */}
           {isAdmin && data?.sections && data.sections.length > 0 && (
-            <TransferSimulator sections={data.sections} />
+            <SimulationHub sections={data.sections} />
           )}
         </>
       )}

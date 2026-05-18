@@ -458,6 +458,335 @@ router.get('/transfer-simulation', (req, res) => {
   }
 });
 
+// ─── FLEXIBLE HELPERS for the new simulation modes ───────────────────────────
+
+// Find the section ('general'|'private'|'semi') a coordinator currently belongs
+// to inside customer_services. Returns null if the name isn't an active
+// customer_services team member or if their section isn't transferable.
+function findCoordinatorSection(name) {
+  if (!name) return null;
+  const row = db.prepare(
+    `SELECT section FROM team_members
+      WHERE status='active'
+        AND department='customer_services'
+        AND LOWER(TRIM(name)) = LOWER(TRIM(?))
+      LIMIT 1`
+  ).get(name);
+  const sec = row?.section || null;
+  return SECTION_TO_USERS_DEPT[sec] ? sec : null;
+}
+
+const SECTION_LABELS = { general: 'عام', private: 'خاص', semi: 'شبه خاص' };
+
+// Variant of planSourceRedistribution that accepts explicit starting loads.
+// Used by Swap mode where one of the recipients is the incoming counterpart
+// (who arrives WITHOUT their old section's groups → startCount/startGroups = 0).
+//
+// recipients: [{ id, name, startCount?, startGroups? }]
+//   If startCount/startGroups are undefined, the helper fetches the member's
+//   actual current load from the DB (same behavior as the legacy function).
+function planRedistributionFlexible(groups, recipients) {
+  const state = recipients.map((m) => {
+    const before_count  = (m.startCount  !== undefined) ? m.startCount  : getMemberCustomerCount(m.name);
+    const before_groups = (m.startGroups !== undefined) ? m.startGroups : getMemberBatches(m.name).length;
+    return {
+      id: m.id, name: m.name,
+      before_count, before_groups,
+      after_count: before_count, after_groups: before_groups,
+      received: [],
+      is_newcomer: m.startCount === 0 && m.startGroups === 0,
+    };
+  });
+
+  const assignments = [];
+  if (state.length === 0) {
+    groups.forEach((g) => {
+      assignments.push({ group_name: g.group_name, line: g.line, customer_count: g.customer_count, recipient_name: null });
+    });
+    return { assignments, member_summary: state };
+  }
+
+  const sorted = [...groups].sort((a, b) => b.customer_count - a.customer_count);
+  for (const g of sorted) {
+    state.sort((a, b) => a.after_count - b.after_count);
+    const recipient = state[0];
+    recipient.after_count  += g.customer_count;
+    recipient.after_groups += 1;
+    recipient.received.push({ group_name: g.group_name, line: g.line, customer_count: g.customer_count });
+    assignments.push({ group_name: g.group_name, line: g.line, customer_count: g.customer_count, recipient_name: recipient.name });
+  }
+
+  state.sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+  return { assignments, member_summary: state };
+}
+
+// ─── GET /api/org-chart/simulate/leave ───────────────────────────────────────
+// Mode 1: Coordinator exits their section. Groups are redistributed to the
+// REMAINING members of the SAME section (LPT balancing). Pure preview.
+//
+// Query: ?coordinator=Ali Hashem
+router.get('/simulate/leave', (req, res) => {
+  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'صلاحية المحاكاة للمدير فقط' });
+  const aliName = String(req.query.coordinator || '').trim();
+  if (!aliName) return res.status(400).json({ error: 'coordinator is required' });
+
+  try {
+    const section = findCoordinatorSection(aliName);
+    if (!section) {
+      return res.status(404).json({ error: `لم يتم العثور على "${aliName}" في الأقسام (عام/خاص/شبه خاص)` });
+    }
+    const aliGroups = getMemberBatches(aliName);
+    const sourceLeader = getSectionLeaderName(section);
+    const remaining = getSectionMembers(section, [aliName, sourceLeader]);
+    const source = planSourceRedistribution(aliGroups, remaining);
+
+    return res.json({
+      mode: 'leave',
+      coordinator_name: aliName,
+      from_section: { key: section, label: SECTION_LABELS[section] },
+      ali_current: {
+        customer_count: aliGroups.reduce((s, g) => s + g.customer_count, 0),
+        group_count: aliGroups.length,
+        groups: aliGroups,
+      },
+      source,  // { assignments, member_summary }
+    });
+  } catch (err) {
+    console.error('[org-chart] simulate/leave error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GET /api/org-chart/simulate/swap ────────────────────────────────────────
+// Mode 2: Two coordinators swap sections. Each one's groups are redistributed
+// in their CURRENT section, with the incoming counterpart as a new recipient
+// starting at zero load.
+//
+// Query: ?coordinatorA=...&coordinatorB=...
+router.get('/simulate/swap', (req, res) => {
+  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'صلاحية المحاكاة للمدير فقط' });
+  const aName = String(req.query.coordinatorA || '').trim();
+  const bName = String(req.query.coordinatorB || '').trim();
+  if (!aName || !bName) return res.status(400).json({ error: 'coordinatorA & coordinatorB required' });
+  if (aName.toLowerCase() === bName.toLowerCase()) return res.status(400).json({ error: 'يجب أن يكون المنسقَين مختلفَين' });
+
+  try {
+    const aSection = findCoordinatorSection(aName);
+    const bSection = findCoordinatorSection(bName);
+    if (!aSection) return res.status(404).json({ error: `لم يتم العثور على "${aName}"` });
+    if (!bSection) return res.status(404).json({ error: `لم يتم العثور على "${bName}"` });
+    if (aSection === bSection) return res.status(400).json({ error: 'المنسقان في نفس القسم — استخدم وضع آخر' });
+
+    const aGroups = getMemberBatches(aName);
+    const bGroups = getMemberBatches(bName);
+
+    const aLeader = getSectionLeaderName(aSection);
+    const bLeader = getSectionLeaderName(bSection);
+
+    // section A: remaining members + B as newcomer (zero load)
+    const aRemaining = getSectionMembers(aSection, [aName, bName, aLeader]);
+    const aMember    = db.prepare(`SELECT id, name FROM team_members
+                                    WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1`).get(bName);
+    const aRecipients = [
+      ...aRemaining,
+      ...(aMember ? [{ id: aMember.id, name: aMember.name, startCount: 0, startGroups: 0 }] : []),
+    ];
+
+    // section B: remaining members + A as newcomer (zero load)
+    const bRemaining = getSectionMembers(bSection, [aName, bName, bLeader]);
+    const bMember    = db.prepare(`SELECT id, name FROM team_members
+                                    WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1`).get(aName);
+    const bRecipients = [
+      ...bRemaining,
+      ...(bMember ? [{ id: bMember.id, name: bMember.name, startCount: 0, startGroups: 0 }] : []),
+    ];
+
+    const sectionA_plan = planRedistributionFlexible(aGroups, aRecipients);
+    const sectionB_plan = planRedistributionFlexible(bGroups, bRecipients);
+
+    return res.json({
+      mode: 'swap',
+      coordinator_a: {
+        name: aName, section: { key: aSection, label: SECTION_LABELS[aSection] },
+        customer_count: aGroups.reduce((s, g) => s + g.customer_count, 0),
+        group_count: aGroups.length, groups: aGroups,
+      },
+      coordinator_b: {
+        name: bName, section: { key: bSection, label: SECTION_LABELS[bSection] },
+        customer_count: bGroups.reduce((s, g) => s + g.customer_count, 0),
+        group_count: bGroups.length, groups: bGroups,
+      },
+      section_a_plan: sectionA_plan,  // A leaves + B arrives, distribute A's groups
+      section_b_plan: sectionB_plan,  // B leaves + A arrives, distribute B's groups
+    });
+  } catch (err) {
+    console.error('[org-chart] simulate/swap error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GET /api/org-chart/simulate/add-new ─────────────────────────────────────
+// Mode 3: New coordinator joins a section (could be a brand-new hire OR an
+// existing employee being reassigned). Existing members donate groups until
+// fair-share threshold reached. Pure preview.
+//
+// Query: ?name=Khaled&toSection=general&type=standard
+router.get('/simulate/add-new', (req, res) => {
+  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'صلاحية المحاكاة للمدير فقط' });
+  const name = String(req.query.name || '').trim();
+  const toSection = String(req.query.toSection || '').trim();
+  const coordinatorType = String(req.query.type || 'standard').trim();
+  if (!name) return res.status(400).json({ error: 'name is required' });
+  if (!SECTION_TO_USERS_DEPT[toSection]) return res.status(400).json({ error: 'invalid toSection' });
+  if (!VALID_TYPES.includes(coordinatorType)) {
+    return res.status(400).json({ error: `type must be one of ${VALID_TYPES.join(', ')}` });
+  }
+
+  try {
+    const targetLeader = getSectionLeaderName(toSection);
+    const targetMembers = getSectionMembers(toSection, [name, targetLeader]);
+    const target = planTargetRedistribution(name, targetMembers);
+    const typeCfg = COORDINATOR_TYPES[coordinatorType];
+
+    return res.json({
+      mode: 'add_new',
+      newcomer: {
+        name,
+        coordinator_type: coordinatorType,
+        coordinator_label: typeCfg.label_ar,
+        capacity_min: typeCfg.capacity_min,
+        capacity_max: typeCfg.capacity_max,
+      },
+      to_section: { key: toSection, label: SECTION_LABELS[toSection] },
+      target,  // { ali_after_count, target_per_person, ali_receives, member_summary }
+    });
+  } catch (err) {
+    console.error('[org-chart] simulate/add-new error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GET /api/org-chart/simulate/temporary ───────────────────────────────────
+// Mode 4: Temporary absence. Same redistribution logic as `/simulate/leave`
+// but echoes back the date range so the UI can show "during 16/5 → 25/5".
+// No DB writes — the dates are purely descriptive metadata for the preview.
+//
+// Query: ?coordinator=...&dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD
+router.get('/simulate/temporary', (req, res) => {
+  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'صلاحية المحاكاة للمدير فقط' });
+  const aliName  = String(req.query.coordinator || '').trim();
+  const dateFrom = String(req.query.dateFrom || '').trim() || null;
+  const dateTo   = String(req.query.dateTo   || '').trim() || null;
+  if (!aliName) return res.status(400).json({ error: 'coordinator is required' });
+
+  try {
+    const section = findCoordinatorSection(aliName);
+    if (!section) {
+      return res.status(404).json({ error: `لم يتم العثور على "${aliName}" في الأقسام (عام/خاص/شبه خاص)` });
+    }
+    const aliGroups = getMemberBatches(aliName);
+    const sourceLeader = getSectionLeaderName(section);
+    const remaining = getSectionMembers(section, [aliName, sourceLeader]);
+    const source = planSourceRedistribution(aliGroups, remaining);
+
+    return res.json({
+      mode: 'temporary',
+      coordinator_name: aliName,
+      from_section: { key: section, label: SECTION_LABELS[section] },
+      date_from: dateFrom,
+      date_to:   dateTo,
+      ali_current: {
+        customer_count: aliGroups.reduce((s, g) => s + g.customer_count, 0),
+        group_count: aliGroups.length,
+        groups: aliGroups,
+      },
+      source,
+    });
+  } catch (err) {
+    console.error('[org-chart] simulate/temporary error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /api/org-chart/simulate/groups ─────────────────────────────────────
+// Mode 5: Move a SPECIFIC SET OF GROUPS from one coordinator to another. No
+// auto-distribution — admin explicitly picks both sides.
+//
+// Body: {
+//   fromCoordinator: 'Ali Hashem',
+//   toCoordinator:   'Mostafa',
+//   groups: [ { group_name: '...', line: 'Ahmed Hassan' }, ... ]
+// }
+router.post('/simulate/groups', express.json(), (req, res) => {
+  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'صلاحية المحاكاة للمدير فقط' });
+  const fromName = String(req.body?.fromCoordinator || '').trim();
+  const toName   = String(req.body?.toCoordinator   || '').trim();
+  const selected = Array.isArray(req.body?.groups) ? req.body.groups : [];
+  if (!fromName) return res.status(400).json({ error: 'fromCoordinator is required' });
+  if (!toName)   return res.status(400).json({ error: 'toCoordinator is required' });
+  if (fromName.toLowerCase() === toName.toLowerCase()) {
+    return res.status(400).json({ error: 'fromCoordinator and toCoordinator must differ' });
+  }
+  if (selected.length === 0) return res.status(400).json({ error: 'يجب اختيار مجموعة واحدة على الأقل' });
+
+  try {
+    const fromGroups = getMemberBatches(fromName);
+    const toGroups   = getMemberBatches(toName);
+
+    // Match each selected (group_name + line) to the source's actual batches.
+    const norm = (g) => `${String(g.group_name || '').trim().toLowerCase()}|${String(g.line || '').trim().toLowerCase()}`;
+    const fromMap = new Map(fromGroups.map((g) => [norm(g), g]));
+    const moving = [];
+    const missing = [];
+    for (const sel of selected) {
+      const found = fromMap.get(norm(sel));
+      if (found) moving.push(found);
+      else       missing.push(sel);
+    }
+    if (moving.length === 0) {
+      return res.status(400).json({ error: 'لم يتم العثور على أي من المجموعات المختارة عند المنسق المصدر' });
+    }
+
+    const movingCustomers = moving.reduce((s, g) => s + g.customer_count, 0);
+    const fromBefore = fromGroups.reduce((s, g) => s + g.customer_count, 0);
+    const toBefore   = toGroups.reduce((s, g) => s + g.customer_count, 0);
+
+    const fromAfter = {
+      customer_count: fromBefore - movingCustomers,
+      group_count:    fromGroups.length - moving.length,
+    };
+    const toAfter = {
+      customer_count: toBefore + movingCustomers,
+      group_count:    toGroups.length + moving.length,
+    };
+
+    // Try to figure out each coordinator's section just for display.
+    const fromSection = findCoordinatorSection(fromName);
+    const toSection   = findCoordinatorSection(toName);
+
+    return res.json({
+      mode: 'specific_groups',
+      from: {
+        name: fromName,
+        section: fromSection ? { key: fromSection, label: SECTION_LABELS[fromSection] } : null,
+        before: { customer_count: fromBefore, group_count: fromGroups.length },
+        after:  fromAfter,
+      },
+      to: {
+        name: toName,
+        section: toSection ? { key: toSection, label: SECTION_LABELS[toSection] } : null,
+        before: { customer_count: toBefore, group_count: toGroups.length },
+        after:  toAfter,
+      },
+      moved_groups: moving,        // ones actually transferred
+      missing_groups: missing,     // selected but not currently owned by source
+    });
+  } catch (err) {
+    console.error('[org-chart] simulate/groups error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/org-chart/coordinator-types ─────────────────────────────────────
 // Returns the catalog of coordinator types + their capacity rules.
 // Used by the frontend dropdown so the labels/limits are sourced from one
