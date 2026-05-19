@@ -212,6 +212,24 @@ initDb().then(db => {
     console.error('team_members.line migration error:', e.message);
   }
 
+  // ── Backfill: education-department trainers are line-agnostic.
+  // Whenever an education trainer is still on a specific line (legacy data),
+  // promote them to 'All' so they appear in every line's view. Idempotent —
+  // re-running is a no-op once data is clean.
+  try {
+    const res = db._raw.exec(
+      `SELECT COUNT(*) FROM team_members WHERE department='education' AND line != 'All'`
+    );
+    const stale = res[0]?.values?.[0]?.[0] || 0;
+    if (stale > 0) {
+      db._raw.run(`UPDATE team_members SET line='All' WHERE department='education' AND line != 'All'`);
+      saveNow();
+      console.log(`✅ Migration: promoted ${stale} education trainer(s) to line='All'`);
+    }
+  } catch (e) {
+    console.error('education trainers line=All backfill error:', e.message);
+  }
+
   // ── team_members.coordinator_type: distinguishes "منسق" from "منسق متعدد المهام"
   //   • 'standard'   → handles students only         (capacity 80..120)
   //   • 'multi_task' → students + extra responsibilities (capacity 70..85)

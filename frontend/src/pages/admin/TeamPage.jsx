@@ -90,6 +90,7 @@ const emptyForm = {
 };
 
 const LINES = {
+  'All':          'الكل (الأكاديمية الرئيسية + دردشة)',
   'Ahmed Hassan': 'Ahmed Hassan (الأكاديمية الرئيسية)',
   'Dardasha':     'Dardasha (دردشة)',
 };
@@ -444,7 +445,15 @@ function MemberModal({ initial, onSave, onClose, loading }) {
   const [form, setForm] = useState(() => hydrateMember(initial));
   // Show shift 2 block by default if the loaded employee already has a second shift
   const [showShift2, setShowShift2] = useState(!!(initial && initial.shift2));
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const set = (k, v) => setForm(f => {
+    // Education trainers are line-agnostic — auto-force line='All' whenever
+    // the department is set to 'education'. Other departments keep manual
+    // line selection.
+    if (k === 'department' && v === 'education') {
+      return { ...f, department: v, line: 'All' };
+    }
+    return { ...f, [k]: v };
+  });
 
   const clearShift2 = () => {
     setShowShift2(false);
@@ -532,14 +541,24 @@ function MemberModal({ initial, onSave, onClose, loading }) {
             </select>
           </div>
 
-          {/* Line — splits the org chart (e.g. Private → "خاص" vs "خاص دردشة") */}
+          {/* Line — splits the org chart (e.g. Private → "خاص" vs "خاص دردشة").
+              Education trainers are line-agnostic so the field is locked to 'All'. */}
           <div>
             <label className={labelCls}>الـ Line</label>
-            <select className={inputCls} value={form.line || 'Ahmed Hassan'} onChange={e => set('line', e.target.value)}>
+            <select
+              className={inputCls}
+              value={form.line || (form.department === 'education' ? 'All' : 'Ahmed Hassan')}
+              onChange={e => set('line', e.target.value)}
+              disabled={form.department === 'education'}
+              title={form.department === 'education' ? 'مدربو الإدارة التعليمية لكل الـ Lines' : ''}
+            >
               {Object.entries(LINES).map(([key, label]) => (
                 <option key={key} value={key}>{label}</option>
               ))}
             </select>
+            {form.department === 'education' && (
+              <p className="mt-1 text-xs text-slate-500">مدربو الإدارة التعليمية متاحون لكل الـ Lines تلقائياً.</p>
+            )}
           </div>
 
           {/* Shift 1 — education only */}

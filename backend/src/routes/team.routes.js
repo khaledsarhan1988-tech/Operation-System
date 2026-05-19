@@ -124,11 +124,19 @@ function validateShiftDates(s1, s2) {
 }
 
 // ─── POST /api/team ───────────────────────────────────────────────────────────
-const VALID_LINES_TM = ['Ahmed Hassan', 'Dardasha'];
+// 'All' = trainer is line-agnostic (visible in both Ahmed Hassan & Dardasha lists).
+// Education-department trainers are line-agnostic by policy, so we force their
+// line to 'All' regardless of what the client sent.
+const VALID_LINES_TM = ['All', 'Ahmed Hassan', 'Dardasha'];
+
+function resolveTeamLine(reqBody) {
+  if (reqBody.department === 'education') return 'All';
+  return VALID_LINES_TM.includes(reqBody.line) ? reqBody.line : 'Ahmed Hassan';
+}
 
 router.post('/', (req, res) => {
   const { name, department, section, status = 'active' } = req.body;
-  const line = VALID_LINES_TM.includes(req.body.line) ? req.body.line : 'Ahmed Hassan';
+  const line = resolveTeamLine(req.body);
   const s1 = buildShiftBundle(req.body.shift,  req.body.shift_start,  req.body.shift_end,  req.body.shift_rests,  req.body.employment_type,        req.body.work_days,        req.body.shift_start_date,  req.body.shift_end_date,  req.body.voice_notes);
   const s2 = buildShiftBundle(req.body.shift2, req.body.shift2_start, req.body.shift2_end, req.body.shift2_rests, req.body.shift2_employment_type, req.body.shift2_work_days, req.body.shift2_start_date, req.body.shift2_end_date, req.body.shift2_voice_notes);
   const job_title = req.body.job_title || null;
@@ -168,7 +176,7 @@ router.post('/', (req, res) => {
 router.put('/:id', (req, res) => {
   const { id } = req.params;
   const { name, department, section, status } = req.body;
-  const line = VALID_LINES_TM.includes(req.body.line) ? req.body.line : 'Ahmed Hassan';
+  const line = resolveTeamLine(req.body);
   const s1 = buildShiftBundle(req.body.shift,  req.body.shift_start,  req.body.shift_end,  req.body.shift_rests,  req.body.employment_type,        req.body.work_days,        req.body.shift_start_date,  req.body.shift_end_date,  req.body.voice_notes);
   const s2 = buildShiftBundle(req.body.shift2, req.body.shift2_start, req.body.shift2_end, req.body.shift2_rests, req.body.shift2_employment_type, req.body.shift2_work_days, req.body.shift2_start_date, req.body.shift2_end_date, req.body.shift2_voice_notes);
   const job_title = req.body.job_title || null;

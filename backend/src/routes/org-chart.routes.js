@@ -106,9 +106,13 @@ router.get('/customer-services', (req, res) => {
     );
     // Section + line variants: callers pick the right prepared statement
     // based on whether a section / line filter applies.
+    // `line='All'` rows are line-agnostic (typically education trainers) —
+    // they must appear in every line's view, so we match either the requested
+    // line OR 'All'.
     const membersWithSectionAndLine = db.prepare(
       `SELECT id, name, job_title, coordinator_type FROM team_members
-        WHERE status='active' AND department = ? AND section = ? AND line = ?
+        WHERE status='active' AND department = ? AND section = ?
+          AND (line = ? OR line = 'All')
         ORDER BY name COLLATE NOCASE`
     );
     const membersWithSection = db.prepare(
