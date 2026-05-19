@@ -1024,6 +1024,28 @@ router.post('/:id/comments', express.json(), (req, res) => {
   }
 });
 
+// ─── POST /api/todos/admin/generate-daily ────────────────────────────────────
+// Manual trigger for the daily-instances generator. The cron runs this
+// automatically at 00:30 Cairo every night — this endpoint is a one-click
+// "fire it now" for testing or for when an admin wants to force generation
+// outside the schedule (e.g. after adding a new template late in the day).
+//
+// Super-admin only. Returns counts of templates matched / instances created.
+router.post('/admin/generate-daily', (req, res) => {
+  try {
+    const scope = userScope(req);
+    if (scope.role !== 'admin' || scope.management !== 'All') {
+      return res.status(403).json({ error: 'صلاحية للأدمن العام فقط' });
+    }
+    const dailyTodosService = require('../services/daily-todos.service');
+    const r = dailyTodosService.generateDailyInstancesForAll();
+    return res.json({ ok: true, ...r });
+  } catch (err) {
+    console.error('[todos] generate-daily error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── POST /api/todos/admin/cleanup-test-data ─────────────────────────────────
 // One-shot cleanup for clearing trial/test data before going live. The actor
 // chooses which buckets to wipe; recurring TEMPLATES are kept by default so

@@ -1495,6 +1495,61 @@ initDb().then(db => {
     }, 5000);
   }
 
+  // ─── DAILY TODOS GENERATOR CRON ──────────────────────────────────────────
+  // Pre-creates today's recurring-template instances for ALL coordinators at
+  // 00:30 Cairo every night, so the work is already waiting in their queue
+  // when they log in next morning. Without this, instances were only created
+  // on-demand when a user opened the todos page — meaning early-shift staff
+  // could find an empty list if no one had logged in before them.
+  //
+  // Env vars:
+  //   DAILY_TODOS_CRON='30 0 * * *'   — defaults to 00:30 daily
+  //   DAILY_TODOS_TZ='Africa/Cairo'   — defaults to Cairo time
+  try {
+    const cron = require('node-cron');
+    const dailyTodosService = require('./services/daily-todos.service');
+    const cronExpr = process.env.DAILY_TODOS_CRON || '30 0 * * *';
+    const tz       = process.env.DAILY_TODOS_TZ   || 'Africa/Cairo';
+
+    if (!cron.validate(cronExpr)) {
+      console.error(`Daily-todos cron: invalid expression "${cronExpr}", skipping schedule.`);
+    } else {
+      cron.schedule(cronExpr, () => {
+        try {
+          const r = dailyTodosService.generateDailyInstancesForAll();
+          if (r.created > 0) saveNow();   // persist to disk only if we wrote rows
+          console.log(
+            `📋 Daily-todos cron (${r.date}): templates=${r.total_templates} ` +
+            `matched=${r.matched} created=${r.created} skipped=${r.skipped}`
+          );
+        } catch (e) {
+          console.error('Daily-todos cron error:', e.message);
+        }
+      }, { timezone: tz });
+      console.log(`⏰ Daily-todos cron scheduled (${cronExpr}, ${tz})`);
+    }
+  } catch (e) {
+    console.error('Failed to schedule daily-todos cron:', e.message);
+  }
+
+  // ─── DAILY TODOS STARTUP CATCH-UP ────────────────────────────────────────
+  // If the server was restarting at 00:30 Cairo, the cron MISSES that fire
+  // window — node-cron does not back-fill. This guarantees today's instances
+  // exist on every startup. Idempotent: already-existing instances are skipped.
+  // Runs ~7s after boot so it doesn't slow first-request handling.
+  setTimeout(() => {
+    try {
+      const dailyTodosService = require('./services/daily-todos.service');
+      const r = dailyTodosService.generateDailyInstancesForAll();
+      if (r.created > 0) {
+        saveNow();
+        console.log(`📋 Daily-todos startup catch-up (${r.date}): created=${r.created}`);
+      }
+    } catch (e) {
+      console.error('Daily-todos startup catch-up error:', e.message);
+    }
+  }, 7000);
+
   // Graceful shutdown
   process.on('SIGTERM', () => { db.close(); process.exit(0); });
   process.on('SIGINT',  () => { db.close(); process.exit(0); });
