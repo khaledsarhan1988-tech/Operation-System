@@ -15,11 +15,20 @@ const PRIORITY_CFG = {
   low:    { label: 'منخفض', emoji: '⚪', cls: 'border-gray-300 bg-gray-50',    dot: 'bg-gray-400' },
 };
 
+// COLUMNS — Kanban swim-lanes.
+//
+// "missed" is a VIRTUAL column: it isn't a real status value. Tasks land here
+// purely because their effective_end < today AND they're still open. Dropping
+// INTO this column is a no-op (handled in onDrop) — to "resolve" a missed
+// task the user drags it to in_progress/completed, or completes via the modal.
+//
+// "on_hold" status is folded into "in_progress" visually so paused work
+// still has a home; "cancelled" rows are hidden entirely.
 const COLUMNS = [
-  { key: 'new',         label: 'جديدة',       icon: '📥', accent: 'border-blue-400 bg-blue-50/40' },
-  { key: 'in_progress', label: 'قيد التنفيذ', icon: '🔄', accent: 'border-amber-400 bg-amber-50/40' },
-  { key: 'on_hold',     label: 'معلّقة',      icon: '⏸️', accent: 'border-gray-400 bg-gray-50/40' },
-  { key: 'completed',   label: 'مكتملة',      icon: '✅', accent: 'border-emerald-400 bg-emerald-50/40' },
+  { key: 'new',         label: 'جديدة',           icon: '📥', accent: 'border-blue-400 bg-blue-50/40'   },
+  { key: 'in_progress', label: 'قيد التنفيذ',     icon: '🔄', accent: 'border-amber-400 bg-amber-50/40' },
+  { key: 'missed',      label: 'لم يتم إنجازها', icon: '⚠️', accent: 'border-red-400 bg-red-50/40'     },
+  { key: 'completed',   label: 'مكتملة',          icon: '✅', accent: 'border-emerald-400 bg-emerald-50/40' },
 ];
 
 function todayStr() {
@@ -83,8 +92,18 @@ export default function LeaderTodos() {
   );
   const byColumn = useMemo(() => {
     const map = Object.fromEntries(COLUMNS.map(c => [c.key, []]));
+    const today = todayStr();
     kanbanTodos.forEach(t => {
-      const col = t.status === 'cancelled' ? 'on_hold' : t.status;
+      // "missed" wins over the actual status: any open daily task whose
+      // effective_end is in the past gets shown here so the leader can act.
+      const effectiveEnd = t.due_date_end || t.due_date;
+      const isMissed = effectiveEnd && effectiveEnd < today
+                       && t.status !== 'completed' && t.status !== 'cancelled';
+      let col;
+      if (isMissed)                        col = 'missed';
+      else if (t.status === 'cancelled')   return;            // hide cancelled
+      else if (t.status === 'on_hold')     col = 'in_progress'; // paused → folded into active
+      else                                 col = t.status;
       if (map[col]) map[col].push(t);
     });
     return map;
@@ -97,6 +116,10 @@ export default function LeaderTodos() {
   function onDragOver(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }
   function onDrop(e, status) {
     e.preventDefault();
+    // "missed" is a virtual/filter column, not a real status — dropping cards
+    // here has no meaning. To "fix" a missed task the user drags it to
+    // in_progress or completed (or marks it done from the modal).
+    if (status === 'missed') return;
     const id = e.dataTransfer.getData('todo-id');
     const todo = kanbanTodos.find(t => String(t.id) === id);
     if (!todo || todo.status === status) return;
@@ -294,26 +317,33 @@ function ExtraTasksSection({ todos, onCardClick, onEdit }) {
 
   if (extras.length === 0) {
     return (
-      <div className="bg-white rounded-2xl shadow-sm border border-purple-200 p-3">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-3">
         <div className="flex items-center gap-2">
-          <Zap size={16} className="text-purple-600" />
+          <span className="w-1 h-5 bg-purple-500 rounded-full"></span>
+          <Zap size={16} className="text-purple-500" />
           <h3 className="font-bold text-gray-800 text-sm">المهام الإضافية (غير اليومية)</h3>
-          <span className="mr-auto text-[10px] text-gray-400">لا توجد مهام إضافية حالياً</span>
+          <span className="mr-auto text-[10px] text-gray-500">لا توجد مهام إضافية حالياً</span>
         </div>
       </div>
     );
   }
 
+  // NOTE: outer uses `bg-white` (auto dark-mode mapped via globals.css to
+  // #111827). Old gradient `from-purple-50 to-indigo-50` had no dark override
+  // and looked invisible in dark mode. Purple accent now comes from a left
+  // border bar + colored title text, both of which read in both themes.
   return (
-    <div className="bg-gradient-to-br from-purple-50 to-indigo-50 rounded-2xl shadow-sm border border-purple-200 p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <Zap size={16} className="text-purple-600" />
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 relative overflow-hidden">
+      {/* Accent strip on the right edge (RTL) */}
+      <div className="absolute top-0 right-0 bottom-0 w-1.5 bg-gradient-to-b from-purple-500 to-indigo-500"></div>
+      <div className="flex items-center gap-2 mb-3 pr-2">
+        <Zap size={18} className="text-purple-500" />
         <h3 className="font-bold text-gray-800 text-sm">المهام الإضافية (غير اليومية)</h3>
-        <span className="text-[10px] bg-purple-100 text-purple-700 font-bold px-2 py-0.5 rounded-full">
+        <span className="text-[11px] bg-purple-100 text-purple-700 font-bold px-2.5 py-1 rounded-full border border-purple-200">
           {openExtras.length} مفتوحة
         </span>
         {doneExtras.length > 0 && (
-          <span className="text-[10px] bg-emerald-100 text-emerald-700 font-bold px-2 py-0.5 rounded-full">
+          <span className="text-[11px] bg-emerald-100 text-emerald-700 font-bold px-2.5 py-1 rounded-full border border-emerald-200">
             {doneExtras.length} مكتملة
           </span>
         )}
@@ -341,10 +371,19 @@ function ExtraCard({ todo, onClick, onEdit }) {
     completed:   { label: 'مكتملة',      cls: 'bg-emerald-100 text-emerald-700' },
     cancelled:   { label: 'ملغاة',       cls: 'bg-red-100 text-red-700' },
   }[todo.status] || { label: todo.status, cls: 'bg-gray-100 text-gray-700' };
+  // Border-only priority styling (no light bg fill — that has no dark-mode
+  // override and looked invisible). The colored side-bar (dot) gives the
+  // priority hint visually.
+  const priorityBorder = {
+    urgent: 'border-red-400',
+    high:   'border-orange-400',
+    normal: 'border-blue-300',
+    low:    'border-gray-300',
+  }[todo.priority] || 'border-gray-200';
   return (
     <div
       onClick={onClick}
-      className={`bg-white rounded-lg border-2 ${p.cls} ${overdue ? 'ring-2 ring-red-300' : ''} p-2.5 cursor-pointer hover:shadow-md transition group`}
+      className={`bg-white rounded-lg border-2 ${priorityBorder} ${overdue ? 'ring-2 ring-red-400' : ''} p-2.5 cursor-pointer hover:shadow-md transition group`}
     >
       <div className="flex items-start gap-2">
         <span className={`w-1 self-stretch ${p.dot} rounded-full flex-shrink-0`}></span>
