@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Plus, Eye, EyeOff, Pencil, Trash2, ToggleLeft, ToggleRight, UserCog, Paperclip } from 'lucide-react';
+import { Plus, Eye, EyeOff, Pencil, Trash2, ToggleLeft, ToggleRight, UserCog, Paperclip, History } from 'lucide-react';
 import api from '../../api/axios';
 import DataTable from '../../components/ui/DataTable';
 import Modal from '../../components/ui/Modal';
@@ -169,6 +169,7 @@ export default function UserManagement() {
   const [deletingId, setDeletingId] = useState(null);
   const [togglingId, setTogglingId] = useState(null);
   const [avatarTarget, setAvatarTarget] = useState(null);
+  const [historyUser, setHistoryUser] = useState(null);
   const isAdmin = currentUser?.role === 'admin';
 
   const { data: users, isLoading } = useQuery({
@@ -259,6 +260,15 @@ export default function UserManagement() {
           >
             <Pencil size={15} />
           </button>
+          {isAdmin && (
+            <button
+              onClick={e => { e.stopPropagation(); setHistoryUser(row); }}
+              className="p-1.5 rounded-lg hover:bg-violet-100 text-violet-600 transition-colors"
+              title="سجل تنقلات الأقسام"
+            >
+              <History size={15} />
+            </button>
+          )}
           <button
             onClick={e => { e.stopPropagation(); handleDelete(row); }}
             disabled={deletingId === row.id}
@@ -323,6 +333,221 @@ export default function UserManagement() {
           }}
         />
       )}
+
+      {/* ── Dept history modal ── */}
+      {historyUser && (
+        <DeptHistoryModal
+          user={historyUser}
+          onClose={() => setHistoryUser(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── DEPT HISTORY MODAL ──────────────────────────────────────────────────────
+function DeptHistoryModal({ user, onClose }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(null); // null | 'new' | rowId
+  const [form, setForm] = useState({ department: '', effective_from: '', effective_to: '' });
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['dept-history', user.id],
+    queryFn: () => api.get(`/admin/users/${user.id}/dept-history`).then(r => r.data),
+  });
+  const rows = data?.history || [];
+
+  const saveMutation = useMutation({
+    mutationFn: (payload) => {
+      if (editing === 'new') {
+        return api.post(`/admin/users/${user.id}/dept-history`, payload).then(r => r.data);
+      }
+      return api.put(`/admin/dept-history/${editing}`, payload).then(r => r.data);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries(['dept-history', user.id]);
+      setEditing(null);
+      setForm({ department: '', effective_from: '', effective_to: '' });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (rid) => api.delete(`/admin/dept-history/${rid}`).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries(['dept-history', user.id]),
+  });
+
+  const startEdit = (row) => {
+    setEditing(row.id);
+    setForm({
+      department: row.department,
+      effective_from: (row.effective_from || '').slice(0, 10),
+      effective_to:   (row.effective_to || '').slice(0, 10),
+    });
+  };
+  const startNew = () => {
+    setEditing('new');
+    setForm({ department: 'Private', effective_from: '', effective_to: '' });
+  };
+  const handleSave = () => {
+    if (!form.department || !form.effective_from) {
+      alert('القسم وتاريخ البداية مطلوبين');
+      return;
+    }
+    saveMutation.mutate({
+      department: form.department,
+      effective_from: form.effective_from,
+      effective_to: form.effective_to || null,
+    });
+  };
+
+  const inputCls = 'border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30';
+  const DEPTS_OPTS = ['General', 'Private', 'Semi'];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" dir="rtl">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-violet-50/40">
+          <div className="flex items-center gap-3">
+            <div className="bg-violet-500 w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm">
+              <History size={18} />
+            </div>
+            <div>
+              <div className="text-sm font-bold text-gray-900">سجل تنقلات الأقسام</div>
+              <div className="text-[11px] text-gray-500 mt-0.5">المستخدم: <span className="font-semibold">{user.full_name}</span></div>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-white/60 rounded-lg">
+            <span className="text-lg">×</span>
+          </button>
+        </div>
+
+        {/* Info note */}
+        <div className="px-5 py-2 bg-amber-50/40 border-b border-amber-100 text-[11px] text-amber-800">
+          💡 سجل التنقلات بيستخدمه نظام تقارير الحضور والغياب لاحتساب نسب الغياب
+          حسب قسم المنسق وقت كل غياب. ابدأ بأقدم سجل واتركها متتالية.
+        </div>
+
+        {/* Body */}
+        <div className="p-4 overflow-y-auto flex-1 space-y-3">
+          {isLoading ? (
+            <div className="space-y-2">
+              {[1,2,3].map(i => <div key={i} className="h-14 bg-gray-100 animate-pulse rounded-xl" />)}
+            </div>
+          ) : (
+            <>
+              {rows.length === 0 && editing !== 'new' && (
+                <div className="text-center py-8 text-sm text-gray-400">
+                  مفيش سجلات
+                </div>
+              )}
+              {rows.map(r => (
+                <div key={r.id} className="border border-gray-200 rounded-xl p-3">
+                  {editing === r.id ? (
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-600 mb-1">القسم</label>
+                          <select className={inputCls + ' w-full'} value={form.department} onChange={e => setForm({...form, department: e.target.value})}>
+                            {DEPTS_OPTS.map(d => <option key={d} value={d}>{d}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-600 mb-1">من تاريخ</label>
+                          <input type="date" className={inputCls + ' w-full'} value={form.effective_from} onChange={e => setForm({...form, effective_from: e.target.value})} />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-600 mb-1">إلى (فاضي = لسه)</label>
+                          <input type="date" className={inputCls + ' w-full'} value={form.effective_to} onChange={e => setForm({...form, effective_to: e.target.value})} />
+                        </div>
+                      </div>
+                      <div className="flex gap-2 justify-end">
+                        <button onClick={() => setEditing(null)} className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-gray-100 hover:bg-gray-200">
+                          إلغاء
+                        </button>
+                        <button onClick={handleSave} disabled={saveMutation.isPending} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
+                          حفظ
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-3">
+                      <span className={`text-xs px-2.5 py-1 rounded-full font-bold border ${
+                        r.department === 'Private' ? 'bg-violet-50 text-violet-700 border-violet-200'
+                        : r.department === 'Semi' ? 'bg-amber-50 text-amber-700 border-amber-200'
+                        : 'bg-sky-50 text-sky-700 border-sky-200'
+                      }`}>
+                        {r.department}
+                      </span>
+                      <span className="text-xs text-gray-600 font-mono" dir="ltr">
+                        {(r.effective_from || '').slice(0, 10)} → {(r.effective_to || '').slice(0, 10) || 'لسه'}
+                      </span>
+                      {!r.effective_to && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-bold">حالي</span>
+                      )}
+                      <div className="ms-auto flex gap-1">
+                        <button onClick={() => startEdit(r)} className="p-1.5 rounded-lg hover:bg-blue-50 text-blue-600">
+                          <Pencil size={13} />
+                        </button>
+                        <button onClick={() => { if (confirm('حذف السجل ده؟')) deleteMutation.mutate(r.id); }} className="p-1.5 rounded-lg hover:bg-rose-50 text-rose-600">
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {/* New record form */}
+              {editing === 'new' && (
+                <div className="border-2 border-dashed border-blue-300 rounded-xl p-3 bg-blue-50/40 space-y-2">
+                  <div className="text-xs font-bold text-blue-700 mb-1">سجل جديد</div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-600 mb-1">القسم</label>
+                      <select className={inputCls + ' w-full'} value={form.department} onChange={e => setForm({...form, department: e.target.value})}>
+                        {DEPTS_OPTS.map(d => <option key={d} value={d}>{d}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-600 mb-1">من تاريخ *</label>
+                      <input type="date" className={inputCls + ' w-full'} value={form.effective_from} onChange={e => setForm({...form, effective_from: e.target.value})} />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-600 mb-1">إلى (فاضي = لسه)</label>
+                      <input type="date" className={inputCls + ' w-full'} value={form.effective_to} onChange={e => setForm({...form, effective_to: e.target.value})} />
+                    </div>
+                  </div>
+                  <div className="flex gap-2 justify-end">
+                    <button onClick={() => setEditing(null)} className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-gray-100 hover:bg-gray-200">
+                      إلغاء
+                    </button>
+                    <button onClick={handleSave} disabled={saveMutation.isPending} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
+                      حفظ
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {editing !== 'new' && (
+                <button
+                  onClick={startNew}
+                  className="w-full py-2.5 rounded-xl border-2 border-dashed border-gray-300 text-xs font-bold text-gray-500 hover:bg-gray-50 hover:border-blue-400 hover:text-blue-600 transition-all"
+                >
+                  + إضافة سجل تنقل جديد
+                </button>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-3 bg-gray-50 border-t border-gray-100">
+          <button onClick={onClose} className="w-full py-2 rounded-xl bg-gray-200 hover:bg-gray-300 text-sm font-semibold text-gray-700">
+            إغلاق
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

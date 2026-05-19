@@ -131,6 +131,91 @@ router.put('/users/:id', (req, res) => {
   return res.json(updated);
 });
 
+// ─── DEPT HISTORY: CRUD for user_department_history ──────────────────────────
+// Used by the admin UI to manually backfill historical department transitions
+// (e.g. when a user moved between depts BEFORE the system started tracking).
+// All endpoints are admin-only via the parent router.
+
+// GET /api/admin/users/:id/dept-history — list all history records, newest first
+router.get('/users/:id/dept-history', (req, res) => {
+  const { id } = req.params;
+  const user = db.prepare('SELECT id, full_name FROM users WHERE id = ?').get(id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  try {
+    const rows = db.prepare(
+      `SELECT id, user_id, user_name, department, effective_from, effective_to, detected_at
+         FROM user_department_history
+        WHERE user_id = ?
+        ORDER BY DATE(effective_from) DESC, id DESC`
+    ).all(id);
+    return res.json({ user: { id: user.id, full_name: user.full_name }, history: rows });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/users/:id/dept-history — add a new history record
+router.post('/users/:id/dept-history', (req, res) => {
+  const { id } = req.params;
+  const { department, effective_from, effective_to } = req.body;
+  const user = db.prepare('SELECT id, full_name FROM users WHERE id = ?').get(id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (!department || !effective_from) {
+    return res.status(400).json({ error: 'department و effective_from مطلوبين' });
+  }
+  if (effective_to && effective_to <= effective_from) {
+    return res.status(400).json({ error: 'effective_to يجب أن يكون بعد effective_from' });
+  }
+  try {
+    const r = db.prepare(
+      `INSERT INTO user_department_history (user_id, user_name, department, effective_from, effective_to)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run(id, user.full_name, department, effective_from, effective_to || null);
+    const created = db.prepare(`SELECT * FROM user_department_history WHERE id = ?`).get(r.lastInsertRowid);
+    return res.status(201).json(created);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/admin/dept-history/:rid — edit a history record
+router.put('/dept-history/:rid', (req, res) => {
+  const { rid } = req.params;
+  const { department, effective_from, effective_to } = req.body;
+  const row = db.prepare(`SELECT * FROM user_department_history WHERE id = ?`).get(rid);
+  if (!row) return res.status(404).json({ error: 'History record not found' });
+  const newFrom = effective_from || row.effective_from;
+  const newTo   = effective_to === undefined ? row.effective_to : (effective_to || null);
+  if (newTo && newTo <= newFrom) {
+    return res.status(400).json({ error: 'effective_to يجب أن يكون بعد effective_from' });
+  }
+  const newDept = department || row.department;
+  try {
+    db.prepare(
+      `UPDATE user_department_history
+          SET department = ?, effective_from = ?, effective_to = ?
+        WHERE id = ?`
+    ).run(newDept, newFrom, newTo, rid);
+    const updated = db.prepare(`SELECT * FROM user_department_history WHERE id = ?`).get(rid);
+    return res.json(updated);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/admin/dept-history/:rid — remove a history record
+router.delete('/dept-history/:rid', (req, res) => {
+  const { rid } = req.params;
+  const row = db.prepare(`SELECT id FROM user_department_history WHERE id = ?`).get(rid);
+  if (!row) return res.status(404).json({ error: 'History record not found' });
+  try {
+    db.prepare(`DELETE FROM user_department_history WHERE id = ?`).run(rid);
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // PATCH /api/admin/users/:id/status — toggle active/inactive
 router.patch('/users/:id/status', (req, res) => {
   const { id } = req.params;
