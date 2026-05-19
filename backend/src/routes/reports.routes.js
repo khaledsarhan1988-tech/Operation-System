@@ -4217,16 +4217,29 @@ router.get('/attendance-absence', (req, res) => {
   const lineL = buildLineFilter('l', line);
   const lineA = buildLineFilter('a', line);
 
-  // Role-based dept filter (applied to both 'b' and 'b2' batches aliases)
+  // Role-based dept filter (applied to both 'b' and 'b2' batches aliases).
+  // For attendance-absence specifically we use a dept_type-only filter for
+  // admins/leaders. This is intentional and differs from buildDeptFilter:
+  // the OR-based filter would exclude groups whose current coordinator
+  // belongs to a different dept (e.g. Hanaa moved from Private to General →
+  // her Private group's data would vanish from the Private report). With
+  // dept_type-only, the GROUP's classification is the source of truth, and
+  // historical coordinators surface naturally via coordinator_history in the
+  // dateAwareCoord aggregation.
   let deptFilterB = '', deptFilterB2 = '';
   let coordFilterB = buildCoordFilter('b', coordinator);
   let coordFilterB2 = buildCoordFilter('b2', coordinator);
+  function deptTypeOnlyFilter(alias, dept) {
+    if (!dept || dept === 'All') return '';
+    const s = String(dept).replace(/'/g, "''");
+    return ` AND ${alias}.dept_type = '${s}'`;
+  }
   if (req.user?.role === 'leader') {
-    deptFilterB  = buildStrictDeptFilter('b',  req.user.department);
-    deptFilterB2 = buildStrictDeptFilter('b2', req.user.department);
+    deptFilterB  = deptTypeOnlyFilter('b',  req.user.department);
+    deptFilterB2 = deptTypeOnlyFilter('b2', req.user.department);
   } else if (req.user?.role === 'admin') {
-    deptFilterB  = buildDeptFilter('b',  req.query.department);
-    deptFilterB2 = buildDeptFilter('b2', req.query.department);
+    deptFilterB  = deptTypeOnlyFilter('b',  req.query.department);
+    deptFilterB2 = deptTypeOnlyFilter('b2', req.query.department);
   } else if (req.user?.role === 'agent') {
     coordFilterB  = buildCoordFilter('b',  req.user.full_name);
     coordFilterB2 = buildCoordFilter('b2', req.user.full_name);
