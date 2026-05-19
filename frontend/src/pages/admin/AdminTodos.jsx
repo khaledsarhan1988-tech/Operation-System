@@ -55,6 +55,7 @@ export default function AdminTodos() {
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(null);
   const [showWorkflow, setShowWorkflow] = useState(false);
+  const [showCleanup, setShowCleanup] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'monitoring'
   const qc = useQueryClient();
 
@@ -217,6 +218,23 @@ export default function AdminTodos() {
           </div>
           <ChevronDown size={18} className="text-orange-500 group-hover:translate-x-1 transition" />
         </div>
+      </button>
+
+      {/* Cleanup test data — collapsed danger-zone strip */}
+      <button
+        onClick={() => setShowCleanup(true)}
+        className="w-full bg-white border border-red-200 rounded-2xl px-4 py-2.5 hover:bg-red-50 transition group text-right flex items-center gap-3"
+      >
+        <div className="p-2 rounded-lg bg-red-100 text-red-700">
+          <Trash2 size={16} />
+        </div>
+        <div className="flex-1">
+          <h3 className="font-bold text-red-700 text-sm">مسح بيانات التجربة</h3>
+          <p className="text-[11px] text-gray-500 mt-0.5">
+            امسح المهام اليومية والإضافية اللى ضفتها أثناء التجربة (يحتفظ بالقوالب — Snapshot أمان تلقائي قبل المسح)
+          </p>
+        </div>
+        <ChevronDown size={16} className="text-red-400 group-hover:translate-x-1 transition" />
       </button>
 
       {/* Stats */}
@@ -502,6 +520,12 @@ export default function AdminTodos() {
           users={usersData?.users || []}
           onClose={() => setShowWorkflow(false)}
           onApplied={() => { qc.invalidateQueries({ queryKey: ['todos'] }); }}
+        />
+      )}
+      {showCleanup && (
+        <CleanupTestDataModal
+          onClose={() => setShowCleanup(false)}
+          onDone={() => { qc.invalidateQueries({ queryKey: ['todos'] }); setShowCleanup(false); }}
         />
       )}
     </div>
@@ -1162,6 +1186,163 @@ function TodoDetailModal({ id, onClose, onEdit, onDeleted }) {
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── CLEANUP TEST DATA MODAL ──────────────────────────────────────────────────
+// Super-admin-only. Wraps POST /api/todos/admin/cleanup-test-data. Forces the
+// admin to type a confirmation phrase and to opt-in to each bucket explicitly.
+// The backend snapshots all rows + comments before deleting anything, so any
+// over-deletion can be restored from /data/todos_cleanup_backup_*.json.
+function CleanupTestDataModal({ onClose, onDone }) {
+  const [deleteInstances, setDeleteInstances] = useState(true);
+  const [deleteExtras,    setDeleteExtras]    = useState(true);
+  const [deleteTemplates, setDeleteTemplates] = useState(false);
+  const [confirmText,     setConfirmText]     = useState('');
+  const [result,          setResult]          = useState(null);
+  const [submitting,      setSubmitting]      = useState(false);
+  const [error,           setError]           = useState(null);
+
+  const canSubmit = confirmText === 'مسح' && (deleteInstances || deleteExtras || deleteTemplates);
+
+  async function execute() {
+    setSubmitting(true); setError(null);
+    try {
+      const res = await api.post('/todos/admin/cleanup-test-data', {
+        confirm: 'DELETE_TEST_DATA',
+        delete_instances: deleteInstances,
+        delete_extras:    deleteExtras,
+        delete_templates: deleteTemplates,
+      });
+      setResult(res.data);
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+    } finally { setSubmitting(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-4 bg-gradient-to-r from-red-50 to-orange-50 border-b border-red-100 flex items-center justify-between">
+          <h3 className="font-bold text-red-700 text-base flex items-center gap-2">
+            <Trash2 size={18} />
+            مسح بيانات التجربة
+          </h3>
+          <button onClick={onClose} className="p-1.5 hover:bg-white rounded-lg"><X size={18} /></button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          {/* Result panel (post-cleanup) */}
+          {result ? (
+            <div className="space-y-3">
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+                <p className="text-sm font-bold text-emerald-800 mb-1">
+                  ✅ تم المسح بنجاح
+                </p>
+                <p className="text-xs text-emerald-700">
+                  إجمالي اللى اتمسح: <b>{result.total_deleted}</b> صف
+                </p>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div className="bg-gray-50 rounded p-2 text-center">
+                  <p className="text-gray-500">مهام يومية</p>
+                  <p className="font-black text-gray-800">{result.deleted?.daily_instances || 0}</p>
+                </div>
+                <div className="bg-gray-50 rounded p-2 text-center">
+                  <p className="text-gray-500">مهام إضافية</p>
+                  <p className="font-black text-gray-800">{result.deleted?.extra_tasks || 0}</p>
+                </div>
+                <div className="bg-gray-50 rounded p-2 text-center">
+                  <p className="text-gray-500">قوالب</p>
+                  <p className="font-black text-gray-800">{result.deleted?.templates || 0}</p>
+                </div>
+              </div>
+              <div className="p-2 bg-blue-50 border border-blue-200 rounded text-[11px] text-blue-700">
+                💾 نسخة احتياطية محفوظة في: <code className="font-mono text-[10px]">{result.backup_dir}/{result.backup_file}</code>
+              </div>
+              <div className="p-2 bg-gray-50 border border-gray-200 rounded text-[11px]">
+                <p className="font-bold text-gray-700 mb-1">المتبقي في النظام:</p>
+                <p className="text-gray-600">
+                  <b>{result.remaining?.templates || 0}</b> قالب يومي • <b>{result.remaining?.instances || 0}</b> instance • <b>{result.remaining?.extras || 0}</b> إضافية
+                </p>
+              </div>
+              <button onClick={onDone}
+                className="w-full py-2.5 rounded-lg bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white font-bold text-sm">
+                تمام، إقفل
+              </button>
+            </div>
+          ) : (
+            <>
+              {error && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                  {error}
+                </div>
+              )}
+
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+                ⚠️ هذه عملية حذف. السيستم بيعمل snapshot تلقائي قبل الحذف ويحفظه في
+                مجلد البيانات على السيرفر، فأي حذف غلط ممكن نرجّعه يدوياً.
+              </div>
+
+              <div className="space-y-2">
+                <label className={`flex items-start gap-2 p-3 rounded-lg border cursor-pointer ${deleteInstances ? 'border-violet-300 bg-violet-50/50' : 'border-gray-200 bg-white hover:bg-gray-50'}`}>
+                  <input type="checkbox" checked={deleteInstances} onChange={e => setDeleteInstances(e.target.checked)}
+                    className="w-4 h-4 mt-0.5 accent-violet-500" />
+                  <div className="flex-1">
+                    <p className="text-sm font-bold text-gray-800">المهام اليومية المتولّدة (instances)</p>
+                    <p className="text-[11px] text-gray-500 mt-0.5">
+                      كل النسخ اللى اتولّدت من القوالب أثناء التجربة (الـ 11 مهمة × كل موظف × أيام التجربة)
+                    </p>
+                  </div>
+                </label>
+
+                <label className={`flex items-start gap-2 p-3 rounded-lg border cursor-pointer ${deleteExtras ? 'border-purple-300 bg-purple-50/50' : 'border-gray-200 bg-white hover:bg-gray-50'}`}>
+                  <input type="checkbox" checked={deleteExtras} onChange={e => setDeleteExtras(e.target.checked)}
+                    className="w-4 h-4 mt-0.5 accent-purple-500" />
+                  <div className="flex-1">
+                    <p className="text-sm font-bold text-gray-800">المهام الإضافية (one-off)</p>
+                    <p className="text-[11px] text-gray-500 mt-0.5">
+                      المهام اللى ضفتها يدوياً (زي المهمة الإضافية بتاعت Shrouk Gamal)
+                    </p>
+                  </div>
+                </label>
+
+                <label className={`flex items-start gap-2 p-3 rounded-lg border cursor-pointer ${deleteTemplates ? 'border-red-300 bg-red-50' : 'border-gray-200 bg-white hover:bg-gray-50'}`}>
+                  <input type="checkbox" checked={deleteTemplates} onChange={e => setDeleteTemplates(e.target.checked)}
+                    className="w-4 h-4 mt-0.5 accent-red-500" />
+                  <div className="flex-1">
+                    <p className="text-sm font-bold text-red-700">⚠️ القوالب المتكررة (11 مهمة يومية)</p>
+                    <p className="text-[11px] text-red-600 mt-0.5">
+                      مش مفضل! لو شيلتها هتحتاج تعيد إنشاء جدول الأعمال اليومي من جديد.
+                    </p>
+                  </div>
+                </label>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-600 mb-1.5">
+                  للتأكيد، اكتب كلمة <span className="text-red-600">مسح</span> في الخانة دي:
+                </label>
+                <input type="text" value={confirmText} onChange={e => setConfirmText(e.target.value)}
+                  placeholder="مسح"
+                  className="w-full px-3 py-2 rounded-lg border-2 border-gray-300 text-sm focus:border-red-400 focus:ring-2 focus:ring-red-100 outline-none" />
+              </div>
+            </>
+          )}
+        </div>
+
+        {!result && (
+          <div className="px-5 py-3 bg-gray-50 border-t flex justify-end gap-2">
+            <button onClick={onClose} className="px-4 py-1.5 rounded-lg border border-gray-300 text-sm hover:bg-gray-100">إلغاء</button>
+            <button onClick={execute} disabled={!canSubmit || submitting}
+              className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-red-500 to-rose-600 text-white text-sm font-bold disabled:opacity-50 inline-flex items-center gap-1.5">
+              <Trash2 size={14} />
+              {submitting ? 'جاري المسح...' : 'تنفيذ المسح'}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

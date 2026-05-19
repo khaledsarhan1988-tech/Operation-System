@@ -1,5 +1,7 @@
 'use strict';
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const db = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 
@@ -987,6 +989,137 @@ router.post('/:id/comments', express.json(), (req, res) => {
     return res.status(201).json({ comment });
   } catch (err) {
     console.error('[todos] comment error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /api/todos/admin/cleanup-test-data ─────────────────────────────────
+// One-shot cleanup for clearing trial/test data before going live. The actor
+// chooses which buckets to wipe; recurring TEMPLATES are kept by default so
+// the daily generator keeps producing instances tomorrow without re-setup.
+//
+// SAFETY:
+//   1. Restricted to super-admin (role='admin' AND management='All').
+//   2. Body must include  confirm: 'DELETE_TEST_DATA'  — guards against
+//      accidental triggers from misconfigured clients.
+//   3. ALWAYS snapshots the affected rows + their comments to a JSON file
+//      on the persistent volume (next to the DB). Restore is a single
+//      INSERT-from-JSON away if anything important was hit.
+//
+// Body:
+//   {
+//     confirm: 'DELETE_TEST_DATA',     // required
+//     delete_instances: boolean,        // default true  — daily workflow instances
+//     delete_extras:    boolean,        // default true  — one-off manual tasks
+//     delete_templates: boolean,        // default false — the recurring templates
+//   }
+router.post('/admin/cleanup-test-data', express.json(), (req, res) => {
+  try {
+    const scope = userScope(req);
+    if (scope.role !== 'admin' || scope.management !== 'All') {
+      return res.status(403).json({
+        error: 'الصلاحية مقصورة على مدير النظام (Super Admin) فقط',
+      });
+    }
+    if ((req.body || {}).confirm !== 'DELETE_TEST_DATA') {
+      return res.status(400).json({
+        error: 'يجب إرسال confirm = "DELETE_TEST_DATA" في الـ body للتأكيد',
+      });
+    }
+    const deleteInstances = req.body.delete_instances !== false;  // default true
+    const deleteExtras    = req.body.delete_extras    !== false;  // default true
+    const deleteTemplates = req.body.delete_templates === true;   // default false
+
+    // ── 1. Snapshot to JSON (atomic write to .tmp then rename) ─────────────
+    const dbPath = process.env.DB_PATH || path.join(__dirname, '../../data/academy.db');
+    const backupDir = path.dirname(dbPath);
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupName = `todos_cleanup_backup_${ts}.json`;
+    const backupPath = path.join(backupDir, backupName);
+
+    let backupOK = false;
+    let backupError = null;
+    try {
+      const allTodos = db.prepare(`SELECT * FROM todos`).all();
+      const allComments = db.prepare(`SELECT * FROM todo_comments`).all();
+      const snapshot = {
+        version: 1,
+        snapshot_at: new Date().toISOString(),
+        actor: { id: scope.id, name: scope.fullName },
+        flags: { deleteInstances, deleteExtras, deleteTemplates },
+        counts_before: {
+          todos: allTodos.length,
+          comments: allComments.length,
+        },
+        todos: allTodos,
+        comments: allComments,
+      };
+      const tmp = backupPath + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(snapshot, null, 2), 'utf8');
+      fs.renameSync(tmp, backupPath);
+      backupOK = true;
+    } catch (e) {
+      backupError = e.message;
+      console.error('[cleanup] snapshot failed:', e.message);
+    }
+
+    // If we can't snapshot, bail rather than delete blindly.
+    if (!backupOK) {
+      return res.status(500).json({
+        error: 'فشل إنشاء النسخة الاحتياطية، لم يتم حذف أي شيء',
+        details: backupError,
+      });
+    }
+
+    // ── 2. Delete per the flags ────────────────────────────────────────────
+    const counts = { daily_instances: 0, extra_tasks: 0, templates: 0 };
+    // Order matters: kill instances first so the parent template can be
+    // safely dropped (FK CASCADE handles it anyway, but explicit is clearer).
+    if (deleteInstances) {
+      counts.daily_instances = db.prepare(
+        `DELETE FROM todos WHERE parent_todo_id IS NOT NULL`
+      ).run().changes;
+    }
+    if (deleteExtras) {
+      counts.extra_tasks = db.prepare(
+        `DELETE FROM todos WHERE is_recurring = 0 AND parent_todo_id IS NULL`
+      ).run().changes;
+    }
+    if (deleteTemplates) {
+      counts.templates = db.prepare(
+        `DELETE FROM todos WHERE is_recurring = 1 AND parent_todo_id IS NULL`
+      ).run().changes;
+    }
+    const totalDeleted = counts.daily_instances + counts.extra_tasks + counts.templates;
+
+    // Orphan comments (FK ON DELETE CASCADE should clear them automatically,
+    // but be defensive in case the constraint was stripped in an older schema).
+    const orphanCommentCleanup = db.prepare(
+      `DELETE FROM todo_comments
+        WHERE todo_id NOT IN (SELECT id FROM todos)`
+    ).run().changes;
+
+    // ── 3. Final remaining rows for the response ───────────────────────────
+    const remaining = db.prepare(`
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN is_recurring = 1 AND parent_todo_id IS NULL THEN 1 ELSE 0 END) AS templates,
+        SUM(CASE WHEN parent_todo_id IS NOT NULL THEN 1 ELSE 0 END) AS instances,
+        SUM(CASE WHEN is_recurring = 0 AND parent_todo_id IS NULL THEN 1 ELSE 0 END) AS extras
+      FROM todos
+    `).get();
+
+    return res.json({
+      ok: true,
+      total_deleted: totalDeleted,
+      deleted: counts,
+      orphan_comments_cleaned: orphanCommentCleanup,
+      backup_file: backupName,
+      backup_dir: backupDir,
+      remaining,
+    });
+  } catch (err) {
+    console.error('[todos] cleanup error:', err);
     return res.status(500).json({ error: err.message });
   }
 });
