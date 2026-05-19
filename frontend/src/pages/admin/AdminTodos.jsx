@@ -5,10 +5,20 @@ import {
   Zap, Clock, Calendar, AlertCircle, TrendingUp, Search, X, Edit3, Trash2,
   Send, MessageSquare, UserCircle, Star, Filter, Download, RefreshCw,
   Sparkles, ClipboardCheck, ChevronDown, ChevronUp, Check, Activity, Grid3x3,
+  Lock,
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Legend } from 'recharts';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
+import { useAuth } from '../../auth/AuthContext';
+
+// Mirror of backend's canEditTodoContent — used to gray out content fields
+// when the viewer didn't create the todo.
+function userOwnsTodo(user, todo) {
+  if (!todo) return true;
+  if (user?.role === 'admin' && user?.management === 'All') return true;
+  return Number(user?.id) === Number(todo.created_by);
+}
 
 const PRIORITY_CFG = {
   urgent: { label: 'عاجل',  emoji: '🔴', color: '#ef4444', bg: 'bg-red-50',     text: 'text-red-700',     border: 'border-red-200' },
@@ -985,8 +995,12 @@ function StatCard({ icon: Icon, label, value, color }) {
 
 // ─── Reused Modals (compact versions, same APIs as agent/leader) ──────────────
 function TodoEditModal({ todo, usersData, onClose, onSaved }) {
+  const { user } = useAuth();
   const isEdit = !!todo;
   const isInstance = !!todo?.parent_todo_id;
+  // Only the creator (or super-admin) can edit content fields. Any other
+  // viewer — even a different department-admin — gets a status-only modal.
+  const lockContent = isEdit && !userOwnsTodo(user, todo);
   const [title, setTitle] = useState(todo?.title || '');
   const [description, setDescription] = useState(todo?.description || '');
   const [priority, setPriority] = useState(todo?.priority || 'normal');
@@ -1030,20 +1044,34 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
         </div>
         <div className="p-5 space-y-3">
           {error && <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">{error}</div>}
+          {lockContent && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2">
+              <Lock size={14} className="text-amber-600 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-800">
+                <b>هذه المهمة من إنشاء {todo.created_by_name || 'شخص آخر'}</b>
+                <br />
+                يمكنك فقط تغيير حالتها. لتعديل المحتوى رجاء التواصل مع منشئها.
+              </p>
+            </div>
+          )}
           <label className="block">
             <span className="text-xs font-bold text-gray-600 block mb-1">العنوان *</span>
             <input type="text" value={title} onChange={e => setTitle(e.target.value)} autoFocus
-              className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" />
+              readOnly={lockContent}
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm read-only:bg-gray-50 read-only:cursor-not-allowed" />
           </label>
           <label className="block">
             <span className="text-xs font-bold text-gray-600 block mb-1">الوصف</span>
             <textarea value={description} onChange={e => setDescription(e.target.value)} rows={3}
-              className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm resize-none" />
+              readOnly={lockContent}
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm resize-none read-only:bg-gray-50 read-only:cursor-not-allowed" />
           </label>
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
               <span className="text-xs font-bold text-gray-600 block mb-1">الأهمية</span>
-              <select value={priority} onChange={e => setPriority(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white">
+              <select value={priority} onChange={e => setPriority(e.target.value)}
+                disabled={lockContent}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white disabled:bg-gray-50 disabled:cursor-not-allowed">
                 {Object.entries(PRIORITY_CFG).map(([k, c]) => (<option key={k} value={k}>{c.emoji} {c.label}</option>))}
               </select>
             </label>
@@ -1057,17 +1085,21 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
           <div className="grid grid-cols-3 gap-3">
             <label className="block">
               <span className="text-xs font-bold text-gray-600 block mb-1">من تاريخ</span>
-              <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" />
+              <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)}
+                disabled={lockContent}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm disabled:bg-gray-50 disabled:cursor-not-allowed" />
             </label>
             <label className="block">
               <span className="text-xs font-bold text-gray-600 block mb-1">إلى تاريخ (اختياري)</span>
               <input type="date" value={dueDateEnd} onChange={e => setDueDateEnd(e.target.value)}
-                min={dueDate || undefined} disabled={!dueDate}
-                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm disabled:bg-gray-50 disabled:text-gray-400" />
+                min={dueDate || undefined} disabled={!dueDate || lockContent}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed" />
             </label>
             <label className="block">
               <span className="text-xs font-bold text-gray-600 block mb-1">الوقت</span>
-              <input type="time" value={dueTime} onChange={e => setDueTime(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" />
+              <input type="time" value={dueTime} onChange={e => setDueTime(e.target.value)}
+                disabled={lockContent}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm disabled:bg-gray-50 disabled:cursor-not-allowed" />
             </label>
           </div>
           {dueDate && dueDateEnd && (
@@ -1077,12 +1109,15 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
           )}
           <label className="block">
             <span className="text-xs font-bold text-gray-600 block mb-1">مُكلّف لـ</span>
-            <select value={assignedTo} onChange={e => setAssignedTo(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white">
+            <select value={assignedTo} onChange={e => setAssignedTo(e.target.value)}
+              disabled={lockContent}
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white disabled:bg-gray-50 disabled:cursor-not-allowed">
               <option value="">— نفسي —</option>
               {(usersData?.users || []).map(u => (<option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>))}
             </select>
           </label>
 
+          {!lockContent && (
           <div className="bg-violet-50/50 border border-violet-200 rounded-lg p-3">
             {isInstance ? (
               <p className="text-xs text-violet-700">
@@ -1115,11 +1150,12 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
               </>
             )}
           </div>
+          )}
         </div>
         <div className="px-5 py-3 bg-gray-50 border-t flex justify-end gap-2">
           <button onClick={onClose} className="px-4 py-1.5 rounded-lg border border-gray-300 text-sm">إلغاء</button>
           <button onClick={save} disabled={submitting} className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white text-sm font-bold disabled:opacity-50">
-            {submitting ? '...' : (isEdit ? 'تحديث' : 'حفظ')}
+            {submitting ? '...' : (isEdit ? (lockContent ? 'حفظ الحالة' : 'تحديث') : 'حفظ')}
           </button>
         </div>
       </div>
@@ -1128,6 +1164,7 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
 }
 
 function TodoDetailModal({ id, onClose, onEdit, onDeleted }) {
+  const { user } = useAuth();
   const qc = useQueryClient();
   const [newComment, setNewComment] = useState('');
   const { data } = useQuery({ queryKey: ['todos', id], queryFn: () => api.get(`/todos/${id}`).then(r => r.data) });
@@ -1139,6 +1176,7 @@ function TodoDetailModal({ id, onClose, onEdit, onDeleted }) {
   if (!data) return null;
   const t = data.todo;
   const p = PRIORITY_CFG[t.priority] || PRIORITY_CFG.normal;
+  const canDelete = userOwnsTodo(user, t);
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[88vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
@@ -1148,8 +1186,10 @@ function TodoDetailModal({ id, onClose, onEdit, onDeleted }) {
             <h3 className="font-bold text-gray-900 text-lg mt-1">{t.title}</h3>
           </div>
           <div className="flex items-center gap-1">
-            <button onClick={() => onEdit(t)} className="p-1.5 hover:bg-white rounded-lg"><Edit3 size={16} /></button>
-            <button onClick={() => { if (confirm('حذف؟')) deleteMut.mutate(); }} className="p-1.5 hover:bg-red-50 rounded-lg"><Trash2 size={16} className="text-red-500" /></button>
+            <button onClick={() => onEdit(t)} className="p-1.5 hover:bg-white rounded-lg" title={canDelete ? 'تعديل' : 'تعديل الحالة فقط'}><Edit3 size={16} /></button>
+            {canDelete && (
+              <button onClick={() => { if (confirm('حذف؟')) deleteMut.mutate(); }} className="p-1.5 hover:bg-red-50 rounded-lg"><Trash2 size={16} className="text-red-500" /></button>
+            )}
             <button onClick={onClose} className="p-1.5 hover:bg-white rounded-lg"><X size={18} /></button>
           </div>
         </div>

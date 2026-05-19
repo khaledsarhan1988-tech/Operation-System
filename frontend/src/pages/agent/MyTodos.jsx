@@ -3,10 +3,19 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   CheckCircle2, Circle, Star, Sun, Calendar, CalendarDays, Clock,
   Plus, X, Trash2, Edit3, AlertCircle, Zap, ChevronDown, ChevronUp,
-  MessageSquare, Send, ListTodo, Sparkles, Filter,
+  MessageSquare, Send, ListTodo, Sparkles, Filter, Lock,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
+import { useAuth } from '../../auth/AuthContext';
+
+// True if the current user is the creator of the todo OR a super-admin.
+// Non-creators may only mutate `status` — same rule the backend enforces.
+function userOwnsTodo(user, todo) {
+  if (!todo) return true;  // creation flow — no owner check
+  if (user?.role === 'admin' && user?.management === 'All') return true;
+  return Number(user?.id) === Number(todo.created_by);
+}
 
 const PRIORITY_CFG = {
   urgent: { label: 'عاجل',   color: 'bg-red-100 text-red-700 border-red-200',       dot: 'bg-red-500',     emoji: '🔴' },
@@ -400,8 +409,13 @@ function EmptyState({ bucket }) {
 
 // ─── Edit / Create Modal ──────────────────────────────────────────────────────
 function TodoEditModal({ todo, onClose, onSaved }) {
+  const { user } = useAuth();
   const isEdit = !!todo;
   const isInstance = !!todo?.parent_todo_id;
+  // If the viewer didn't create this todo, they can ONLY change its status —
+  // content fields are read-only (backend enforces the same rule).
+  const isOwner = userOwnsTodo(user, todo);
+  const lockContent = isEdit && !isOwner;
   const [title, setTitle] = useState(todo?.title || '');
   const [description, setDescription] = useState(todo?.description || '');
   const [priority, setPriority] = useState(todo?.priority || 'normal');
@@ -471,22 +485,36 @@ function TodoEditModal({ todo, onClose, onSaved }) {
         <div className="p-5 space-y-3">
           {error && <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">{error}</div>}
 
+          {lockContent && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2">
+              <Lock size={14} className="text-amber-600 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-800">
+                <b>هذه المهمة من إنشاء {todo.created_by_name || 'مدير النظام'}</b>
+                <br />
+                يمكنك فقط تغيير حالتها (مكتملة / قيد التنفيذ / إلخ). لتعديل المحتوى رجاء التواصل مع منشئها.
+              </p>
+            </div>
+          )}
+
           <Field label="العنوان *">
             <input ref={titleRef} type="text" value={title} onChange={e => setTitle(e.target.value)}
               placeholder="مثلاً: اتصل بأحمد 5 مساءً" autoFocus
-              className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:ring-2 focus:ring-rose-300 outline-none" />
+              readOnly={lockContent}
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:ring-2 focus:ring-rose-300 outline-none read-only:bg-gray-50 read-only:cursor-not-allowed" />
           </Field>
 
           <Field label="الوصف">
             <textarea value={description} onChange={e => setDescription(e.target.value)}
               placeholder="تفاصيل اختيارية..." rows={3}
-              className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:ring-2 focus:ring-rose-300 outline-none resize-none" />
+              readOnly={lockContent}
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:ring-2 focus:ring-rose-300 outline-none resize-none read-only:bg-gray-50 read-only:cursor-not-allowed" />
           </Field>
 
           <div className="grid grid-cols-2 gap-3">
             <Field label="الأهمية">
               <select value={priority} onChange={e => setPriority(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white">
+                disabled={lockContent}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white disabled:bg-gray-50 disabled:cursor-not-allowed">
                 {Object.entries(PRIORITY_CFG).map(([k, c]) => (
                   <option key={k} value={k}>{c.emoji} {c.label}</option>
                 ))}
@@ -505,17 +533,19 @@ function TodoEditModal({ todo, onClose, onSaved }) {
           <div className="grid grid-cols-3 gap-3">
             <Field label="من تاريخ">
               <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" />
+                readOnly={lockContent} disabled={lockContent}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm disabled:bg-gray-50 disabled:cursor-not-allowed" />
             </Field>
             <Field label="إلى تاريخ (اختياري)">
               <input type="date" value={dueDateEnd} onChange={e => setDueDateEnd(e.target.value)}
                 min={dueDate || undefined}
-                disabled={!dueDate}
-                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm disabled:bg-gray-50 disabled:text-gray-400" />
+                disabled={!dueDate || lockContent}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed" />
             </Field>
             <Field label="الوقت (اختياري)">
               <input type="time" value={dueTime} onChange={e => setDueTime(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" />
+                readOnly={lockContent} disabled={lockContent}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm disabled:bg-gray-50 disabled:cursor-not-allowed" />
             </Field>
           </div>
           {dueDate && dueDateEnd && (
@@ -527,7 +557,8 @@ function TodoEditModal({ todo, onClose, onSaved }) {
           {usersData?.users && usersData.users.length > 1 && (
             <Field label="مُكلّف لـ">
               <select value={assignedTo} onChange={e => setAssignedTo(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white">
+                disabled={lockContent}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white disabled:bg-gray-50 disabled:cursor-not-allowed">
                 <option value="">— نفسي —</option>
                 {usersData.users.map(u => (
                   <option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>
@@ -536,7 +567,8 @@ function TodoEditModal({ todo, onClose, onSaved }) {
             </Field>
           )}
 
-          {/* Recurring section */}
+          {/* Recurring section — hidden when not editable by the viewer */}
+          {!lockContent && (
           <div className="bg-rose-50/50 border border-rose-200 rounded-lg p-3">
             {isInstance ? (
               <p className="text-xs text-rose-700">
@@ -574,6 +606,7 @@ function TodoEditModal({ todo, onClose, onSaved }) {
               </>
             )}
           </div>
+          )}
         </div>
         <div className="px-5 py-3 bg-gray-50 border-t flex items-center justify-between gap-2">
           <span className="text-[10px] text-gray-500">⌘+Enter للحفظ • Esc للإغلاق</span>
@@ -582,7 +615,7 @@ function TodoEditModal({ todo, onClose, onSaved }) {
               className="px-4 py-1.5 rounded-lg border border-gray-300 text-sm hover:bg-gray-100">إلغاء</button>
             <button onClick={save} disabled={submitting}
               className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-rose-500 to-pink-500 text-white text-sm font-bold disabled:opacity-50">
-              {submitting ? 'جاري الحفظ...' : (isEdit ? 'تحديث' : 'حفظ')}
+              {submitting ? 'جاري الحفظ...' : (isEdit ? (lockContent ? 'حفظ الحالة' : 'تحديث') : 'حفظ')}
             </button>
           </div>
         </div>
@@ -602,6 +635,7 @@ function Field({ label, children }) {
 
 // ─── Detail Modal (with comments) ─────────────────────────────────────────────
 function TodoDetailModal({ id, onClose, onEdit, onDeleted }) {
+  const { user } = useAuth();
   const qc = useQueryClient();
   const [newComment, setNewComment] = useState('');
 
@@ -627,6 +661,7 @@ function TodoDetailModal({ id, onClose, onEdit, onDeleted }) {
   const t = data.todo;
   const p = PRIORITY_CFG[t.priority] || PRIORITY_CFG.normal;
   const s = STATUS_CFG[t.status] || STATUS_CFG.new;
+  const canDelete = userOwnsTodo(user, t);
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -640,8 +675,10 @@ function TodoDetailModal({ id, onClose, onEdit, onDeleted }) {
             <h3 className="font-bold text-gray-900 text-lg">{t.title}</h3>
           </div>
           <div className="flex items-center gap-1">
-            <button onClick={() => onEdit(t)} className="p-1.5 hover:bg-white rounded-lg" title="تعديل"><Edit3 size={16} className="text-gray-600" /></button>
-            <button onClick={() => { if (confirm('حذف المهمة؟')) deleteMut.mutate(); }} className="p-1.5 hover:bg-red-50 rounded-lg" title="حذف"><Trash2 size={16} className="text-red-500" /></button>
+            <button onClick={() => onEdit(t)} className="p-1.5 hover:bg-white rounded-lg" title={canDelete ? 'تعديل' : 'تعديل الحالة فقط'}><Edit3 size={16} className="text-gray-600" /></button>
+            {canDelete && (
+              <button onClick={() => { if (confirm('حذف المهمة؟')) deleteMut.mutate(); }} className="p-1.5 hover:bg-red-50 rounded-lg" title="حذف"><Trash2 size={16} className="text-red-500" /></button>
+            )}
             <button onClick={onClose} className="p-1.5 hover:bg-white rounded-lg"><X size={18} className="text-gray-600" /></button>
           </div>
         </div>

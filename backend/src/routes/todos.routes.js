@@ -49,6 +49,23 @@ function canMutateTodo(scope, todo) {
   return todo.assigned_to === scope.id || todo.created_by === scope.id;
 }
 
+// Can the user edit the CONTENT of the todo (title/desc/date/priority/...)?
+// Rule: only the creator can edit content — everyone else (even the assignee
+// or a leader of the assignee's team) can only update the STATUS to reflect
+// progress. The super-admin (management='All') can always edit anything as
+// a system-wide override.
+function canEditTodoContent(scope, todo) {
+  if (!todo) return false;
+  if (scope.role === 'admin' && scope.management === 'All') return true;
+  return todo.created_by === scope.id;
+}
+
+// Deleting a todo is a stronger privilege than editing it. Same rule as
+// content edit: only the creator or super-admin.
+function canDeleteTodo(scope, todo) {
+  return canEditTodoContent(scope, todo);
+}
+
 // Get the IDs of the agents that belong to a leader's *direct* team.
 // Definition: any active user with role='agent' AND same department as the
 // leader. Other leaders / admins are excluded so they don't pollute the
@@ -848,10 +865,19 @@ router.patch('/:id', express.json(), (req, res) => {
                      'assigned_to', 'department', 'management', 'related_remark_id',
                      'tags', 'is_recurring', 'recurrence_pattern', 'parent_todo_id'];
 
-    // Agents can't reassign
-    const safeAllowed = scope.role === 'agent'
-      ? allowed.filter(f => f !== 'assigned_to' && f !== 'department' && f !== 'management')
-      : allowed;
+    // Permission cascade:
+    //   1. Non-creators (assignees + their leaders) can ONLY update `status`.
+    //      Content fields are owned by whoever created the task.
+    //   2. Creators (and super-admins) get the full allowed list, with the
+    //      legacy agent restriction that agents still can't reassign tasks.
+    let safeAllowed;
+    if (!canEditTodoContent(scope, existing)) {
+      safeAllowed = ['status'];
+    } else if (scope.role === 'agent') {
+      safeAllowed = allowed.filter(f => f !== 'assigned_to' && f !== 'department' && f !== 'management');
+    } else {
+      safeAllowed = allowed;
+    }
 
     for (const k of safeAllowed) {
       if (k in b) {
@@ -882,12 +908,17 @@ router.patch('/:id', express.json(), (req, res) => {
 });
 
 // DELETE /api/todos/:id
+// Only the creator or super-admin can delete a todo. Assignees who try to
+// remove a task they didn't create get a 403 — they should mark it complete
+// or talk to whoever assigned it instead.
 router.delete('/:id', (req, res) => {
   try {
     const scope = userScope(req);
     const existing = db.prepare(`SELECT * FROM todos WHERE id = ?`).get(req.params.id);
     if (!existing) return res.status(404).json({ error: 'غير موجود' });
-    if (!canMutateTodo(scope, existing)) return res.status(403).json({ error: 'صلاحية غير كافية' });
+    if (!canDeleteTodo(scope, existing)) {
+      return res.status(403).json({ error: 'فقط منشئ المهمة يمكنه حذفها' });
+    }
     db.prepare(`DELETE FROM todos WHERE id = ?`).run(req.params.id);
     return res.json({ deleted: true });
   } catch (err) {
