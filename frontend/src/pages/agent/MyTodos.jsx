@@ -46,6 +46,28 @@ function todayStr() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// "45 د" / "2 س 15 د" / "1 يوم 3 س" — minutes → human readable Arabic.
+// Used to show how late a task is (both currently-overdue and completed-late).
+function formatMinutesLate(mins) {
+  const n = Math.max(0, Math.round(Number(mins) || 0));
+  if (n === 0) return '';
+  if (n < 60) return `${n} د`;
+  const h = Math.floor(n / 60);
+  const remMin = n % 60;
+  if (h < 24) return remMin > 0 ? `${h} س ${remMin} د` : `${h} س`;
+  const days = Math.floor(h / 24);
+  const remH  = h % 24;
+  return remH > 0 ? `${days} يوم ${remH} س` : `${days} يوم`;
+}
+
+// Format "2026-05-19 17:30:42" → "17:30" for compact display.
+function formatTimeOnly(dt) {
+  if (!dt) return '';
+  // Handle both 'T' and ' ' separators
+  const m = String(dt).match(/(\d{2}):(\d{2})/);
+  return m ? `${m[1]}:${m[2]}` : '';
+}
+
 // ─── Confetti ─────────────────────────────────────────────────────────────────
 function fireConfetti() {
   const colors = ['#ec4899', '#a855f7', '#3b82f6', '#22c55e', '#f59e0b'];
@@ -325,12 +347,18 @@ function MiniStat({ label, value, icon: Icon, color }) {
 function TodoCard({ todo, onToggle, onEdit, onOpen }) {
   const p = PRIORITY_CFG[todo.priority] || PRIORITY_CFG.normal;
   const done = todo.status === 'completed';
-  // Overdue uses the EFFECTIVE end of the date range (end if set, else start)
+  // Backend now computes `late_by_minutes` time-aware — fall back to a
+  // simple date check only when the field is missing (older API responses).
+  const lateMinutes = Number(todo.late_by_minutes) || 0;
   const effectiveEnd = todo.due_date_end || todo.due_date;
-  const overdue = !done && effectiveEnd && effectiveEnd < todayStr();
+  const isLate = lateMinutes > 0 || (!done && effectiveEnd && effectiveEnd < todayStr());
+  // Visually: "overdue" = currently late (still open). A completed-late
+  // task gets a milder amber tint so the row still reads as "done".
+  const overdueOpen = isLate && !done;
+  const lateLabel  = lateMinutes > 0 ? formatMinutesLate(lateMinutes) : '';
 
   return (
-    <div className={`bg-white rounded-xl border ${overdue ? 'border-red-200' : 'border-gray-100'} hover:border-rose-300 hover:shadow-sm transition group p-3 flex items-center gap-3`}>
+    <div className={`bg-white rounded-xl border ${overdueOpen ? 'border-red-200' : (done && lateMinutes > 0 ? 'border-amber-200' : 'border-gray-100')} hover:border-rose-300 hover:shadow-sm transition group p-3 flex items-center gap-3`}>
       <button
         onClick={onToggle}
         className="flex-shrink-0 hover:scale-110 transition"
@@ -355,18 +383,33 @@ function TodoCard({ todo, onToggle, onEdit, onOpen }) {
           {todo.parent_todo_id && (
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700" title="مهمة يومية متكررة">🔁 يومي</span>
           )}
+          {/* Lateness badge — different tone for completed-late vs open-overdue */}
+          {lateLabel && (
+            <span className={`inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded
+              ${overdueOpen ? 'bg-red-500 text-white' : 'bg-amber-100 text-amber-800 border border-amber-200'}`}
+              title={done ? 'اكتمل بعد الموعد' : 'متأخر عن الموعد'}>
+              <AlertCircle size={9} /> متأخر {lateLabel}
+            </span>
+          )}
         </div>
         {todo.description && (
           <p className="text-xs text-gray-500 line-clamp-1 mt-0.5">{todo.description}</p>
         )}
-        <div className="flex items-center gap-3 mt-1.5 text-[11px] text-gray-500">
+        <div className="flex items-center gap-3 mt-1.5 text-[11px] text-gray-500 flex-wrap">
           {todo.due_date && (
-            <span className={`inline-flex items-center gap-1 ${overdue ? 'text-red-600 font-bold' : ''}`}>
+            <span className={`inline-flex items-center gap-1 ${overdueOpen ? 'text-red-600 font-bold' : ''}`}>
               <Calendar size={11} />
               {todo.due_date_end && todo.due_date_end !== todo.due_date
                 ? <>{todo.due_date} → {todo.due_date_end}</>
                 : todo.due_date}
               {todo.due_time && ` • ${todo.due_time}`}
+            </span>
+          )}
+          {/* Show when the user actually completed it */}
+          {done && todo.completed_at && (
+            <span className={`inline-flex items-center gap-1 ${lateMinutes > 0 ? 'text-amber-700 font-bold' : 'text-emerald-600'}`}
+              title={`اكتمل في ${todo.completed_at?.replace('T', ' ')}`}>
+              <CheckCircle2 size={11} /> اتعملت {formatTimeOnly(todo.completed_at)}
             </span>
           )}
           {todo.comment_count > 0 && (

@@ -139,7 +139,20 @@ function buildListWhere(scope, query) {
     const weekEnd = addDaysCairo(7);
     switch (query.bucket) {
       case 'overdue':
-        wheres.push("(t.status NOT IN ('completed','cancelled') AND t.due_date IS NOT NULL AND COALESCE(t.due_date_end, t.due_date) < ?)");
+        // TIME-AWARE: a task with a due_time becomes overdue the minute its
+        // deadline passes; a task without due_time is overdue once the
+        // effective_end date is in the past.
+        // Also includes COMPLETED-LATE tasks so the late history isn't lost.
+        wheres.push(`(t.due_date IS NOT NULL AND (
+             (t.status NOT IN ('completed','cancelled') AND t.due_time IS NOT NULL
+               AND datetime(t.due_date || ' ' || t.due_time) < datetime('now', '+2 hours'))
+          OR (t.status NOT IN ('completed','cancelled') AND t.due_time IS NULL
+               AND COALESCE(t.due_date_end, t.due_date) < ?)
+          OR (t.status = 'completed' AND t.completed_at IS NOT NULL AND t.due_time IS NOT NULL
+               AND datetime(t.due_date || ' ' || t.due_time) < t.completed_at)
+          OR (t.status = 'completed' AND t.completed_at IS NOT NULL AND t.due_time IS NULL
+               AND DATE(t.completed_at) > COALESCE(t.due_date_end, t.due_date))
+        ))`);
         params.push(today);
         break;
       case 'today':
@@ -331,9 +344,45 @@ router.get('/', (req, res) => {
         break;
     }
 
+    // late_by_minutes — time-aware lateness in MINUTES.
+    //   • Tasks with a due_time: deadline = due_date + due_time
+    //   • Tasks without due_time: deadline = end of effective_end day (23:59:59)
+    //   • For COMPLETED tasks: minutes between deadline and completed_at (if > 0)
+    //   • For OPEN tasks past their deadline: minutes between deadline and NOW
+    //   • NULL otherwise (on time / no due date)
+    // julianday returns days, * 1440 → minutes.
+    const lateExpr = `
+      CAST(
+        CASE
+          /* Completed late, with due_time precision */
+          WHEN t.status = 'completed' AND t.completed_at IS NOT NULL
+               AND t.due_date IS NOT NULL AND t.due_time IS NOT NULL
+               AND datetime(t.due_date || ' ' || t.due_time) < t.completed_at
+          THEN (julianday(t.completed_at) - julianday(t.due_date || ' ' || t.due_time)) * 1440
+          /* Completed late, date-only — compare day vs day */
+          WHEN t.status = 'completed' AND t.completed_at IS NOT NULL
+               AND t.due_date IS NOT NULL AND t.due_time IS NULL
+               AND DATE(t.completed_at) > COALESCE(t.due_date_end, t.due_date)
+          THEN (julianday(DATE(t.completed_at)) - julianday(COALESCE(t.due_date_end, t.due_date))) * 1440
+          /* Open + past deadline, with due_time */
+          WHEN t.status NOT IN ('completed','cancelled')
+               AND t.due_date IS NOT NULL AND t.due_time IS NOT NULL
+               AND datetime(t.due_date || ' ' || t.due_time) < datetime('now', '+2 hours')
+          THEN (julianday(datetime('now', '+2 hours')) - julianday(t.due_date || ' ' || t.due_time)) * 1440
+          /* Open + past deadline, date-only */
+          WHEN t.status NOT IN ('completed','cancelled')
+               AND t.due_date IS NOT NULL AND t.due_time IS NULL
+               AND COALESCE(t.due_date_end, t.due_date) < DATE('now', '+2 hours')
+          THEN (julianday(DATE('now', '+2 hours')) - julianday(COALESCE(t.due_date_end, t.due_date))) * 1440
+          ELSE NULL
+        END
+      AS INTEGER)
+    `;
+
     const rows = db.prepare(`
       SELECT t.*,
         CASE t.priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END AS priority_rank,
+        ${lateExpr} AS late_by_minutes,
         u_assigned.full_name AS assigned_to_name,
         u_created.full_name  AS created_by_name,
         (SELECT COUNT(*) FROM todo_comments c WHERE c.todo_id = t.id) AS comment_count
@@ -360,9 +409,13 @@ router.get('/stats', (req, res) => {
     const { where, params } = buildListWhere(scope, {});
     const today = todayCairo();
 
-    // Stats use range-aware logic: COALESCE(due_date_end, due_date) is the
-    // task's effective last day. A task is overdue if that's already past,
-    // and counted as "due today" if today falls inside [due_date..effective_end].
+    // Stats:
+    //   • overdue_count → TIME-AWARE: counts both (a) currently-open tasks
+    //     past their deadline AND (b) tasks completed AFTER their deadline.
+    //     With due_time, deadline = due_date + due_time. Without due_time,
+    //     deadline = end of effective_end day (so date-only tasks become
+    //     overdue at the start of the next day).
+    //   • due_today_count → date-range overlap with today (unchanged).
     const stats = db.prepare(`
       SELECT
         COUNT(*) AS total,
@@ -370,9 +423,20 @@ router.get('/stats', (req, res) => {
         SUM(CASE WHEN t.status='in_progress' THEN 1 ELSE 0 END) AS in_progress_count,
         SUM(CASE WHEN t.status='on_hold'     THEN 1 ELSE 0 END) AS on_hold_count,
         SUM(CASE WHEN t.status='completed'   THEN 1 ELSE 0 END) AS completed_count,
-        SUM(CASE WHEN t.status NOT IN ('completed','cancelled')
-                  AND t.due_date IS NOT NULL
-                  AND COALESCE(t.due_date_end, t.due_date) < ? THEN 1 ELSE 0 END) AS overdue_count,
+        SUM(CASE WHEN t.due_date IS NOT NULL AND (
+          /* Open + past deadline (with due_time) */
+          (t.status NOT IN ('completed','cancelled') AND t.due_time IS NOT NULL
+            AND datetime(t.due_date || ' ' || t.due_time) < datetime('now', '+2 hours'))
+          /* Open + past end-of-day (date-only) */
+          OR (t.status NOT IN ('completed','cancelled') AND t.due_time IS NULL
+            AND COALESCE(t.due_date_end, t.due_date) < DATE('now', '+2 hours'))
+          /* Completed AFTER deadline (with due_time) */
+          OR (t.status = 'completed' AND t.completed_at IS NOT NULL AND t.due_time IS NOT NULL
+            AND datetime(t.due_date || ' ' || t.due_time) < t.completed_at)
+          /* Completed AFTER end-of-day (date-only) */
+          OR (t.status = 'completed' AND t.completed_at IS NOT NULL AND t.due_time IS NULL
+            AND DATE(t.completed_at) > COALESCE(t.due_date_end, t.due_date))
+        ) THEN 1 ELSE 0 END) AS overdue_count,
         SUM(CASE WHEN t.status NOT IN ('completed','cancelled')
                   AND t.due_date IS NOT NULL
                   AND t.due_date <= ?
@@ -381,7 +445,7 @@ router.get('/stats', (req, res) => {
       FROM todos t
       WHERE ${where}
         AND NOT (t.is_recurring = 1 AND t.parent_todo_id IS NULL)
-    `).get(today, today, today, ...params);
+    `).get(today, today, ...params);  // 2 todays for due_today_count (overdue_count uses NOW() in-SQL)
 
     return res.json(stats || {});
   } catch (err) {

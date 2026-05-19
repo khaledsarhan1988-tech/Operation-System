@@ -45,6 +45,24 @@ function todayStr() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// Format minutes-late → Arabic short form ("45 د" / "2 س 15 د" / "1 يوم 3 س")
+function formatMinutesLate(mins) {
+  const n = Math.max(0, Math.round(Number(mins) || 0));
+  if (n === 0) return '';
+  if (n < 60) return `${n} د`;
+  const h = Math.floor(n / 60);
+  const remMin = n % 60;
+  if (h < 24) return remMin > 0 ? `${h} س ${remMin} د` : `${h} س`;
+  const days = Math.floor(h / 24);
+  const remH  = h % 24;
+  return remH > 0 ? `${days} يوم ${remH} س` : `${days} يوم`;
+}
+function formatTimeOnly(dt) {
+  if (!dt) return '';
+  const m = String(dt).match(/(\d{2}):(\d{2})/);
+  return m ? `${m[1]}:${m[2]}` : '';
+}
+
 export default function LeaderTodos() {
   const [search, setSearch] = useState('');
   const [filterPriority, setFilterPriority] = useState('');
@@ -370,9 +388,14 @@ function ExtraTasksSection({ todos, onCardClick, onEdit }) {
 
 function ExtraCard({ todo, onClick, onEdit }) {
   const p = PRIORITY_CFG[todo.priority] || PRIORITY_CFG.normal;
-  // Effective end of the date range (end if multi-day, else start)
+  // Time-aware lateness from the backend (`late_by_minutes`) — fall back to
+  // a date-only check on older API responses.
+  const done = todo.status === 'completed';
+  const lateMinutes = Number(todo.late_by_minutes) || 0;
   const effectiveEnd = todo.due_date_end || todo.due_date;
-  const overdue = todo.status !== 'completed' && effectiveEnd && effectiveEnd < todayStr();
+  const overdue = !done && (lateMinutes > 0 || (effectiveEnd && effectiveEnd < todayStr()));
+  const completedLate = done && lateMinutes > 0;
+  const lateLabel = lateMinutes > 0 ? formatMinutesLate(lateMinutes) : '';
   const statusCfg = {
     new:         { label: 'جديدة',       cls: 'bg-blue-100 text-blue-700' },
     in_progress: { label: 'قيد التنفيذ', cls: 'bg-amber-100 text-amber-700' },
@@ -427,6 +450,19 @@ function ExtraCard({ todo, onClick, onEdit }) {
                 <Clock size={10} /> {todo.due_time.slice(0, 5)}
               </span>
             )}
+            {lateLabel && (
+              <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded font-bold border
+                ${overdue ? 'bg-red-500 text-white border-red-600' : 'bg-amber-100 text-amber-800 border-amber-200'}`}
+                title={done ? 'اكتمل بعد الموعد' : 'متأخر عن الموعد'}>
+                <AlertCircle size={9} /> متأخر {lateLabel}
+              </span>
+            )}
+            {done && todo.completed_at && (
+              <span className={`inline-flex items-center gap-0.5 ${completedLate ? 'text-amber-700 font-bold' : 'text-emerald-600'}`}
+                title={`اكتمل في ${todo.completed_at?.replace('T', ' ')}`}>
+                <CheckCircle2 size={10} /> اتعملت {formatTimeOnly(todo.completed_at)}
+              </span>
+            )}
             {todo.priority === 'urgent' && (
               <span className="inline-flex items-center gap-0.5 bg-red-500 text-white px-1.5 py-0.5 rounded font-bold">
                 <Star size={9} /> عاجل
@@ -447,15 +483,20 @@ function ExtraCard({ todo, onClick, onEdit }) {
 // ─── Kanban Card ──────────────────────────────────────────────────────────────
 function KanbanCard({ todo, onDragStart, onClick, onEdit }) {
   const p = PRIORITY_CFG[todo.priority] || PRIORITY_CFG.normal;
-  // Effective end of the date range (end if multi-day, else start)
+  // Backend computes `late_by_minutes` time-aware (using due_time). Fall back
+  // to a coarser date-only check for clients on stale schemas.
+  const done = todo.status === 'completed';
+  const lateMinutes = Number(todo.late_by_minutes) || 0;
   const effectiveEnd = todo.due_date_end || todo.due_date;
-  const overdue = todo.status !== 'completed' && effectiveEnd && effectiveEnd < todayStr();
+  const overdueOpen = !done && (lateMinutes > 0 || (effectiveEnd && effectiveEnd < todayStr()));
+  const completedLate = done && lateMinutes > 0;
+  const lateLabel  = lateMinutes > 0 ? formatMinutesLate(lateMinutes) : '';
   return (
     <div
       draggable
       onDragStart={onDragStart}
       onClick={onClick}
-      className={`bg-white rounded-lg border ${p.cls} ${overdue ? 'ring-2 ring-red-300' : ''} p-2.5 cursor-grab active:cursor-grabbing hover:shadow-md transition group`}
+      className={`bg-white rounded-lg border ${p.cls} ${overdueOpen ? 'ring-2 ring-red-300' : completedLate ? 'ring-1 ring-amber-300' : ''} p-2.5 cursor-grab active:cursor-grabbing hover:shadow-md transition group`}
     >
       <div className="flex items-start gap-2">
         <span className={`w-1 self-stretch ${p.dot} rounded-full flex-shrink-0`}></span>
@@ -477,7 +518,7 @@ function KanbanCard({ todo, onDragStart, onClick, onEdit }) {
               </span>
             )}
             {todo.due_date && (
-              <span className={`inline-flex items-center gap-0.5 ${overdue ? 'text-red-600 font-bold' : ''}`}>
+              <span className={`inline-flex items-center gap-0.5 ${overdueOpen ? 'text-red-600 font-bold' : ''}`}>
                 <Calendar size={10} />
                 {todo.due_date_end && todo.due_date_end !== todo.due_date
                   ? <>{todo.due_date} → {todo.due_date_end}</>
@@ -487,6 +528,21 @@ function KanbanCard({ todo, onDragStart, onClick, onEdit }) {
             {todo.due_time && (
               <span className="inline-flex items-center gap-0.5 bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold">
                 <Clock size={10} /> {todo.due_time.slice(0, 5)}
+              </span>
+            )}
+            {/* Lateness badge */}
+            {lateLabel && (
+              <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded font-bold border
+                ${overdueOpen ? 'bg-red-500 text-white border-red-600' : 'bg-amber-100 text-amber-800 border-amber-200'}`}
+                title={done ? 'اكتمل بعد الموعد' : 'متأخر عن الموعد'}>
+                <AlertCircle size={9} /> متأخر {lateLabel}
+              </span>
+            )}
+            {/* Completion time */}
+            {done && todo.completed_at && (
+              <span className={`inline-flex items-center gap-0.5 ${completedLate ? 'text-amber-700 font-bold' : 'text-emerald-600'}`}
+                title={`اكتمل في ${todo.completed_at?.replace('T', ' ')}`}>
+                <CheckCircle2 size={10} /> اتعملت {formatTimeOnly(todo.completed_at)}
               </span>
             )}
             {todo.priority === 'urgent' && (
