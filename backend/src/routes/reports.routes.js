@@ -126,6 +126,59 @@ function coordFilterAtDatePrepared(groupExpr, lineExpr, dateExpr) {
 }
 
 /**
+ * Time-aware department filter.
+ *
+ * Returns events where, at the event's date, the coordinator-of-record was
+ * registered in `activeDept`. The coordinator-of-record comes from
+ * `coordinator_history`; their department on that date comes from
+ * `user_department_history`. Falls back to `batches.dept_type` only when NO
+ * coordinator in coordinator_history at that date has any dept history record
+ * covering the date (graceful for users without history).
+ *
+ * Use this in place of `buildDeptFilter` when the query has a date column,
+ * so that historical absences are attributed to the coordinator's
+ * department-at-that-time rather than their current department.
+ *
+ * @param {string} batchAlias   alias of the batches table in the outer query
+ * @param {string} dateExpr     SQL expression yielding the event's date
+ * @param {string} activeDept   department to filter by ('' or 'All' → no filter)
+ */
+function coordDeptAtDateFilter(batchAlias, dateExpr, activeDept) {
+  if (!activeDept || activeDept === 'All') return '';
+  const s = String(activeDept).replace(/'/g, "''");
+  return ` AND (
+    EXISTS (
+      SELECT 1
+        FROM coordinator_history ch_c
+        JOIN user_department_history udh
+          ON LOWER(TRIM(udh.user_name)) = LOWER(TRIM(ch_c.coordinator))
+         AND DATE(udh.effective_from) <= ${dateExpr}
+         AND (udh.effective_to IS NULL OR DATE(udh.effective_to) > ${dateExpr})
+       WHERE ch_c.group_name = ${batchAlias}.group_name
+         AND ch_c.line       = ${batchAlias}.line
+         AND DATE(ch_c.effective_from) <= ${dateExpr}
+         AND (ch_c.effective_to IS NULL OR DATE(ch_c.effective_to) > ${dateExpr})
+         AND udh.department  = '${s}'
+    )
+    OR (
+      ${batchAlias}.dept_type = '${s}'
+      AND NOT EXISTS (
+        SELECT 1
+          FROM coordinator_history ch_c2
+          JOIN user_department_history udh2
+            ON LOWER(TRIM(udh2.user_name)) = LOWER(TRIM(ch_c2.coordinator))
+           AND DATE(udh2.effective_from) <= ${dateExpr}
+           AND (udh2.effective_to IS NULL OR DATE(udh2.effective_to) > ${dateExpr})
+         WHERE ch_c2.group_name = ${batchAlias}.group_name
+           AND ch_c2.line       = ${batchAlias}.line
+           AND DATE(ch_c2.effective_from) <= ${dateExpr}
+           AND (ch_c2.effective_to IS NULL OR DATE(ch_c2.effective_to) > ${dateExpr})
+      )
+    )
+  )`;
+}
+
+/**
  * Display expression: returns the coordinator(s) responsible at the event's
  * date (comma-separated if more than one). NULL if no history record covers
  * that date — caller can COALESCE with the current batches.coordinators.
@@ -1114,7 +1167,13 @@ router.get('/absent-list', (req, res) => {
   const activeFrom  = modal_from  || from_date;
   const activeTo    = modal_to    || to_date;
 
-  const deptFilter   = buildDeptFilter('b', activeDept);
+  // Time-aware dept filter — attribute each absence to the coordinator's
+  // department-at-event-date (via coordinator_history + user_department_history),
+  // not the current batches.dept_type. Mirrors /attendance-absence so modal
+  // counts match the main table.
+  // Part1 absence date = COALESCE(a.date, inferred-from-lecture_no). The dept
+  // filter is applied INSIDE the inner SELECT where lec_inf is in scope.
+  const deptFilter   = coordDeptAtDateFilter('b',  `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`, activeDept);
   // Date-aware: attribute each absence to whoever was coordinator at a.date
   const empFilter    = coordFilterAtDate('a.group_name', 'a.line', 'a.date', employee);
   const coordFilter  = coordFilterAtDate('a.group_name', 'a.line', 'a.date', coordinator);
@@ -1128,7 +1187,7 @@ router.get('/absent-list', (req, res) => {
   const dateFilter2  = activeFrom && activeTo ? ` AND l.date BETWEEN '${activeFrom}' AND '${activeTo}'`
                      : activeFrom ? ` AND l.date >= '${activeFrom}'`
                      : activeTo   ? ` AND l.date <= '${activeTo}'` : '';
-  const deptFilter2  = buildDeptFilter('b2', activeDept);
+  const deptFilter2  = coordDeptAtDateFilter('b2', 'l.date', activeDept);
   const empFilter2   = coordFilterAtDate('l.group_name', 'l.line', 'l.date', employee);
   const coordFilter2 = coordFilterAtDate('l.group_name', 'l.line', 'l.date', coordinator);
   const searchFilter2= search      ? ` AND l.group_name LIKE '%${escapeLike(search)}%' ESCAPE '\\'` : '';
@@ -1232,7 +1291,10 @@ router.get('/absent-side-list', (req, res) => {
   const activeFrom = modal_from || from_date;
   const activeTo   = modal_to   || to_date;
 
-  const deptFilter    = buildDeptFilter('b', activeDept);
+  // Time-aware dept filter — attribute each lecture/absence to the coordinator's
+  // department-at-that-date (not current b.dept_type). Mirrors /attendance-absence
+  // so modal counts match the main table.
+  const deptFilter    = coordDeptAtDateFilter('b', 'l.date', activeDept);
   // Date-aware: attribute each lecture to the coordinator on l.date, not current b.coordinators.
   const empFilter     = coordFilterAtDate('l.group_name', 'l.line', 'l.date', employee);
   const trainerFilter = trainer     ? ` AND l.trainer LIKE '%${escapeLike(trainer)}%' ESCAPE '\\'` : '';
@@ -1259,7 +1321,9 @@ router.get('/absent-side-list', (req, res) => {
     // was the coordinator on `a.date` (not the CURRENT batches.coordinators).
     const azCoordFilter  = coordFilterAtDate('a.group_name', 'a.line', 'a.date', coordinator);
     const azEmpFilter    = coordFilterAtDate('a.group_name', 'a.line', 'a.date', employee);
-    const azDeptFilter   = buildDeptFilter('b', activeDept);
+    // Time-aware dept filter — coordinator's dept on a.date (via history),
+    // not the current batches.dept_type. Mirrors /attendance-absence.
+    const azDeptFilter   = coordDeptAtDateFilter('b', 'a.date', activeDept);
 
     // Restrict zoom-absent rows to absences against REGULAR (≤15-min) zoom
     // sessions only. Onboarding/Offboarding/Compensatory rows live in the
@@ -4238,52 +4302,14 @@ router.get('/attendance-absence', (req, res) => {
   }
   if (activeDept === 'All') activeDept = '';
 
-  // Build dept filter that checks the coordinator's dept at the time of the
-  // event via user_department_history. Include the row when ANY coordinator
-  // in coordinator_history at that date had department = filter at that
-  // date. Falls back to batch.dept_type when none of the coords have any
-  // history record covering the date (graceful for users without history).
-  function coordDeptAtDateFilter(batchAlias, dateExpr) {
-    if (!activeDept) return '';
-    const s = String(activeDept).replace(/'/g, "''");
-    return ` AND (
-      EXISTS (
-        SELECT 1
-          FROM coordinator_history ch_c
-          JOIN user_department_history udh
-            ON LOWER(TRIM(udh.user_name)) = LOWER(TRIM(ch_c.coordinator))
-           AND DATE(udh.effective_from) <= ${dateExpr}
-           AND (udh.effective_to IS NULL OR DATE(udh.effective_to) > ${dateExpr})
-         WHERE ch_c.group_name = ${batchAlias}.group_name
-           AND ch_c.line       = ${batchAlias}.line
-           AND DATE(ch_c.effective_from) <= ${dateExpr}
-           AND (ch_c.effective_to IS NULL OR DATE(ch_c.effective_to) > ${dateExpr})
-           AND udh.department  = '${s}'
-      )
-      OR (
-        ${batchAlias}.dept_type = '${s}'
-        AND NOT EXISTS (
-          SELECT 1
-            FROM coordinator_history ch_c2
-            JOIN user_department_history udh2
-              ON LOWER(TRIM(udh2.user_name)) = LOWER(TRIM(ch_c2.coordinator))
-             AND DATE(udh2.effective_from) <= ${dateExpr}
-             AND (udh2.effective_to IS NULL OR DATE(udh2.effective_to) > ${dateExpr})
-           WHERE ch_c2.group_name = ${batchAlias}.group_name
-             AND ch_c2.line       = ${batchAlias}.line
-             AND DATE(ch_c2.effective_from) <= ${dateExpr}
-             AND (ch_c2.effective_to IS NULL OR DATE(ch_c2.effective_to) > ${dateExpr})
-        )
-      )
-    )`;
-  }
-
+  // Time-aware dept filter — uses module-level helper (shared with
+  // /absent-list and /absent-side-list so modal counts always match).
   // Build the SQL fragment used at each event-level filter location.
   const deptFilterB   = ''; // applied per-query below via coordDeptAtDateFilter
   const deptFilterB2  = '';
-  const deptFilterMainL_b   = coordDeptAtDateFilter('b',  'l.date');
-  const deptFilterMainL_b2  = coordDeptAtDateFilter('b2', 'l.date');
-  const deptFilterAbsentP1  = coordDeptAtDateFilter('b',  `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`);
+  const deptFilterMainL_b   = coordDeptAtDateFilter('b',  'l.date', activeDept);
+  const deptFilterMainL_b2  = coordDeptAtDateFilter('b2', 'l.date', activeDept);
+  const deptFilterAbsentP1  = coordDeptAtDateFilter('b',  `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`, activeDept);
 
   const dateFilterL = buildDateFilter('l.date', from_date, to_date);
   const dateFilterResolved = from_date && to_date
@@ -4403,7 +4429,7 @@ router.get('/attendance-absence', (req, res) => {
         WHERE l.session_type = 'side'
           AND l.status = 'مؤكدة'
           AND (l.duration IS NULL OR l.duration <= '00:15')
-        ${dateFilterL}${coordDeptAtDateFilter('b', 'l.date')}${coordFilterB}
+        ${dateFilterL}${coordDeptAtDateFilter('b', 'l.date', activeDept)}${coordFilterB}
         GROUP BY coordinator, l.group_name, l.date
       ) sub
       GROUP BY coordinator
@@ -4423,7 +4449,7 @@ router.get('/attendance-absence', (req, res) => {
         WHERE l.session_type = 'side'
           AND l.status = 'مؤكدة'
           AND (l.duration IS NULL OR l.duration <= '00:15')
-        ${dateFilterL}${coordDeptAtDateFilter('b', 'l.date')}${coordFilterB}
+        ${dateFilterL}${coordDeptAtDateFilter('b', 'l.date', activeDept)}${coordFilterB}
         GROUP BY coordinator, l.group_name, l.date
         HAVING absent_count > 0
       ) sub
