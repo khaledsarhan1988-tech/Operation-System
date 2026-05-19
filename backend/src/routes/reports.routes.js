@@ -4217,33 +4217,73 @@ router.get('/attendance-absence', (req, res) => {
   const lineL = buildLineFilter('l', line);
   const lineA = buildLineFilter('a', line);
 
-  // Role-based dept filter (applied to both 'b' and 'b2' batches aliases).
-  // For attendance-absence specifically we use a dept_type-only filter for
-  // admins/leaders. This is intentional and differs from buildDeptFilter:
-  // the OR-based filter would exclude groups whose current coordinator
-  // belongs to a different dept (e.g. Hanaa moved from Private to General →
-  // her Private group's data would vanish from the Private report). With
-  // dept_type-only, the GROUP's classification is the source of truth, and
-  // historical coordinators surface naturally via coordinator_history in the
-  // dateAwareCoord aggregation.
-  let deptFilterB = '', deptFilterB2 = '';
+  // Role-based dept filter. For /attendance-absence the dept is matched
+  // against the COORDINATOR's department AT THE TIME OF THE EVENT, looked
+  // up via user_department_history. This means: filter=Private → include
+  // any absence where the coordinator-at-the-time was in Private dept at
+  // that moment, regardless of the group's current dept_type or the
+  // coordinator's current dept. Falls back to b.dept_type when no history
+  // record covers the event date (graceful degradation for users without
+  // dept history yet).
   let coordFilterB = buildCoordFilter('b', coordinator);
   let coordFilterB2 = buildCoordFilter('b2', coordinator);
-  function deptTypeOnlyFilter(alias, dept) {
-    if (!dept || dept === 'All') return '';
-    const s = String(dept).replace(/'/g, "''");
-    return ` AND ${alias}.dept_type = '${s}'`;
-  }
+  let activeDept = '';
   if (req.user?.role === 'leader') {
-    deptFilterB  = deptTypeOnlyFilter('b',  req.user.department);
-    deptFilterB2 = deptTypeOnlyFilter('b2', req.user.department);
+    activeDept = req.user.department;
   } else if (req.user?.role === 'admin') {
-    deptFilterB  = deptTypeOnlyFilter('b',  req.query.department);
-    deptFilterB2 = deptTypeOnlyFilter('b2', req.query.department);
+    activeDept = req.query.department || '';
   } else if (req.user?.role === 'agent') {
     coordFilterB  = buildCoordFilter('b',  req.user.full_name);
     coordFilterB2 = buildCoordFilter('b2', req.user.full_name);
   }
+  if (activeDept === 'All') activeDept = '';
+
+  // Build dept filter that checks the coordinator's dept at the time of the
+  // event via user_department_history. Include the row when ANY coordinator
+  // in coordinator_history at that date had department = filter at that
+  // date. Falls back to batch.dept_type when none of the coords have any
+  // history record covering the date (graceful for users without history).
+  function coordDeptAtDateFilter(batchAlias, dateExpr) {
+    if (!activeDept) return '';
+    const s = String(activeDept).replace(/'/g, "''");
+    return ` AND (
+      EXISTS (
+        SELECT 1
+          FROM coordinator_history ch_c
+          JOIN user_department_history udh
+            ON LOWER(TRIM(udh.user_name)) = LOWER(TRIM(ch_c.coordinator))
+           AND DATE(udh.effective_from) <= ${dateExpr}
+           AND (udh.effective_to IS NULL OR DATE(udh.effective_to) > ${dateExpr})
+         WHERE ch_c.group_name = ${batchAlias}.group_name
+           AND ch_c.line       = ${batchAlias}.line
+           AND DATE(ch_c.effective_from) <= ${dateExpr}
+           AND (ch_c.effective_to IS NULL OR DATE(ch_c.effective_to) > ${dateExpr})
+           AND udh.department  = '${s}'
+      )
+      OR (
+        ${batchAlias}.dept_type = '${s}'
+        AND NOT EXISTS (
+          SELECT 1
+            FROM coordinator_history ch_c2
+            JOIN user_department_history udh2
+              ON LOWER(TRIM(udh2.user_name)) = LOWER(TRIM(ch_c2.coordinator))
+             AND DATE(udh2.effective_from) <= ${dateExpr}
+             AND (udh2.effective_to IS NULL OR DATE(udh2.effective_to) > ${dateExpr})
+           WHERE ch_c2.group_name = ${batchAlias}.group_name
+             AND ch_c2.line       = ${batchAlias}.line
+             AND DATE(ch_c2.effective_from) <= ${dateExpr}
+             AND (ch_c2.effective_to IS NULL OR DATE(ch_c2.effective_to) > ${dateExpr})
+        )
+      )
+    )`;
+  }
+
+  // Build the SQL fragment used at each event-level filter location.
+  const deptFilterB   = ''; // applied per-query below via coordDeptAtDateFilter
+  const deptFilterB2  = '';
+  const deptFilterMainL_b   = coordDeptAtDateFilter('b',  'l.date');
+  const deptFilterMainL_b2  = coordDeptAtDateFilter('b2', 'l.date');
+  const deptFilterAbsentP1  = coordDeptAtDateFilter('b',  `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`);
 
   const dateFilterL = buildDateFilter('l.date', from_date, to_date);
   const dateFilterResolved = from_date && to_date
@@ -4276,7 +4316,7 @@ router.get('/attendance-absence', (req, res) => {
       FROM lectures l
       INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
       WHERE l.session_type = 'main' AND l.status != 'غير مؤكدة'
-      ${dateFilterL}${deptFilterB}${coordFilterB}${lineL}
+      ${dateFilterL}${deptFilterMainL_b}${coordFilterB}${lineL}
       GROUP BY coordinator
     `).all();
 
@@ -4302,7 +4342,7 @@ router.get('/attendance-absence', (req, res) => {
           (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
           OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
         )
-        ${deptFilterB}${coordFilterB}${lineA}
+        ${deptFilterAbsentP1}${coordFilterB}${lineA}
       ) p1
       WHERE 1=1${dateFilterResolved}
       GROUP BY coordinator
@@ -4323,7 +4363,7 @@ router.get('/attendance-absence', (req, res) => {
           SELECT 1 FROM absent_students a2
           WHERE a2.group_name = l.group_name AND a2.date = l.date${line ? ' AND a2.line = l.line' : ''}
         )
-      ${dateFilterL}${deptFilterB2}${coordFilterB2}${lineL}
+      ${dateFilterL}${deptFilterMainL_b2}${coordFilterB2}${lineL}
       GROUP BY coordinator
     `).all();
 
@@ -4363,7 +4403,7 @@ router.get('/attendance-absence', (req, res) => {
         WHERE l.session_type = 'side'
           AND l.status = 'مؤكدة'
           AND (l.duration IS NULL OR l.duration <= '00:15')
-        ${dateFilterL}${deptFilterB}${coordFilterB}
+        ${dateFilterL}${coordDeptAtDateFilter('b', 'l.date')}${coordFilterB}
         GROUP BY coordinator, l.group_name, l.date
       ) sub
       GROUP BY coordinator
@@ -4383,7 +4423,7 @@ router.get('/attendance-absence', (req, res) => {
         WHERE l.session_type = 'side'
           AND l.status = 'مؤكدة'
           AND (l.duration IS NULL OR l.duration <= '00:15')
-        ${dateFilterL}${deptFilterB}${coordFilterB}
+        ${dateFilterL}${coordDeptAtDateFilter('b', 'l.date')}${coordFilterB}
         GROUP BY coordinator, l.group_name, l.date
         HAVING absent_count > 0
       ) sub

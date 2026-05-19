@@ -366,6 +366,23 @@ CREATE TABLE IF NOT EXISTS coordinator_history (
   effective_to    TEXT,
   detected_at     TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
 );
+
+-- User dept history: tracks when a user's department changed. Used by
+-- attendance-absence to attribute absences to the coordinator's dept AT THE
+-- TIME of the event (not their current dept). Backfilled on first migration.
+CREATE TABLE IF NOT EXISTS user_department_history (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_name       TEXT NOT NULL,
+  department      TEXT NOT NULL,
+  effective_from  TEXT NOT NULL,
+  effective_to    TEXT,
+  detected_at     TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+);
+CREATE INDEX IF NOT EXISTS idx_udh_user      ON user_department_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_udh_name      ON user_department_history(user_name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_udh_dates     ON user_department_history(effective_from, effective_to);
+CREATE INDEX IF NOT EXISTS idx_udh_dept      ON user_department_history(department);
 CREATE INDEX IF NOT EXISTS idx_ch_group_line   ON coordinator_history(group_name, line);
 CREATE INDEX IF NOT EXISTS idx_ch_coord        ON coordinator_history(coordinator COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_ch_dates        ON coordinator_history(effective_from, effective_to);

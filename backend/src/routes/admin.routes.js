@@ -79,7 +79,10 @@ router.put('/users/:id', (req, res) => {
   const { id } = req.params;
   const { full_name, role, department, language, password, is_active, management, line } = req.body;
 
-  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
+  // Snapshot current state — needed for dept-change detection
+  const user = db.prepare(
+    'SELECT id, full_name, department FROM users WHERE id = ?'
+  ).get(id);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   if (password) {
@@ -100,6 +103,28 @@ router.put('/users/:id', (req, res) => {
   if (fields.length) {
     fields.push("updated_at = datetime('now', 'localtime')");
     db.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).run(...params, id);
+  }
+
+  // ── Track department changes in user_department_history ─────────────────
+  // Close the current open record and open a new one when dept changes.
+  // Skipped if the new dept matches the old, or new dept is missing/'All'.
+  if (department !== undefined && department && department !== 'All' && department !== user.department) {
+    try {
+      const nowIso = new Date().toISOString();
+      const effectiveName = (full_name !== undefined ? full_name : user.full_name) || '';
+      // Close previous open record (effective_to IS NULL)
+      db.prepare(
+        `UPDATE user_department_history SET effective_to = ?
+          WHERE user_id = ? AND effective_to IS NULL`
+      ).run(nowIso, id);
+      // Open new record for the new dept
+      db.prepare(
+        `INSERT INTO user_department_history (user_id, user_name, department, effective_from, effective_to)
+         VALUES (?, ?, ?, ?, NULL)`
+      ).run(id, String(effectiveName).trim(), department, nowIso);
+    } catch (e) {
+      console.error('user_department_history change-tracking error:', e.message);
+    }
   }
 
   const updated = db.prepare('SELECT id, username, full_name, role, department, management, line, language, avatar_url, is_active FROM users WHERE id = ?').get(id);

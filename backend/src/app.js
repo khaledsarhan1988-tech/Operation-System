@@ -1097,6 +1097,53 @@ initDb().then(db => {
     console.error('coordinator_history bootstrap error:', e.message);
   }
 
+  // ── user_department_history bootstrap + backfill ─────────────────────────
+  // Creates the table if missing and seeds one record per user with their
+  // current department. Going forward, dept changes are tracked via the
+  // admin PUT /users/:id handler (closes old record + opens new). Baseline
+  // uses far-past effective_from so historical events fall inside the
+  // record (legacy behavior preserved for unchanged users).
+  try {
+    db._raw.run(`CREATE TABLE IF NOT EXISTS user_department_history (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      user_name       TEXT NOT NULL,
+      department      TEXT NOT NULL,
+      effective_from  TEXT NOT NULL,
+      effective_to    TEXT,
+      detected_at     TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+    )`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_udh_user  ON user_department_history(user_id)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_udh_name  ON user_department_history(user_name COLLATE NOCASE)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_udh_dates ON user_department_history(effective_from, effective_to)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_udh_dept  ON user_department_history(department)`);
+
+    const udhCount = db.prepare(`SELECT COUNT(*) AS cnt FROM user_department_history`).get();
+    if (udhCount && udhCount.cnt === 0) {
+      // Backfill: one record per user with valid dept, effective_from far past
+      const usrs = db.prepare(
+        `SELECT id, full_name, department FROM users
+          WHERE department IS NOT NULL AND department != 'All'
+            AND full_name IS NOT NULL AND TRIM(full_name) != ''`
+      ).all();
+      const insertUdh = db.prepare(
+        `INSERT INTO user_department_history (user_id, user_name, department, effective_from, effective_to)
+         VALUES (?, ?, ?, '2000-01-01', NULL)`
+      );
+      let seeded = 0;
+      const tx = db.transaction(() => {
+        for (const u of usrs) { insertUdh.run(u.id, u.full_name.trim(), u.department); seeded += 1; }
+      });
+      tx();
+      if (seeded > 0) {
+        saveNow();
+        console.log(`✅ Migration: user_department_history seeded with ${seeded} baseline rows`);
+      }
+    }
+  } catch (e) {
+    console.error('user_department_history bootstrap error:', e.message);
+  }
+
   try {
     const rahCount = db.prepare(`SELECT COUNT(*) AS cnt FROM remark_assignment_history`).get();
     if (rahCount && rahCount.cnt === 0) {
