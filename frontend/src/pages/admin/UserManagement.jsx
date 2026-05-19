@@ -346,6 +346,71 @@ export default function UserManagement() {
 }
 
 // ─── DEPT HISTORY MODAL ──────────────────────────────────────────────────────
+// Detects overlaps, gaps, and multiple "current" records in a list of history
+// rows. Returns an array of issue objects, empty when everything is consistent.
+function validateDeptHistory(rows) {
+  const issues = [];
+  if (!rows || rows.length === 0) return issues;
+  const norm = rows
+    .map(r => ({
+      ...r,
+      from: (r.effective_from || '').slice(0, 10),
+      to:   (r.effective_to || '').slice(0, 10) || null,
+    }))
+    .filter(r => r.from)
+    .sort((a, b) => a.from.localeCompare(b.from));
+
+  // Multiple open (effective_to IS NULL)
+  const openCount = norm.filter(r => !r.to).length;
+  if (openCount > 1) {
+    issues.push({
+      type: 'multiple_open',
+      severity: 'error',
+      message: `${openCount} سجلات "حالية" — لازم سجل واحد بس بدون "إلى تاريخ"`,
+    });
+  }
+  // Open records that aren't the latest
+  for (let i = 0; i < norm.length - 1; i++) {
+    if (!norm[i].to) {
+      issues.push({
+        type: 'open_not_last',
+        severity: 'error',
+        message: `سجل ${norm[i].department} (${norm[i].from}) بدون "إلى" لكن في سجلات بعده`,
+      });
+    }
+  }
+  // Overlap and gap detection
+  for (let i = 0; i < norm.length - 1; i++) {
+    const a = norm[i];
+    const b = norm[i + 1];
+    if (!a.to) continue;
+    if (a.to > b.from) {
+      issues.push({
+        type: 'overlap',
+        severity: 'error',
+        message: `تداخل بين ${a.department} (${a.from} → ${a.to}) و ${b.department} (${b.from} → ${b.to || 'لسه'})`,
+      });
+    } else if (a.to < b.from) {
+      issues.push({
+        type: 'gap',
+        severity: 'warning',
+        message: `فجوة بين ${a.to} و ${b.from} — مفيش سجل في الفترة دي`,
+      });
+    }
+  }
+  // Records where to <= from
+  for (const r of norm) {
+    if (r.to && r.to <= r.from) {
+      issues.push({
+        type: 'invalid_dates',
+        severity: 'error',
+        message: `سجل ${r.department}: تاريخ النهاية (${r.to}) قبل أو يساوي البداية (${r.from})`,
+      });
+    }
+  }
+  return issues;
+}
+
 function DeptHistoryModal({ user, onClose }) {
   const qc = useQueryClient();
   const [editing, setEditing] = useState(null); // null | 'new' | rowId
@@ -356,6 +421,8 @@ function DeptHistoryModal({ user, onClose }) {
     queryFn: () => api.get(`/admin/users/${user.id}/dept-history`).then(r => r.data),
   });
   const rows = data?.history || [];
+  const issues = validateDeptHistory(rows);
+  const hasErrors = issues.some(i => i.severity === 'error');
 
   const saveMutation = useMutation({
     mutationFn: (payload) => {
@@ -427,6 +494,28 @@ function DeptHistoryModal({ user, onClose }) {
           💡 سجل التنقلات بيستخدمه نظام تقارير الحضور والغياب لاحتساب نسب الغياب
           حسب قسم المنسق وقت كل غياب. ابدأ بأقدم سجل واتركها متتالية.
         </div>
+
+        {/* Validation banner */}
+        {issues.length > 0 && (
+          <div className={`px-5 py-3 border-b ${hasErrors ? 'bg-rose-50 border-rose-200' : 'bg-amber-50 border-amber-200'}`}>
+            <div className={`text-xs font-bold mb-1.5 flex items-center gap-1.5 ${hasErrors ? 'text-rose-800' : 'text-amber-800'}`}>
+              {hasErrors ? '🔴 مشاكل لازم تتصلح:' : '⚠ تنبيهات:'}
+            </div>
+            <ul className="space-y-1">
+              {issues.map((iss, i) => (
+                <li key={i} className={`text-[11px] flex items-start gap-1.5 ${iss.severity === 'error' ? 'text-rose-700' : 'text-amber-700'}`}>
+                  <span className="mt-0.5 shrink-0">{iss.severity === 'error' ? '✗' : '!'}</span>
+                  <span>{iss.message}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {issues.length === 0 && rows.length >= 2 && !isLoading && (
+          <div className="px-5 py-2 bg-emerald-50/60 border-b border-emerald-100 text-[11px] text-emerald-800 flex items-center gap-1.5">
+            ✅ كل السجلات متتالية بدون تداخل أو فجوة — النظام هيقرأ البيانات صح
+          </div>
+        )}
 
         {/* Body */}
         <div className="p-4 overflow-y-auto flex-1 space-y-3">
