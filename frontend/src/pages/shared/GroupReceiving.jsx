@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ClipboardCheck, Search, CheckCircle, Loader2,
-  AlertTriangle, Circle, Users, Check, CalendarDays,
+  AlertTriangle, Circle, Users, Check, CalendarDays, X,
 } from 'lucide-react';
 import api from '../../api/axios';
 import { useAuth } from '../../auth/AuthContext';
@@ -38,6 +38,72 @@ function SkeletonRows({ cols = 8, rows = 6 }) {
   ));
 }
 
+// ─── CLIENTS MODAL ─────────────────────────────────────────────────────────────
+// Opened by clicking a group's "العدد الحالي" cell — lists the registered
+// clients (name + phone) of that group.
+function ClientsModal({ group, onClose }) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['group-clients', group.group_name, group.line],
+    queryFn: () => api.get('/group-approvals/clients', {
+      params: { group_name: group.group_name, line: group.line },
+    }).then(r => r.data),
+  });
+  const clients = data?.clients ?? [];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+      onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+        onClick={e => e.stopPropagation()} dir="rtl">
+        <div className="px-5 py-4 bg-gradient-to-l from-[#1e3a5f]/10 to-[#1e3a5f]/5 border-b border-[#1e3a5f]/10 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-[#1e3a5f] uppercase tracking-wide mb-1">عملاء المجموعة</p>
+            <p className="text-sm font-black text-gray-900 leading-tight break-all" dir="ltr">{group.group_name}</p>
+            {!isLoading && !isError && <p className="text-xs text-gray-500 mt-1">{clients.length} عميل</p>}
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 flex-shrink-0">
+            <X size={15} className="text-gray-500" />
+          </button>
+        </div>
+        <div className="max-h-[60vh] overflow-y-auto">
+          {isLoading ? (
+            <div className="p-10 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-gray-400" /></div>
+          ) : isError ? (
+            <div className="p-10 text-center text-sm text-red-600">تعذّر تحميل بيانات العملاء</div>
+          ) : clients.length === 0 ? (
+            <div className="p-10 text-center text-sm text-gray-400">لا يوجد عملاء مسجلين لهذه المجموعة</div>
+          ) : (
+            <table className="w-full text-sm text-right">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100">
+                  <th className="px-4 py-2.5 text-xs font-semibold text-gray-500 w-10">#</th>
+                  <th className="px-4 py-2.5 text-xs font-semibold text-gray-500">اسم العميل</th>
+                  <th className="px-4 py-2.5 text-xs font-semibold text-gray-500">رقم الهاتف</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {clients.map((c, i) => (
+                  <tr key={i} className="hover:bg-gray-50/60">
+                    <td className="px-4 py-2.5 text-xs text-gray-400">{i + 1}</td>
+                    <td className="px-4 py-2.5 font-semibold text-gray-800">{c.name || '—'}</td>
+                    <td className="px-4 py-2.5">
+                      {c.phone ? (
+                        <CopyButton text={c.phone} className="text-gray-600 hover:text-blue-600 font-mono" dir="ltr" size={11}>
+                          <span dir="ltr">{c.phone}</span>
+                        </CopyButton>
+                      ) : <span className="text-gray-300">—</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── MAIN COMPONENT ────────────────────────────────────────────────────────────
 export default function GroupReceiving() {
   const { user } = useAuth();
@@ -48,6 +114,7 @@ export default function GroupReceiving() {
   const [fromDate,  setFromDate]  = useState('2026-06-06'); // only groups starting on/after this
   const [busyKey,   setBusyKey]   = useState(null);   // group_name|line currently being approved
   const [errMsg,    setErrMsg]    = useState(null);
+  const [clientModal, setClientModal] = useState(null); // { group_name, line } | null
 
   // ── data — `from_date` filters to groups starting on/after the chosen date
   const { data, isLoading } = useQuery({
@@ -231,9 +298,13 @@ export default function GroupReceiving() {
                      <td className="px-4 py-3 whitespace-nowrap"><DeptBadge dept={g.dept_type} /></td>
                      <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{g.course ?? '—'}</td>
                      <td className="px-4 py-3 whitespace-nowrap">
-                       <span className="inline-flex items-center justify-center min-w-[2rem] px-2 py-0.5 rounded-lg bg-gray-100 text-gray-800 text-sm font-black">
+                       <button
+                         onClick={() => setClientModal({ group_name: g.group_name, line: g.line })}
+                         title="عرض أسماء العملاء وأرقام هواتفهم"
+                         className="inline-flex items-center justify-center min-w-[2rem] px-2 py-0.5 rounded-lg bg-blue-50 text-blue-700 text-sm font-black border border-blue-200 hover:bg-blue-100 transition-colors cursor-pointer"
+                       >
                          {g.current_count ?? 0}
-                       </span>
+                       </button>
                      </td>
                      <td className="px-4 py-3 whitespace-nowrap">
                        {g.approved_count == null ? (
@@ -285,6 +356,11 @@ export default function GroupReceiving() {
           </p>
         </div>
       </div>
+
+      {/* ── CLIENTS MODAL ── */}
+      {clientModal && (
+        <ClientsModal group={clientModal} onClose={() => setClientModal(null)} />
+      )}
     </div>
   );
 }

@@ -168,6 +168,35 @@ function findScopedBatch(req, groupName, line) {
   `).get(groupName, line);
 }
 
+// ─── GET /api/group-approvals/clients ────────────────────────────────────────
+// Returns the registered clients (name + phone) of one group. Used by the
+// "العدد الحالي" cell — clicking the count opens a modal with this list.
+router.get('/clients', (req, res) => {
+  const groupName = (req.query.group_name || '').trim();
+  const line      = (req.query.line || '').trim();
+  if (!groupName || !line) {
+    return res.status(400).json({ error: 'group_name and line are required' });
+  }
+  // Scope guard — only groups the caller can see.
+  const batch = findScopedBatch(req, groupName, line);
+  if (!batch) {
+    return res.status(404).json({ error: 'المجموعة غير موجودة أو خارج نطاقك' });
+  }
+  try {
+    const clients = db.prepare(`
+      SELECT name, phone
+      FROM clients
+      WHERE group_name = ? AND line = ?
+        AND name IS NOT NULL AND TRIM(name) != ''
+      ORDER BY name COLLATE NOCASE
+    `).all(groupName, line);
+    return res.json({ group_name: groupName, line, count: clients.length, clients });
+  } catch (err) {
+    console.error('[group-approvals] clients error:', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // UPSERT one approval row, snapshotting the batch's current trainee_count.
 function approveOne(req, groupName, line) {
   const batch = findScopedBatch(req, groupName, line);
