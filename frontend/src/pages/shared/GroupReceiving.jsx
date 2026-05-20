@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ClipboardCheck, Search, CheckCircle, Loader2,
-  AlertTriangle, Circle, Users, Check,
+  AlertTriangle, Circle, Users, Check, CalendarDays,
 } from 'lucide-react';
 import api from '../../api/axios';
 import { useAuth } from '../../auth/AuthContext';
@@ -45,13 +45,14 @@ export default function GroupReceiving() {
 
   const [search,    setSearch]    = useState('');
   const [statusTab, setStatusTab] = useState('');     // '' | not_approved | approved | changed
+  const [fromDate,  setFromDate]  = useState('2026-06-06'); // only groups starting on/after this
   const [busyKey,   setBusyKey]   = useState(null);   // group_name|line currently being approved
   const [errMsg,    setErrMsg]    = useState(null);
 
-  // ── data
+  // ── data — `from_date` filters to groups starting on/after the chosen date
   const { data, isLoading } = useQuery({
-    queryKey: ['group-approvals', user?.id],
-    queryFn: () => api.get('/group-approvals').then(r => r.data),
+    queryKey: ['group-approvals', user?.id, fromDate],
+    queryFn: () => api.get('/group-approvals', { params: { from_date: fromDate } }).then(r => r.data),
     enabled: !!user?.id,
     staleTime: 2 * 60 * 1000,
   });
@@ -67,7 +68,7 @@ export default function GroupReceiving() {
   });
 
   const bulkMut = useMutation({
-    mutationFn: () => api.post('/group-approvals/bulk'),
+    mutationFn: () => api.post('/group-approvals/bulk', { from_date: fromDate }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['group-approvals'] }),
     onError:   (e) => setErrMsg(e?.response?.data?.error || 'حدث خطأ أثناء الاعتماد الجماعي'),
   });
@@ -162,6 +163,17 @@ export default function GroupReceiving() {
                 placeholder="بحث باسم المجموعة..."
                 className="w-full bg-white border border-gray-200 rounded-xl pr-10 pl-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
               />
+            </div>
+            <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 py-1.5 whitespace-nowrap">
+              <CalendarDays className="w-4 h-4 text-gray-400 flex-shrink-0" />
+              <label className="text-xs font-bold text-gray-500">المجموعات من تاريخ</label>
+              <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
+                className="text-sm text-gray-700 focus:outline-none bg-transparent"
+              />
+              {fromDate && (
+                <button onClick={() => setFromDate('')} title="عرض كل التواريخ"
+                  className="text-gray-400 hover:text-red-600 text-xs font-bold">✕</button>
+              )}
             </div>
             {hasFilters && (
               <button

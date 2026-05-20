@@ -25,6 +25,16 @@ router.use(authenticate, requireRole('agent'));
 
 const sq = (s) => String(s == null ? '' : s).replace(/'/g, "''");
 
+// Accept only a YYYY-MM-DD string; anything else → '' (no filter).
+const safeDate = (s) => (/^\d{4}-\d{2}-\d{2}$/.test(String(s || '')) ? String(s) : '');
+
+// Start-date filter: keep groups starting ON/AFTER `fromDate`. Groups with no
+// recorded start_date are always kept (we can't tell when they started).
+function buildStartDateClause(fromDate) {
+  if (!fromDate) return '';
+  return ` AND (b.start_date >= '${fromDate}' OR b.start_date IS NULL OR TRIM(b.start_date) = '')`;
+}
+
 // Build the role-scoped WHERE fragment applied to a `batches b` query.
 // Returns a string that always starts with ' AND ...' (or '' for no extra filter).
 function buildScopeFilter(req) {
@@ -90,6 +100,7 @@ router.get('/', (req, res) => {
   const scope = buildScopeFilter(req);
   const search = (req.query.search || '').trim();
   const searchClause = search ? ` AND b.group_name LIKE '%${sq(search)}%'` : '';
+  const dateClause = buildStartDateClause(safeDate(req.query.from_date));
 
   try {
     const rows = db.prepare(`
@@ -114,7 +125,7 @@ router.get('/', (req, res) => {
       FROM batches b
       LEFT JOIN group_count_approvals gca
         ON gca.group_name = b.group_name AND gca.line = b.line
-      WHERE b.status = 'نشطة'${lineClause}${scope}${searchClause}
+      WHERE b.status = 'نشطة'${lineClause}${scope}${searchClause}${dateClause}
       ORDER BY b.group_name COLLATE NOCASE
     `).all();
 
@@ -211,18 +222,21 @@ router.post('/', (req, res) => {
 
 // ─── POST /api/group-approvals/bulk ──────────────────────────────────────────
 // Approves every NOT-yet-approved group in the caller's scope at once.
+// Respects the same start-date filter as the list, so it never approves
+// groups hidden from the current view.
 // Groups whose count already changed are left untouched (review individually).
 router.post('/bulk', (req, res) => {
   const line = lineFilter(req);
   const lineClause = line ? ` AND b.line = '${sq(line)}'` : '';
   const scope = buildScopeFilter(req);
+  const dateClause = buildStartDateClause(safeDate(req.body?.from_date));
   try {
     const pending = db.prepare(`
       SELECT b.group_name, b.line
       FROM batches b
       LEFT JOIN group_count_approvals gca
         ON gca.group_name = b.group_name AND gca.line = b.line
-      WHERE b.status = 'نشطة' AND gca.id IS NULL${lineClause}${scope}
+      WHERE b.status = 'نشطة' AND gca.id IS NULL${lineClause}${scope}${dateClause}
     `).all();
 
     let approved = 0;
