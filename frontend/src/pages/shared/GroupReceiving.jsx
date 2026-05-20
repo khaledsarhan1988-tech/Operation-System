@@ -253,19 +253,19 @@ export default function GroupReceiving() {
 
         {/* ── TABLE ── */}
         <div className="overflow-x-auto">
-          <table className="w-full text-sm text-right" style={{ minWidth: '880px' }}>
+          <table className="w-full text-sm text-right" style={{ minWidth: '980px' }}>
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100">
-                {['اسم المجموعة', 'المنسق', 'القسم', 'الكورس', 'العدد الحالي', 'العدد المعتمد', 'الحالة', 'إجراء'].map(h => (
+                {['اسم المجموعة', 'المنسق', 'القسم', 'الكورس', 'تاريخ البداية', 'العدد الحالي', 'العدد المعتمد', 'الحالة', 'إجراء'].map(h => (
                   <th key={h} className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {isLoading ? <SkeletonRows cols={8} rows={6} /> :
+              {isLoading ? <SkeletonRows cols={9} rows={6} /> :
                !filtered.length ? (
                  <tr>
-                   <td colSpan={8} className="text-center py-12">
+                   <td colSpan={9} className="text-center py-12">
                      <div className="flex flex-col items-center gap-2 text-gray-400">
                        <ClipboardCheck className="w-8 h-8 text-gray-300" />
                        <p className="text-sm font-medium">لا توجد مجموعات</p>
@@ -297,6 +297,13 @@ export default function GroupReceiving() {
                      <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">{g.coordinators ?? '--'}</td>
                      <td className="px-4 py-3 whitespace-nowrap"><DeptBadge dept={g.dept_type} /></td>
                      <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{g.course ?? '—'}</td>
+                     <td className="px-4 py-3 whitespace-nowrap">
+                       {g.start_date && String(g.start_date).trim() ? (
+                         <span className="text-xs font-mono text-gray-600" dir="ltr">{g.start_date}</span>
+                       ) : (
+                         <span className="text-xs text-gray-300">— بدون تاريخ —</span>
+                       )}
+                     </td>
                      <td className="px-4 py-3 whitespace-nowrap">
                        <button
                          onClick={() => setClientModal({ group_name: g.group_name, line: g.line })}
