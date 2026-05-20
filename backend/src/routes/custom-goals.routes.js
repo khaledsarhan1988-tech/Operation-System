@@ -67,7 +67,7 @@ function validateGoalPayload(body) {
 function getGoalWithUser(id) {
   return db.prepare(`
     SELECT g.*, u.full_name AS agent_name, u.department AS agent_department,
-           u.line AS agent_line,
+           u.line AS agent_line, u.role AS agent_role,
            e.full_name AS evaluator_name
     FROM custom_goals g
     LEFT JOIN users u ON u.id = g.user_id
@@ -174,7 +174,11 @@ router.get('/team', (req, res) => {
   const deptFilter = leaderDeptFilter(req);
 
   const params = [];
-  const whereParts = ['u.role = \'agent\'', 'u.is_active = 1'];
+  // Admin can also see goals assigned to team leaders; a regular leader sees agents only.
+  const teamRoleClause = req.user?.role === 'admin'
+    ? "u.role IN ('agent','leader')"
+    : "u.role = 'agent'";
+  const whereParts = [teamRoleClause, 'u.is_active = 1'];
   if (deptFilter) { whereParts.push('u.department = ?'); params.push(deptFilter); }
   if (status && VALID_STATUSES.includes(status)) {
     whereParts.push('g.result_status = ?'); params.push(status);
@@ -203,7 +207,7 @@ router.get('/team', (req, res) => {
     SELECT g.result_status AS status, COUNT(*) AS c
     FROM custom_goals g
     INNER JOIN users u ON u.id = g.user_id
-    WHERE u.role = 'agent' AND u.is_active = 1
+    WHERE ${teamRoleClause} AND u.is_active = 1
       ${deptFilter ? 'AND u.department = ?' : ''}
     GROUP BY g.result_status
   `).all(...(deptFilter ? [deptFilter] : []));
@@ -222,8 +226,13 @@ router.post('/team', (req, res) => {
   const targetUserId = parseInt(req.body?.user_id, 10);
   if (!targetUserId) return res.status(400).json({ error: 'user_id is required' });
 
-  const target = db.prepare(`SELECT id, department FROM users WHERE id = ? AND role = 'agent' AND is_active = 1`).get(targetUserId);
+  const target = db.prepare(`SELECT id, department, role FROM users WHERE id = ? AND role IN ('agent','leader') AND is_active = 1`).get(targetUserId);
   if (!target) return res.status(404).json({ error: 'الموظف غير موجود' });
+
+  // Only an admin may assign a goal to a team leader.
+  if (target.role === 'leader' && req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'إسناد هدف لقائد فريق متاح للأدمن فقط' });
+  }
 
   const deptFilter = leaderDeptFilter(req);
   if (deptFilter && target.department !== deptFilter) {
@@ -262,6 +271,11 @@ router.put('/team/:id', (req, res) => {
   const goal = getGoalWithUser(id);
   if (!goal) return res.status(404).json({ error: 'Goal not found' });
 
+  // Goals assigned to a team leader can only be managed by an admin.
+  if (goal.agent_role === 'leader' && req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'إدارة أهداف قادة الفريق متاحة للأدمن فقط' });
+  }
+
   const deptFilter = leaderDeptFilter(req);
   if (deptFilter && goal.agent_department !== deptFilter) {
     return res.status(403).json({ error: 'هذا الموظف ليس ضمن فريقك' });
@@ -288,6 +302,12 @@ router.delete('/team/:id', (req, res) => {
 
   const goal = getGoalWithUser(id);
   if (!goal) return res.status(404).json({ error: 'Goal not found' });
+
+  // Goals assigned to a team leader can only be managed by an admin.
+  if (goal.agent_role === 'leader' && req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'إدارة أهداف قادة الفريق متاحة للأدمن فقط' });
+  }
+
   const deptFilter = leaderDeptFilter(req);
   if (deptFilter && goal.agent_department !== deptFilter) {
     return res.status(403).json({ error: 'هذا الموظف ليس ضمن فريقك' });
@@ -308,6 +328,11 @@ router.put('/team/:id/evaluate', (req, res) => {
 
   const goal = getGoalWithUser(id);
   if (!goal) return res.status(404).json({ error: 'Goal not found' });
+
+  // Goals assigned to a team leader can only be evaluated by an admin.
+  if (goal.agent_role === 'leader' && req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'تقييم أهداف قادة الفريق متاح للأدمن فقط' });
+  }
 
   const deptFilter = leaderDeptFilter(req);
   if (deptFilter && goal.agent_department !== deptFilter) {
@@ -366,10 +391,15 @@ router.get('/team-agents', (req, res) => {
   if (!isLeader(req)) return res.status(403).json({ error: 'Forbidden' });
   const deptFilter = leaderDeptFilter(req);
   const params = [];
-  let where = `WHERE role = 'agent' AND is_active = 1`;
+  // Admin can also assign goals to team leaders; a regular leader sees agents only.
+  const roleClause = req.user?.role === 'admin'
+    ? "role IN ('agent','leader')"
+    : "role = 'agent'";
+  let where = `WHERE ${roleClause} AND is_active = 1`;
   if (deptFilter) { where += ' AND department = ?'; params.push(deptFilter); }
   const rows = db.prepare(`
-    SELECT id, full_name, department FROM users ${where} ORDER BY full_name COLLATE NOCASE
+    SELECT id, full_name, department, role FROM users ${where}
+    ORDER BY CASE role WHEN 'agent' THEN 0 ELSE 1 END, full_name COLLATE NOCASE
   `).all(...params);
   return res.json(rows);
 });

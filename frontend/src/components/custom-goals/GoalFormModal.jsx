@@ -127,7 +127,9 @@ export default function GoalFormModal({ open, onClose, goal, mode = 'agent', onS
               <select value={agentId} onChange={e => setAgentId(e.target.value)} className={inputCls}>
                 <option value="">— اختر الموظف —</option>
                 {teamAgents.map(a => (
-                  <option key={a.id} value={a.id}>{a.full_name} — {a.department}</option>
+                  <option key={a.id} value={a.id}>
+                    {a.full_name} — {a.department}{a.role === 'leader' ? ' (قائد فريق)' : ''}
+                  </option>
                 ))}
               </select>
             </div>
