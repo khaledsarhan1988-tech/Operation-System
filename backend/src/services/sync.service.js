@@ -380,6 +380,19 @@ function syncBatches(buffer, line) {
           (old_group_name, new_group_name, line, renamed_on, detected_by)
         VALUES (?, ?, ?, DATE('now', '+2 hours'), 'auto-sync')
       `);
+      // When a group is renamed (coordinator suffix changes in the code)
+      // it's the SAME group. Carry its count-approval baseline over to the
+      // new code so "استلام المجموعات" keeps tracking it instead of
+      // treating the renamed code as a brand-new unapproved group.
+      const findApproval = db.prepare(
+        `SELECT 1 FROM group_count_approvals WHERE group_name = ? AND line = ?`
+      );
+      const moveApproval = db.prepare(
+        `UPDATE group_count_approvals SET group_name = ? WHERE group_name = ? AND line = ?`
+      );
+      const dropApproval = db.prepare(
+        `DELETE FROM group_count_approvals WHERE group_name = ? AND line = ?`
+      );
       let renames = 0;
       for (const [stable, oldNames] of oldStable) {
         const newNames = newStable.get(stable) || [];
@@ -391,6 +404,17 @@ function syncBatches(buffer, line) {
           if (target) {
             insertRename.run(oldName, target, line);
             renames += 1;
+            // Migrate the count-approval baseline to the renamed code.
+            try {
+              if (findApproval.get(oldName, line)) {
+                if (findApproval.get(target, line)) {
+                  // New code already approved → just drop the stale old row.
+                  dropApproval.run(oldName, line);
+                } else {
+                  moveApproval.run(target, oldName, line);
+                }
+              }
+            } catch (_) { /* group_count_approvals absent on very old DB — skip */ }
           }
         }
       }
