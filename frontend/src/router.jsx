@@ -62,6 +62,7 @@ import EnrollmentPipeline from './pages/enrollment/Pipeline';
 // Shared pages
 import FixReport from './pages/shared/FixReport';
 import AttendanceAbsenceReport from './pages/shared/AttendanceAbsenceReport';
+import GroupReceiving from './pages/shared/GroupReceiving';
 
 const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
@@ -80,6 +81,7 @@ const router = createBrowserRouter([
       { path: 'schedule',           element: <TodaySchedule /> },
       { path: 'side-session-check', element: <SideSessionCheck /> },
       { path: 'code-problems',      element: <AgentCodeProblems /> },
+      { path: 'group-receiving',    element: <GroupReceiving /> },
       { path: 'pipeline',           element: <Pipeline /> },
       { path: 'my-progression',     element: <MyProgression /> },
       { path: 'todos',              element: <MyTodos /> },
@@ -103,6 +105,7 @@ const router = createBrowserRouter([
       { path: 'users',                        element: <UserManagement /> },
       { path: 'upload',                       element: <ExcelUpload /> },
       { path: 'code-problems',                element: <LeaderCodeProblems /> },
+      { path: 'group-receiving',              element: <GroupReceiving /> },
       { path: 'performance',                  element: <LeaderPerformance /> },
       { path: 'pipeline',                     element: <LeaderPipeline /> },
       { path: 'reports/customer-services',    element: <SystemReports /> },
@@ -131,6 +134,7 @@ const router = createBrowserRouter([
       { path: 'todos',                        element: <AdminTodos /> },
       { path: 'team',                         element: <TeamPage /> },
       { path: 'org-chart',                    element: <OrgChart /> },
+      { path: 'group-receiving',              element: <GroupReceiving /> },
       { path: 'reports/trainer-utilization',  element: <TrainerUtilization /> },
       { path: 'reports/find-available-trainer', element: <TrainerAvailabilityFinder /> },
       { path: 'reports/trainer-dashboard',      element: <TrainerUtilizationDashboard /> },

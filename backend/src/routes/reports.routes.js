@@ -1825,9 +1825,22 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
                LIMIT 1),
               b.dept_type
             ) AS dept_type,
-            b.coordinators, b.start_date
+            b.coordinators, b.start_date, b.line
      FROM batches b WHERE status='نشطة'${deptFilter}${empFilter}${lineB}`
   ).all();
+
+  // ── Approved client-count baselines (group "receiving") ───────────────────
+  // Keyed by `group_name|line`. A group is checked ONLY if it has an approval
+  // record — unapproved groups are intentionally never flagged.
+  const approvalMap = {};
+  try {
+    const approvals = db.prepare(
+      `SELECT group_name, line, approved_count FROM group_count_approvals`
+    ).all();
+    for (const a of approvals) {
+      approvalMap[`${a.group_name}|${a.line}`] = a.approved_count;
+    }
+  } catch (_) { /* table may not exist yet on a very old DB — skip the check */ }
 
     // fetch ALL main sessions (including unconfirmed) for count/date validation
     // Unconfirmed lectures are real lectures — excluding them causes false "missing lectures" errors
@@ -2208,6 +2221,29 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
           };
           addProblem(mainProblems, { ...baseProblem, first_date: firstMainDate }, 'main');
           addProblem(zoomProblems, { ...baseProblem, trainee_count: batch.trainee_count, first_date: firstSideDate }, 'side');
+        }
+      }
+
+      // ── GROUP-LEVEL CHECK: عدد العملاء اتغير عن المعتمد ─────────────
+      // Only groups that were explicitly "received" (have an approval row)
+      // are checked. If the live trainee_count drifted from the approved
+      // baseline — up OR down — flag it. Resolution = re-approve the new
+      // count from the "استلام المجموعات" page (which clears this flag).
+      // Pushed directly (not via addProblem) because re-approval — not the
+      // code-problem status mechanism — is the canonical resolution.
+      {
+        const approvedCount = approvalMap[`${gn}|${batch.line}`];
+        const liveCount     = batch.trainee_count || 0;
+        if (approvedCount != null && approvedCount !== liveCount) {
+          const diff = liveCount - approvedCount;
+          mainProblems.push({
+            ...meta,
+            first_date: firstMainDate,
+            problem_type: 'عدد عملاء المجموعة اتغير عن المعتمد',
+            detail: `المعتمد: ${approvedCount} | الحالي: ${liveCount} (${diff > 0 ? '+' : ''}${diff}) — اعتمد العدد الجديد من صفحة استلام المجموعات`,
+            actual: liveCount,
+            expected: approvedCount,
+          });
         }
       }
 

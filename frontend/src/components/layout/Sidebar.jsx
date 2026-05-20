@@ -7,7 +7,7 @@ import {
   Video, Users, BarChart2, Globe, UserCog, Upload, FileText,
   LogOut, Headphones, GraduationCap, ShieldCheck, AlertTriangle, Activity, Shuffle, Kanban,
   TrendingUp, Target, Settings, Award, Snowflake, Goal, Database, ChevronDown, Sparkles, BarChart3,
-  Cloud, History, Network, ListTodo
+  Cloud, History, Network, ListTodo, ClipboardCheck
 } from 'lucide-react';
 import UserAvatar from '../ui/UserAvatar';
 
@@ -43,6 +43,7 @@ const AGENT_LINKS = [
   { to: '/agent/side-session-check', label: 'nav.sideSessionCheck', icon: Video,           color: 'purple' },
   { to: '/agent/clients',            label: 'nav.clientSearch',     icon: Search,          color: 'cyan' },
   { to: '/agent/code-problems',      label: 'nav.codeProblems',     icon: AlertTriangle,   color: 'amber' },
+  { to: '/agent/group-receiving',    label: 'استلام المجموعات',     icon: ClipboardCheck,  color: 'cyan' },
   { to: '/agent/pipeline',           label: 'nav.clientPipeline',   icon: Kanban,          color: 'emerald' },
   { to: '/agent/tasks',              label: 'nav.myTasks',          icon: ClipboardList,   color: 'indigo' },
   { to: '/agent/todos',              label: 'مهامي',                icon: ListTodo,        color: 'pink' },
@@ -68,6 +69,7 @@ const LEADER_LINKS = [
   { to: '/leader/tasks',                        label: 'nav.taskDistribution', icon: ClipboardList,   color: 'indigo' },
   { to: '/leader/todos',                        label: 'مهام الفريق',          icon: ListTodo,        color: 'pink' },
   { to: '/leader/code-problems',                label: 'nav.codeProblems',     icon: AlertTriangle,   color: 'amber' },
+  { to: '/leader/group-receiving',              label: 'استلام المجموعات',     icon: ClipboardCheck,  color: 'cyan' },
   { to: '/leader/pipeline',                     label: 'nav.clientPipeline',   icon: Kanban,          color: 'emerald' },
   { to: '/agent/my-progression',                label: 'nav.myProgression',    icon: TrendingUp,      color: 'violet' },
   { type: 'section', label: 'nav.reportsSection' },
@@ -109,6 +111,7 @@ function getAdminLinks(user) {
     ] : []),
     { to: '/admin/team',         label: 'nav.team',          icon: Users,           color: 'purple' },
     { to: '/admin/org-chart',    label: 'الهيكل التنظيمي',    icon: Network,         color: 'indigo' },
+    { to: '/admin/group-receiving', label: 'استلام المجموعات', icon: ClipboardCheck, color: 'cyan' },
     { to: '/admin/control',      label: 'nav.controlPanel',       icon: LayoutDashboard, color: 'pink' },
     { to: '/admin/distribution', label: 'nav.clientDistribution', icon: Shuffle,         color: 'cyan' },
     { to: '/admin/pipeline',     label: 'nav.clientPipeline',     icon: Kanban,          color: 'emerald' },

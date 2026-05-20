@@ -1162,6 +1162,29 @@ initDb().then(db => {
     console.error('user_department_history bootstrap error:', e.message);
   }
 
+  // ── group_count_approvals bootstrap ──────────────────────────────────────
+  // "Receive a group" feature: stores the approved baseline client count per
+  // group. Keyed by (group_name, line) so it survives the Excel sync that
+  // rebuilds the `batches` table. No backfill — groups stay unapproved until
+  // a user explicitly receives them.
+  try {
+    db._raw.run(`CREATE TABLE IF NOT EXISTS group_count_approvals (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_name       TEXT NOT NULL,
+      line             TEXT NOT NULL DEFAULT 'Ahmed Hassan',
+      approved_count   INTEGER NOT NULL,
+      approved_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      approved_by_name TEXT,
+      approved_at      TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+      updated_at       TEXT,
+      UNIQUE(group_name, line)
+    )`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_gca_group_line ON group_count_approvals(group_name, line)`);
+    saveNow();
+  } catch (e) {
+    console.error('group_count_approvals bootstrap error:', e.message);
+  }
+
   try {
     const rahCount = db.prepare(`SELECT COUNT(*) AS cnt FROM remark_assignment_history`).get();
     if (rahCount && rahCount.cnt === 0) {
@@ -1313,6 +1336,7 @@ initDb().then(db => {
   app.use('/api/export',  require('./routes/export.routes'));
   app.use('/api/reports',       require('./routes/reports.routes'));
   app.use('/api/team',          require('./routes/team.routes'));
+  app.use('/api/group-approvals', require('./routes/group-approvals.routes'));
   app.use('/api/org-chart',     require('./routes/org-chart.routes'));
   app.use('/api/distribution',       require('./routes/distribution.routes'));
   app.use('/api/enrollment',         require('./routes/enrollment.routes'));

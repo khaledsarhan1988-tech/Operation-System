@@ -431,6 +431,29 @@ CREATE INDEX IF NOT EXISTS idx_rah_dates       ON remark_assignment_history(effe
 CREATE INDEX IF NOT EXISTS idx_rah_open        ON remark_assignment_history(remark_external_id, line, effective_to);
 
 -- =============================================
+-- GROUP COUNT APPROVALS — "receive a group" baseline client count
+-- =============================================
+-- When a user "receives" a group they approve its current client count.
+-- We snapshot batches.trainee_count at that moment as approved_count.
+-- Later, if the live trainee_count differs (up OR down), code-problems
+-- flags "عدد عملاء المجموعة اتغير عن المعتمد". Re-approving updates the
+-- baseline and clears the flag.
+-- Keyed by (group_name, line) — NOT batch.id — so the approval survives
+-- the Excel sync rebuilding the `batches` table.
+CREATE TABLE IF NOT EXISTS group_count_approvals (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  group_name       TEXT NOT NULL,
+  line             TEXT NOT NULL DEFAULT 'Ahmed Hassan',
+  approved_count   INTEGER NOT NULL,
+  approved_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  approved_by_name TEXT,
+  approved_at      TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+  updated_at       TEXT,
+  UNIQUE(group_name, line)
+);
+CREATE INDEX IF NOT EXISTS idx_gca_group_line ON group_count_approvals(group_name, line);
+
+-- =============================================
 -- MONTHLY SNAPSHOTS — frozen KPIs per agent per month (Level 2)
 -- =============================================
 CREATE TABLE IF NOT EXISTS monthly_snapshots (
