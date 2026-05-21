@@ -1015,6 +1015,14 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
+  // Manager view (department-admin, NOT super-admin) → split the assignee
+  // dropdown into "قادة الفريق" first, then everyone else. Super-admin keeps
+  // a single flat list.
+  const assignableUsers = usersData?.users || [];
+  const isManagerViewer = user?.role === 'admin' && !!user?.management && user.management !== 'All';
+  const leaderOptions = assignableUsers.filter(u => u.role === 'leader');
+  const otherOptions  = assignableUsers.filter(u => u.role !== 'leader');
+
   async function save() {
     if (!title.trim()) { setError('العنوان مطلوب'); return; }
     setSubmitting(true); setError(null);
@@ -1113,7 +1121,20 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
               disabled={lockContent}
               className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white disabled:bg-gray-50 disabled:cursor-not-allowed">
               <option value="">— نفسي —</option>
-              {(usersData?.users || []).map(u => (<option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>))}
+              {isManagerViewer && leaderOptions.length > 0 ? (
+                <>
+                  <optgroup label="قادة الفريق">
+                    {leaderOptions.map(u => (<option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>))}
+                  </optgroup>
+                  {otherOptions.length > 0 && (
+                    <optgroup label="باقي الفريق">
+                      {otherOptions.map(u => (<option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>))}
+                    </optgroup>
+                  )}
+                </>
+              ) : (
+                assignableUsers.map(u => (<option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>))
+              )}
             </select>
           </label>
 
