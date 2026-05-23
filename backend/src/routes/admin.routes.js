@@ -40,7 +40,7 @@ function effectiveLine(req) {
 // GET /api/admin/users
 router.get('/users', (req, res) => {
   const requesterLine = req.user.line || 'All';
-  let sql = 'SELECT id, username, full_name, role, department, management, line, language, avatar_url, is_active, created_at FROM users';
+  let sql = 'SELECT id, username, full_name, role, department, extra_departments, management, line, language, avatar_url, is_active, created_at FROM users';
   const params = [];
   if (requesterLine !== 'All') {
     sql += ' WHERE line = ?';
@@ -53,7 +53,11 @@ router.get('/users', (req, res) => {
 
 // POST /api/admin/users
 router.post('/users', (req, res) => {
-  const { username, password, full_name, role, department, language = 'ar', management = 'Customer Services', line = 'Ahmed Hassan' } = req.body;
+  const {
+    username, password, full_name, role, department,
+    extra_departments,
+    language = 'ar', management = 'Customer Services', line = 'Ahmed Hassan',
+  } = req.body;
   if (!username || !password || !full_name || !role) {
     return res.status(400).json({ error: 'username, password, full_name, role are required' });
   }
@@ -63,13 +67,25 @@ router.post('/users', (req, res) => {
   const existing = db.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE').get(username);
   if (existing) return res.status(409).json({ error: 'Username already exists' });
 
+  // Normalize extras: accept array OR comma-string, drop blanks + the primary
+  // department, store as comma-string (or NULL when empty).
+  const primary = String(department || 'General').trim().toLowerCase();
+  const rawExtras = Array.isArray(extra_departments)
+    ? extra_departments
+    : String(extra_departments || '').split(',');
+  const extras = rawExtras
+    .map(s => String(s).trim())
+    .filter(Boolean)
+    .filter(s => s.toLowerCase() !== primary);
+  const extrasField = extras.length ? Array.from(new Set(extras)).join(',') : null;
+
   const hash = bcrypt.hashSync(password, 12);
   const result = db.prepare(`
-    INSERT INTO users (username, password_hash, full_name, role, department, language, management, line)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(username, hash, full_name, role, department || 'General', language, management, line);
+    INSERT INTO users (username, password_hash, full_name, role, department, extra_departments, language, management, line)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(username, hash, full_name, role, department || 'General', extrasField, language, management, line);
 
-  const user = db.prepare('SELECT id, username, full_name, role, department, management, line, language, is_active FROM users WHERE id = ?')
+  const user = db.prepare('SELECT id, username, full_name, role, department, extra_departments, management, line, language, is_active FROM users WHERE id = ?')
     .get(result.lastInsertRowid);
   return res.status(201).json(user);
 });
@@ -77,7 +93,7 @@ router.post('/users', (req, res) => {
 // PUT /api/admin/users/:id
 router.put('/users/:id', (req, res) => {
   const { id } = req.params;
-  const { full_name, role, department, language, password, is_active, management, line } = req.body;
+  const { full_name, role, department, extra_departments, language, password, is_active, management, line } = req.body;
 
   // Snapshot current state — needed for dept-change detection
   const user = db.prepare(
@@ -90,11 +106,28 @@ router.put('/users/:id', (req, res) => {
       .run(bcrypt.hashSync(password, 12), id);
   }
 
+  // Normalize extra_departments: accept array OR comma-string, store as
+  // comma-separated string (or NULL when empty). Strip blanks and the
+  // primary `department` from the list — that would be redundant.
+  let normalizedExtras;
+  if (extra_departments !== undefined) {
+    const raw = Array.isArray(extra_departments)
+      ? extra_departments
+      : String(extra_departments || '').split(',');
+    const primary = (department !== undefined ? department : user.department || '').trim().toLowerCase();
+    const cleaned = raw
+      .map(s => String(s).trim())
+      .filter(Boolean)
+      .filter(s => s.toLowerCase() !== primary);
+    normalizedExtras = cleaned.length ? Array.from(new Set(cleaned)).join(',') : null;
+  }
+
   const fields = [];
   const params = [];
   if (full_name  !== undefined) { fields.push('full_name = ?');  params.push(full_name); }
   if (role       !== undefined) { fields.push('role = ?');       params.push(role); }
   if (department !== undefined) { fields.push('department = ?'); params.push(department); }
+  if (extra_departments !== undefined) { fields.push('extra_departments = ?'); params.push(normalizedExtras); }
   if (language   !== undefined) { fields.push('language = ?');   params.push(language); }
   if (is_active  !== undefined) { fields.push('is_active = ?');  params.push(is_active ? 1 : 0); }
   if (management !== undefined) { fields.push('management = ?'); params.push(management); }

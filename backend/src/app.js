@@ -115,6 +115,15 @@ initDb().then(db => {
       saveNow();
       console.log('✅ Migration: added `avatar_url` column to users');
     }
+    // extra_departments: lets ONE leader oversee MULTIPLE sections in the
+    // org chart (e.g. Mai leads both 'General' and 'Private'). Stored as a
+    // comma-separated list. NULL on non-leaders. No data migration needed —
+    // every existing user simply gets NULL until an admin assigns extras.
+    if (!cols.includes('extra_departments')) {
+      db._raw.run(`ALTER TABLE users ADD COLUMN extra_departments TEXT`);
+      saveNow();
+      console.log('✅ Migration: added `extra_departments` column to users');
+    }
   } catch (e) {
     console.error('users.line migration error:', e.message);
   }

@@ -11,6 +11,11 @@ CREATE TABLE IF NOT EXISTS users (
   full_name     TEXT NOT NULL,
   role          TEXT NOT NULL CHECK(role IN ('agent','leader','admin')),
   department    TEXT NOT NULL DEFAULT 'General',
+  -- Comma-separated list of ADDITIONAL sections this leader oversees beyond
+  -- their primary `department`. E.g. department='General' + extra='Private'
+  -- → the user appears as leader of both columns in the org chart.
+  -- Only meaningful when role='leader'. NULL on regular agents/admins.
+  extra_departments TEXT,
   management    TEXT NOT NULL DEFAULT 'Customer Services',
   line          TEXT NOT NULL DEFAULT 'Ahmed Hassan',
   language      TEXT NOT NULL DEFAULT 'ar' CHECK(language IN ('ar','en')),

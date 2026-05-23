@@ -84,25 +84,46 @@ router.get('/customer-services', (req, res) => {
       { key: 'appointments',     label: 'مواعيد',      dept_users: 'Appointments',tm_dept: 'appointments',      tm_section: null,      tm_line: null           },
     ];
 
-    // Filter to the leader's own section so each team-leader sees only the
-    // column they actually own. Admins (and any other higher role) get all.
+    // Filter to the leader's own section(s) so each team-leader sees only
+    // the columns they actually own. Admins get all. A leader can oversee
+    // multiple sections via users.extra_departments (comma-separated).
     let visibleSections = sections;
     if (req.user?.role === 'leader') {
-      const dept = (req.user.department || '').trim();
-      visibleSections = sections.filter((s) => s.dept_users.toLowerCase() === dept.toLowerCase());
+      // Read extra_departments from DB — JWT only carries `department`.
+      const u = db.prepare(
+        `SELECT department, extra_departments FROM users WHERE id = ?`
+      ).get(req.user.id) || {};
+      const primary = String(u.department || req.user.department || '').trim().toLowerCase();
+      const extras = String(u.extra_departments || '')
+        .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+      const allDepts = new Set([primary, ...extras].filter(Boolean));
+      visibleSections = sections.filter(s => allDepts.has(s.dept_users.toLowerCase()));
       if (!visibleSections.length) {
         return res.json({
           sections: [],
           viewer_role: 'leader',
-          warning: `لا يوجد قسم يطابق department='${dept}' في users`,
+          warning: `لا يوجد قسم يطابق صلاحيتك (primary='${u.department}', extra='${u.extra_departments || ''}')`,
         });
       }
     }
 
+    // Match a leader to a section using EITHER their primary `department`
+    // OR a token-exact match in `extra_departments` (a comma-separated list
+    // of additional sections they oversee). The token-match wraps the column
+    // in commas on both sides so a search for 'General' never matches
+    // 'GeneralSomething'. Case-insensitive, whitespace-tolerant.
     const leaderStmt = db.prepare(
       `SELECT id, full_name AS name FROM users
-        WHERE role='leader' AND is_active=1 AND department = ? COLLATE NOCASE
-        ORDER BY id LIMIT 1`
+        WHERE role='leader' AND is_active=1
+          AND (
+            department = ? COLLATE NOCASE
+            OR (',' || REPLACE(REPLACE(IFNULL(extra_departments, ''), ', ', ','), ' ,', ',') || ',')
+                 LIKE ('%,' || ? || ',%') COLLATE NOCASE
+          )
+        ORDER BY
+          CASE WHEN department = ? COLLATE NOCASE THEN 0 ELSE 1 END,
+          id
+        LIMIT 1`
     );
     // Section + line variants: callers pick the right prepared statement
     // based on whether a section / line filter applies.
@@ -127,7 +148,9 @@ router.get('/customer-services', (req, res) => {
     );
 
     const result = visibleSections.map((s) => {
-      const leader = leaderStmt.get(s.dept_users) || null;
+      // Pass dept 3 times: primary match, extra_departments token match,
+      // and ORDER BY tiebreaker (prefers primary over extra).
+      const leader = leaderStmt.get(s.dept_users, s.dept_users, s.dept_users) || null;
       const rawMembers = s.tm_section
         ? (s.tm_line
             ? membersWithSectionAndLine.all(s.tm_dept, s.tm_section, s.tm_line)
@@ -303,11 +326,21 @@ function getLeaderAndManagerNames() {
 function getSectionLeaderName(section) {
   const usersDept = SECTION_TO_USERS_DEPT[section];
   if (!usersDept) return null;
+  // Same dual-match as the org-chart leaderStmt: primary department OR
+  // a token in extra_departments. Stays consistent with the column view.
   const row = db.prepare(
     `SELECT full_name FROM users
-      WHERE role='leader' AND is_active=1 AND department = ? COLLATE NOCASE
-      ORDER BY id LIMIT 1`
-  ).get(usersDept);
+      WHERE role='leader' AND is_active=1
+        AND (
+          department = ? COLLATE NOCASE
+          OR (',' || REPLACE(REPLACE(IFNULL(extra_departments, ''), ', ', ','), ' ,', ',') || ',')
+               LIKE ('%,' || ? || ',%') COLLATE NOCASE
+        )
+      ORDER BY
+        CASE WHEN department = ? COLLATE NOCASE THEN 0 ELSE 1 END,
+        id
+      LIMIT 1`
+  ).get(usersDept, usersDept, usersDept);
   return row?.full_name || null;
 }
 

@@ -15,16 +15,29 @@ import { useAuth } from '../../auth/AuthContext';
 
 const EMPTY_FORM = {
   username: '', password: '', full_name: '',
-  role: 'agent', department: 'All', management: 'Customer Services',
+  role: 'agent', department: 'All', extra_departments: [],
+  management: 'Customer Services',
   line: 'Ahmed Hassan', language: 'ar', is_active: 1,
 };
+
+// Sections a LEADER can manage. Matches users.department values used by the
+// org chart. ('All' / 'Appointments' aren't in this list because they're not
+// real sections in the customer-services org-chart pipeline.)
+const EXTRA_DEPT_OPTIONS = [
+  { value: 'General', label: 'عام' },
+  { value: 'Private', label: 'خاص' },
+  { value: 'Semi',    label: 'شبه خاص' },
+];
 
 function UserModal({ open, onClose, user, onSaved }) {
   const { t } = useTranslation();
   const [form, setForm] = useState(user ? {
     username: user.username, password: '',
     full_name: user.full_name, role: user.role,
-    department: user.department, management: user.management || 'Customer Services',
+    department: user.department,
+    extra_departments: (user.extra_departments || '')
+      .split(',').map(s => s.trim()).filter(Boolean),
+    management: user.management || 'Customer Services',
     line: user.line || 'Ahmed Hassan', language: user.language,
     is_active: user.is_active,
   } : { ...EMPTY_FORM });
@@ -105,6 +118,43 @@ function UserModal({ open, onClose, user, onSaved }) {
               <p className="text-xs text-amber-600 mt-1 font-medium">⚠ قائد الفريق يحتاج قسم محدد (General / Private / Semi)</p>
             )}
           </div>
+          {/* Extra sections — only meaningful for leaders. Lets ONE leader
+              oversee multiple org-chart columns (e.g. General + Private). */}
+          {form.role === 'leader' && (
+            <div className="col-span-2">
+              <label className="label">أقسام إضافية تحت إشرافي (اختياري)</label>
+              <div className="flex flex-wrap gap-2 p-2 rounded-lg border border-border bg-surface">
+                {EXTRA_DEPT_OPTIONS
+                  .filter(o => o.value !== form.department)  /* hide the primary */
+                  .map(o => {
+                    const selected = form.extra_departments.includes(o.value);
+                    return (
+                      <button
+                        key={o.value}
+                        type="button"
+                        onClick={() => {
+                          const next = selected
+                            ? form.extra_departments.filter(v => v !== o.value)
+                            : [...form.extra_departments, o.value];
+                          set('extra_departments', next);
+                        }}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold border-2 transition
+                          ${selected
+                            ? 'bg-indigo-100 text-indigo-700 border-indigo-300'
+                            : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-200'}`}
+                      >
+                        {selected ? '✓ ' : ''}{o.label}
+                      </button>
+                    );
+                  })}
+              </div>
+              {form.extra_departments.length > 0 && (
+                <p className="text-xs text-indigo-600 mt-1.5 font-medium">
+                  💡 المستخدم هيظهر كقائد لـ <b>{form.department}</b> + <b>{form.extra_departments.join(', ')}</b> في الهيكل التنظيمي
+                </p>
+              )}
+            </div>
+          )}
           <div>
             <label className="label">الإدارة</label>
             <select className="input" value={form.management} onChange={e => set('management', e.target.value)}>
