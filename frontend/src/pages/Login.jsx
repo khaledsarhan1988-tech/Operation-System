@@ -33,7 +33,22 @@ export default function Login() {
       const loggedUser = await login(form.username, form.password);
       navigate(ROLE_HOME[loggedUser.role] || '/agent', { replace: true });
     } catch (err) {
-      setError(t('auth.invalidCredentials'));
+      // Show the REAL backend error so the user (and we) can diagnose:
+      //   • 401  → wrong credentials → keep the generic translation
+      //   • 503  → DB unavailable (transient or volume issue)
+      //   • 500  → backend bug
+      //   • no response → network / CORS / backend down
+      const status = err?.response?.status;
+      const backendMsg = err?.response?.data?.error;
+      if (status === 401) {
+        setError(t('auth.invalidCredentials'));
+      } else if (!err?.response) {
+        setError('تعذّر الاتصال بالسيرفر. تأكد من الإنترنت أو حاول مرة أخرى بعد لحظات.');
+      } else if (backendMsg) {
+        setError(`خطأ من السيرفر (${status}): ${backendMsg}`);
+      } else {
+        setError(`خطأ غير متوقع (${status || 'unknown'}). جرب مرة أخرى.`);
+      }
     } finally {
       setLoading(false);
     }
