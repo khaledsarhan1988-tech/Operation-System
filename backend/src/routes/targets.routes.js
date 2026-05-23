@@ -5,6 +5,20 @@ const { saveNow } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { lineFilter } = require('../utils/lineFilter');
+const { resolveLeaderDepts } = require('../utils/leader-scope');
+
+// Lowercase + de-dup'd list of departments the leader oversees (primary
+// + extras). Returns [] for admins. Used everywhere the old code looked
+// at req.user.department directly.
+function leaderDeptsLowercase(req) {
+  if (req.user?.role !== 'leader') return [];
+  const { listDepts } = resolveLeaderDepts(db, req.user.id);
+  const list = (listDepts.length ? listDepts : [req.user.department])
+    .filter(Boolean)
+    .map(d => String(d).toLowerCase().trim())
+    .filter(d => d !== 'all');
+  return Array.from(new Set(list));
+}
 
 const router = express.Router();
 router.use(authenticate, requireRole('agent')); // base auth — admin gates per write route
@@ -25,8 +39,8 @@ function adminOrLeader(req, res, next) {
 function checkLeaderTargetScope(req, body) {
   if (req.user.role === 'admin') return null;
   if (req.user.role !== 'leader') return { status: 403, error: 'Forbidden' };
-  const dept = req.user.department;
-  if (!dept || dept === 'All') {
+  const depts = leaderDeptsLowercase(req);
+  if (depts.length === 0) {
     return { status: 403, error: 'Leader must have a specific department to set targets' };
   }
   // Leader can only manage agent-scope targets — no department or global.
@@ -34,16 +48,20 @@ function checkLeaderTargetScope(req, body) {
   if (!agentName) {
     return { status: 403, error: 'القائد يقدر يضيف أهداف فردية فقط (موظف محدد)' };
   }
-  // The target's department, if provided, must equal the leader's dept.
-  if (body?.department && body.department !== 'All' && body.department !== dept) {
-    return { status: 403, error: 'لا يمكن للقائد تعيين هدف خارج قسمه' };
+  // The target's department, if provided, must be one of the leader's depts.
+  if (body?.department && body.department !== 'All') {
+    const bodyDept = String(body.department).toLowerCase().trim();
+    if (!depts.includes(bodyDept)) {
+      return { status: 403, error: 'لا يمكن للقائد تعيين هدف خارج قسمه' };
+    }
   }
-  // The agent must be registered in the leader's department.
+  // The agent must be registered in one of the leader's departments.
   const agent = db.prepare(
     `SELECT department FROM users WHERE LOWER(TRIM(full_name))=LOWER(TRIM(?)) AND role='agent' AND is_active=1 LIMIT 1`
   ).get(agentName);
   if (!agent) return { status: 404, error: 'الموظف غير موجود' };
-  if (agent.department !== dept) {
+  const agentDept = String(agent.department || '').toLowerCase().trim();
+  if (!depts.includes(agentDept)) {
     return { status: 403, error: 'هذا الموظف ليس ضمن فريقك' };
   }
   return null;
@@ -58,15 +76,19 @@ function checkLeaderTargetScope(req, body) {
 //   - admin   → no extra filter (sees everything)
 function scopedTargetWhere(req) {
   if (req.user?.role === 'admin') return null;
-  if (req.user?.role === 'leader' && req.user?.department && req.user.department !== 'All') {
-    return {
-      sql: `((t.department = ? AND t.agent_name IS NULL)
-          OR (t.agent_name IS NOT NULL AND LOWER(TRIM(t.agent_name)) IN (
-            SELECT LOWER(TRIM(full_name)) FROM users
-            WHERE department = ? AND role = 'agent'
-          )))`,
-      params: [req.user.department, req.user.department],
-    };
+  if (req.user?.role === 'leader') {
+    const depts = leaderDeptsLowercase(req);
+    if (depts.length > 0) {
+      const ph = depts.map(() => '?').join(',');
+      return {
+        sql: `((LOWER(TRIM(t.department)) IN (${ph}) AND t.agent_name IS NULL)
+            OR (t.agent_name IS NOT NULL AND LOWER(TRIM(t.agent_name)) IN (
+              SELECT LOWER(TRIM(full_name)) FROM users
+              WHERE LOWER(TRIM(department)) IN (${ph}) AND role = 'agent'
+            )))`,
+        params: [...depts, ...depts],
+      };
+    }
   }
   // agent
   const dept = req.user?.department && req.user.department !== 'All' ? req.user.department : null;

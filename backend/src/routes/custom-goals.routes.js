@@ -18,6 +18,7 @@ const express = require('express');
 const db = require('../config/database');
 const { saveNow } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
+const { resolveLeaderDepts } = require('../utils/leader-scope');
 
 const router = express.Router();
 router.use(authenticate);
@@ -158,9 +159,26 @@ function isLeader(req) {
   return req.user?.role === 'leader' || req.user?.role === 'admin';
 }
 
+// Returns the leader's overseen departments as a normalized lowercase array,
+// or null when no filter should apply (admin). Supports multi-section leaders
+// via users.extra_departments.
 function leaderDeptFilter(req) {
   if (req.user?.role === 'admin') return null;
-  return req.user?.department || null;
+  const { listDepts } = resolveLeaderDepts(db, req.user?.id);
+  const list = (listDepts.length ? listDepts : [req.user?.department])
+    .filter(Boolean)
+    .map(d => String(d).toLowerCase().trim());
+  return list.length ? list : null;
+}
+
+// Build "LOWER(TRIM(col)) IN (?,?,...)" + params from a depts array. Returns
+// `null` if there's no filter (admin) — caller should skip the clause entirely.
+function deptInClause(column, depts) {
+  if (!depts || depts.length === 0) return null;
+  return {
+    sql: `LOWER(TRIM(${column})) IN (${depts.map(() => '?').join(',')})`,
+    params: depts,
+  };
 }
 
 // GET /api/custom-goals/team?status=&agent=
@@ -179,7 +197,8 @@ router.get('/team', (req, res) => {
     ? "u.role IN ('agent','leader')"
     : "u.role = 'agent'";
   const whereParts = [teamRoleClause, 'u.is_active = 1'];
-  if (deptFilter) { whereParts.push('u.department = ?'); params.push(deptFilter); }
+  const inClause = deptInClause('u.department', deptFilter);
+  if (inClause) { whereParts.push(inClause.sql); params.push(...inClause.params); }
   if (status && VALID_STATUSES.includes(status)) {
     whereParts.push('g.result_status = ?'); params.push(status);
   }
@@ -203,14 +222,15 @@ router.get('/team', (req, res) => {
   `).all(...params);
 
   // Counts by status for the page tabs
+  const countsClause = deptInClause('u.department', deptFilter);
   const counts = db.prepare(`
     SELECT g.result_status AS status, COUNT(*) AS c
     FROM custom_goals g
     INNER JOIN users u ON u.id = g.user_id
     WHERE ${teamRoleClause} AND u.is_active = 1
-      ${deptFilter ? 'AND u.department = ?' : ''}
+      ${countsClause ? 'AND ' + countsClause.sql : ''}
     GROUP BY g.result_status
-  `).all(...(deptFilter ? [deptFilter] : []));
+  `).all(...(countsClause ? countsClause.params : []));
   const countMap = { pending: 0, achieved: 0, partially: 0, not_achieved: 0 };
   counts.forEach(r => countMap[r.status] = r.c);
   countMap.total = (countMap.pending + countMap.achieved + countMap.partially + countMap.not_achieved);
@@ -235,7 +255,7 @@ router.post('/team', (req, res) => {
   }
 
   const deptFilter = leaderDeptFilter(req);
-  if (deptFilter && target.department !== deptFilter) {
+  if (deptFilter && !deptFilter.includes(String(target.department || '').toLowerCase().trim())) {
     return res.status(403).json({ error: 'هذا الموظف ليس ضمن فريقك' });
   }
 
@@ -277,7 +297,7 @@ router.put('/team/:id', (req, res) => {
   }
 
   const deptFilter = leaderDeptFilter(req);
-  if (deptFilter && goal.agent_department !== deptFilter) {
+  if (deptFilter && !deptFilter.includes(String(goal.agent_department || '').toLowerCase().trim())) {
     return res.status(403).json({ error: 'هذا الموظف ليس ضمن فريقك' });
   }
 
@@ -309,7 +329,7 @@ router.delete('/team/:id', (req, res) => {
   }
 
   const deptFilter = leaderDeptFilter(req);
-  if (deptFilter && goal.agent_department !== deptFilter) {
+  if (deptFilter && !deptFilter.includes(String(goal.agent_department || '').toLowerCase().trim())) {
     return res.status(403).json({ error: 'هذا الموظف ليس ضمن فريقك' });
   }
 
@@ -335,7 +355,7 @@ router.put('/team/:id/evaluate', (req, res) => {
   }
 
   const deptFilter = leaderDeptFilter(req);
-  if (deptFilter && goal.agent_department !== deptFilter) {
+  if (deptFilter && !deptFilter.includes(String(goal.agent_department || '').toLowerCase().trim())) {
     return res.status(403).json({ error: 'هذا الموظف ليس ضمن فريقك' });
   }
 
@@ -396,7 +416,8 @@ router.get('/team-agents', (req, res) => {
     ? "role IN ('agent','leader')"
     : "role = 'agent'";
   let where = `WHERE ${roleClause} AND is_active = 1`;
-  if (deptFilter) { where += ' AND department = ?'; params.push(deptFilter); }
+  const inC = deptInClause('department', deptFilter);
+  if (inC) { where += ` AND ${inC.sql}`; params.push(...inC.params); }
   const rows = db.prepare(`
     SELECT id, full_name, department, role FROM users ${where}
     ORDER BY CASE role WHEN 'agent' THEN 0 ELSE 1 END, full_name COLLATE NOCASE

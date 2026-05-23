@@ -7,6 +7,7 @@ const { authenticate } = require('../middleware/auth');
 const { requireRole, requireSuperAdmin } = require('../middleware/roles');
 const { lineFilter } = require('../utils/lineFilter');
 const { nameInListInline } = require('../utils/nameMatch');
+const { resolveLeaderDepts } = require('../utils/leader-scope');
 
 const router = express.Router();
 // Read endpoints need at least leader (so the team-progression page works).
@@ -14,13 +15,35 @@ const router = express.Router();
 router.use(authenticate, requireRole('leader'));
 const adminOnly = requireRole('admin');
 
-// For leader: scope every read query to their own department automatically,
-// regardless of what the client passed in `?department=`. Admins see everything.
+// For leader: scope every read query to their PRIMARY department. Kept for
+// back-compat with code that only handles a single dept string. New code
+// should prefer `leaderScopedDepts(req)` to also include extras.
 function leaderScopedDept(req) {
   if (req.user?.role === 'leader' && req.user?.department && req.user.department !== 'All') {
     return req.user.department;
   }
-  return null; // null = trust client's ?department= param
+  return null;
+}
+
+// Plural variant: returns ALL departments a leader oversees (primary +
+// users.extra_departments). Returns null for admins (no scope). Use when
+// the query can filter via `department IN (?,?,...)` instead of `= ?`.
+function leaderScopedDepts(req) {
+  if (req.user?.role !== 'leader') return null;
+  const { listDepts } = resolveLeaderDepts(db, req.user.id);
+  const list = (listDepts.length ? listDepts : [req.user.department])
+    .filter(Boolean)
+    .filter(d => d !== 'All');
+  return list.length ? list : null;
+}
+
+// Convert depts array into "LOWER(TRIM(col)) IN (?,?,...)" + params.
+function deptsInClause(column, depts) {
+  if (!depts || depts.length === 0) return null;
+  return {
+    sql: `LOWER(TRIM(${column})) IN (${depts.map(() => '?').join(',')})`,
+    params: depts.map(d => String(d).toLowerCase().trim()),
+  };
 }
 
 // Notification helper — fail-soft

@@ -5,6 +5,7 @@ const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { lineFilter } = require('../utils/lineFilter');
 const { nameInListParam } = require('../utils/nameMatch');
+const { resolveLeaderDepts } = require('../utils/leader-scope');
 
 // Coordinator field token-exact matcher: prevents "Alaa" matching "Alaa wael".
 const coordTokenMatch = nameInListParam('b.coordinators');
@@ -12,6 +13,18 @@ const coordTokenMatchAbsent = nameInListParam('b.coordinators');
 
 const router = express.Router();
 router.use(authenticate, requireRole('leader'));
+
+// Returns the leader's full overseen departments list (primary + extras),
+// or an empty array if they oversee "All" (i.e. no scoping needed).
+// Use this everywhere instead of `req.user.department` to support leaders
+// who manage multiple sections via users.extra_departments.
+function leaderDeptsForScoping(req) {
+  const primary = String(req.user?.department || '').trim();
+  if (primary === 'All') return [];   // sentinel: no department filter
+  const { listDepts } = resolveLeaderDepts(db, req.user?.id);
+  // Fallback to JWT primary if DB lookup returned nothing.
+  return listDepts.length ? listDepts : (primary ? [primary] : []);
+}
 
 // ─── ROUTES ───────────────────────────────────────────────────────────────────
 
@@ -21,10 +34,11 @@ router.get('/team', (req, res) => {
   // Include the leader themselves so they can manage clients transferred to them
   const userConditions = ["(u.role = 'agent' OR u.full_name = ?)", 'u.is_active = 1'];
   const userParams = [req.user.full_name];
-  const dept = req.user?.department;
-  if (dept && dept !== 'All') {
-    userConditions.push('(u.department = ? OR u.full_name = ?)');
-    userParams.push(dept, req.user.full_name);
+  const depts = leaderDeptsForScoping(req);
+  if (depts.length > 0) {
+    const ph = depts.map(() => '?').join(',');
+    userConditions.push(`(LOWER(TRIM(u.department)) IN (${ph}) OR u.full_name = ?)`);
+    userParams.push(...depts.map(d => d.toLowerCase().trim()), req.user.full_name);
   }
   // Line filter on users — agents scoped to same line as leader (leader always included)
   const line = lineFilter(req);
@@ -76,9 +90,10 @@ router.get('/absent-report', (req, res) => {
     conditions.push(`EXISTS (SELECT 1 FROM batches b WHERE b.group_name = absent_students.group_name${joinBatchLine} AND ${m.clause})`);
     params.push(m.param);
   }
-  const dept = req.user?.department;
-  if (dept && dept !== 'All') {
+  const depts = leaderDeptsForScoping(req);
+  if (depts.length > 0) {
     const joinBatchLine = line ? ' AND b.line = absent_students.line' : '';
+    const ph = depts.map(() => '?').join(',');
     conditions.push(`EXISTS (
       SELECT 1 FROM batches b
       WHERE b.group_name = absent_students.group_name${joinBatchLine}
@@ -86,10 +101,10 @@ router.get('/absent-report', (req, res) => {
           EXISTS (
             SELECT 1 FROM users u
             WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
-              AND u.department = ?
+              AND LOWER(TRIM(u.department)) IN (${ph})
           )
           OR (
-            b.dept_type = ?
+            LOWER(TRIM(b.dept_type)) IN (${ph})
             AND NOT EXISTS (
               SELECT 1 FROM users u2
               WHERE LOWER(TRIM(u2.full_name)) = LOWER(TRIM(b.coordinators))
@@ -98,7 +113,8 @@ router.get('/absent-report', (req, res) => {
           )
         )
     )`);
-    params.push(dept, dept);
+    const norm = depts.map(d => d.toLowerCase().trim());
+    params.push(...norm, ...norm);
   }
 
   const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
@@ -122,16 +138,17 @@ router.get('/groups', (req, res) => {
   if (line) { conditions.push('b.line = ?'); params.push(line); }
 
   if (coordinator) { const m = coordTokenMatch(coordinator); conditions.push(m.clause); params.push(m.param); }
-  const dept = req.user?.department;
-  if (dept && dept !== 'All') {
+  const depts = leaderDeptsForScoping(req);
+  if (depts.length > 0) {
+    const ph = depts.map(() => '?').join(',');
     conditions.push(`(
       EXISTS (
         SELECT 1 FROM users u
         WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
-          AND u.department = ?
+          AND LOWER(TRIM(u.department)) IN (${ph})
       )
       OR (
-        b.dept_type = ?
+        LOWER(TRIM(b.dept_type)) IN (${ph})
         AND NOT EXISTS (
           SELECT 1 FROM users u2
           WHERE LOWER(TRIM(u2.full_name)) = LOWER(TRIM(b.coordinators))
@@ -139,7 +156,8 @@ router.get('/groups', (req, res) => {
         )
       )
     )`);
-    params.push(dept, dept);
+    const norm = depts.map(d => d.toLowerCase().trim());
+    params.push(...norm, ...norm);
   }
   const where = 'WHERE ' + conditions.join(' AND ');
   // Clients subquery scoped by line too
@@ -160,10 +178,11 @@ router.get('/performance', (req, res) => {
 
   const userConditions = ["u.role = 'agent'", 'u.is_active = 1'];
   const userParams = [];
-  const dept = req.user?.department;
-  if (dept && dept !== 'All') {
-    userConditions.push('u.department = ?');
-    userParams.push(dept);
+  const depts = leaderDeptsForScoping(req);
+  if (depts.length > 0) {
+    const ph = depts.map(() => '?').join(',');
+    userConditions.push(`LOWER(TRIM(u.department)) IN (${ph})`);
+    userParams.push(...depts.map(d => d.toLowerCase().trim()));
   }
   const line = lineFilter(req);
   if (line) { userConditions.push('u.line = ?'); userParams.push(line); }
@@ -220,19 +239,23 @@ router.post('/assign', (req, res) => {
 // GET /api/leader/side-sessions-summary
 router.get('/side-sessions-summary', (req, res) => {
   const date = req.query.date || new Date().toISOString().slice(0, 10);
-  const dept = req.user?.department;
+  const depts = leaderDeptsForScoping(req);
   const line = lineFilter(req);
   let deptClause = '';
-  if (dept && dept !== 'All') {
-    const safe = dept.replace(/'/g, "''");
+  if (depts.length > 0) {
+    // String-interpolate the IN list (legacy pattern in this query). We
+    // escape single quotes and pre-normalize, so injection is bounded.
+    const safeList = depts
+      .map(d => `'${String(d).toLowerCase().trim().replace(/'/g, "''")}'`)
+      .join(',');
     deptClause = ` AND (
       EXISTS (
         SELECT 1 FROM users u2
         WHERE LOWER(TRIM(u2.full_name)) = LOWER(TRIM(b.coordinators))
-          AND u2.department = '${safe}'
+          AND LOWER(TRIM(u2.department)) IN (${safeList})
       )
       OR (
-        b.dept_type = '${safe}'
+        LOWER(TRIM(b.dept_type)) IN (${safeList})
         AND NOT EXISTS (
           SELECT 1 FROM users u3
           WHERE LOWER(TRIM(u3.full_name)) = LOWER(TRIM(b.coordinators))
@@ -287,7 +310,7 @@ function getSlaStatus(slaDeadline, priority) {
 // GET /api/leader/pipeline?agent_name=&date_from=&date_to=
 // Reads exclusively from distribution_items — completely separate from remarks
 router.get('/pipeline', (req, res) => {
-  const dept = req.user?.department;
+  const depts = leaderDeptsForScoping(req);
   const line = lineFilter(req);
   const { agent_name, date_from, date_to } = req.query;
 
@@ -301,8 +324,12 @@ router.get('/pipeline', (req, res) => {
     // Include items assigned to the leader themselves + their team's agents
     const agentConds = ["role = 'agent'", "is_active = 1"];
     const subParams  = [];
-    if (dept && dept !== 'All') { agentConds.push('department = ?'); subParams.push(dept); }
-    if (line)                   { agentConds.push('line = ?');       subParams.push(line); }
+    if (depts.length > 0) {
+      const ph = depts.map(() => '?').join(',');
+      agentConds.push(`LOWER(TRIM(department)) IN (${ph})`);
+      subParams.push(...depts.map(d => d.toLowerCase().trim()));
+    }
+    if (line) { agentConds.push('line = ?'); subParams.push(line); }
     conditions.push(`(di.assigned_to = ? OR di.assigned_to IN (SELECT full_name FROM users WHERE ${agentConds.join(' AND ')}))`);
     params.push(req.user.full_name, ...subParams);
   }

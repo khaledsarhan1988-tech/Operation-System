@@ -6,11 +6,52 @@ const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { lineFilter } = require('../utils/lineFilter');
 const { nameInListInline } = require('../utils/nameMatch');
+const { resolveLeaderDepts } = require('../utils/leader-scope');
 
 const router = express.Router();
 router.use(authenticate, requireRole('agent'));
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
+
+// Returns the list of departments a leader oversees (primary + extras),
+// or null for non-leaders / 'All' scope. SQL-escaped lowercase values ready
+// to drop into a quoted IN() list.
+function leaderScopedDepts(req) {
+  if (req.user?.role !== 'leader') return null;
+  const { listDepts } = resolveLeaderDepts(db, req.user.id);
+  const list = (listDepts.length ? listDepts : [req.user.department])
+    .filter(Boolean)
+    .filter(d => d !== 'All')
+    .map(d => String(d).toLowerCase().trim().replace(/'/g, "''"));
+  return list.length ? list : null;
+}
+
+// Build a leader-dept SQL clause that mirrors the existing pattern used in
+// 4-5 spots in this file (and in leader.routes.js). Returns a string ready
+// to drop into a query (prefixed with ' AND ...') or empty if no scoping.
+// Coordinator's registered dept is the source of truth; falls back to
+// batches.dept_type only when the coordinator is unregistered.
+function leaderDeptClause(req, opts = {}) {
+  const { batchAlias = 'b', userAlias = 'u', fallbackUserAlias = 'u_fb' } = opts;
+  const depts = leaderScopedDepts(req);
+  if (!depts) return '';
+  const inList = depts.map(d => `'${d}'`).join(',');
+  return ` AND (
+    EXISTS (
+      SELECT 1 FROM users ${userAlias}
+      WHERE LOWER(TRIM(${userAlias}.full_name)) = LOWER(TRIM(${batchAlias}.coordinators))
+        AND LOWER(TRIM(${userAlias}.department)) IN (${inList})
+    )
+    OR (
+      LOWER(TRIM(${batchAlias}.dept_type)) IN (${inList})
+      AND NOT EXISTS (
+        SELECT 1 FROM users ${fallbackUserAlias}
+        WHERE LOWER(TRIM(${fallbackUserAlias}.full_name)) = LOWER(TRIM(${batchAlias}.coordinators))
+          AND ${fallbackUserAlias}.department IS NOT NULL AND ${fallbackUserAlias}.department != 'All'
+      )
+    )
+  )`;
+}
 
 function buildDateFilter(field, from_date, to_date) {
   if (from_date && to_date) return ` AND ${field} BETWEEN '${from_date}' AND '${to_date}'`;
@@ -38,16 +79,24 @@ function buildDeptFilter(table, department) {
 // This prevents cross-dept leakage: groups where batch stored General but coordinator
 // is registered Semi will NOT appear for General leader (they belong to coordinator's dept).
 function buildStrictDeptFilter(table, department) {
-  if (!department || department === 'All') return '';
-  const safe = department.replace(/'/g, "''");
+  // Accept either a single department string or an array (for multi-section
+  // leaders). Falsy / 'All' / empty array → no filter.
+  if (!department) return '';
+  const depts = Array.isArray(department) ? department : [department];
+  const cleaned = depts
+    .filter(Boolean)
+    .filter(d => d !== 'All')
+    .map(d => String(d).toLowerCase().trim().replace(/'/g, "''"));
+  if (cleaned.length === 0) return '';
+  const inList = cleaned.map(d => `'${d}'`).join(',');
   return ` AND (
     EXISTS (
       SELECT 1 FROM users u
       WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(${table}.coordinators))
-        AND u.department = '${safe}'
+        AND LOWER(TRIM(u.department)) IN (${inList})
     )
     OR (
-      ${table}.dept_type = '${safe}'
+      LOWER(TRIM(${table}.dept_type)) IN (${inList})
       AND NOT EXISTS (
         SELECT 1 FROM users u
         WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(${table}.coordinators))
@@ -144,8 +193,18 @@ function coordFilterAtDatePrepared(groupExpr, lineExpr, dateExpr) {
  * @param {string} activeDept   department to filter by ('' or 'All' → no filter)
  */
 function coordDeptAtDateFilter(batchAlias, dateExpr, activeDept) {
-  if (!activeDept || activeDept === 'All') return '';
-  const s = String(activeDept).replace(/'/g, "''");
+  // activeDept can be:
+  //   • '' / null / 'All' / [] → no filter
+  //   • string                  → single-dept filter (legacy callers)
+  //   • string[]                → multi-dept filter (multi-section leaders)
+  if (!activeDept) return '';
+  const depts = Array.isArray(activeDept) ? activeDept : [activeDept];
+  const cleaned = depts
+    .filter(Boolean)
+    .filter(d => d !== 'All')
+    .map(d => String(d).toLowerCase().trim().replace(/'/g, "''"));
+  if (cleaned.length === 0) return '';
+  const inList = cleaned.map(d => `'${d}'`).join(',');
   return ` AND (
     EXISTS (
       SELECT 1
@@ -158,10 +217,10 @@ function coordDeptAtDateFilter(batchAlias, dateExpr, activeDept) {
          AND ch_c.line       = ${batchAlias}.line
          AND DATE(ch_c.effective_from) <= ${dateExpr}
          AND (ch_c.effective_to IS NULL OR DATE(ch_c.effective_to) > ${dateExpr})
-         AND udh.department  = '${s}'
+         AND LOWER(TRIM(udh.department))  IN (${inList})
     )
     OR (
-      ${batchAlias}.dept_type = '${s}'
+      LOWER(TRIM(${batchAlias}.dept_type)) IN (${inList})
       AND NOT EXISTS (
         SELECT 1
           FROM coordinator_history ch_c2
@@ -4121,29 +4180,10 @@ router.get('/fix-report', (req, res) => {
   // No WHERE dept filter — all coordinators always appear.
   // For leaders: dept filter applied inside CASE WHEN so fixed counts only include
   // records from the leader's own department. This prevents fixed > all_count.
-  let deptCond = '';
-  if (req.user.role === 'leader') {
-    const dept = req.user.department;
-    if (dept && dept !== 'All') {
-      const s = dept.replace(/'/g,"''");
-      // Coordinator's registered dept is source of truth; fallback to batch.dept_type only if coordinator unregistered.
-      deptCond = ` AND (
-        EXISTS (
-          SELECT 1 FROM users u
-          WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
-            AND u.department = '${s}'
-        )
-        OR (
-          b.dept_type = '${s}'
-          AND NOT EXISTS (
-            SELECT 1 FROM users u
-            WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
-              AND u.department IS NOT NULL AND u.department != 'All'
-          )
-        )
-      )`;
-    }
-  }
+  // Multi-dept aware: leader sees rows for ANY of their overseen departments
+  // (primary + users.extra_departments). leaderDeptClause() returns '' for
+  // admins / no scope.
+  const deptCond = leaderDeptClause(req);
   // Build date condition embedded in CASE WHEN (date_from/date_to override period)
   let fixedDateCond = '';
   if (date_from && date_to) {
@@ -4228,29 +4268,8 @@ router.get('/fix-report/detail', (req, res) => {
   if (!coordinator) return res.status(400).json({ error: 'coordinator required' });
   const line = lineFilter(req);
   const lineCps = buildLineFilter('cps', line);
-  // For leader: coordinator's registered dept is source of truth (consistent with code-problems)
-  let deptClause = '';
-  if (req.user.role === 'leader') {
-    const dept = req.user.department;
-    if (dept && dept !== 'All') {
-      const s = dept.replace(/'/g,"''");
-      deptClause = ` AND (
-        EXISTS (
-          SELECT 1 FROM users u
-          WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
-            AND u.department = '${s}'
-        )
-        OR (
-          b.dept_type = '${s}'
-          AND NOT EXISTS (
-            SELECT 1 FROM users u
-            WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
-              AND u.department IS NOT NULL AND u.department != 'All'
-          )
-        )
-      )`;
-    }
-  }
+  // Multi-dept aware (supervisor-follow-up): leader sees all overseen depts.
+  const deptClause = leaderDeptClause(req);
   let periodClause = '';
   if (date_from && date_to) {
     const f = date_from.replace(/'/g,"''"); const t = date_to.replace(/'/g,"''");
@@ -4329,7 +4348,9 @@ router.get('/attendance-absence', (req, res) => {
   let coordFilterB2 = buildCoordFilter('b2', coordinator);
   let activeDept = '';
   if (req.user?.role === 'leader') {
-    activeDept = req.user.department;
+    // Multi-dept aware: pass the full overseen list (primary + extras).
+    // coordDeptAtDateFilter now accepts arrays.
+    activeDept = leaderScopedDepts(req) || '';
   } else if (req.user?.role === 'admin') {
     activeDept = req.query.department || '';
   } else if (req.user?.role === 'agent') {
@@ -4594,8 +4615,10 @@ router.get('/attendance-absence-by-department', (req, res) => {
   let coordFilterB = buildCoordFilter('b', coordinator);
   let coordFilterB2 = buildCoordFilter('b2', coordinator);
   if (req.user?.role === 'leader') {
-    deptFilterB  = buildStrictDeptFilter('b',  req.user.department);
-    deptFilterB2 = buildStrictDeptFilter('b2', req.user.department);
+    // Multi-dept aware: pass the array of overseen depts.
+    const depts = leaderScopedDepts(req);
+    deptFilterB  = buildStrictDeptFilter('b',  depts);
+    deptFilterB2 = buildStrictDeptFilter('b2', depts);
   } else if (req.user?.role === 'admin') {
     deptFilterB  = buildDeptFilter('b',  req.query.department);
     deptFilterB2 = buildDeptFilter('b2', req.query.department);
@@ -4792,19 +4815,22 @@ router.get('/quality-employee', (req, res) => {
     return res.status(400).json({ error: `Invalid 'to' date: ${to}` });
   }
 
-  // Build user (agent) list — admin sees all; leader scoped to their dept.
+  // Build user (agent) list — admin sees all; leader scoped to all of
+  // their overseen departments (primary + extras).
   const userConds = ["u.role = 'agent'", 'u.is_active = 1'];
   const userParams = [];
-  let activeDept = (department && department !== 'All') ? department : null;
+  let activeDepts = null;  // array form for multi-dept support
 
-  // If caller is a leader, hard-scope to their dept
-  if (req.user?.role === 'leader' && req.user?.department && req.user.department !== 'All') {
-    activeDept = req.user.department;
+  if (req.user?.role === 'leader') {
+    activeDepts = leaderScopedDepts(req);
+  } else if (department && department !== 'All') {
+    activeDepts = [department];
   }
 
-  if (activeDept) {
-    userConds.push('u.department = ?');
-    userParams.push(activeDept);
+  if (activeDepts && activeDepts.length > 0) {
+    const ph = activeDepts.map(() => '?').join(',');
+    userConds.push(`LOWER(TRIM(u.department)) IN (${ph})`);
+    userParams.push(...activeDepts.map(d => String(d).toLowerCase().trim()));
   }
   if (line) {
     userConds.push('u.line = ?');

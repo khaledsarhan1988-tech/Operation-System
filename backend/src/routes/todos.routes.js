@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const db = require('../config/database');
 const { authenticate } = require('../middleware/auth');
+const { resolveLeaderDepts, sqlInDepts } = require('../utils/leader-scope');
 
 const router = express.Router();
 router.use(authenticate);
@@ -67,17 +68,20 @@ function canDeleteTodo(scope, todo) {
 }
 
 // Get the IDs of the agents that belong to a leader's *direct* team.
-// Definition: any active user with role='agent' AND same department as the
-// leader. Other leaders / admins are excluded so they don't pollute the
-// team views (gehad shouldn't see doha's row, and vice versa).
+// Definition: any active user with role='agent' AND department in the
+// leader's set of overseen departments (primary + extras). Other leaders /
+// admins are excluded so they don't pollute the team views.
 function leaderTeamMemberIds(scope) {
   if (scope.role !== 'leader') return [];
+  const { listDepts } = resolveLeaderDepts(db, scope.id);
+  if (listDepts.length === 0) return [];
+  const { sql, params } = sqlInDepts(listDepts);
   const rows = db.prepare(`
     SELECT id FROM users
      WHERE is_active = 1
        AND role = 'agent'
-       AND department = ?
-  `).all(scope.department || '');
+       AND ${sql}
+  `).all(...params);
   return rows.map(r => r.id);
 }
 
@@ -499,13 +503,16 @@ router.get('/team-summary', (req, res) => {
     // 1. Resolve the user pool to summarize.
     let userRows;
     if (scope.role === 'leader') {
+      // Leader can manage MULTIPLE departments (primary + extras).
+      const { listDepts } = resolveLeaderDepts(db, scope.id);
+      const { sql, params: deptParams } = sqlInDepts(listDepts);
       userRows = db.prepare(`
         SELECT id, full_name FROM users
          WHERE is_active = 1
            AND role = 'agent'
-           AND department = ?
+           AND ${sql}
          ORDER BY full_name COLLATE NOCASE
-      `).all(scope.department || '');
+      `).all(...deptParams);
     } else if (scope.management === 'All') {
       // Super-admin → every active agent
       userRows = db.prepare(`
@@ -786,17 +793,20 @@ router.get('/assignable-users', (req, res) => {
           ORDER BY full_name COLLATE NOCASE`
       ).all(scope.management);
     } else if (scope.role === 'leader') {
-      // Leader can only assign to: themselves + agents in their direct team
-      // (same department). Other leaders and other teams' agents are excluded.
+      // Leader can only assign to: themselves + agents in any of their
+      // overseen departments (primary + extras). Other leaders and other
+      // teams' agents are excluded.
+      const { listDepts } = resolveLeaderDepts(db, scope.id);
+      const { sql: inSql, params: deptParams } = sqlInDepts(listDepts);
       rows = db.prepare(
         `SELECT id, full_name, role, department, management FROM users
           WHERE is_active = 1
             AND (
               id = ?
-              OR (role = 'agent' AND department = ?)
+              OR (role = 'agent' AND ${inSql})
             )
           ORDER BY full_name COLLATE NOCASE`
-      ).all(scope.id, scope.department || '');
+      ).all(scope.id, ...deptParams);
     } else {
       // agent — only themselves
       rows = db.prepare(
