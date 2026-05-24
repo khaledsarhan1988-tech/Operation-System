@@ -142,6 +142,90 @@ function StatusBadge({ value }) {
   );
 }
 
+// ─── UNCONFIRMED LECTURES MODAL ────────────────────────────────────────────────
+// Opens when a "ساعات غير مؤكدة" cell is clicked — lists the individual
+// unconfirmed lectures making up that cell's total.
+function UnconfirmedModal({ context, onClose }) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['unconfirmed-lectures', context.trainer, context.from, context.to, context.shift_start, context.shift_end],
+    queryFn: () => api.get('/reports/trainer-work-history/unconfirmed', {
+      params: {
+        trainer:     context.trainer,
+        from:        context.from,
+        to:          context.to,
+        shift_start: context.shift_start,
+        shift_end:   context.shift_end || '',
+      },
+    }).then(r => r.data),
+  });
+  const lectures = data?.lectures || [];
+  const totalMin = lectures.reduce((acc, l) => {
+    const m = String(l.duration || '').match(/^(\d{1,2}):(\d{2})$/);
+    return acc + (m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : 0);
+  }, 0);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+      onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden"
+        onClick={e => e.stopPropagation()} dir="rtl">
+        <div className="px-5 py-4 bg-gradient-to-l from-red-50 to-red-100/50 border-b border-red-100 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-red-700 uppercase tracking-wide mb-1">محاضرات غير مؤكدة</p>
+            <p className="text-sm font-black text-gray-900 leading-tight">{context.trainer}</p>
+            {!isLoading && !isError && (
+              <p className="text-xs text-gray-500 mt-1">
+                {lectures.length} محاضرة · إجمالي {fmtMins(totalMin)}
+              </p>
+            )}
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/60 flex-shrink-0">
+            <X size={15} className="text-gray-600" />
+          </button>
+        </div>
+        <div className="max-h-[60vh] overflow-y-auto">
+          {isLoading ? (
+            <div className="p-10 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-gray-400" /></div>
+          ) : isError ? (
+            <div className="p-10 text-center text-sm text-red-600">تعذّر تحميل المحاضرات</div>
+          ) : lectures.length === 0 ? (
+            <div className="p-10 text-center text-sm text-gray-400">لا توجد محاضرات غير مؤكدة لهذا الشيفت في الفترة</div>
+          ) : (
+            <table className="w-full text-sm text-right">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100">
+                  <th className="px-4 py-2.5 text-xs font-semibold text-gray-500 w-10">#</th>
+                  <th className="px-4 py-2.5 text-xs font-semibold text-gray-500">اسم المجموعة</th>
+                  <th className="px-4 py-2.5 text-xs font-semibold text-gray-500">التاريخ</th>
+                  <th className="px-4 py-2.5 text-xs font-semibold text-gray-500">الوقت</th>
+                  <th className="px-4 py-2.5 text-xs font-semibold text-gray-500">المدّة</th>
+                  <th className="px-4 py-2.5 text-xs font-semibold text-gray-500">النوع</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {lectures.map((l, i) => (
+                  <tr key={i} className="hover:bg-gray-50/60">
+                    <td className="px-4 py-2.5 text-xs text-gray-400">{i + 1}</td>
+                    <td className="px-4 py-2.5 font-semibold text-gray-800 text-xs break-all" dir="ltr">{l.group_name || '—'}</td>
+                    <td className="px-4 py-2.5 text-xs text-gray-600 font-mono whitespace-nowrap" dir="ltr">{l.date || '—'}</td>
+                    <td className="px-4 py-2.5 text-xs text-gray-600 font-mono whitespace-nowrap" dir="ltr">{l.time || '—'}</td>
+                    <td className="px-4 py-2.5 text-xs text-gray-700 font-mono whitespace-nowrap" dir="ltr">{l.duration || '—'}</td>
+                    <td className="px-4 py-2.5 text-xs whitespace-nowrap">
+                      {l.session_type === 'side'
+                        ? <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border bg-purple-100 text-purple-700 border-purple-200">زووم كول</span>
+                        : <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border bg-blue-100 text-blue-700 border-blue-200">أساسية</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SkeletonRows({ cols = 11, rows = 6 }) {
   return Array.from({ length: rows }).map((_, i) => (
     <tr key={i} className="animate-pulse border-b border-gray-50">
@@ -163,6 +247,7 @@ export default function TrainerWorkHistory() {
   const [trainer,     setTrainer]     = useState('');
   const [search,      setSearch]      = useState('');
   const [editMember,  setEditMember]  = useState(null);
+  const [ucModal,     setUcModal]     = useState(null);  // { trainer, from, to, shift_start, shift_end }
 
   // ── trainer dropdown options — all education team members
   // (also used as the source for the click-to-edit modal — we look up the
@@ -370,12 +455,20 @@ export default function TrainerWorkHistory() {
                    </td>
                    <td className="px-3 py-3 whitespace-nowrap">
                      {r.unconfirmed_minutes > 0 ? (
-                       <span
-                         className="inline-flex items-center justify-center px-2 py-0.5 rounded-lg bg-red-50 text-red-700 text-xs font-black border border-red-200"
-                         title="مجموع مدة المحاضرات اللي حالتها 'غير مؤكدة' في هذا الشيفت"
+                       <button
+                         type="button"
+                         onClick={() => setUcModal({
+                           trainer:     r.trainer_name,
+                           from:        fromDate,
+                           to:          toDate,
+                           shift_start: r.start_date,
+                           shift_end:   r.end_date,
+                         })}
+                         title="انقر لعرض المحاضرات الغير مؤكدة"
+                         className="inline-flex items-center justify-center px-2 py-0.5 rounded-lg bg-red-50 text-red-700 text-xs font-black border border-red-200 hover:bg-red-100 hover:border-red-300 transition-colors cursor-pointer"
                        >
                          {fmtMins(r.unconfirmed_minutes)}
-                       </span>
+                       </button>
                      ) : (
                        <span className="text-xs text-gray-300">—</span>
                      )}
@@ -404,6 +497,11 @@ export default function TrainerWorkHistory() {
           onClose={() => setEditMember(null)}
           loading={saveMutation.isPending}
         />
+      )}
+
+      {/* ── Unconfirmed lectures drill-down modal ── */}
+      {ucModal && (
+        <UnconfirmedModal context={ucModal} onClose={() => setUcModal(null)} />
       )}
     </div>
   );

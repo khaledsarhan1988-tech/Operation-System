@@ -4035,6 +4035,58 @@ router.get('/trainer-work-history', (req, res) => {
   }
 });
 
+// ─── GET /api/reports/trainer-work-history/unconfirmed ───────────────────────
+// Backs the click-through drill-down on the "ساعات غير مؤكدة" cell.
+// Returns the individual unconfirmed lectures making up that cell's total.
+//
+// Query params:
+//   trainer       — full team_members.name (paren suffix is stripped before
+//                   matching against lectures.trainer)
+//   from, to      — the report's main date window
+//   shift_start   — the SHIFT's start_date (optional)
+//   shift_end     — the SHIFT's end_date (optional; null = still active)
+//
+// Returns lectures whose date is within BOTH windows (report ∩ shift).
+router.get('/trainer-work-history/unconfirmed', (req, res) => {
+  const safeDate = (s) => (/^\d{4}-\d{2}-\d{2}$/.test(String(s || '')) ? String(s) : '');
+  const stripParens = (s) => String(s || '').replace(/\([^)]*\)/g, '').trim().toLowerCase();
+  const trainerName = (req.query.trainer || '').trim();
+  const from        = safeDate(req.query.from);
+  const to          = safeDate(req.query.to);
+  if (!trainerName || !from || !to) {
+    return res.status(400).json({ error: 'trainer, from, to are required' });
+  }
+  const shiftStart = safeDate(req.query.shift_start) || from;
+  const shiftEnd   = safeDate(req.query.shift_end)   || to;
+  const winLo = shiftStart > from ? shiftStart : from;
+  const winHi = shiftEnd   < to   ? shiftEnd   : to;
+
+  try {
+    const allRows = db.prepare(
+      `SELECT group_name, date, time, duration, trainer, session_type
+         FROM lectures
+        WHERE status = 'غير مؤكدة'
+          AND date BETWEEN ? AND ?
+        ORDER BY date ASC, time ASC`
+    ).all(winLo, winHi);
+    const target = stripParens(trainerName);
+    const lectures = allRows
+      .filter(r => stripParens(r.trainer) === target)
+      .map(r => ({
+        group_name:   r.group_name,
+        date:         r.date,
+        time:         r.time,
+        duration:     r.duration,
+        session_type: r.session_type,
+        trainer:      r.trainer,
+      }));
+    return res.json({ trainer: trainerName, window: { from: winLo, to: winHi }, lectures });
+  } catch (err) {
+    console.error('[reports] trainer-work-history/unconfirmed error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/reports/remarks-notes-options ──────────────────────────────────
 // Returns dropdown options for coordinator, category, assigned_to
 router.get('/remarks-notes-options', (req, res) => {
