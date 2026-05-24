@@ -215,6 +215,8 @@ export default function LectureReschedules() {
       )}
       {showDiagnostic && (
         <DiagnosticModal
+          initialFrom={from}
+          initialTo={to}
           onClose={() => setShowDiagnostic(false)}
           onBackfilled={() => { qc.invalidateQueries({ queryKey: ['reschedules'] }); }}
         />
@@ -229,9 +231,12 @@ export default function LectureReschedules() {
 // doesn't fall on the batch's training_schedule weekdays. These get added
 // as "pending" reschedules with reason='anomaly_detected' so the admin can
 // review and approve/reject like any other entry.
-function DiagnosticModal({ onClose, onBackfilled }) {
-  const [from, setFrom] = useState('');   // empty = backend default (30d)
-  const [to, setTo]     = useState('');
+function DiagnosticModal({ initialFrom, initialTo, onClose, onBackfilled }) {
+  // Pre-fill from the parent page's filter bar (so the admin doesn't have
+  // to re-type dates they already entered). Empty defaults fall back to
+  // backend's "last 30 days" window.
+  const [from, setFrom] = useState(initialFrom || '');
+  const [to, setTo]     = useState(initialTo   || '');
   const [result, setResult] = useState(null);
 
   const { data, isLoading, refetch } = useQuery({
@@ -276,19 +281,29 @@ function DiagnosticModal({ onClose, onBackfilled }) {
         </div>
 
         <div className="p-5 space-y-4 overflow-y-auto flex-1">
-          {/* Date range */}
+          {/* Date range — pre-filled from the parent page's filter bar.
+              Empty fields fall back to backend default (last 30 days). */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-bold text-gray-600 mb-1">من تاريخ (افتراضي: آخر 30 يوم)</label>
+              <label className="block text-xs font-bold text-gray-600 mb-1">
+                من تاريخ {!from && <span className="text-gray-400 font-normal">(افتراضي: آخر 30 يوم)</span>}
+              </label>
               <input type="date" value={from} onChange={e => setFrom(e.target.value)}
                 className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" />
             </div>
             <div>
-              <label className="block text-xs font-bold text-gray-600 mb-1">إلى تاريخ</label>
+              <label className="block text-xs font-bold text-gray-600 mb-1">
+                إلى تاريخ {!to && <span className="text-gray-400 font-normal">(افتراضي: النهاردة)</span>}
+              </label>
               <input type="date" value={to} onChange={e => setTo(e.target.value)}
                 className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" />
             </div>
           </div>
+          {(from || to) && (
+            <p className="text-[11px] text-indigo-700 bg-indigo-50 border border-indigo-200 rounded px-2 py-1">
+              ✓ التاريخ اتنقل تلقائياً من فلتر الصفحة. تقدر تعدّله لو حبيت.
+            </p>
+          )}
 
           {isLoading ? (
             <p className="text-center text-gray-400 py-8">جاري التحليل...</p>
