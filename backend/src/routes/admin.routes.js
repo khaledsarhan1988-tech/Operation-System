@@ -40,7 +40,7 @@ function effectiveLine(req) {
 // GET /api/admin/users
 router.get('/users', (req, res) => {
   const requesterLine = req.user.line || 'All';
-  let sql = 'SELECT id, username, full_name, role, department, extra_departments, management, line, language, avatar_url, is_active, created_at FROM users';
+  let sql = 'SELECT id, username, full_name, role, department, extra_departments, management, extra_managements, line, language, avatar_url, is_active, created_at FROM users';
   const params = [];
   if (requesterLine !== 'All') {
     sql += ' WHERE line = ?';
@@ -55,7 +55,7 @@ router.get('/users', (req, res) => {
 router.post('/users', (req, res) => {
   const {
     username, password, full_name, role, department,
-    extra_departments,
+    extra_departments, extra_managements,
     language = 'ar', management = 'Customer Services', line = 'Ahmed Hassan',
   } = req.body;
   if (!username || !password || !full_name || !role) {
@@ -79,13 +79,28 @@ router.post('/users', (req, res) => {
     .filter(s => s.toLowerCase() !== primary);
   const extrasField = extras.length ? Array.from(new Set(extras)).join(',') : null;
 
+  // Normalize extra_managements (same shape — comma-separated; drops primary).
+  // Ignored entirely when primary management is 'All' (already covers everything).
+  const primaryMgmt = String(management || '').trim().toLowerCase();
+  let extraMgmtsField = null;
+  if (primaryMgmt !== 'all') {
+    const rawMgmts = Array.isArray(extra_managements)
+      ? extra_managements
+      : String(extra_managements || '').split(',');
+    const mgmts = rawMgmts
+      .map(s => String(s).trim())
+      .filter(Boolean)
+      .filter(s => s.toLowerCase() !== primaryMgmt && s.toLowerCase() !== 'all');
+    extraMgmtsField = mgmts.length ? Array.from(new Set(mgmts)).join(',') : null;
+  }
+
   const hash = bcrypt.hashSync(password, 12);
   const result = db.prepare(`
-    INSERT INTO users (username, password_hash, full_name, role, department, extra_departments, language, management, line)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(username, hash, full_name, role, department || 'General', extrasField, language, management, line);
+    INSERT INTO users (username, password_hash, full_name, role, department, extra_departments, language, management, extra_managements, line)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(username, hash, full_name, role, department || 'General', extrasField, language, management, extraMgmtsField, line);
 
-  const user = db.prepare('SELECT id, username, full_name, role, department, extra_departments, management, line, language, is_active FROM users WHERE id = ?')
+  const user = db.prepare('SELECT id, username, full_name, role, department, extra_departments, management, extra_managements, line, language, is_active FROM users WHERE id = ?')
     .get(result.lastInsertRowid);
   return res.status(201).json(user);
 });
@@ -93,7 +108,7 @@ router.post('/users', (req, res) => {
 // PUT /api/admin/users/:id
 router.put('/users/:id', (req, res) => {
   const { id } = req.params;
-  const { full_name, role, department, extra_departments, language, password, is_active, management, line } = req.body;
+  const { full_name, role, department, extra_departments, extra_managements, language, password, is_active, management, line } = req.body;
 
   // Snapshot current state — needed for dept-change detection
   const user = db.prepare(
@@ -122,6 +137,27 @@ router.put('/users/:id', (req, res) => {
     normalizedExtras = cleaned.length ? Array.from(new Set(cleaned)).join(',') : null;
   }
 
+  // Same normalization for extra_managements. Cleared when the effective
+  // primary management is 'All' (already covers everything).
+  let normalizedExtraMgmts;
+  if (extra_managements !== undefined) {
+    // Fetch current management for the primary-vs-extra comparison.
+    const cur = db.prepare('SELECT management FROM users WHERE id = ?').get(id);
+    const primaryMgmt = String(management !== undefined ? management : (cur?.management || '')).trim().toLowerCase();
+    if (primaryMgmt === 'all') {
+      normalizedExtraMgmts = null;
+    } else {
+      const raw = Array.isArray(extra_managements)
+        ? extra_managements
+        : String(extra_managements || '').split(',');
+      const cleaned = raw
+        .map(s => String(s).trim())
+        .filter(Boolean)
+        .filter(s => s.toLowerCase() !== primaryMgmt && s.toLowerCase() !== 'all');
+      normalizedExtraMgmts = cleaned.length ? Array.from(new Set(cleaned)).join(',') : null;
+    }
+  }
+
   const fields = [];
   const params = [];
   if (full_name  !== undefined) { fields.push('full_name = ?');  params.push(full_name); }
@@ -131,6 +167,7 @@ router.put('/users/:id', (req, res) => {
   if (language   !== undefined) { fields.push('language = ?');   params.push(language); }
   if (is_active  !== undefined) { fields.push('is_active = ?');  params.push(is_active ? 1 : 0); }
   if (management !== undefined) { fields.push('management = ?'); params.push(management); }
+  if (extra_managements !== undefined) { fields.push('extra_managements = ?'); params.push(normalizedExtraMgmts); }
   if (line       !== undefined) { fields.push('line = ?');       params.push(line); }
 
   if (fields.length) {

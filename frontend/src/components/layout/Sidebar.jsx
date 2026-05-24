@@ -127,10 +127,16 @@ function getAdminLinks(user) {
     ] : []),
     { type: 'section', label: 'nav.reportsSection' },
   ];
+  // A user's effective managements = primary + any extras assigned via
+  // users.extra_managements. The sidebar shows a report's section when the
+  // user's set includes that report's management (or either is 'All').
   const mgmt = user?.management;
-  const reports = mgmt === 'All'
+  const extraMgmts = String(user?.extra_managements || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+  const userMgmts = new Set([mgmt, ...extraMgmts].filter(Boolean));
+  const reports = userMgmts.has('All')
     ? REPORT_LINKS
-    : REPORT_LINKS.filter(r => r.management === mgmt || r.management === 'All');
+    : REPORT_LINKS.filter(r => r.management === 'All' || userMgmts.has(r.management));
 
   const monitoring = [
     { type: 'section', label: 'المراقبة' },

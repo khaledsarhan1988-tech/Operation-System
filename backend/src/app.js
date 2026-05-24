@@ -124,6 +124,14 @@ initDb().then(db => {
       saveNow();
       console.log('✅ Migration: added `extra_departments` column to users');
     }
+    // extra_managements: lets ONE admin/manager oversee MULTIPLE managements
+    // (e.g. a Customer Services manager also has Quality access). Mirror of
+    // extra_departments but at the management level. NULL by default.
+    if (!cols.includes('extra_managements')) {
+      db._raw.run(`ALTER TABLE users ADD COLUMN extra_managements TEXT`);
+      saveNow();
+      console.log('✅ Migration: added `extra_managements` column to users');
+    }
   } catch (e) {
     console.error('users.line migration error:', e.message);
   }
@@ -340,6 +348,74 @@ initDb().then(db => {
     console.log('✅ Migration: team_member_extra_shifts table ready');
   } catch (e) {
     console.error('team_member_extra_shifts migration error:', e.message);
+  }
+
+  // ── official_holidays: ranges where lectures get bulk-rescheduled ────────
+  // Admin enters an entry per holiday (start..end + name). The sync service
+  // uses it to AUTO-MARK lecture reschedules whose old_date falls in the
+  // range as reason='official_holiday' (and auto-approves them so admins
+  // don't have to triage Eid/national-day shifts manually).
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS official_holidays (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        name        TEXT NOT NULL,
+        start_date  TEXT NOT NULL,
+        end_date    TEXT NOT NULL,
+        notes       TEXT,
+        created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_holiday_range ON official_holidays(start_date, end_date)`);
+    saveNow();
+    console.log('✅ Migration: official_holidays table ready');
+  } catch (e) {
+    console.error('official_holidays migration error:', e.message);
+  }
+
+  // ── lecture_reschedules: audit trail for lectures moved between dates ────
+  // Sync detection writes here whenever the diff between an old & new
+  // lectures Excel finds a (group + trainer + session_type) tuple that
+  // disappeared from date X and reappeared on date Y. Admin then approves
+  // or rejects through dedicated routes; admin-only notes column is kept
+  // separate from any user-visible explanation.
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS lecture_reschedules (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_name        TEXT NOT NULL,
+        line              TEXT NOT NULL,
+        session_type      TEXT NOT NULL,
+        old_date          TEXT NOT NULL,
+        old_time          TEXT,
+        old_trainer       TEXT,
+        old_duration      TEXT,
+        new_date          TEXT NOT NULL,
+        new_time          TEXT,
+        new_trainer       TEXT,
+        new_duration      TEXT,
+        detected_at       TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        excel_sync_id     INTEGER REFERENCES excel_syncs(id) ON DELETE SET NULL,
+        reschedule_reason TEXT,
+        holiday_id        INTEGER REFERENCES official_holidays(id) ON DELETE SET NULL,
+        approval_status   TEXT NOT NULL DEFAULT 'pending'
+                          CHECK(approval_status IN ('pending','approved','rejected','auto')),
+        approved_by       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        approved_at       TEXT,
+        rejection_reason  TEXT,
+        admin_notes       TEXT
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_resched_status   ON lecture_reschedules(approval_status)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_resched_old_date ON lecture_reschedules(old_date)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_resched_new_date ON lecture_reschedules(new_date)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_resched_group    ON lecture_reschedules(group_name)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_resched_trainer  ON lecture_reschedules(old_trainer)`);
+    saveNow();
+    console.log('✅ Migration: lecture_reschedules table ready');
+  } catch (e) {
+    console.error('lecture_reschedules migration error:', e.message);
   }
 
   // ── todos.due_date_end: support multi-day tasks (date ranges) ─────────────

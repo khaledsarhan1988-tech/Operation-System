@@ -16,7 +16,7 @@ import { useAuth } from '../../auth/AuthContext';
 const EMPTY_FORM = {
   username: '', password: '', full_name: '',
   role: 'agent', department: 'All', extra_departments: [],
-  management: 'Customer Services',
+  management: 'Customer Services', extra_managements: [],
   line: 'Ahmed Hassan', language: 'ar', is_active: 1,
 };
 
@@ -29,6 +29,15 @@ const EXTRA_DEPT_OPTIONS = [
   { value: 'Semi',    label: 'شبه خاص' },
 ];
 
+// Managements a MANAGER (admin) can be given additional access to.
+// The primary `management` field still picks ONE; these checkboxes add
+// further ones. 'All' isn't listed — it implicitly covers everything.
+const MANAGEMENT_OPTIONS = [
+  { value: 'Customer Services', label: 'خدمة العملاء' },
+  { value: 'Education',         label: 'التعليم' },
+  { value: 'Quality',           label: 'الجودة' },
+];
+
 function UserModal({ open, onClose, user, onSaved }) {
   const { t } = useTranslation();
   const [form, setForm] = useState(user ? {
@@ -38,6 +47,8 @@ function UserModal({ open, onClose, user, onSaved }) {
     extra_departments: (user.extra_departments || '')
       .split(',').map(s => s.trim()).filter(Boolean),
     management: user.management || 'Customer Services',
+    extra_managements: (user.extra_managements || '')
+      .split(',').map(s => s.trim()).filter(Boolean),
     line: user.line || 'Ahmed Hassan', language: user.language,
     is_active: user.is_active,
   } : { ...EMPTY_FORM });
@@ -164,6 +175,44 @@ function UserModal({ open, onClose, user, onSaved }) {
               <option value="Quality">الجودة</option>
             </select>
           </div>
+          {/* Additional managements — only meaningful when the primary
+              management is NOT 'All' (which already covers everything). */}
+          {form.management !== 'All' && (
+            <div>
+              <label className="label">إدارات إضافية (اختياري)</label>
+              <div className="flex flex-wrap gap-2">
+                {MANAGEMENT_OPTIONS
+                  .filter(o => o.value !== form.management)
+                  .map(o => {
+                    const selected = form.extra_managements.includes(o.value);
+                    return (
+                      <button
+                        key={o.value}
+                        type="button"
+                        onClick={() => {
+                          const next = selected
+                            ? form.extra_managements.filter(v => v !== o.value)
+                            : [...form.extra_managements, o.value];
+                          set('extra_managements', next);
+                        }}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${
+                          selected
+                            ? 'bg-violet-600 text-white border-violet-600 shadow-sm'
+                            : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                        }`}
+                      >
+                        {selected ? '✓ ' : ''}{o.label}
+                      </button>
+                    );
+                  })}
+              </div>
+              {form.extra_managements.length > 0 && (
+                <p className="text-xs text-violet-600 mt-1.5 font-medium">
+                  💡 المستخدم هيشوف صفحات إدارة <b>{form.management}</b> + <b>{form.extra_managements.join(', ')}</b>
+                </p>
+              )}
+            </div>
+          )}
           <div>
             <label className="label">Line</label>
             <select className="input" value={form.line} onChange={e => set('line', e.target.value)}>

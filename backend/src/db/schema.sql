@@ -17,6 +17,12 @@ CREATE TABLE IF NOT EXISTS users (
   -- Only meaningful when role='leader'. NULL on regular agents/admins.
   extra_departments TEXT,
   management    TEXT NOT NULL DEFAULT 'Customer Services',
+  -- Comma-separated list of ADDITIONAL managements this user oversees beyond
+  -- their primary `management`. E.g. management='Customer Services' +
+  -- extra='Quality' → the admin sees sidebar/links/scope for both. Mirror of
+  -- `extra_departments` but at the management level (not section). NULL on
+  -- users with only their primary management or on management='All'.
+  extra_managements TEXT,
   line          TEXT NOT NULL DEFAULT 'Ahmed Hassan',
   language      TEXT NOT NULL DEFAULT 'ar' CHECK(language IN ('ar','en')),
   avatar_url    TEXT,
