@@ -641,6 +641,12 @@ function _isMinorTimeDrift(rowA, rowB) {
   return Math.abs(ma - mb) < SAME_SLOT_TIME_TOLERANCE_MIN;
 }
 
+// ⚠️ DEAD CODE — kept for reference only.
+// This function is NOT called anywhere in production. Live detection was
+// removed per business rule: reschedule audit data must come ONLY from
+// Google Drive snapshot comparisons (see reschedules.routes.js →
+// /backfill-from-drive). Do not re-enable without explicit approval.
+// eslint-disable-next-line no-unused-vars
 function detectAndRecordReschedules({ snapshot, after, sessionType, line }) {
   // Build slot maps to find truly-changed slots (skip rows that are identical
   // pre/post — those are just re-imports of unchanged data).
@@ -743,17 +749,16 @@ function _daysBetween(d1, d2) {
 function syncLectures(buffer, line) {
   const rows = excel.parseLectures(buffer);
   const uniqueGroups = [...new Set(rows.map(r => r.group_name))];
-  let rescheduleCount = 0;
   const run = db.transaction(() => {
-    // Snapshot existing main lectures BEFORE wipe (for reschedule detection).
-    let snapshot = [];
-    try {
-      snapshot = db.prepare(
-        `SELECT group_name, date, time, duration, trainer, session_type, line
-           FROM lectures WHERE session_type = 'main' AND line = ?`
-      ).all(line);
-    } catch (_) { /* defensive */ }
-
+    // ── RESCHEDULE DETECTION INTENTIONALLY DISABLED ──────────────────────
+    // Live detection compares the current DB state (which may have come from
+    // a different source, manual upload, or older sync) to the incoming
+    // Excel — producing reschedule rows whose "old" side does NOT correspond
+    // to any specific Drive file. Per business decision, reschedule audit
+    // data must come ONLY from Google Drive snapshots — see the
+    // `/api/reschedules/backfill-from-drive` endpoint, which compares
+    // Excel files dated D vs D+1 directly. Do NOT re-enable live detection
+    // here without revisiting that policy.
     db.prepare("DELETE FROM lectures WHERE session_type = 'main' AND line = ?").run(line);
     // Claim exclusive ownership of these groups' main lectures
     evictFromOtherLines('lectures', line, uniqueGroups, " AND session_type = 'main'");
@@ -762,17 +767,6 @@ function syncLectures(buffer, line) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'main', NULL, ?, datetime('now', 'localtime'))
     `);
     rows.forEach(r => insert.run(r.group_name, r.date, r.time, r.duration, r.trainer, r.status, r.location, r.attendance, line));
-
-    // Reschedule detection AFTER the new state lands — both snapshot and
-    // `rows` are tagged with session_type/line so the matcher can key on them.
-    try {
-      const taggedRows = rows.map(r => ({ ...r, session_type: 'main', line }));
-      rescheduleCount = detectAndRecordReschedules({
-        snapshot, after: taggedRows, sessionType: 'main', line,
-      });
-    } catch (e) {
-      console.error('[reschedule-detect main]', e.message);
-    }
 
     // Update completed_lectures ONLY for this line's batches — count CONFIRMED lectures only
     // (unconfirmed lectures are excluded from all CS reports per business rule).
@@ -795,9 +789,6 @@ function syncLectures(buffer, line) {
     `).run(line);
   });
   run();
-  if (rescheduleCount > 0) {
-    console.log(`🔁 Detected ${rescheduleCount} main-lecture reschedule(s) for ${line}`);
-  }
   // Main lectures changed → recompute auto-absences for confirmed empty-attendance rows
   // Auto-absent refresh is best-effort — never let a failure here break the upload.
   try { regenerateAutoAbsents(line); }
@@ -808,16 +799,8 @@ function syncLectures(buffer, line) {
 function syncSideSessions(buffer, line) {
   const rows = excel.parseSideSessions(buffer);
   const uniqueGroups = [...new Set(rows.map(r => r.group_name))];
-  let rescheduleCount = 0;
   const run = db.transaction(() => {
-    let snapshot = [];
-    try {
-      snapshot = db.prepare(
-        `SELECT group_name, date, time, duration, trainer, session_type, line
-           FROM lectures WHERE session_type = 'side' AND line = ?`
-      ).all(line);
-    } catch (_) { /* defensive */ }
-
+    // ── RESCHEDULE DETECTION INTENTIONALLY DISABLED — see syncLectures ──
     db.prepare("DELETE FROM lectures WHERE session_type = 'side' AND line = ?").run(line);
     // Claim exclusive ownership of these groups' side sessions
     evictFromOtherLines('lectures', line, uniqueGroups, " AND session_type = 'side'");
@@ -826,20 +809,8 @@ function syncSideSessions(buffer, line) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'side', ?, ?, datetime('now', 'localtime'))
     `);
     rows.forEach(r => insert.run(r.group_name, r.date, r.time, r.duration, r.trainer, r.status, r.location, r.attendance, r.side_session_category, line));
-
-    try {
-      const taggedRows = rows.map(r => ({ ...r, session_type: 'side', line }));
-      rescheduleCount = detectAndRecordReschedules({
-        snapshot, after: taggedRows, sessionType: 'side', line,
-      });
-    } catch (e) {
-      console.error('[reschedule-detect side]', e.message);
-    }
   });
   run();
-  if (rescheduleCount > 0) {
-    console.log(`🔁 Detected ${rescheduleCount} side-session reschedule(s) for ${line}`);
-  }
   // Side sessions changed → recompute auto-absences for zoom calls (regular)
   // Auto-absent refresh is best-effort — never let a failure here break the upload.
   try { regenerateAutoAbsents(line); }

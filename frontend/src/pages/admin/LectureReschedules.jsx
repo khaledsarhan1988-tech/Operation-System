@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   CalendarClock, CheckCircle2, XCircle, Clock, AlertCircle, Search,
   RefreshCw, FileText, X, Send, Sparkles, ScanSearch, Database, Trash2,
-  FileCheck2,
+  FileCheck2, ShieldAlert, Cloud,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -69,6 +69,24 @@ export default function LectureReschedules() {
         gradient="from-indigo-500 to-purple-600"
       />
 
+      {/* Data source policy banner — establishes that ALL rows below are
+          Drive-sourced. Live DB detection was removed by design. */}
+      <div className="bg-gradient-to-r from-emerald-50 to-cyan-50 border border-emerald-200 rounded-xl p-3 flex items-start gap-3">
+        <div className="bg-emerald-500 text-white rounded-lg p-2 flex-shrink-0">
+          <Cloud size={16} />
+        </div>
+        <div className="flex-1 text-xs leading-relaxed">
+          <p className="font-bold text-emerald-900 mb-0.5">
+            مصدر البيانات: Google Drive فقط
+          </p>
+          <p className="text-emerald-800">
+            كل سجل في الجدول جاي من مقارنة ملفات Excel الفعلية المخزنة على Drive (يوم D vs يوم D+1).
+            الكشف اللحظي من قاعدة البيانات اتعطّل ومش بيكتب سجلات جديدة.
+            لو حابب تعيد البناء من الصفر، استخدم زر <b>"مسح كل السجلات"</b> ثم <b>"الفحص الحقيقي من Drive"</b>.
+          </p>
+        </div>
+      </div>
+
       {/* Tabs */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-1.5 flex gap-1.5 flex-wrap">
         {TABS.map(t => {
@@ -118,6 +136,10 @@ export default function LectureReschedules() {
         {isSuperAdmin && (
           <>
             <CleanupFalsePositivesButton
+              onDone={() => qc.invalidateQueries({ queryKey: ['reschedules'] })}
+            />
+            <WipeAllButton
+              total={Object.values(counts).reduce((s, n) => s + n, 0)}
               onDone={() => qc.invalidateQueries({ queryKey: ['reschedules'] })}
             />
             <button onClick={() => setShowDiagnostic(true)}
@@ -827,6 +849,44 @@ function CleanupFalsePositivesButton({ onDone }) {
       className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold flex items-center gap-1.5 disabled:opacity-50">
       <Trash2 size={14} />
       {cleanupMut.isPending ? 'جاري...' : 'مسح False Positives'}
+    </button>
+  );
+}
+
+// ─── Wipe ALL Reschedules button ─────────────────────────────────────────────
+// Hard reset for the audit table. After this, the table is empty until the
+// admin runs "الفحص الحقيقي من Drive" — guaranteeing every remaining row's
+// source is a real Excel snapshot, not a DB live-diff. Uses two confirmation
+// prompts (text + checkbox-style intent) because the action is irreversible.
+function WipeAllButton({ total, onDone }) {
+  const wipeMut = useMutation({
+    mutationFn: () => api.post('/reschedules/wipe-all', { confirm: true }).then(r => r.data),
+    onSuccess: (res) => {
+      alert(res.message || `تم مسح ${res.deleted} سجل.`);
+      onDone();
+    },
+    onError: (err) => alert(err.response?.data?.error || err.message),
+  });
+
+  return (
+    <button
+      onClick={() => {
+        const c1 = confirm(
+          `⚠ هتمسح ${total} سجل إعادة جدولة بالكامل (كل التابات).\n\n` +
+          'الهدف: تبدأ من جديد بحيث كل البيانات تكون من Drive بس عن طريق ' +
+          '"الفحص الحقيقي من Drive".\n\n' +
+          'العملية دي لا يمكن التراجع عنها. متأكد؟'
+        );
+        if (!c1) return;
+        const c2 = prompt('اكتب كلمة "مسح" للتأكيد النهائي:');
+        if (c2 === 'مسح') wipeMut.mutate();
+        else if (c2 !== null) alert('تم الإلغاء — النص اللى كتبته مش مطابق.');
+      }}
+      disabled={wipeMut.isPending}
+      title="مسح كل السجلات للبدء من جديد بـ Drive فقط"
+      className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-bold flex items-center gap-1.5 disabled:opacity-50">
+      <ShieldAlert size={14} />
+      {wipeMut.isPending ? 'جاري المسح...' : `مسح كل السجلات (${total})`}
     </button>
   );
 }

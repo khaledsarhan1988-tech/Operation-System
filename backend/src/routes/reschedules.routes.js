@@ -826,4 +826,34 @@ router.get('/verify-source', requireSuperAdmin, (req, res) => {
   }
 });
 
+// ─── POST /api/reschedules/wipe-all ──────────────────────────────────────────
+// Hard-deletes EVERY row from `lecture_reschedules`. Used once after disabling
+// live detection (in sync.service.js) so the table can be rebuilt cleanly from
+// `/backfill-from-drive` — guaranteeing every remaining row's source is a
+// real Google Drive Excel snapshot, not a DB live-diff.
+//
+// Optional body: { confirm: true }  — required, prevents accidental wipes.
+// Returns: { ok, deleted, message }
+router.post('/wipe-all', requireSuperAdmin, express.json(), (req, res) => {
+  if (req.body?.confirm !== true) {
+    return res.status(400).json({
+      error: 'حذف كامل لكل سجلات إعادة الجدولة — مطلوب confirm:true في الـ body للتأكيد',
+    });
+  }
+  try {
+    const before = db.prepare(`SELECT COUNT(*) AS n FROM lecture_reschedules`).get().n;
+    db.prepare(`DELETE FROM lecture_reschedules`).run();
+    return res.json({
+      ok: true,
+      deleted: before,
+      message:
+        `تم مسح ${before} سجل إعادة جدولة. ` +
+        `استخدم "فحص من Drive" لإعادة بناء البيانات من ملفات Google Drive فقط.`,
+    });
+  } catch (err) {
+    console.error('[reschedules/wipe-all]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
