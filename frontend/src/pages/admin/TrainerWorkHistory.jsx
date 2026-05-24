@@ -37,11 +37,11 @@ const EMPLOYMENT_LABEL = {
 // Overall (aggregated) employment — combines all shifts' work_days. When a
 // trainer has multiple Part-Time shifts whose days union to a full week,
 // they're shown as "Full Time موزّع" (split).
-function OverallEmpBadge({ type, split, daysCovered }) {
+function OverallEmpBadge({ type, split, daysCovered, uniformTimes }) {
   if (type === 'full_time' && split) {
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold border bg-violet-100 text-violet-800 border-violet-200"
-        title="مجموع أيام الشيفتات يغطّي أسبوع العمل بالكامل">
+        title="شيفتات متعددة بنفس المواعيد تغطّي أسبوع العمل بالكامل">
         Full Time <span className="text-[10px] font-normal opacity-80">موزّع</span>
       </span>
     );
@@ -50,9 +50,24 @@ function OverallEmpBadge({ type, split, daysCovered }) {
     return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold border bg-blue-100 text-blue-800 border-blue-200">Full Time</span>;
   }
   if (type === 'part_time') {
+    // Edge case: 6/6 days but DIFFERENT shift times per day group → still
+    // Part Time but worth flagging so the reader knows why it's not "موزّع".
+    const variedFullWeek = daysCovered === 6 && uniformTimes === false;
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold border bg-gray-100 text-gray-700 border-gray-200">
-        Part Time <span className="text-[10px] font-normal opacity-70">({daysCovered}/6)</span>
+      <span
+        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold border ${
+          variedFullWeek
+            ? 'bg-amber-50 text-amber-800 border-amber-200'
+            : 'bg-gray-100 text-gray-700 border-gray-200'
+        }`}
+        title={variedFullWeek
+          ? 'يعمل كل أيام الأسبوع لكن بمواعيد مختلفة بين الأيام'
+          : ''}
+      >
+        Part Time
+        <span className="text-[10px] font-normal opacity-70">
+          {variedFullWeek ? '(6/6 — مواعيد متباينة)' : `(${daysCovered}/6)`}
+        </span>
       </span>
     );
   }
@@ -278,6 +293,7 @@ export default function TrainerWorkHistory() {
                        type={r.overall_employment_type}
                        split={r.overall_employment_split}
                        daysCovered={r.overall_days_covered}
+                       uniformTimes={r.overall_uniform_times}
                      />
                    </td>
                    <td className="px-3 py-3 whitespace-nowrap">

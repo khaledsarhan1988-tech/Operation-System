@@ -954,17 +954,25 @@ function SectionGroup({ section, members, dept, onEdit, onDelete }) {
 }
 
 // ─── computeOverallEmployment ─────────────────────────────────────────────────
-// A trainer with multiple Part-Time shifts whose days cover the full work
-// week is effectively Full Time (split across shifts). Surfaces this in the
-// member row so the user doesn't have to mentally combine shifts.
+// A trainer with multiple shifts whose days+times line up is effectively
+// Full Time (split across shifts). "Full Time موزّع" requires BOTH:
+//   1. Combined work_days = the full work week (6 days), AND
+//   2. All contributing shifts use the SAME (start, end) times.
+// If days are 6/6 but times differ between shifts, that's still Part Time
+// (varying schedule) — surfaced via days_covered + uniform_times.
 function computeOverallEmployment(member) {
   let shifts = member?.shifts;
   if (!Array.isArray(shifts) || shifts.length === 0) {
     shifts = [];
-    if (member?.shift)  shifts.push({ work_days: member.work_days });
-    if (member?.shift2) shifts.push({ work_days: member.shift2_work_days });
+    if (member?.shift)  shifts.push({
+      work_days: member.work_days, start: member.shift_start, end: member.shift_end,
+    });
+    if (member?.shift2) shifts.push({
+      work_days: member.shift2_work_days, start: member.shift2_start, end: member.shift2_end,
+    });
   }
   const daysUnion = new Set();
+  const timeKeys  = new Set();
   let contributing = 0;
   for (const sh of shifts) {
     if (!sh) continue;
@@ -972,13 +980,18 @@ function computeOverallEmployment(member) {
     if (list.length === 0) continue;
     contributing += 1;
     list.forEach(d => daysUnion.add(d));
+    const start = sh.start || '';
+    const end   = sh.end   || '';
+    if (start && end) timeKeys.add(`${start}|${end}`);
   }
   if (daysUnion.size === 0) return null;
-  const isFull = ALL_DAYS.every(d => daysUnion.has(d));
+  const allDays      = ALL_DAYS.every(d => daysUnion.has(d));
+  const uniformTimes = timeKeys.size <= 1;
   return {
-    type: isFull ? 'full_time' : 'part_time',
-    split: contributing > 1,
-    days_covered: daysUnion.size,
+    type:           (allDays && uniformTimes) ? 'full_time' : 'part_time',
+    split:          contributing > 1,
+    uniform_times:  uniformTimes,
+    days_covered:   daysUnion.size,
   };
 }
 

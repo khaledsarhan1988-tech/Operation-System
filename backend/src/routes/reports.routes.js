@@ -414,9 +414,10 @@ function parseTeamShifts(t) {
 function computeOverallEmployment(shiftsOrBundles) {
   const ALL_DAYS = ['saturday','sunday','monday','tuesday','wednesday','thursday'];
   if (!Array.isArray(shiftsOrBundles) || shiftsOrBundles.length === 0) {
-    return { type: null, split: false, days_covered: 0 };
+    return { type: null, split: false, days_covered: 0, uniform_times: true };
   }
   const daysUnion = new Set();
+  const timeKeys  = new Set();   // distinct (start|end) pairs across shifts
   let contributingShifts = 0;
   for (const sh of shiftsOrBundles) {
     if (!sh) continue;
@@ -430,12 +431,23 @@ function computeOverallEmployment(shiftsOrBundles) {
     if (dayList.length === 0) continue;
     contributingShifts += 1;
     dayList.forEach(d => daysUnion.add(d));
+    // Accept raw JSON keys (start/end) AND parseTeamShifts output (startStr/endStr)
+    const start = sh.start || sh.startStr || '';
+    const end   = sh.end   || sh.endStr   || '';
+    if (start && end) timeKeys.add(`${start}|${end}`);
   }
-  if (daysUnion.size === 0) return { type: null, split: false, days_covered: 0 };
-  const allCovered = ALL_DAYS.every(d => daysUnion.has(d));
+  if (daysUnion.size === 0) {
+    return { type: null, split: false, days_covered: 0, uniform_times: true };
+  }
+  const allCovered   = ALL_DAYS.every(d => daysUnion.has(d));
+  const uniformTimes = timeKeys.size <= 1;
+  // "Full Time موزّع" requires BOTH a full-week coverage AND uniform shift
+  // times — otherwise the trainer works different schedules on different
+  // days, which is Part Time (varying), not Full Time.
   return {
-    type: allCovered ? 'full_time' : 'part_time',
-    split: contributingShifts > 1,
+    type:           (allCovered && uniformTimes) ? 'full_time' : 'part_time',
+    split:          contributingShifts > 1,
+    uniform_times:  uniformTimes,
     days_covered: daysUnion.size,
   };
 }
@@ -3931,9 +3943,10 @@ router.get('/trainer-work-history', (req, res) => {
           work_days:    daysList.join(','),
           work_days_ar: daysAr,
           employment_type: sh.employment_type || null,
-          overall_employment_type:  overall.type,
-          overall_employment_split: overall.split,
-          overall_days_covered:     overall.days_covered,
+          overall_employment_type:    overall.type,
+          overall_employment_split:   overall.split,
+          overall_days_covered:       overall.days_covered,
+          overall_uniform_times:      overall.uniform_times,
           extra_minutes: extra,
         });
         totalExtraMin += extra;
