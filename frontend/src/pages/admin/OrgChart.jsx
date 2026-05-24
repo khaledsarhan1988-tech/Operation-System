@@ -18,11 +18,13 @@ import PageHero from '../../components/ui/PageHero';
 const COORD_TYPE_VISUAL = {
   standard:   { label: 'منسق',              badge: 'bg-teal-100 text-teal-700 border-teal-200',     dot: 'bg-teal-500'   },
   multi_task: { label: 'منسق متعدد المهام', badge: 'bg-indigo-100 text-indigo-700 border-indigo-200', dot: 'bg-indigo-500' },
+  on_leave:   { label: 'في إجازة',          badge: 'bg-gray-200 text-gray-600 border-gray-300',     dot: 'bg-gray-400'   },
 };
 const CAPACITY_VISUAL = {
-  under:   { label: 'تحت الحد الأدنى', bar: 'bg-orange-400', text: 'text-orange-700', soft: 'bg-orange-50' },
-  ok:      { label: 'ضمن النطاق',     bar: 'bg-emerald-500', text: 'text-emerald-700', soft: 'bg-emerald-50' },
-  over:    { label: 'تجاوز الحد الأقصى', bar: 'bg-red-500',    text: 'text-red-700',    soft: 'bg-red-50' },
+  under:    { label: 'تحت الحد الأدنى',  bar: 'bg-orange-400',  text: 'text-orange-700',  soft: 'bg-orange-50' },
+  ok:       { label: 'ضمن النطاق',       bar: 'bg-emerald-500', text: 'text-emerald-700', soft: 'bg-emerald-50' },
+  over:     { label: 'تجاوز الحد الأقصى', bar: 'bg-red-500',     text: 'text-red-700',     soft: 'bg-red-50' },
+  on_leave: { label: 'خارج العمل حالياً', bar: 'bg-gray-300',    text: 'text-gray-600',    soft: 'bg-gray-50' },
 };
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
@@ -85,20 +87,27 @@ function ColumnCard({ section, isAdmin, onEditMember }) {
           section.members.map((m) => {
             const typeViz = COORD_TYPE_VISUAL[m.coordinator_type] || COORD_TYPE_VISUAL.standard;
             const capViz  = m.capacity_status ? CAPACITY_VISUAL[m.capacity_status] : null;
+            const isOnLeave = m.coordinator_type === 'on_leave';
             // Visual progress: percentage of capacity_max (cap at 110% so an
-            // over-loaded bar stays visible on the row).
-            const pct = (!isAppointments && m.capacity_max)
+            // over-loaded bar stays visible on the row). Skip for on_leave.
+            const pct = (!isAppointments && !isOnLeave && m.capacity_max)
               ? Math.min(110, Math.round(((m.customer_count || 0) / m.capacity_max) * 100))
               : 0;
+            // Pending batches still tagged to the on-leave coordinator that
+            // need admin reassignment via the Leave/Transfer simulation.
+            const hasPending = isOnLeave && (m.pending_customer_count > 0 || m.pending_group_count > 0);
             return (
-              <div key={m.id} className="px-4 py-2.5 hover:bg-gray-50 transition-colors group">
+              <div key={m.id}
+                className={`px-4 py-2.5 hover:bg-gray-50 transition-colors group ${isOnLeave ? 'opacity-70' : ''}`}>
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
-                    <div className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0">
-                      <User className="w-3.5 h-3.5 text-gray-500" />
+                    <div className={`w-7 h-7 rounded-full ${isOnLeave ? 'bg-gray-200' : 'bg-gray-100'} flex items-center justify-center flex-shrink-0`}>
+                      <User className={`w-3.5 h-3.5 ${isOnLeave ? 'text-gray-400' : 'text-gray-500'}`} />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-sm font-semibold text-gray-800 truncate">{m.name}</p>
+                      <p className={`text-sm font-semibold truncate ${isOnLeave ? 'text-gray-500 line-through decoration-gray-300' : 'text-gray-800'}`}>
+                        {m.name}
+                      </p>
                       {!isAppointments && (
                         <span
                           className={`inline-flex items-center gap-1 text-[10px] font-bold mt-0.5 px-1.5 py-0.5 rounded border ${typeViz.badge}`}
@@ -116,7 +125,7 @@ function ColumnCard({ section, isAdmin, onEditMember }) {
                   {!isAppointments && (
                     <div className="flex items-center gap-1.5 flex-shrink-0">
                       <span
-                        title={`عدد العملاء (الحد ${m.capacity_min}-${m.capacity_max})`}
+                        title={isOnLeave ? 'خارج العمل حالياً' : `عدد العملاء (الحد ${m.capacity_min}-${m.capacity_max})`}
                         className={`text-[11px] font-bold ${capViz ? capViz.text : theme.accent} ${capViz ? capViz.soft : theme.softBg} rounded-md px-1.5 py-0.5 flex items-center gap-1`}
                       >
                         <Users className="w-3 h-3" />
@@ -142,8 +151,18 @@ function ColumnCard({ section, isAdmin, onEditMember }) {
                     </div>
                   )}
                 </div>
-                {/* Capacity meter — full width line under the name row */}
-                {!isAppointments && m.capacity_max && (
+                {/* On-leave banner: pending reassignments */}
+                {isOnLeave && hasPending && !isAppointments && (
+                  <div className="mt-1.5 text-[10px] bg-amber-50 border border-amber-200 rounded px-2 py-1 flex items-center gap-1 text-amber-800">
+                    <AlertCircle className="w-3 h-3 flex-shrink-0" />
+                    <span>
+                      لسه فيه <b>{m.pending_group_count}</b> مجموعة (<b>{m.pending_customer_count}</b> عميل) مسجلة باسمه — استخدم محاكاة "خروج من القسم" لتوزيعها
+                    </span>
+                  </div>
+                )}
+                {/* Capacity meter — full width line under the name row.
+                    Hidden for on-leave (no meaningful capacity). */}
+                {!isAppointments && !isOnLeave && m.capacity_max && (
                   <div className="mt-1.5">
                     <div className="flex items-center justify-between text-[9px] mb-0.5">
                       <span className="text-gray-400">
@@ -1337,12 +1356,27 @@ function EditMemberTypeModal({ member, onClose }) {
                     )}
                   </div>
                   <p className="text-[11px] text-gray-500 mt-1">
-                    الـ Capacity المثالية: <span className="font-bold">{t.capacity_min}-{t.capacity_max} طالب</span>
+                    {t.code === 'on_leave'
+                      ? <span className="font-bold text-gray-600">إجازة مؤقتة — لا يتم احتساب أي مجموعات أو عملاء</span>
+                      : <>الـ Capacity المثالية: <span className="font-bold">{t.capacity_min}-{t.capacity_max} طالب</span></>}
                   </p>
                 </button>
               );
             })}
           </div>
+
+          {/* Warning when switching TO on_leave and they currently have batches */}
+          {selectedType === 'on_leave' && (member.customer_count > 0 || member.group_count > 0) && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <div>
+                <b>تنبيه:</b> المنسق لسه مسجل عليه <b>{member.group_count || 0}</b> مجموعة (<b>{member.customer_count || 0}</b> عميل).
+                <br />
+                بعد ما تحفظ، الأرقام هتبان <b>0</b> في الهيكل التنظيمي، لكن المجموعات في قاعدة البيانات لسه مربوطة بيه.
+                استخدم محاكاة <b>"خروج من القسم"</b> عشان توزّعها على الباقيين.
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="px-5 py-3 bg-gray-50 border-t flex justify-end gap-2">

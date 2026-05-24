@@ -36,12 +36,26 @@ const COORDINATOR_TYPES = {
     capacity_min: 70,
     capacity_max: 85,
   },
+  // Marker type: coordinator is on temporary leave. Their batches stay in
+  // the DB (admin reassigns them via the simulation feature) but in every
+  // org-chart view their effective counts are forced to 0 so the cards
+  // accurately reflect "not currently working".
+  on_leave: {
+    code:     'on_leave',
+    label_ar: 'منسق خارج العمل حالياً (إجازة)',
+    label_en: 'On Leave',
+    capacity_min: 0,
+    capacity_max: 0,
+  },
 };
 const VALID_TYPES = Object.keys(COORDINATOR_TYPES);
 
 function classifyCapacity(type, customerCount) {
   const cfg = COORDINATOR_TYPES[type];
   if (!cfg) return { status: 'unknown', min: null, max: null };
+  // On-leave coordinators get their own status — they're not "under" capacity,
+  // they're just off the schedule. Frontend renders them differently.
+  if (type === 'on_leave') return { status: 'on_leave', min: 0, max: 0 };
   const n = customerCount || 0;
   let status = 'ok';
   if (n < cfg.capacity_min) status = 'under';
@@ -195,9 +209,27 @@ router.get('/customer-services', (req, res) => {
         const type = VALID_TYPES.includes(m.coordinator_type)
           ? m.coordinator_type
           : 'standard';
+
+        // On-leave override: force displayed counts to 0 regardless of any
+        // batches still tagged with this coordinator's name. They've stepped
+        // away — the admin should run the Leave/Transfer simulation to
+        // actually reassign the batches; meanwhile the card tells the truth.
+        // We expose the original numbers as `pending_*` so the UI can hint
+        // "X groups still need reassignment".
+        let displayed_customer_count = customer_count;
+        let displayed_group_count    = group_count;
+        let pending_customer_count   = null;
+        let pending_group_count      = null;
+        if (type === 'on_leave' && s.key !== 'appointments') {
+          pending_customer_count   = customer_count;
+          pending_group_count      = group_count;
+          displayed_customer_count = 0;
+          displayed_group_count    = 0;
+        }
+
         const typeCfg = COORDINATOR_TYPES[type];
         const capacity = (s.key !== 'appointments')
-          ? classifyCapacity(type, customer_count)
+          ? classifyCapacity(type, displayed_customer_count)
           : { status: null, min: null, max: null };
 
         return {
@@ -208,9 +240,12 @@ router.get('/customer-services', (req, res) => {
           coordinator_label: typeCfg.label_ar,
           capacity_min: capacity.min,
           capacity_max: capacity.max,
-          capacity_status: capacity.status,  // 'under' | 'ok' | 'over' | null
-          customer_count,
-          group_count,
+          capacity_status: capacity.status,  // 'under'|'ok'|'over'|'on_leave'|null
+          customer_count: displayed_customer_count,
+          group_count:    displayed_group_count,
+          // Only non-null when on_leave with batches still tagged to them
+          pending_customer_count,
+          pending_group_count,
         };
       });
 
