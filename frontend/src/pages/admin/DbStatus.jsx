@@ -17,7 +17,10 @@ export default function DbStatus() {
 
   const handleBackup = async () => {
     try {
-      const res = await api.get('/admin/backup/download', { responseType: 'blob' });
+      const res = await api.get('/admin/backup/download', {
+        responseType: 'blob',
+        timeout: 0, // No timeout — DB file can be 100+ MB and take minutes
+      });
       const blob = new Blob([res.data], { type: 'application/octet-stream' });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
