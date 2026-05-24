@@ -583,10 +583,146 @@ function syncRemarks(buffer, line, warnings) {
   return rows.length;
 }
 
+// ─── RESCHEDULE DETECTION ────────────────────────────────────────────────────
+// Lecture imports are DELETE-then-INSERT per (line + session_type). That wipes
+// the previous state before the new file lands, so by default we lose any
+// "this lecture moved from X to Y" signal. To preserve it, we:
+//   1. Snapshot the existing lectures for this scope BEFORE the DELETE.
+//   2. After INSERT, build matching sets keyed by a STABLE identifier
+//      (group_name + trainer + session_type + line — the parts that survive
+//      a coordinator's reschedule).
+//   3. Anything in the snapshot but absent from the new state = cancelled.
+//      Anything in the new state but absent from the snapshot = added.
+//   4. Pair cancellations with the closest added entry sharing the same
+//      stable identifier. Each pair becomes a `lecture_reschedules` row.
+//   5. If the cancelled date falls inside an active official_holiday range,
+//      auto-mark the row as reason='official_holiday' + status='auto'
+//      (no admin approval needed — these are expected bulk shifts).
+//
+// All writes go through the transaction that wraps the import so a failure
+// here rolls back atomically.
+
+function _stableKey(r) {
+  return [
+    String(r.group_name || '').trim().toLowerCase(),
+    String(r.trainer    || '').trim().toLowerCase(),
+    String(r.session_type || '').trim().toLowerCase(),
+    String(r.line       || '').trim().toLowerCase(),
+  ].join('|');
+}
+function _slotKey(r) {
+  // Identifies a specific slot (so an unchanged slot doesn't get flagged).
+  return [
+    r.date, r.time,
+    String(r.group_name || '').trim().toLowerCase(),
+    String(r.trainer    || '').trim().toLowerCase(),
+    String(r.session_type || '').trim().toLowerCase(),
+    String(r.line       || '').trim().toLowerCase(),
+  ].join('|');
+}
+
+function detectAndRecordReschedules({ snapshot, after, sessionType, line }) {
+  // Build slot maps to find truly-changed slots (skip rows that are identical
+  // pre/post — those are just re-imports of unchanged data).
+  const beforeSlots = new Map();
+  for (const r of snapshot) beforeSlots.set(_slotKey(r), r);
+  const afterSlots = new Set();
+  for (const r of after)   afterSlots.add(_slotKey(r));
+
+  // Cancellations = slots present before but not after.
+  const cancelled = [];
+  for (const [k, row] of beforeSlots) {
+    if (!afterSlots.has(k)) cancelled.push(row);
+  }
+  if (cancelled.length === 0) return 0;   // nothing to do
+
+  // Additions = slots present after but not before, grouped by stable key
+  // so we can pop the closest match per cancellation.
+  const additionsByStable = new Map();
+  const beforeSlotKeys = new Set(beforeSlots.keys());
+  for (const r of after) {
+    if (beforeSlotKeys.has(_slotKey(r))) continue;
+    const k = _stableKey(r);
+    if (!additionsByStable.has(k)) additionsByStable.set(k, []);
+    additionsByStable.get(k).push(r);
+  }
+
+  // Pre-load active holidays so we can mark holiday-shifted rows.
+  let holidays = [];
+  try {
+    holidays = db.prepare(
+      `SELECT id, start_date, end_date FROM official_holidays`
+    ).all();
+  } catch (_) { /* table might not exist on first deploy */ }
+
+  function holidayFor(date) {
+    for (const h of holidays) {
+      if (date >= h.start_date && date <= h.end_date) return h;
+    }
+    return null;
+  }
+
+  // Match each cancelled row to the closest added row with the same stable
+  // key. Sort cancellations by date so the earliest gets first pick when
+  // multiple slots moved at once.
+  cancelled.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const insertResched = db.prepare(`
+    INSERT INTO lecture_reschedules
+      (group_name, line, session_type,
+       old_date, old_time, old_trainer, old_duration,
+       new_date, new_time, new_trainer, new_duration,
+       reschedule_reason, holiday_id, approval_status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  let inserted = 0;
+  for (const oldRow of cancelled) {
+    const k = _stableKey(oldRow);
+    const candidates = additionsByStable.get(k) || [];
+    if (candidates.length === 0) continue;   // pure cancellation, not a reschedule
+    // Pick the temporally-closest new slot (minimize |new_date - old_date|).
+    candidates.sort((a, b) => {
+      const da = Math.abs(_daysBetween(oldRow.date, a.date));
+      const db_ = Math.abs(_daysBetween(oldRow.date, b.date));
+      return da - db_;
+    });
+    const newRow = candidates.shift();   // consume — each addition matches once
+
+    const hol = holidayFor(oldRow.date);
+    const reason = hol ? 'official_holiday' : null;
+    const status = hol ? 'auto' : 'pending';
+
+    insertResched.run(
+      oldRow.group_name, line, sessionType,
+      oldRow.date, oldRow.time, oldRow.trainer, oldRow.duration,
+      newRow.date, newRow.time, newRow.trainer, newRow.duration,
+      reason, hol ? hol.id : null, status,
+    );
+    inserted++;
+  }
+  return inserted;
+}
+
+function _daysBetween(d1, d2) {
+  const a = new Date(d1 + 'T00:00:00').getTime();
+  const b = new Date(d2 + 'T00:00:00').getTime();
+  if (!isFinite(a) || !isFinite(b)) return 999999;
+  return Math.round((b - a) / 86400000);
+}
+
 function syncLectures(buffer, line) {
   const rows = excel.parseLectures(buffer);
   const uniqueGroups = [...new Set(rows.map(r => r.group_name))];
+  let rescheduleCount = 0;
   const run = db.transaction(() => {
+    // Snapshot existing main lectures BEFORE wipe (for reschedule detection).
+    let snapshot = [];
+    try {
+      snapshot = db.prepare(
+        `SELECT group_name, date, time, duration, trainer, session_type, line
+           FROM lectures WHERE session_type = 'main' AND line = ?`
+      ).all(line);
+    } catch (_) { /* defensive */ }
+
     db.prepare("DELETE FROM lectures WHERE session_type = 'main' AND line = ?").run(line);
     // Claim exclusive ownership of these groups' main lectures
     evictFromOtherLines('lectures', line, uniqueGroups, " AND session_type = 'main'");
@@ -595,6 +731,17 @@ function syncLectures(buffer, line) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'main', NULL, ?, datetime('now', 'localtime'))
     `);
     rows.forEach(r => insert.run(r.group_name, r.date, r.time, r.duration, r.trainer, r.status, r.location, r.attendance, line));
+
+    // Reschedule detection AFTER the new state lands — both snapshot and
+    // `rows` are tagged with session_type/line so the matcher can key on them.
+    try {
+      const taggedRows = rows.map(r => ({ ...r, session_type: 'main', line }));
+      rescheduleCount = detectAndRecordReschedules({
+        snapshot, after: taggedRows, sessionType: 'main', line,
+      });
+    } catch (e) {
+      console.error('[reschedule-detect main]', e.message);
+    }
 
     // Update completed_lectures ONLY for this line's batches — count CONFIRMED lectures only
     // (unconfirmed lectures are excluded from all CS reports per business rule).
@@ -617,6 +764,9 @@ function syncLectures(buffer, line) {
     `).run(line);
   });
   run();
+  if (rescheduleCount > 0) {
+    console.log(`🔁 Detected ${rescheduleCount} main-lecture reschedule(s) for ${line}`);
+  }
   // Main lectures changed → recompute auto-absences for confirmed empty-attendance rows
   // Auto-absent refresh is best-effort — never let a failure here break the upload.
   try { regenerateAutoAbsents(line); }
@@ -627,7 +777,16 @@ function syncLectures(buffer, line) {
 function syncSideSessions(buffer, line) {
   const rows = excel.parseSideSessions(buffer);
   const uniqueGroups = [...new Set(rows.map(r => r.group_name))];
+  let rescheduleCount = 0;
   const run = db.transaction(() => {
+    let snapshot = [];
+    try {
+      snapshot = db.prepare(
+        `SELECT group_name, date, time, duration, trainer, session_type, line
+           FROM lectures WHERE session_type = 'side' AND line = ?`
+      ).all(line);
+    } catch (_) { /* defensive */ }
+
     db.prepare("DELETE FROM lectures WHERE session_type = 'side' AND line = ?").run(line);
     // Claim exclusive ownership of these groups' side sessions
     evictFromOtherLines('lectures', line, uniqueGroups, " AND session_type = 'side'");
@@ -636,8 +795,20 @@ function syncSideSessions(buffer, line) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'side', ?, ?, datetime('now', 'localtime'))
     `);
     rows.forEach(r => insert.run(r.group_name, r.date, r.time, r.duration, r.trainer, r.status, r.location, r.attendance, r.side_session_category, line));
+
+    try {
+      const taggedRows = rows.map(r => ({ ...r, session_type: 'side', line }));
+      rescheduleCount = detectAndRecordReschedules({
+        snapshot, after: taggedRows, sessionType: 'side', line,
+      });
+    } catch (e) {
+      console.error('[reschedule-detect side]', e.message);
+    }
   });
   run();
+  if (rescheduleCount > 0) {
+    console.log(`🔁 Detected ${rescheduleCount} side-session reschedule(s) for ${line}`);
+  }
   // Side sessions changed → recompute auto-absences for zoom calls (regular)
   // Auto-absent refresh is best-effort — never let a failure here break the upload.
   try { regenerateAutoAbsents(line); }

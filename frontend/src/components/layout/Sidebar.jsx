@@ -7,7 +7,7 @@ import {
   Video, Users, BarChart2, Globe, UserCog, Upload, FileText,
   LogOut, Headphones, GraduationCap, ShieldCheck, AlertTriangle, Activity, Shuffle, Kanban,
   TrendingUp, Target, Settings, Award, Snowflake, Goal, Database, ChevronDown, Sparkles, BarChart3,
-  Cloud, History, Network, ListTodo, ClipboardCheck
+  Cloud, History, Network, ListTodo, ClipboardCheck, CalendarClock,
 } from 'lucide-react';
 import UserAvatar from '../ui/UserAvatar';
 
@@ -87,6 +87,8 @@ const REPORT_LINKS = [
   { to: '/admin/reports/find-available-trainer', label: 'nav.findAvailableTrainer', icon: Sparkles,    color: 'cyan',    management: 'Education', sub: true },
   { to: '/admin/reports/trainer-dashboard',      label: 'nav.trainerDashboard',     icon: BarChart3,   color: 'indigo',  management: 'Education', sub: true },
   { to: '/admin/reports/trainer-work-history',   label: 'سجل عمل المدربين',          icon: History,     color: 'violet',  management: 'Education', sub: true },
+  { to: '/admin/reschedules',                    label: 'إعادة جدولة المحاضرات',     icon: CalendarClock, color: 'indigo',  management: 'Education', sub: true },
+  { to: '/admin/holidays',                       label: 'الإجازات الرسمية',          icon: Sparkles,    color: 'cyan',    management: 'Education', sub: true },
   { to: '/admin/reports/quality',               label: 'nav.qualityReports',     icon: ShieldCheck,   color: 'green',   management: 'Quality' },
   { to: '/admin/reports/quality-snapshots',     label: 'nav.qualitySnapshots',   icon: Snowflake,     color: 'cyan',    management: 'Quality', sub: true },
 ];

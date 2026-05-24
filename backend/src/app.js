@@ -1505,6 +1505,8 @@ initDb().then(db => {
   app.use('/api/team',          require('./routes/team.routes'));
   app.use('/api/group-approvals', require('./routes/group-approvals.routes'));
   app.use('/api/org-chart',     require('./routes/org-chart.routes'));
+  app.use('/api/holidays',      require('./routes/holidays.routes'));
+  app.use('/api/reschedules',   require('./routes/reschedules.routes'));
   app.use('/api/distribution',       require('./routes/distribution.routes'));
   app.use('/api/enrollment',         require('./routes/enrollment.routes'));
   app.use('/api/enrollment-leader',  require('./routes/enrollment-leader.routes'));
