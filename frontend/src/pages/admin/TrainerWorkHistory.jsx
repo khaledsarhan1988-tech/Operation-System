@@ -102,6 +102,28 @@ function defaultToDate() {
   return `${y}-${String(m + 1).padStart(2, '0')}-${String(last).padStart(2, '0')}`;
 }
 
+// "HH:MM" (24h) → Arabic 12-hour with period qualifier.
+//   "00:00" → "12 منتصف الليل"
+//   "08:30" → "8:30 صباحاً"
+//   "12:00" → "12 ظهراً"
+//   "16:00" → "4 مساءً"
+//   "21:45" → "9:45 مساءً"
+// Returns the raw string unchanged if it can't be parsed.
+function fmtTimeAr(t) {
+  if (!t) return '';
+  const m = String(t).match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return String(t);
+  const h24 = parseInt(m[1], 10);
+  const mins = parseInt(m[2], 10);
+  // Special-cased labels (cleanest reading for these edge times)
+  if (h24 === 0  && mins === 0) return '12 منتصف الليل';
+  if (h24 === 12 && mins === 0) return '12 ظهراً';
+  let h12 = h24 % 12; if (h12 === 0) h12 = 12;
+  // Period: AM = صباحاً, PM = مساءً. Noon and after → مساءً.
+  const period = h24 < 12 ? 'صباحاً' : 'مساءً';
+  return mins === 0 ? `${h12} ${period}` : `${h12}:${String(mins).padStart(2,'0')} ${period}`;
+}
+
 function SectionBadge({ value }) {
   const cls = SECTION_BADGE[value] || 'bg-gray-100 text-gray-700 border-gray-200';
   const label = SECTIONS[value] || value || '—';
@@ -289,9 +311,9 @@ export default function TrainerWorkHistory() {
                        ? <span className="text-gray-600 font-mono">{r.end_date}</span>
                        : <span className="text-emerald-700 font-bold font-sans">لسه شغال</span>}
                    </td>
-                   <td className="px-3 py-3 text-xs text-gray-600 font-mono whitespace-nowrap" dir="ltr">
+                   <td className="px-3 py-3 text-xs text-gray-700 whitespace-nowrap">
                      {r.shift_start && r.shift_end
-                       ? `⁦${r.shift_start} → ${r.shift_end}⁩`
+                       ? <span className="font-semibold">{fmtTimeAr(r.shift_start)} <span className="text-gray-400">←</span> {fmtTimeAr(r.shift_end)}</span>
                        : '—'}
                    </td>
                    <td className="px-3 py-3 text-xs text-gray-600" style={{ maxWidth: '220px' }}>
