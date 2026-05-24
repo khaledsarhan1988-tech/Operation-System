@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   CalendarClock, CheckCircle2, XCircle, Clock, AlertCircle, Search,
-  RefreshCw, FileText, X, Send, Sparkles,
+  RefreshCw, FileText, X, Send, Sparkles, ScanSearch, Database,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -36,6 +36,7 @@ export default function LectureReschedules() {
   const [from, setFrom]       = useState('');
   const [to, setTo]           = useState('');
   const [openId, setOpenId]   = useState(null);
+  const [showDiagnostic, setShowDiagnostic] = useState(false);
 
   // Super-admin actions (approve/reject/notes) only available to admin+All
   const isSuperAdmin = user?.role === 'admin' && user?.management === 'All';
@@ -113,6 +114,12 @@ export default function LectureReschedules() {
           className="px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 text-sm flex items-center gap-1.5">
           <RefreshCw size={14} /> تحديث
         </button>
+        {isSuperAdmin && (
+          <button onClick={() => setShowDiagnostic(true)}
+            className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-sm font-bold flex items-center gap-1.5 mr-auto">
+            <ScanSearch size={14} /> فحص ذكي للبيانات التاريخية
+          </button>
+        )}
       </div>
 
       {/* Table */}
@@ -201,6 +208,170 @@ export default function LectureReschedules() {
           onChanged={() => { qc.invalidateQueries({ queryKey: ['reschedules'] }); }}
         />
       )}
+      {showDiagnostic && (
+        <DiagnosticModal
+          onClose={() => setShowDiagnostic(false)}
+          onBackfilled={() => { qc.invalidateQueries({ queryKey: ['reschedules'] }); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Diagnostic Modal — "Smart Scan" for historical reschedules ──────────────
+// Explains the feature's limitation (only detects reschedules going forward
+// from deploy day) and offers a heuristic backfill: lectures whose date
+// doesn't fall on the batch's training_schedule weekdays. These get added
+// as "pending" reschedules with reason='anomaly_detected' so the admin can
+// review and approve/reject like any other entry.
+function DiagnosticModal({ onClose, onBackfilled }) {
+  const [from, setFrom] = useState('');   // empty = backend default (30d)
+  const [to, setTo]     = useState('');
+  const [result, setResult] = useState(null);
+
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ['reschedules-diagnostic', from, to],
+    queryFn: () => api.get('/reschedules/diagnostic', {
+      params: { from: from || undefined, to: to || undefined },
+    }).then(r => r.data),
+  });
+
+  const backfillMut = useMutation({
+    mutationFn: () => api.post('/reschedules/backfill', { from, to }).then(r => r.data),
+    onSuccess: (res) => { setResult(res); onBackfilled(); refetch(); },
+  });
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+           onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-4 bg-gradient-to-r from-indigo-50 to-purple-50 border-b flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2">
+              <ScanSearch size={18} className="text-indigo-600" />
+              فحص ذكي للبيانات التاريخية
+            </h3>
+            <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+              السيستم بيـ detect الـ reschedules اللى تحصل من تاريخ تفعيله. للبيانات الأقدم،
+              بنستخدم heuristic بيدور على المحاضرات اللى تاريخها مش في أيام الـ training_schedule
+              للمجموعة — مؤشّر قوي على إن المحاضرة اتـ rescheduled.
+            </p>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-white rounded-lg">
+            <X size={18} className="text-gray-600" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4 overflow-y-auto flex-1">
+          {/* Date range */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-gray-600 mb-1">من تاريخ (افتراضي: آخر 30 يوم)</label>
+              <input type="date" value={from} onChange={e => setFrom(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-600 mb-1">إلى تاريخ</label>
+              <input type="date" value={to} onChange={e => setTo(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" />
+            </div>
+          </div>
+
+          {isLoading ? (
+            <p className="text-center text-gray-400 py-8">جاري التحليل...</p>
+          ) : !data ? null : (
+            <>
+              {/* Summary cards */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-center">
+                  <p className="text-[10px] font-bold text-blue-700 uppercase mb-1">عمليات رفع</p>
+                  <p className="text-2xl font-black text-blue-900">{data.syncs.count}</p>
+                  <p className="text-[10px] text-blue-700 mt-1">
+                    {data.syncs.latest ? `آخر: ${data.syncs.latest.slice(0,10)}` : 'لا توجد'}
+                  </p>
+                </div>
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-center">
+                  <p className="text-[10px] font-bold text-emerald-700 uppercase mb-1">Reschedules مكتشف</p>
+                  <p className="text-2xl font-black text-emerald-900">{data.reschedules.total}</p>
+                  <p className="text-[10px] text-emerald-700 mt-1">
+                    {data.reschedules.by_status.pending || 0} في الانتظار
+                  </p>
+                </div>
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-center">
+                  <p className="text-[10px] font-bold text-amber-700 uppercase mb-1">Anomalies مشبوهة</p>
+                  <p className="text-2xl font-black text-amber-900">{data.suspects.count}</p>
+                  <p className="text-[10px] text-amber-700 mt-1">
+                    {data.suspects.batches_affected} مجموعة
+                  </p>
+                </div>
+              </div>
+
+              {/* Explanation banner */}
+              <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-xs text-indigo-800 leading-relaxed">
+                <p className="font-bold mb-1">📋 تفسير الأرقام:</p>
+                <ul className="list-disc pr-4 space-y-1">
+                  <li><b>Reschedules مكتشف</b>: الـ rows اللى تم رصدها عبر الـ Drive Sync من بعد التفعيل النهارده.</li>
+                  <li><b>Anomalies مشبوهة</b>: محاضرات تاريخها مش في أيام الـ training_schedule — مؤشر على إن فيه reschedule حصل في الماضي.</li>
+                </ul>
+              </div>
+
+              {/* Suspect batches list */}
+              {data.suspects.per_batch.length > 0 && (
+                <div className="border border-gray-200 rounded-xl overflow-hidden">
+                  <div className="bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800 border-b border-amber-200">
+                    🔍 المجموعات اللى فيها محاضرات بأيام غير متوقعة
+                  </div>
+                  <div className="max-h-80 overflow-y-auto divide-y divide-gray-100">
+                    {data.suspects.per_batch.map((b, i) => (
+                      <div key={i} className="p-3 hover:bg-gray-50">
+                        <div className="flex items-center justify-between mb-1">
+                          <p className="font-bold text-sm text-gray-800">{b.group_name}</p>
+                          <span className="text-[10px] bg-gray-100 px-2 py-0.5 rounded font-bold">{b.line}</span>
+                        </div>
+                        <p className="text-[11px] text-gray-500 mb-2">
+                          الأيام المعتمدة: <b>{b.expected_days}</b> · {b.lectures.length} محاضرة مشبوهة
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {b.lectures.map((l, j) => (
+                            <span key={j} className="text-[10px] bg-amber-100 text-amber-800 px-2 py-1 rounded border border-amber-200">
+                              {l.date} ({l.weekday}) {l.time}
+                              {l.session_type === 'side' && <span className="text-fuchsia-700 mr-1">·zoom</span>}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Backfill action */}
+              {data.suspects.count > 0 && !result && (
+                <div className="bg-purple-50 border border-purple-200 rounded-xl p-4">
+                  <p className="text-sm font-bold text-purple-900 mb-1">إيجاد بيانات أكتر؟</p>
+                  <p className="text-xs text-purple-700 mb-3">
+                    اضغط الزر تحت عشان السيستم يحوّل الـ {data.suspects.count} انومالي دول لـ pending reschedules
+                    عشان تقدر تراجعهم وتعتمد أو ترفض كل واحد. ⚠ التاريخ الأصلي مش معروف فبيتسجل = التاريخ الجديد.
+                  </p>
+                  <button onClick={() => backfillMut.mutate()}
+                    disabled={backfillMut.isPending}
+                    className="px-4 py-2 rounded-lg bg-gradient-to-r from-purple-500 to-indigo-600 text-white text-sm font-bold inline-flex items-center gap-2 disabled:opacity-50">
+                    <Database size={14} />
+                    {backfillMut.isPending ? 'جاري الحفظ...' : 'حوّلهم لـ Pending Reschedules'}
+                  </button>
+                </div>
+              )}
+
+              {result && (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-sm text-emerald-800">
+                  ✅ <b>{result.inserted}</b> انومالي اتم تحويلها. <b>{result.skipped}</b> كانت موجودة قبل كده.
+                  راجعها في تاب "في الانتظار".
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

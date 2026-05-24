@@ -153,4 +153,224 @@ router.patch('/:id/notes', requireSuperAdmin, express.json(), (req, res) => {
   }
 });
 
+// ─── GET /api/reschedules/diagnostic ─────────────────────────────────────────
+// Returns a snapshot of the data that helps answer "are there any
+// reschedules in the past?". The reschedule-detection feature was only
+// added today, so anything that happened before its deploy can't be
+// detected automatically. This endpoint surfaces:
+//
+//   syncs:    excel_syncs in the requested window — proves whether new
+//             uploads happened that COULD trigger detection.
+//   counts:   how many lecture_reschedules rows exist (per status).
+//   suspects: heuristic — lectures whose date doesn't fall on any of the
+//             batch's planned training_schedule weekdays. These are
+//             "anomalies" — likely reschedules, but we can't know the
+//             original date without historical snapshots.
+//
+// Query: ?from=YYYY-MM-DD&to=YYYY-MM-DD&line=  (defaults: last 30 days, all lines)
+router.get('/diagnostic', requireSuperAdmin, (req, res) => {
+  // Default window: last 30 days
+  const today = new Date(Date.now() + 2 * 60 * 60 * 1000)
+    .toISOString().slice(0, 10);
+  const thirty = new Date(Date.now() - 30 * 86400000 + 2 * 60 * 60 * 1000)
+    .toISOString().slice(0, 10);
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(req.query.from || '') ? req.query.from : thirty;
+  const to   = /^\d{4}-\d{2}-\d{2}$/.test(req.query.to   || '') ? req.query.to   : today;
+  const line = (req.query.line || '').trim();
+
+  try {
+    // Syncs in window
+    const syncWhere = ['file_type IN (?, ?)', 'status = ?', "DATE(created_at) BETWEEN ? AND ?"];
+    const syncParams = ['lectures', 'side_sessions', 'success', from, to];
+    if (line) { syncWhere.push('line = ?'); syncParams.push(line); }
+    const syncs = db.prepare(`
+      SELECT file_type, line, rows_imported, created_at
+        FROM excel_syncs
+       WHERE ${syncWhere.join(' AND ')}
+       ORDER BY created_at DESC
+       LIMIT 50
+    `).all(...syncParams);
+
+    // Reschedule row counts
+    const counts = db.prepare(`
+      SELECT approval_status AS status, COUNT(*) AS cnt
+        FROM lecture_reschedules
+       GROUP BY approval_status
+    `).all().reduce((acc, r) => { acc[r.status] = r.cnt; return acc; }, {});
+    const totalReschedules = Object.values(counts).reduce((s, n) => s + n, 0);
+
+    // Heuristic suspects — lectures whose date weekday isn't in the batch's
+    // training_schedule. Schedule format examples seen in this DB:
+    //   "Sat, Mon", "Sun,Wed", "Saturday,Tuesday", etc.
+    // We tolerate both 3-letter and full names by lowercasing + prefix-match.
+    const DOW = ['sun','mon','tue','wed','thu','fri','sat']; // index 0..6
+    const lectures = db.prepare(`
+      SELECT l.id, l.group_name, l.date, l.time, l.trainer, l.session_type, l.line,
+             b.training_schedule
+        FROM lectures l
+        INNER JOIN batches b ON b.group_name = l.group_name AND b.line = l.line
+       WHERE l.date BETWEEN ? AND ?
+         ${line ? 'AND l.line = ?' : ''}
+    `).all(from, to, ...(line ? [line] : []));
+
+    const suspects = [];
+    for (const l of lectures) {
+      const sched = String(l.training_schedule || '')
+        .toLowerCase()
+        .split(/[,،;]+/)
+        .map(s => s.trim())
+        .filter(Boolean)
+        .map(s => s.slice(0, 3));        // normalize to 3-letter
+      if (sched.length === 0) continue;   // no schedule on file → can't judge
+      const dow = DOW[new Date(l.date + 'T12:00:00').getDay()];
+      if (!sched.includes(dow)) {
+        suspects.push({
+          id: l.id,
+          group_name: l.group_name,
+          line: l.line,
+          session_type: l.session_type,
+          date: l.date,
+          weekday: dow,
+          time: l.time,
+          trainer: l.trainer,
+          expected_days: sched.join(','),
+        });
+      }
+    }
+
+    // Group suspects per batch for easier reading
+    const suspectsByBatch = {};
+    for (const s of suspects) {
+      const key = `${s.group_name}|${s.line}`;
+      if (!suspectsByBatch[key]) {
+        suspectsByBatch[key] = {
+          group_name: s.group_name,
+          line: s.line,
+          expected_days: s.expected_days,
+          lectures: [],
+        };
+      }
+      suspectsByBatch[key].lectures.push({
+        date: s.date,
+        weekday: s.weekday,
+        time: s.time,
+        trainer: s.trainer,
+        session_type: s.session_type,
+      });
+    }
+
+    return res.json({
+      window: { from, to, line: line || 'all' },
+      syncs: {
+        count: syncs.length,
+        latest: syncs[0]?.created_at || null,
+        rows: syncs,
+      },
+      reschedules: {
+        total: totalReschedules,
+        by_status: counts,
+        explanation: totalReschedules === 0
+          ? 'لا توجد reschedules مكتشفة. الـ feature اتفعّل النهارده، ولن يكتشف إلا الـ reschedules اللى تحصل في sync جديد من دلوقت.'
+          : `${totalReschedules} reschedule مكتشف`,
+      },
+      suspects: {
+        count: suspects.length,
+        batches_affected: Object.keys(suspectsByBatch).length,
+        per_batch: Object.values(suspectsByBatch).slice(0, 50),   // cap for response size
+        explanation: 'محاضرات تاريخها لا يقع في أيام الـ training_schedule المعتمد للمجموعة — مؤشّر قوي على إن المحاضرة اتـ rescheduled لكن مفيش طريقة نعرف التاريخ الأصلي.',
+      },
+    });
+  } catch (err) {
+    console.error('[reschedules/diagnostic]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /api/reschedules/backfill ──────────────────────────────────────────
+// Takes the heuristic "suspects" from /diagnostic and writes them into the
+// lecture_reschedules table as `pending` rows with reason='anomaly_detected'.
+// The old_date is recorded as NULL (unknown — we don't have history), and
+// new_date is the suspect lecture's actual date. The admin can review and
+// approve/reject just like normal reschedules.
+//
+// Idempotent: skips rows where (group_name, line, new_date, new_time,
+// session_type) already exists in lecture_reschedules.
+router.post('/backfill', requireSuperAdmin, express.json(), (req, res) => {
+  const today = new Date(Date.now() + 2 * 60 * 60 * 1000)
+    .toISOString().slice(0, 10);
+  const thirty = new Date(Date.now() - 30 * 86400000 + 2 * 60 * 60 * 1000)
+    .toISOString().slice(0, 10);
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(req.body?.from || '') ? req.body.from : thirty;
+  const to   = /^\d{4}-\d{2}-\d{2}$/.test(req.body?.to   || '') ? req.body.to   : today;
+
+  try {
+    const DOW = ['sun','mon','tue','wed','thu','fri','sat'];
+    const lectures = db.prepare(`
+      SELECT l.group_name, l.date, l.time, l.duration, l.trainer,
+             l.session_type, l.line, b.training_schedule
+        FROM lectures l
+        INNER JOIN batches b ON b.group_name = l.group_name AND b.line = l.line
+       WHERE l.date BETWEEN ? AND ?
+    `).all(from, to);
+
+    const checkDup = db.prepare(`
+      SELECT id FROM lecture_reschedules
+       WHERE group_name = ? AND line = ? AND session_type = ?
+         AND new_date = ? AND IFNULL(new_time,'') = IFNULL(?, '')
+       LIMIT 1
+    `);
+    const insertResched = db.prepare(`
+      INSERT INTO lecture_reschedules
+        (group_name, line, session_type,
+         old_date, old_time, old_trainer, old_duration,
+         new_date, new_time, new_trainer, new_duration,
+         reschedule_reason, approval_status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    let inserted = 0;
+    let skipped  = 0;
+    for (const l of lectures) {
+      const sched = String(l.training_schedule || '')
+        .toLowerCase()
+        .split(/[,،;]+/)
+        .map(s => s.trim().slice(0, 3))
+        .filter(Boolean);
+      if (sched.length === 0) continue;
+      const dow = DOW[new Date(l.date + 'T12:00:00').getDay()];
+      if (sched.includes(dow)) continue;
+
+      // Dedup against existing reschedules
+      if (checkDup.get(l.group_name, l.line, l.session_type, l.date, l.time || null)) {
+        skipped++;
+        continue;
+      }
+
+      // Insert as pending anomaly. old_date = NULL signals "unknown
+      // original date" (frontend should show "—" / "غير معروف").
+      insertResched.run(
+        l.group_name, l.line, l.session_type,
+        l.date,  // we DON'T know the original date, so use current as placeholder
+        l.time, l.trainer, l.duration,
+        l.date, l.time, l.trainer, l.duration,
+        'anomaly_detected', 'pending',
+      );
+      inserted++;
+    }
+
+    return res.json({
+      ok: true,
+      window: { from, to },
+      inserted,
+      skipped,
+      message: inserted === 0
+        ? 'مفيش anomalies جديدة. كل المحاضرات في الفترة دي ضمن أيام الـ training_schedule المعتمد.'
+        : `${inserted} انومالي اتزرعت كـ pending — راجعها في تاب "في الانتظار".`,
+    });
+  } catch (err) {
+    console.error('[reschedules/backfill]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
