@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   History, CalendarDays, Search, Loader2, Users, Clock, Plus,
-  CheckCircle, XCircle, X, Pencil,
+  CheckCircle, XCircle, X, Pencil, AlertCircle,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -232,9 +232,10 @@ export default function TrainerWorkHistory() {
         icon={History}
         gradient="violet"
         stats={[
-          { label: 'عدد المدربين',       value: summary.trainers_count,   icon: Users },
-          { label: 'إجمالي الشيفتات',    value: summary.shifts_count,     icon: Clock },
-          { label: 'ساعات إضافية (دقيقة)', value: summary.total_extra_min, icon: Plus },
+          { label: 'عدد المدربين',           value: summary.trainers_count,        icon: Users },
+          { label: 'إجمالي الشيفتات',        value: summary.shifts_count,          icon: Clock },
+          { label: 'ساعات إضافية (دقيقة)',     value: summary.total_extra_min,       icon: Plus },
+          { label: 'ساعات غير مؤكدة (دقيقة)', value: summary.total_unconfirmed_min, icon: AlertCircle },
         ]}
       />
 
@@ -291,21 +292,21 @@ export default function TrainerWorkHistory() {
 
         {/* ── TABLE ── */}
         <div className="overflow-x-auto">
-          <table className="w-full text-sm text-right" style={{ minWidth: '1240px' }}>
+          <table className="w-full text-sm text-right" style={{ minWidth: '1380px' }}>
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100">
-                {['المدرب', 'القسم', '#', 'نوع الشيفت', 'بداية العمل', 'نهاية العمل', 'المواعيد', 'أيام العمل', 'الدوام', 'الدوام الإجمالي', 'ساعات إضافية', 'الحالة']
+                {['المدرب', 'القسم', '#', 'نوع الشيفت', 'بداية العمل', 'نهاية العمل', 'المواعيد', 'أيام العمل', 'الدوام', 'الدوام الإجمالي', 'ساعات إضافية', 'ساعات غير مؤكدة', 'الحالة']
                   .map(h => <th key={h} className="px-3 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>)}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {isLoading ? <SkeletonRows cols={12} rows={6} /> :
+              {isLoading ? <SkeletonRows cols={13} rows={6} /> :
                isError    ? (
-                 <tr><td colSpan={12} className="text-center py-12 text-sm text-red-600">حدث خطأ أثناء تحميل البيانات</td></tr>
+                 <tr><td colSpan={13} className="text-center py-12 text-sm text-red-600">حدث خطأ أثناء تحميل البيانات</td></tr>
                ) :
                filteredRows.length === 0 ? (
                  <tr>
-                   <td colSpan={12} className="text-center py-12">
+                   <td colSpan={13} className="text-center py-12">
                      <div className="flex flex-col items-center gap-2 text-gray-400">
                        <History className="w-8 h-8 text-gray-300" />
                        <p className="text-sm font-medium">لا توجد شيفتات في الفترة المحددة</p>
@@ -362,6 +363,18 @@ export default function TrainerWorkHistory() {
                      {r.extra_minutes > 0 ? (
                        <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-lg bg-amber-50 text-amber-800 text-xs font-black border border-amber-200">
                          {fmtMins(r.extra_minutes)}
+                       </span>
+                     ) : (
+                       <span className="text-xs text-gray-300">—</span>
+                     )}
+                   </td>
+                   <td className="px-3 py-3 whitespace-nowrap">
+                     {r.unconfirmed_minutes > 0 ? (
+                       <span
+                         className="inline-flex items-center justify-center px-2 py-0.5 rounded-lg bg-red-50 text-red-700 text-xs font-black border border-red-200"
+                         title="مجموع مدة المحاضرات اللي حالتها 'غير مؤكدة' في هذا الشيفت"
+                       >
+                         {fmtMins(r.unconfirmed_minutes)}
                        </span>
                      ) : (
                        <span className="text-xs text-gray-300">—</span>

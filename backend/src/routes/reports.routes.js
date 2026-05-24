@@ -3877,8 +3877,32 @@ router.get('/trainer-work-history', (req, res) => {
       extrasByMember.get(e.team_member_id).push(e);
     }
 
+    // Unconfirmed lectures in the window — bucketed per trainer (matched by
+    // parenthesis-stripped name, since lectures.trainer often has suffixes
+    // like "(Group)" while team_members.name has "(Private)" etc).
+    const unconfirmedRows = db.prepare(
+      `SELECT trainer, date, duration
+         FROM lectures
+        WHERE status = 'غير مؤكدة'
+          AND date BETWEEN ? AND ?`
+    ).all(from, to);
+    const stripParens = (s) => String(s || '').replace(/\([^)]*\)/g, '').trim().toLowerCase();
+    const parseDurationMin = (s) => {
+      if (!s) return 0;
+      const m = String(s).match(/^(\d{1,2}):(\d{2})$/);
+      return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : 0;
+    };
+    const unconfirmedByTrainer = new Map();
+    for (const l of unconfirmedRows) {
+      const key = stripParens(l.trainer);
+      if (!key) continue;
+      if (!unconfirmedByTrainer.has(key)) unconfirmedByTrainer.set(key, []);
+      unconfirmedByTrainer.get(key).push({ date: l.date, minutes: parseDurationMin(l.duration) });
+    }
+
     const rows = [];
     let totalExtraMin = 0;
+    let totalUnconfirmedMin = 0;
     const trainerIdsSeen = new Set();
 
     for (const t of trainers) {
@@ -3903,7 +3927,8 @@ router.get('/trainer-work-history', (req, res) => {
         });
       }
 
-      const memberExtras = extrasByMember.get(t.id) || [];
+      const memberExtras       = extrasByMember.get(t.id) || [];
+      const memberUnconfirmed  = unconfirmedByTrainer.get(stripParens(t.name)) || [];
 
       // Overall (aggregated) employment type: union of work_days across ALL
       // configured shifts. A trainer with 2 Part-Time shifts whose days union
@@ -3945,7 +3970,8 @@ router.get('/trainer-work-history', (req, res) => {
           overall_employment_split:   overall.split,
           overall_days_covered:       overall.days_covered,
           overall_uniform_times:      overall.uniform_times,
-          extra_minutes: 0,   // filled below
+          extra_minutes:       0,   // filled below
+          unconfirmed_minutes: 0,   // filled below
         });
         trainerIdsSeen.add(t.id);
       });
@@ -3976,6 +4002,18 @@ router.get('/trainer-work-history', (req, res) => {
           targetRow.extra_minutes += (e.duration_min || 0);
           totalExtraMin += (e.duration_min || 0);
         }
+        // Same attribution rule for unconfirmed-lecture hours: assign each
+        // lecture to the latest shift that started on/before its date.
+        const ucInWindow = memberUnconfirmed.filter(l => l.date >= from && l.date <= to);
+        for (const l of ucInWindow) {
+          let owner = null;
+          for (const row of sortedRowsAsc) {
+            if (row.start_date <= l.date) owner = row;
+          }
+          const targetRow = owner || sortedRowsAsc[0];
+          targetRow.unconfirmed_minutes += (l.minutes || 0);
+          totalUnconfirmedMin += (l.minutes || 0);
+        }
       }
 
       rows.push(...memberRows);
@@ -3984,9 +4022,10 @@ router.get('/trainer-work-history', (req, res) => {
     return res.json({
       rows,
       summary: {
-        trainers_count:   trainerIdsSeen.size,
-        shifts_count:     rows.length,
-        total_extra_min:  totalExtraMin,
+        trainers_count:        trainerIdsSeen.size,
+        shifts_count:          rows.length,
+        total_extra_min:       totalExtraMin,
+        total_unconfirmed_min: totalUnconfirmedMin,
       },
       window: { from, to },
     });
