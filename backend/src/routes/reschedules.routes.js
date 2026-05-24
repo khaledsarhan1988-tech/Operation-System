@@ -441,12 +441,22 @@ router.post('/backfill-from-drive', requireSuperAdmin, express.json(), async (re
     }
   }
 
-  // Helper: stable identifier (same as live detection — group + trainer +
-  // session_type + line). Slot identifier adds date+time.
+  // Helper: stable identifier — the part of group_name BEFORE the first
+  // `(`. Survives BOTH trainer-name changes (inside parens) and coordinator
+  // changes (after parens). Pure prefix matching means we don't include
+  // trainer in the key — that's intentional: when a batch's trainer
+  // changes, we want the diff to STILL pair the old and new slots as a
+  // rename, not treat them as cancelled+added.
+  // Falls back to the full group_name if there's no `(`.
+  function stablePrefix(groupName) {
+    const s = String(groupName || '').trim();
+    const idx = s.indexOf('(');
+    const head = idx === -1 ? s : s.substring(0, idx);
+    return head.trim().toLowerCase().replace(/\s+/g, ' ').replace(/[_\s]+$/, '');
+  }
   function stableKey(r) {
     return [
-      String(r.group_name   || '').trim().toLowerCase(),
-      String(r.trainer      || '').trim().toLowerCase(),
+      stablePrefix(r.group_name),
       String(r.session_type || '').trim().toLowerCase(),
       String(r.line         || '').trim().toLowerCase(),
     ].join('|');
@@ -454,8 +464,7 @@ router.post('/backfill-from-drive', requireSuperAdmin, express.json(), async (re
   function slotKey(r) {
     return [
       r.date, r.time,
-      String(r.group_name   || '').trim().toLowerCase(),
-      String(r.trainer      || '').trim().toLowerCase(),
+      stablePrefix(r.group_name),
       String(r.session_type || '').trim().toLowerCase(),
       String(r.line         || '').trim().toLowerCase(),
     ].join('|');
@@ -746,6 +755,40 @@ router.post('/cleanup-false-positives', requireSuperAdmin, (req, res) => {
 //       rows: [...]           // all reschedule audit rows for this group
 //     },
 //   }
+// Build the full alias set for a group_name by walking group_renames BOTH
+// directions (forward — group was renamed TO X; backward — group was
+// renamed FROM Y). Returns Set<string> of all known aliases (always
+// includes the input).
+function resolveGroupAliases(group, line) {
+  const aliases = new Set([group]);
+  const queue   = [group];
+  while (queue.length) {
+    const cur = queue.shift();
+    let forwards = [], backwards = [];
+    try {
+      forwards = db.prepare(
+        `SELECT new_group_name FROM group_renames WHERE old_group_name = ?${line ? ' AND line = ?' : ''}`
+      ).all(cur, ...(line ? [line] : []));
+      backwards = db.prepare(
+        `SELECT old_group_name FROM group_renames WHERE new_group_name = ?${line ? ' AND line = ?' : ''}`
+      ).all(cur, ...(line ? [line] : []));
+    } catch (_) { /* table missing on first deploy */ }
+    for (const r of forwards) {
+      if (!aliases.has(r.new_group_name)) {
+        aliases.add(r.new_group_name);
+        queue.push(r.new_group_name);
+      }
+    }
+    for (const r of backwards) {
+      if (!aliases.has(r.old_group_name)) {
+        aliases.add(r.old_group_name);
+        queue.push(r.old_group_name);
+      }
+    }
+  }
+  return aliases;
+}
+
 router.get('/verify-source', requireSuperAdmin, (req, res) => {
   const group = String(req.query.group || '').trim();
   const line  = (req.query.line || '').trim();
@@ -759,53 +802,60 @@ router.get('/verify-source', requireSuperAdmin, (req, res) => {
   const to   = /^\d{4}-\d{2}-\d{2}$/.test(req.query.to   || '') ? req.query.to   : today;
 
   try {
+    // ── Step 1 — resolve the full alias chain via group_renames ─────────
+    // A group can be referred to by multiple names over time as trainers
+    // and coordinators change. We chase both directions to gather them all.
+    const aliasSet = resolveGroupAliases(group, line);
+    const aliasArr = Array.from(aliasSet);
     const lineClause   = line ? ' AND line = ?' : '';
     const lineLClause  = line ? ' AND l.line = ?' : '';
     const lineParam    = line ? [line] : [];
-    const groupLike    = `%${group}%`;
 
-    // Matching batches (so the admin sees if the group_name matches multiple
-    // batches — e.g. cross-line)
+    // ── Step 2 — match against ALL aliases. Build (group LIKE ? OR ...)
+    // so even partial-name searches still hit. Each alias becomes a LIKE.
+    const groupOrs = aliasArr.map(() => 'group_name LIKE ?').join(' OR ');
+    const groupOrsL = aliasArr.map(() => 'l.group_name LIKE ?').join(' OR ');
+    const likeParams = aliasArr.map(a => `%${a}%`);
+
     const matches = db.prepare(`
       SELECT group_name, line, status, dept_type, course, training_schedule, coordinators
         FROM batches
-       WHERE group_name LIKE ?${lineClause}
+       WHERE (${groupOrs})${lineClause}
        ORDER BY line, group_name
        LIMIT 25
-    `).all(groupLike, ...lineParam);
+    `).all(...likeParams, ...lineParam);
 
-    // All lectures for the group inside the window
     const lectures = db.prepare(`
       SELECT l.id, l.group_name, l.date, l.time, l.duration, l.trainer,
              l.status, l.session_type, l.side_session_category, l.line, l.synced_at
         FROM lectures l
-       WHERE l.group_name LIKE ?${lineLClause}
+       WHERE (${groupOrsL})${lineLClause}
          AND l.date BETWEEN ? AND ?
        ORDER BY l.date, l.time, l.session_type
        LIMIT 500
-    `).all(groupLike, ...lineParam, from, to);
+    `).all(...likeParams, ...lineParam, from, to);
 
     const byType = lectures.reduce((acc, l) => {
       acc[l.session_type] = (acc[l.session_type] || 0) + 1;
       return acc;
     }, { main: 0, side: 0 });
 
-    // All reschedules ever recorded for the group
     const reschedules = db.prepare(`
       SELECT id, group_name, line, session_type,
              old_date, old_time, old_trainer,
              new_date, new_time, new_trainer,
              approval_status, reschedule_reason, detected_at
         FROM lecture_reschedules
-       WHERE group_name LIKE ?${lineClause}
+       WHERE (${groupOrs})${lineClause}
        ORDER BY old_date DESC
        LIMIT 100
-    `).all(groupLike, ...lineParam);
+    `).all(...likeParams, ...lineParam);
 
     return res.json({
       group_query: group,
       line:        line || 'all',
       window:      { from, to },
+      aliases:     aliasArr,           // all known names for this group
       matches: {
         count: matches.length,
         rows:  matches,
@@ -822,6 +872,175 @@ router.get('/verify-source', requireSuperAdmin, (req, res) => {
     });
   } catch (err) {
     console.error('[reschedules/verify-source]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GET /api/reschedules/timeline ───────────────────────────────────────────
+// Full chronological story for ONE group. Walks group_renames to gather
+// every alias the group ever had, then merges:
+//   • completed/confirmed lectures (from `lectures` table)
+//   • cancelled lectures (reschedule rows' old side)
+//   • newly-scheduled lectures (reschedule rows' new side, including current state)
+// Into a single chronological timeline. Also computes summary stats:
+//   • full date range (earliest → latest event)
+//   • count of cancelled-and-moved lectures by weekday (Sun/Mon/…)
+//   • the chain of group_name aliases
+//
+// Query: ?group=...&line=...
+router.get('/timeline', requireSuperAdmin, (req, res) => {
+  const group = String(req.query.group || '').trim();
+  const line  = (req.query.line || '').trim();
+  if (!group) return res.status(400).json({ error: 'group is required' });
+
+  try {
+    const aliasArr = Array.from(resolveGroupAliases(group, line));
+    const groupOrs   = aliasArr.map(() => 'group_name = ?').join(' OR ');
+    const groupOrsL  = aliasArr.map(() => 'l.group_name = ?').join(' OR ');
+    const lineClause = line ? ' AND line = ?' : '';
+    const lineLClause = line ? ' AND l.line = ?' : '';
+    const lineParam  = line ? [line] : [];
+
+    // Pull all reschedules for any alias, ASC by old_date (chronological)
+    const reschedRows = db.prepare(`
+      SELECT id, group_name, line, session_type,
+             old_date, old_time, old_trainer, old_duration,
+             new_date, new_time, new_trainer, new_duration,
+             approval_status, reschedule_reason, holiday_id, admin_notes,
+             detected_at
+        FROM lecture_reschedules
+       WHERE (${groupOrs})${lineClause}
+       ORDER BY old_date ASC, old_time ASC, id ASC
+    `).all(...aliasArr, ...lineParam);
+
+    // Pull all lectures (any alias) for context — gives the user the
+    // "active period" of the group, not just the reschedule window.
+    const lectureRows = db.prepare(`
+      SELECT l.id, l.group_name, l.date, l.time, l.duration, l.trainer,
+             l.status, l.session_type, l.side_session_category, l.line
+        FROM lectures l
+       WHERE (${groupOrsL})${lineLClause}
+       ORDER BY l.date ASC, l.time ASC
+    `).all(...aliasArr, ...lineParam);
+
+    // Weekday helper — JS getDay() is 0=Sun..6=Sat; map to Arabic name.
+    const DOW_AR = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+    const DOW_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    function dow(dateStr) {
+      const d = new Date(dateStr + 'T12:00:00');
+      const i = d.getDay();
+      return { ar: DOW_AR[i], en: DOW_EN[i], idx: i };
+    }
+
+    // Build a single chronological event stream so the frontend can render
+    // it like "May 17 (Sun): cancelled — moved to May 20…".
+    // We dedupe carefully: a reschedule row contributes TWO events (its
+    // cancellation + its rescheduled-to). The same date can BE a cancellation
+    // in one row and a rescheduled-to in an earlier row (chain). We keep both
+    // perspectives so the user sees "this date was a destination that later
+    // also got cancelled".
+    const events = [];
+    for (const r of reschedRows) {
+      events.push({
+        kind: 'cancelled',
+        date: r.old_date,
+        time: r.old_time,
+        weekday: dow(r.old_date),
+        trainer: r.old_trainer,
+        duration: r.old_duration,
+        group_name: r.group_name,
+        session_type: r.session_type,
+        moved_to: r.new_date,
+        moved_to_time: r.new_time,
+        moved_to_trainer: r.new_trainer,
+        reschedule_id: r.id,
+        approval_status: r.approval_status,
+        holiday_id: r.holiday_id,
+        reason: r.reschedule_reason,
+      });
+      events.push({
+        kind: 'rescheduled',
+        date: r.new_date,
+        time: r.new_time,
+        weekday: dow(r.new_date),
+        trainer: r.new_trainer,
+        duration: r.new_duration,
+        group_name: r.group_name,
+        session_type: r.session_type,
+        moved_from: r.old_date,
+        moved_from_time: r.old_time,
+        moved_from_trainer: r.old_trainer,
+        name_changed: false,   // filled below if trainer/coordinator differ
+        reschedule_id: r.id,
+        approval_status: r.approval_status,
+      });
+    }
+
+    // Flag rescheduled events whose final name (latest lecture row for the
+    // same date) differs from the originating row's group_name.
+    const lectureByDate = new Map();
+    for (const l of lectureRows) lectureByDate.set(`${l.date}|${l.session_type}`, l);
+    for (const ev of events) {
+      if (ev.kind !== 'rescheduled') continue;
+      const cur = lectureByDate.get(`${ev.date}|${ev.session_type}`);
+      if (cur && cur.group_name && cur.group_name !== ev.group_name) {
+        ev.name_changed = true;
+        ev.current_name = cur.group_name;
+        ev.current_trainer = cur.trainer;
+      }
+    }
+
+    // Sort chronologically (oldest first). Ties: cancelled before rescheduled
+    // so the narrative reads "X was cancelled → moved to Y".
+    events.sort((a, b) => {
+      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+      if ((a.time || '') !== (b.time || '')) return (a.time || '').localeCompare(b.time || '');
+      if (a.kind !== b.kind) return a.kind === 'cancelled' ? -1 : 1;
+      return 0;
+    });
+
+    // Stats
+    const allDates = [
+      ...reschedRows.flatMap(r => [r.old_date, r.new_date]).filter(Boolean),
+      ...lectureRows.map(l => l.date).filter(Boolean),
+    ].sort();
+    const dateRange = allDates.length
+      ? { from: allDates[0], to: allDates[allDates.length - 1] }
+      : null;
+
+    // Cancellations grouped by weekday (the headline stat the user wants)
+    const cancelledByWeekday = {};
+    for (const r of reschedRows) {
+      const w = dow(r.old_date);
+      const k = w.en;
+      if (!cancelledByWeekday[k]) {
+        cancelledByWeekday[k] = { label_ar: w.ar, label_en: w.en, count: 0, dates: [] };
+      }
+      cancelledByWeekday[k].count++;
+      cancelledByWeekday[k].dates.push(r.old_date);
+    }
+
+    // Latest "currently-scheduled" lecture for the group (gives the user the
+    // "final destination" line). Take the latest by date among lectures
+    // whose status is not 'مكتملة'/'ملغية' — i.e. still on the calendar.
+    const latestScheduled = lectureRows.length
+      ? lectureRows[lectureRows.length - 1]
+      : null;
+
+    return res.json({
+      group_query: group,
+      line: line || 'all',
+      aliases: aliasArr,
+      total_reschedules: reschedRows.length,
+      date_range: dateRange,
+      cancelled_by_weekday: cancelledByWeekday,
+      latest_scheduled: latestScheduled,
+      events,
+      reschedules: reschedRows,
+      lectures_count: lectureRows.length,
+    });
+  } catch (err) {
+    console.error('[reschedules/timeline]', err);
     return res.status(500).json({ error: err.message });
   }
 });

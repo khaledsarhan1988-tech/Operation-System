@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   CalendarClock, CheckCircle2, XCircle, Clock, AlertCircle, Search,
   RefreshCw, FileText, X, Send, Sparkles, ScanSearch, Database, Trash2,
-  FileCheck2, ShieldAlert, Cloud,
+  FileCheck2, ShieldAlert, Cloud, History, ArrowRight, MapPin,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -603,6 +603,14 @@ function RescheduleDetailModal({ row, isSuperAdmin, onClose, onChanged }) {
             )}
           </div>
 
+          {/* Full chronological story — every reschedule for this group
+              across the full alias chain. Tells the user "this group's
+              lecture on X was cancelled, then Y was cancelled, then Z is
+              currently scheduled with new name…" */}
+          {isSuperAdmin && (
+            <GroupTimelineSection group={row.group_name} line={row.line} />
+          )}
+
           {/* Verify-source section — confirms the group still exists in the
               current synced Excel state (so the admin knows the row reflects
               real data, not a sync artifact). */}
@@ -850,6 +858,245 @@ function CleanupFalsePositivesButton({ onDone }) {
       <Trash2 size={14} />
       {cleanupMut.isPending ? 'جاري...' : 'مسح False Positives'}
     </button>
+  );
+}
+
+// ─── Group Timeline — full chronological story of one group ─────────────────
+// Fetches /timeline for the group (which chases group_renames so all aliases
+// are merged). Shows: summary card (date range + weekday breakdown +
+// latest scheduled lecture), then chronological event list. Each event is
+// either "cancelled (moved to X)" or "scheduled (moved from Y)".
+function GroupTimelineSection({ group, line }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['timeline', group, line],
+    queryFn: () => api.get('/reschedules/timeline', {
+      params: { group, line },
+    }).then(r => r.data),
+  });
+
+  if (isLoading) {
+    return (
+      <div className="bg-purple-50 border border-purple-200 rounded-xl p-3 text-center text-xs text-purple-400">
+        جاري بناء القصة الكاملة للمجموعة...
+      </div>
+    );
+  }
+  if (!data) return null;
+
+  const {
+    aliases = [],
+    total_reschedules = 0,
+    date_range,
+    cancelled_by_weekday = {},
+    latest_scheduled,
+    events = [],
+  } = data;
+
+  // Weekday breakdown summary text — "1 يوم الأحد بتاريخ 17 مايو، 1 يوم الأربعاء بتاريخ 20 مايو"
+  const weekdayBreakdown = Object.values(cancelled_by_weekday);
+
+  return (
+    <div className="bg-gradient-to-br from-purple-50 to-indigo-50 border-2 border-purple-200 rounded-xl p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <div className="bg-purple-500 text-white rounded-lg p-1.5">
+          <History size={14} />
+        </div>
+        <p className="text-sm font-bold text-purple-900">
+          القصة الكاملة لإعادة جدولة المجموعة
+        </p>
+      </div>
+
+      {/* Alias chain — if the group was renamed, show all known names */}
+      {aliases.length > 1 && (
+        <div className="bg-white border border-purple-200 rounded-lg p-2 text-xs">
+          <p className="font-bold text-purple-700 mb-1">المجموعة معروفة بـ {aliases.length} أسماء:</p>
+          <div className="space-y-1">
+            {aliases.map((a, i) => (
+              <div key={i} className="flex items-center gap-1.5">
+                <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-mono">
+                  {i + 1}
+                </span>
+                <span className="font-mono text-gray-700 break-all">{a}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Summary stats */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="bg-white border border-purple-200 rounded-lg p-2.5 text-center">
+          <p className="text-[10px] text-purple-600 font-bold uppercase mb-0.5">إجمالى إعادة الجدولة</p>
+          <p className="text-2xl font-black text-purple-800">{total_reschedules}</p>
+        </div>
+        <div className="bg-white border border-purple-200 rounded-lg p-2.5 text-center">
+          <p className="text-[10px] text-purple-600 font-bold uppercase mb-0.5">الفترة الإجمالية</p>
+          <p className="text-xs font-black text-purple-800 leading-tight">
+            {date_range ? (
+              <>
+                من <b>{date_range.from}</b>
+                <br />
+                إلى <b>{date_range.to}</b>
+              </>
+            ) : '—'}
+          </p>
+        </div>
+      </div>
+
+      {/* Weekday breakdown — "1 يوم الأحد، 1 يوم الأربعاء" */}
+      {weekdayBreakdown.length > 0 && (
+        <div className="bg-white border border-purple-200 rounded-lg p-3">
+          <p className="text-xs font-bold text-purple-800 mb-2 flex items-center gap-1.5">
+            <CalendarClock size={12} /> الأيام اللى اتلغت وتم نقلها:
+          </p>
+          <div className="space-y-1.5">
+            {weekdayBreakdown.map((w, i) => (
+              <div key={i} className="flex items-start gap-2 text-xs">
+                <span className="inline-flex items-center justify-center bg-red-100 text-red-700 rounded-full w-6 h-6 font-black text-[11px] flex-shrink-0">
+                  {w.count}
+                </span>
+                <div className="flex-1">
+                  <span className="font-bold text-gray-800">يوم {w.label_ar}</span>
+                  <span className="text-gray-500 mr-1">·</span>
+                  <span className="text-gray-600">
+                    {w.dates.map((d, j) => (
+                      <span key={j}>
+                        {j > 0 && '، '}
+                        <span className="font-mono text-red-700">{d}</span>
+                      </span>
+                    ))}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Latest scheduled — the "current destination" */}
+      {latest_scheduled && (
+        <div className="bg-emerald-50 border border-emerald-300 rounded-lg p-3">
+          <p className="text-xs font-bold text-emerald-800 mb-1 flex items-center gap-1.5">
+            <MapPin size={12} /> آخر محاضرة مجدولة (الحالة الحالية):
+          </p>
+          <div className="flex items-center justify-between gap-2 text-xs">
+            <div>
+              <p className="font-black text-emerald-900 text-base">{latest_scheduled.date}</p>
+              <p className="text-emerald-700">
+                <Clock size={10} className="inline -mt-0.5" /> {latest_scheduled.time || '—'}
+                · {latest_scheduled.trainer || '—'}
+              </p>
+            </div>
+            <span className={`text-[10px] px-2 py-1 rounded-full font-bold border
+              ${latest_scheduled.status === 'مؤكدة'
+                ? 'bg-emerald-100 text-emerald-700 border-emerald-300'
+                : 'bg-amber-100 text-amber-700 border-amber-300'}`}>
+              {latest_scheduled.status || 'مجدولة'}
+            </span>
+          </div>
+          {latest_scheduled.group_name !== group && (
+            <p className="text-[10px] text-purple-700 mt-1.5 italic">
+              ⚠ الاسم الحالي مختلف: <span className="font-mono break-all">{latest_scheduled.group_name}</span>
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Chronological event timeline */}
+      {events.length > 0 && (
+        <details className="bg-white border border-purple-200 rounded-lg" open={events.length <= 6}>
+          <summary className="cursor-pointer p-2.5 text-xs font-bold text-purple-800 flex items-center gap-1.5">
+            <History size={12} /> سرد القصة بالتواريخ ({events.length} حدث)
+          </summary>
+          <div className="border-t border-purple-100 p-2 space-y-1.5 max-h-80 overflow-y-auto">
+            {events.map((ev, i) => (
+              <TimelineEvent key={i} ev={ev} />
+            ))}
+          </div>
+        </details>
+      )}
+
+      {events.length === 0 && (
+        <p className="text-xs text-purple-500 text-center py-2">
+          لا توجد أحداث إعادة جدولة لهذه المجموعة في السجلات.
+        </p>
+      )}
+    </div>
+  );
+}
+
+// One row in the timeline. Two flavors: cancelled vs rescheduled.
+function TimelineEvent({ ev }) {
+  if (ev.kind === 'cancelled') {
+    return (
+      <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded p-2">
+        <div className="bg-red-500 text-white rounded p-1 flex-shrink-0">
+          <XCircle size={12} />
+        </div>
+        <div className="flex-1 text-xs">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="font-bold text-red-800">{ev.date}</span>
+            <span className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold">
+              {ev.weekday?.ar}
+            </span>
+            <span className="text-red-700">{ev.time || ''}</span>
+            <span className="text-red-600">— محاضرة اتلغت</span>
+          </div>
+          <p className="text-[11px] text-red-700 mt-0.5">
+            المدرب: <b>{ev.trainer || '—'}</b>
+            {ev.moved_to && (
+              <span className="text-gray-600 mr-1">
+                <ArrowRight size={10} className="inline -mt-0.5 mx-1" />
+                نُقلت إلى <b className="text-emerald-700">{ev.moved_to}</b>
+                {ev.moved_to_time && <span className="text-gray-500"> · {ev.moved_to_time}</span>}
+              </span>
+            )}
+          </p>
+          {ev.reason === 'official_holiday' && (
+            <p className="text-[10px] text-sky-700 mt-0.5">
+              <Sparkles size={9} className="inline" /> سبب: إجازة رسمية (تم اعتمادها تلقائياً)
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // rescheduled (new side of a pair)
+  return (
+    <div className="flex items-start gap-2 bg-emerald-50 border border-emerald-200 rounded p-2">
+      <div className="bg-emerald-500 text-white rounded p-1 flex-shrink-0">
+        <CheckCircle2 size={12} />
+      </div>
+      <div className="flex-1 text-xs">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="font-bold text-emerald-800">{ev.date}</span>
+          <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold">
+            {ev.weekday?.ar}
+          </span>
+          <span className="text-emerald-700">{ev.time || ''}</span>
+          <span className="text-emerald-600">
+            — {ev.name_changed ? 'محاضرة جديدة (تغيّر الاسم)' : 'محاضرة مجدولة بدلاً منها'}
+          </span>
+        </div>
+        <p className="text-[11px] text-emerald-700 mt-0.5">
+          المدرب: <b>{ev.trainer || '—'}</b>
+          {ev.moved_from && (
+            <span className="text-gray-600 mr-1">
+              · بديلاً عن <b className="text-red-700">{ev.moved_from}</b>
+            </span>
+          )}
+        </p>
+        {ev.name_changed && ev.current_name && (
+          <p className="text-[10px] text-purple-700 mt-0.5 italic">
+            الاسم الحالي: <span className="font-mono break-all">{ev.current_name}</span>
+            {ev.current_trainer && ev.current_trainer !== ev.trainer && (
+              <span className="mr-1">· مدرب جديد: <b>{ev.current_trainer}</b></span>
+            )}
+          </p>
+        )}
+      </div>
+    </div>
   );
 }
 

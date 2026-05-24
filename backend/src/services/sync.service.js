@@ -281,21 +281,34 @@ function parseCoordinatorList(coordField) {
   return map;
 }
 
-// Extract the "stable identifier" of a group code by stripping the trailing
-// coordinator suffix. Examples:
-//   "May_10_Sun_10PM_Con2_P(Asmaa)hanaa"  → "may_10_sun_10pm_con2_p(asmaa)"
-//   "May_10_Sun_10PM_Con2_P(Asmaa) doha"  → "may_10_sun_10pm_con2_p(asmaa)"
-//   "Apr_29_Sat_9Pm_General3(Ali Hashem)" → "apr_29_sat_9pm_general3(ali hashem)"
-//   "no_parens_code"                        → null (can't reliably split)
-// Returns lowercased + trimmed so two slightly-different casings still match.
+// Extract the "stable identifier" of a group code — everything BEFORE the
+// FIRST `(`. The parens contain the trainer name; what follows them is the
+// coordinator. Both can change over the life of a batch (trainer leaves,
+// coordinator reassigned) without the batch itself changing identity.
+// Stripping both gives us a stable anchor for rename detection.
+//
+// Examples:
+//   "Apr_19_Sun_11pm_ General1 _SP(Nashwa Shabaan)alaa" → "apr_19_sun_11pm_ general1 _sp"
+//   "Apr_19_Sun_11pm_ General1 _SP(Yasmeen Mohamed)alaa" → "apr_19_sun_11pm_ general1 _sp"
+//   "May_10_Sun_10PM_Con2_P(Asmaa)hanaa"                → "may_10_sun_10pm_con2_p"
+//   "Apr_29_Sat_9Pm_General3(Ali Hashem)"               → "apr_29_sat_9pm_general3"
+//   "no_parens_code"                                    → null (can't split)
+//
+// ⚠ TRADE-OFF: two parallel batches with the same prefix (different trainers
+// AND different coordinators running in parallel) would collide. In practice
+// the prefix encodes month/day/weekday/time/course so this is rare — but if
+// it happens, the admin sees both as the same batch and can reject the
+// resulting reschedule rows.
 function getStableIdentifier(groupName) {
   if (!groupName) return null;
   const s = String(groupName).trim();
-  // Match everything up to and including the LAST `)`. The trailing part
-  // (after the `)`) is the coordinator suffix that varies on renames.
-  const m = s.match(/^(.+\))[\s_]*[^)]*$/);
-  if (!m) return null;
-  return m[1].toLowerCase().replace(/\s+/g, ' ');
+  const idx = s.indexOf('(');
+  if (idx === -1) return null;   // no `(` → can't reliably split
+  return s.substring(0, idx)
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[_\s]+$/, '');     // strip trailing underscores/spaces
 }
 
 function syncBatches(buffer, line) {
