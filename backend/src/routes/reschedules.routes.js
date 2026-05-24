@@ -373,4 +373,264 @@ router.post('/backfill', requireSuperAdmin, express.json(), (req, res) => {
   }
 });
 
+// ─── POST /api/reschedules/backfill-from-drive ───────────────────────────────
+// TRUE historical reschedule detection — reads the Excel files DIRECTLY from
+// Google Drive for every day in the requested window. For each consecutive
+// pair of days (D and D+1), parses both lectures Excel snapshots and finds
+// any (group + trainer + session_type) tuple whose date/time CHANGED between
+// the two snapshots. Each such change = an authentic reschedule with REAL
+// old_date and new_date (recovered from the historical files themselves).
+//
+// This is the proper backfill: we don't need to guess from weekday patterns.
+// The Excel files dated 17/5 contain the lecture for 16/5 AS THE COORDINATOR
+// SAW IT on 17/5 — so comparing 16/5's file vs 17/5's file shows exactly
+// what changed in those 24 hours.
+//
+// Body:  { from: 'YYYY-MM-DD', to: 'YYYY-MM-DD', line?: 'Ahmed Hassan|Dardasha' }
+// (defaults: from = 16/5/current-year, to = today, line = run for both lines)
+//
+// Safe to re-run — duplicates are skipped via the dedup check (same group,
+// line, session_type, old_date, new_date already exists).
+router.post('/backfill-from-drive', requireSuperAdmin, express.json(), async (req, res) => {
+  const today = new Date(Date.now() + 2 * 60 * 60 * 1000)
+    .toISOString().slice(0, 10);
+
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(req.body?.from || '') ? req.body.from : `${new Date().getUTCFullYear()}-05-16`;
+  const to   = /^\d{4}-\d{2}-\d{2}$/.test(req.body?.to   || '') ? req.body.to   : today;
+  const requestedLines = req.body?.line
+    ? [req.body.line]
+    : ['Ahmed Hassan', 'Dardasha'];
+
+  if (from > to) return res.status(400).json({ error: 'from > to' });
+
+  const drive = require('../services/googleDrive.service');
+  const excel = require('../services/excel.service');
+
+  // Helper: enumerate every YYYY-MM-DD in the inclusive range
+  function eachDate(fromStr, toStr) {
+    const out = [];
+    const d = new Date(fromStr + 'T12:00:00Z');
+    const end = new Date(toStr + 'T12:00:00Z');
+    while (d <= end) {
+      out.push(d.toISOString().slice(0, 10));
+      d.setUTCDate(d.getUTCDate() + 1);
+    }
+    return out;
+  }
+
+  // Helper: fetch + parse the day's Excel for a fileType. Returns rows array
+  // (possibly empty) or NULL if no file exists for that day.
+  async function fetchAndParse(line, dateStr, fileType) {
+    try {
+      const dateObj = new Date(dateStr + 'T12:00:00Z');
+      const folderId = await drive.getOrCreateDatePath(line, dateObj, fileType, {
+        createIfMissing: false,
+      });
+      if (!folderId) return null;
+      const fileInfo = await drive.getLatestFileInFolder(folderId);
+      if (!fileInfo) return null;
+      const buffer = await drive.downloadFile(fileInfo.id);
+      const rows = fileType === 'lectures'
+        ? excel.parseLectures(buffer)
+        : excel.parseSideSessions(buffer);
+      return rows.map(r => ({ ...r, line }));
+    } catch (e) {
+      // Folder missing / file unreadable / parse error — log + continue
+      console.warn(`[backfill] ${line} ${dateStr} ${fileType}: ${e.message}`);
+      return null;
+    }
+  }
+
+  // Helper: stable identifier (same as live detection — group + trainer +
+  // session_type + line). Slot identifier adds date+time.
+  function stableKey(r) {
+    return [
+      String(r.group_name   || '').trim().toLowerCase(),
+      String(r.trainer      || '').trim().toLowerCase(),
+      String(r.session_type || '').trim().toLowerCase(),
+      String(r.line         || '').trim().toLowerCase(),
+    ].join('|');
+  }
+  function slotKey(r) {
+    return [
+      r.date, r.time,
+      String(r.group_name   || '').trim().toLowerCase(),
+      String(r.trainer      || '').trim().toLowerCase(),
+      String(r.session_type || '').trim().toLowerCase(),
+      String(r.line         || '').trim().toLowerCase(),
+    ].join('|');
+  }
+
+  // Pre-load holidays so we can flag holiday-shifted rows.
+  let holidays = [];
+  try {
+    holidays = db.prepare(`SELECT id, start_date, end_date FROM official_holidays`).all();
+  } catch (_) { /* defensive */ }
+  function holidayFor(date) {
+    for (const h of holidays) {
+      if (date >= h.start_date && date <= h.end_date) return h;
+    }
+    return null;
+  }
+
+  const checkDup = db.prepare(`
+    SELECT id FROM lecture_reschedules
+     WHERE group_name = ? AND line = ? AND session_type = ?
+       AND old_date = ? AND IFNULL(old_time,'') = IFNULL(?, '')
+       AND new_date = ? AND IFNULL(new_time,'') = IFNULL(?, '')
+     LIMIT 1
+  `);
+  const insertResched = db.prepare(`
+    INSERT INTO lecture_reschedules
+      (group_name, line, session_type,
+       old_date, old_time, old_trainer, old_duration,
+       new_date, new_time, new_trainer, new_duration,
+       reschedule_reason, holiday_id, approval_status,
+       admin_notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  // Detect reschedules between two parsed-rows arrays for ONE specific
+  // target date. We only compare slots whose date == targetDate (the day
+  // we're "looking at" in both snapshots). Returns array of pairs.
+  function diffForTargetDate(beforeRows, afterRows, targetDate) {
+    const beforeForDate = beforeRows.filter(r => r.date === targetDate);
+    const afterForDate  = afterRows;   // anything that could be the new date
+
+    const beforeBySlot = new Map();
+    beforeForDate.forEach(r => beforeBySlot.set(slotKey(r), r));
+    const afterBySlot = new Set(afterRows.map(slotKey));
+
+    // Cancellations: slots that were on targetDate before but NOT in after.
+    const cancelled = [];
+    for (const [k, row] of beforeBySlot) {
+      if (!afterBySlot.has(k)) cancelled.push(row);
+    }
+    if (cancelled.length === 0) return [];
+
+    // Additions: any row in after whose stable key matches one of the
+    // cancelled rows AND whose date/time differs from before.
+    const beforeStableKeys = new Set(beforeForDate.map(stableKey));
+    const additions = afterRows.filter(r =>
+      beforeStableKeys.has(stableKey(r)) && !beforeBySlot.has(slotKey(r))
+    );
+
+    // Pair: greedy match by stable key, pick closest date.
+    const additionsByKey = new Map();
+    for (const r of additions) {
+      const k = stableKey(r);
+      if (!additionsByKey.has(k)) additionsByKey.set(k, []);
+      additionsByKey.get(k).push(r);
+    }
+    const pairs = [];
+    for (const oldRow of cancelled) {
+      const candidates = additionsByKey.get(stableKey(oldRow)) || [];
+      if (candidates.length === 0) continue;
+      candidates.sort((a, b) => {
+        const da = Math.abs(new Date(a.date) - new Date(oldRow.date));
+        const db_ = Math.abs(new Date(b.date) - new Date(oldRow.date));
+        return da - db_;
+      });
+      const newRow = candidates.shift();
+      pairs.push({ old: oldRow, new: newRow });
+    }
+    return pairs;
+  }
+
+  // ── Main loop ────────────────────────────────────────────────────────────
+  const dates = eachDate(from, to);
+  const summary = {
+    days_scanned: dates.length,
+    days_with_data: 0,
+    days_with_pairs: 0,
+    inserted: 0,
+    skipped_existing: 0,
+    by_line: {},
+    by_session_type: { main: 0, side: 0 },
+  };
+  const log = [];
+
+  for (const line of requestedLines) {
+    summary.by_line[line] = { days_with_data: 0, inserted: 0 };
+
+    for (const sessionType of ['lectures', 'side_sessions']) {
+      const sessionLabel = sessionType === 'lectures' ? 'main' : 'side';
+
+      // Parse the day-by-day snapshot. We cache so we don't re-fetch the
+      // same file twice (D's file used both as "after" for D-1 and "before"
+      // for D).
+      const snapshots = new Map();   // dateStr → parsed rows | null
+      for (const d of dates) {
+        if (!snapshots.has(d)) {
+          snapshots.set(d, await fetchAndParse(line, d, sessionType));
+        }
+      }
+
+      // Pair-wise diff
+      for (let i = 0; i < dates.length - 1; i++) {
+        const d1 = dates[i];
+        const d2 = dates[i + 1];
+        const before = snapshots.get(d1);
+        const after  = snapshots.get(d2);
+        if (!before || !after) continue;
+
+        // For each "target date" present in `before`, see if it changed
+        // in `after`. The most meaningful target is d1 itself (lectures
+        // dated for d1, as of d1 — vs as of d2). Limit to that for now to
+        // avoid double-counting.
+        const pairs = diffForTargetDate(before, after, d1);
+
+        for (const { old: o, new: n } of pairs) {
+          // Dedup against any existing row
+          if (checkDup.get(
+            o.group_name, line, sessionLabel,
+            o.date, o.time || null,
+            n.date, n.time || null,
+          )) {
+            summary.skipped_existing++;
+            continue;
+          }
+          const hol = holidayFor(o.date);
+          insertResched.run(
+            o.group_name, line, sessionLabel,
+            o.date, o.time, o.trainer, o.duration,
+            n.date, n.time, n.trainer, n.duration,
+            hol ? 'official_holiday' : null,
+            hol ? hol.id : null,
+            hol ? 'auto' : 'pending',
+            `Backfilled from Drive (${d1} → ${d2} snapshot diff)`,
+          );
+          summary.inserted++;
+          summary.by_line[line].inserted++;
+          summary.by_session_type[sessionLabel]++;
+          log.push({
+            line, session_type: sessionLabel,
+            from_file_date: d1, to_file_date: d2,
+            group: o.group_name,
+            old: `${o.date} ${o.time || ''}`,
+            new: `${n.date} ${n.time || ''}`,
+            trainer: o.trainer,
+            holiday: hol ? hol.name : null,
+          });
+        }
+      }
+
+      // Track days that actually had files
+      for (const [d, rows] of snapshots) {
+        if (rows && rows.length > 0) {
+          summary.by_line[line].days_with_data++;
+          if (sessionType === 'lectures') summary.days_with_data++;
+        }
+      }
+    }
+  }
+
+  return res.json({
+    ok: true,
+    window: { from, to },
+    summary,
+    sample_log: log.slice(0, 50),   // cap for response size
+  });
+});
+
 module.exports = router;

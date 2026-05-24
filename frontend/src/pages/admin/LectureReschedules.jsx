@@ -241,6 +241,14 @@ function DiagnosticModal({ onClose, onBackfilled }) {
     onSuccess: (res) => { setResult(res); onBackfilled(); refetch(); },
   });
 
+  // TRUE Drive-based backfill: walks the historical Excel files day-by-day
+  // and diffs them. This is the slow but ACCURATE option — actual reschedules
+  // with real old_date + new_date recovered from the file snapshots.
+  const driveBackfillMut = useMutation({
+    mutationFn: () => api.post('/reschedules/backfill-from-drive', { from, to }).then(r => r.data),
+    onSuccess: (res) => { setResult({ ...res, fromDrive: true }); onBackfilled(); refetch(); },
+  });
+
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col"
@@ -345,24 +353,111 @@ function DiagnosticModal({ onClose, onBackfilled }) {
                 </div>
               )}
 
-              {/* Backfill action */}
-              {data.suspects.count > 0 && !result && (
-                <div className="bg-purple-50 border border-purple-200 rounded-xl p-4">
-                  <p className="text-sm font-bold text-purple-900 mb-1">إيجاد بيانات أكتر؟</p>
-                  <p className="text-xs text-purple-700 mb-3">
-                    اضغط الزر تحت عشان السيستم يحوّل الـ {data.suspects.count} انومالي دول لـ pending reschedules
-                    عشان تقدر تراجعهم وتعتمد أو ترفض كل واحد. ⚠ التاريخ الأصلي مش معروف فبيتسجل = التاريخ الجديد.
-                  </p>
-                  <button onClick={() => backfillMut.mutate()}
-                    disabled={backfillMut.isPending}
-                    className="px-4 py-2 rounded-lg bg-gradient-to-r from-purple-500 to-indigo-600 text-white text-sm font-bold inline-flex items-center gap-2 disabled:opacity-50">
-                    <Database size={14} />
-                    {backfillMut.isPending ? 'جاري الحفظ...' : 'حوّلهم لـ Pending Reschedules'}
-                  </button>
+              {/* Two backfill options: heuristic (fast, approximate) and
+                  Drive-based (slow, accurate — true reschedule recovery) */}
+              {!result && (
+                <div className="space-y-3">
+                  {/* OPTION 1 — RECOMMENDED: True Drive backfill */}
+                  <div className="bg-gradient-to-br from-indigo-50 to-purple-50 border-2 border-indigo-300 rounded-xl p-4">
+                    <div className="flex items-start gap-3">
+                      <div className="bg-indigo-500 text-white rounded-lg p-2 flex-shrink-0">
+                        <Sparkles size={16} />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-sm font-bold text-indigo-900 mb-1">
+                          🎯 الفحص الحقيقي من ملفات Drive (موصى به)
+                        </p>
+                        <p className="text-xs text-indigo-700 mb-3 leading-relaxed">
+                          السيستم هيقرا كل ملف Excel من تاريخ لتاريخ، ويقارن محاضرات يوم 16
+                          في ملف 16 مع محاضرات يوم 16 في ملف 17، وكذا. كل اختلاف = reschedule
+                          <b> حقيقي</b> بتاريخ أصلي وتاريخ جديد فعلي.
+                          <br />
+                          <span className="text-amber-700 font-semibold">⏱ بياخد دقيقة أو اتنين لأنه بيـ download كل الملفات.</span>
+                        </p>
+                        <button onClick={() => driveBackfillMut.mutate()}
+                          disabled={driveBackfillMut.isPending}
+                          className="px-4 py-2 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 text-white text-sm font-bold inline-flex items-center gap-2 disabled:opacity-50">
+                          <Sparkles size={14} />
+                          {driveBackfillMut.isPending ? 'جاري قراءة الملفات من Drive...' : '🔍 ابدأ الفحص الحقيقي من Drive'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* OPTION 2 — Quick heuristic */}
+                  {data.suspects.count > 0 && (
+                    <details className="bg-gray-50 border border-gray-200 rounded-xl p-3">
+                      <summary className="cursor-pointer text-xs font-bold text-gray-700">
+                        ⚡ بديل سريع: heuristic بناءً على training_schedule ({data.suspects.count} انومالي)
+                      </summary>
+                      <p className="text-[11px] text-gray-600 my-2">
+                        يحوّل الـ {data.suspects.count} انومالي لـ pending reschedules بدون قراءة الملفات.
+                        ⚠ التاريخ الأصلي مش معروف فبيتسجل = التاريخ الجديد (أقل دقة).
+                      </p>
+                      <button onClick={() => backfillMut.mutate()}
+                        disabled={backfillMut.isPending}
+                        className="px-3 py-1.5 rounded-lg bg-gray-500 text-white text-xs font-bold inline-flex items-center gap-1.5 disabled:opacity-50">
+                        <Database size={11} />
+                        {backfillMut.isPending ? 'جاري...' : 'استخدم heuristic بدلاً منه'}
+                      </button>
+                    </details>
+                  )}
                 </div>
               )}
 
-              {result && (
+              {result && result.fromDrive && (
+                <div className="bg-emerald-50 border-2 border-emerald-300 rounded-xl p-4">
+                  <p className="text-sm font-bold text-emerald-900 mb-2">
+                    ✅ تم الفحص الحقيقي من Drive
+                  </p>
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div className="bg-white rounded p-2">
+                      <p className="text-gray-500">أيام مفحوصة</p>
+                      <p className="text-lg font-black text-gray-800">{result.summary?.days_scanned || 0}</p>
+                    </div>
+                    <div className="bg-white rounded p-2">
+                      <p className="text-gray-500">أيام فيها ملفات</p>
+                      <p className="text-lg font-black text-gray-800">{result.summary?.days_with_data || 0}</p>
+                    </div>
+                    <div className="bg-white rounded p-2">
+                      <p className="text-gray-500">Reschedules مكتشف</p>
+                      <p className="text-lg font-black text-emerald-700">{result.summary?.inserted || 0}</p>
+                    </div>
+                    <div className="bg-white rounded p-2">
+                      <p className="text-gray-500">موجود من قبل</p>
+                      <p className="text-lg font-black text-gray-800">{result.summary?.skipped_existing || 0}</p>
+                    </div>
+                  </div>
+                  {result.sample_log?.length > 0 && (
+                    <details className="mt-3 text-xs">
+                      <summary className="cursor-pointer font-bold text-emerald-800">
+                        عينة من الـ reschedules اللى اتلاقت ({Math.min(result.sample_log.length, 50)})
+                      </summary>
+                      <div className="mt-2 max-h-60 overflow-y-auto space-y-1">
+                        {result.sample_log.map((l, i) => (
+                          <div key={i} className="bg-white rounded p-2 border border-emerald-200">
+                            <p className="font-bold text-gray-800">{l.group}</p>
+                            <p className="text-gray-600">
+                              <span className="text-red-600 line-through">{l.old}</span>
+                              <span className="text-gray-400 mx-1">←</span>
+                              <span className="text-emerald-600 font-bold">{l.new}</span>
+                            </p>
+                            <p className="text-[10px] text-gray-500">
+                              {l.trainer} · ملف {l.from_file_date} → {l.to_file_date}
+                              {l.holiday && <span className="text-sky-600 mr-1">· {l.holiday}</span>}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+                  <p className="text-xs text-emerald-700 mt-3">
+                    راجع كل reschedule في تاب "في الانتظار" وقرر موافقة / رفض.
+                  </p>
+                </div>
+              )}
+
+              {result && !result.fromDrive && (
                 <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-sm text-emerald-800">
                   ✅ <b>{result.inserted}</b> انومالي اتم تحويلها. <b>{result.skipped}</b> كانت موجودة قبل كده.
                   راجعها في تاب "في الانتظار".
