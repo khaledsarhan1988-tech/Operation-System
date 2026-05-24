@@ -1272,6 +1272,14 @@ function TimelineEvent({ ev, firstCancelledTrainer = '' }) {
               </span>
             )}
           </p>
+          {/* Coordinator who was responsible AT THE TIME of cancellation,
+              resolved from coordinator_history. Multiple coords possible
+              when a group has parallel co-coordinators. */}
+          {ev.coordinators_at_time?.length > 0 && (
+            <p className="text-[11px] text-gray-600 mt-0.5">
+              المنسق وقت الإلغاء: <b className="text-gray-800">{ev.coordinators_at_time.join('، ')}</b>
+            </p>
+          )}
           {ev.reason === 'official_holiday' && (
             <p className="text-[10px] text-sky-700 mt-0.5">
               <Sparkles size={9} className="inline" /> سبب: إجازة رسمية (تم اعتمادها تلقائياً)
@@ -1325,6 +1333,12 @@ function TimelineEvent({ ev, firstCancelledTrainer = '' }) {
             </span>
           )}
         </p>
+        {/* Coordinator(s) responsible at the time of the new schedule */}
+        {ev.coordinators_at_time?.length > 0 && (
+          <p className="text-[11px] text-gray-600 mt-0.5">
+            المنسق وقت الجدولة: <b className="text-gray-800">{ev.coordinators_at_time.join('، ')}</b>
+          </p>
+        )}
         {ev.name_changed && ev.current_name && (
           <p className="text-[10px] text-purple-700 mt-0.5 italic">
             الاسم الحالي: <span className="font-mono break-all">{ev.current_name}</span>

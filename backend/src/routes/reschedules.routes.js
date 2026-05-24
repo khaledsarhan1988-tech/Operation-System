@@ -1146,6 +1146,55 @@ router.get('/timeline', requireSuperAdmin, (req, res) => {
        ORDER BY l.date ASC, l.time ASC
     `).all(...aliasArr, ...lineParam);
 
+    // ── Coordinator-at-time lookup ────────────────────────────────────────
+    // coordinator_history records every coord assignment with effective_from/
+    // effective_to. For each event in the timeline we'll resolve the coord(s)
+    // who were active on that specific date — so the admin sees the person
+    // responsible AT THE TIME of cancellation, not the current coordinator.
+    let coordHistory = [];
+    try {
+      coordHistory = db.prepare(`
+        SELECT group_name, coordinator, effective_from, effective_to
+          FROM coordinator_history
+         WHERE (${groupOrs})${lineClause}
+         ORDER BY effective_from ASC
+      `).all(...aliasArr, ...lineParam);
+    } catch (_) { /* table may not exist on first deploy */ }
+
+    function uniqueCoordNames(arr) {
+      const seen = new Set();
+      const out  = [];
+      for (const r of arr) {
+        const k = String(r.coordinator || '').toLowerCase().trim();
+        if (!k || seen.has(k)) continue;
+        seen.add(k);
+        out.push(r.coordinator);
+      }
+      return out;
+    }
+
+    function coordinatorsOnDate(dateStr) {
+      if (!dateStr || coordHistory.length === 0) return [];
+      // Match: effective_from's DATE <= eventDate AND
+      //        (effective_to IS NULL OR effective_to's DATE > eventDate)
+      const exact = coordHistory.filter(h => {
+        const fromDate = (h.effective_from || '').slice(0, 10);
+        if (fromDate > dateStr) return false;
+        if (!h.effective_to) return true;
+        const toDate = (h.effective_to || '').slice(0, 10);
+        return toDate > dateStr;
+      });
+      if (exact.length > 0) return uniqueCoordNames(exact);
+
+      // Fallback — event predates the earliest sync record. Use the coord(s)
+      // with the earliest effective_from (best guess of who was active then).
+      const sortedByFrom = coordHistory.slice()
+        .sort((a, b) => (a.effective_from || '').localeCompare(b.effective_from || ''));
+      const earliestFrom = sortedByFrom[0]?.effective_from;
+      if (!earliestFrom) return [];
+      return uniqueCoordNames(sortedByFrom.filter(h => h.effective_from === earliestFrom));
+    }
+
     // Weekday helper — JS getDay() is 0=Sun..6=Sat; map to Arabic name.
     const DOW_AR = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
     const DOW_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -1176,6 +1225,11 @@ router.get('/timeline', requireSuperAdmin, (req, res) => {
         moved_to: r.new_date,
         moved_to_time: r.new_time,
         moved_to_trainer: r.new_trainer,
+        // Coordinator(s) responsible at the time of the cancellation —
+        // not the current coordinator. Uses coordinator_history's time
+        // windows to resolve correctly even if the coordinator changed
+        // mid-batch.
+        coordinators_at_time: coordinatorsOnDate(r.old_date),
         reschedule_id: r.id,
         approval_status: r.approval_status,
         holiday_id: r.holiday_id,
@@ -1193,6 +1247,7 @@ router.get('/timeline', requireSuperAdmin, (req, res) => {
         moved_from: r.old_date,
         moved_from_time: r.old_time,
         moved_from_trainer: r.old_trainer,
+        coordinators_at_time: coordinatorsOnDate(r.new_date),
         name_changed: false,   // filled below if trainer/coordinator differ
         reschedule_id: r.id,
         approval_status: r.approval_status,
