@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Users, Plus, Pencil, Trash2, X, Search, Sun, Moon,
   Phone, Briefcase, CheckCircle, XCircle, ChevronDown, UserX,
+  Clock, Calendar as CalendarIcon,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -367,6 +368,155 @@ function ShiftSection({
   );
 }
 
+// ─── EXTRA SHIFTS SECTION ─────────────────────────────────────────────────────
+// One-off after-shift-end hour blocks. Use case: trainer's shift_end_date was
+// 21/5 but they're coming on 24/5 for 4h and 25/5 for 1h. Each row adds to
+// the trainer's daily capacity in utilization reports — even if the day is
+// outside their regular shift window.
+//
+// CRUD lives in dedicated endpoints, NOT in the main member-save payload, so
+// edits here persist immediately (no need to press the main "Save" button).
+function ExtraShiftsSection({ memberId, inputCls, labelCls }) {
+  const qc = useQueryClient();
+  const { data: rows = [], isLoading } = useQuery({
+    queryKey: ['team-extra-shifts', memberId],
+    queryFn: () => api.get(`/team/${memberId}/extra-shifts`).then(r => r.data),
+  });
+
+  const [date, setDate] = useState('');
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
+  const [durationHours, setDurationHours] = useState('');
+  const [notes, setNotes] = useState('');
+  const [error, setError] = useState(null);
+
+  const addMut = useMutation({
+    mutationFn: (body) => api.post(`/team/${memberId}/extra-shifts`, body).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['team-extra-shifts', memberId] });
+      setDate(''); setStartTime(''); setEndTime(''); setDurationHours(''); setNotes('');
+      setError(null);
+    },
+    onError: (err) => setError(err.response?.data?.error || 'تعذّر الإضافة'),
+  });
+
+  const delMut = useMutation({
+    mutationFn: (entryId) => api.delete(`/team/extra-shifts/${entryId}`).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['team-extra-shifts', memberId] }),
+  });
+
+  // Format minutes → "4 س" / "1 س 30 د" / "45 د"
+  const fmtMins = (n) => {
+    n = Math.max(0, Math.round(Number(n) || 0));
+    if (n === 0) return '0';
+    if (n < 60) return `${n} د`;
+    const h = Math.floor(n / 60);
+    const rem = n % 60;
+    return rem > 0 ? `${h} س ${rem} د` : `${h} س`;
+  };
+
+  function submit() {
+    setError(null);
+    if (!date) { setError('من فضلك اختر التاريخ'); return; }
+    const body = { date, notes };
+    if (startTime && endTime) {
+      body.start_time = startTime;
+      body.end_time   = endTime;
+    } else if (durationHours) {
+      const mins = Math.round(Number(durationHours) * 60);
+      if (!Number.isFinite(mins) || mins <= 0) { setError('عدد ساعات غير صالح'); return; }
+      body.duration_min = mins;
+    } else {
+      setError('حدد وقت بداية ونهاية، أو عدد ساعات');
+      return;
+    }
+    addMut.mutate(body);
+  }
+
+  return (
+    <div className="bg-amber-50/60 border border-amber-200 rounded-xl p-4">
+      <div className="flex items-center gap-2 mb-2">
+        <Clock size={16} className="text-amber-600" />
+        <h4 className="text-sm font-bold text-amber-900">ساعات إضافية (one-off)</h4>
+        <span className="mr-auto text-[10px] text-amber-700">تظهر في حساب نسبة التشغيل لليوم المحدد</span>
+      </div>
+      <p className="text-[11px] text-amber-700/80 mb-3 leading-relaxed">
+        💡 لو الموظف خلص شيفته (تاريخ نهاية الشيفت)، لكن بيدخل أيام محددة لساعات إضافية —
+        ضيف كل يوم هنا. الساعات بتتحسب في utilization من غير ما تفتح شيفت جديد.
+      </p>
+
+      {/* Existing entries */}
+      {isLoading ? (
+        <p className="text-xs text-gray-500 text-center py-2">جاري التحميل...</p>
+      ) : rows.length === 0 ? (
+        <p className="text-xs text-gray-500 text-center py-2 italic">لا توجد ساعات إضافية مسجلة</p>
+      ) : (
+        <ul className="space-y-1.5 mb-3">
+          {rows.map(r => (
+            <li key={r.id} className="bg-white border border-amber-200 rounded-lg px-3 py-2 flex items-center gap-2 text-xs">
+              <CalendarIcon size={12} className="text-amber-600 flex-shrink-0" />
+              <span className="font-bold text-gray-800">{r.date}</span>
+              {r.start_time && r.end_time ? (
+                <span className="text-gray-600">{r.start_time} → {r.end_time}</span>
+              ) : null}
+              <span className="bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded">
+                {fmtMins(r.duration_min)}
+              </span>
+              {r.notes && <span className="text-gray-500 truncate flex-1">— {r.notes}</span>}
+              <button type="button"
+                onClick={() => { if (confirm('حذف الإدخال؟')) delMut.mutate(r.id); }}
+                className="mr-auto p-1 hover:bg-red-50 rounded text-red-500"
+                title="حذف">
+                <Trash2 size={12} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {/* Add form */}
+      <div className="border-t border-amber-200 pt-3 space-y-2">
+        <div className="grid grid-cols-3 gap-2">
+          <div>
+            <label className={labelCls}>التاريخ <span className="text-red-500">*</span></label>
+            <input type="date" className={inputCls} value={date} onChange={e => setDate(e.target.value)} />
+          </div>
+          <div>
+            <label className={labelCls}>من (اختياري)</label>
+            <input type="time" className={inputCls} value={startTime} onChange={e => setStartTime(e.target.value)} />
+          </div>
+          <div>
+            <label className={labelCls}>إلى (اختياري)</label>
+            <input type="time" className={inputCls} value={endTime} onChange={e => setEndTime(e.target.value)} />
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <div>
+            <label className={labelCls}>أو عدد ساعات</label>
+            <input type="number" step="0.25" min="0" placeholder="مثلاً 4"
+              className={inputCls} value={durationHours}
+              onChange={e => setDurationHours(e.target.value)}
+              disabled={!!(startTime && endTime)} />
+          </div>
+          <div className="col-span-2">
+            <label className={labelCls}>ملاحظة (اختياري)</label>
+            <input className={inputCls} value={notes} onChange={e => setNotes(e.target.value)}
+              placeholder="مثلاً: عوض درس / تعديل" />
+          </div>
+        </div>
+        {error && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">{error}</p>}
+        <button type="button"
+          onClick={submit}
+          disabled={addMut.isPending || !date}
+          className="w-full py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold disabled:opacity-50 flex items-center justify-center gap-2">
+          <Plus size={14} />
+          {addMut.isPending ? 'جاري الإضافة...' : 'إضافة ساعات إضافية'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── TEACHABLE COURSES SECTION ────────────────────────────────────────────────
 // Three rows of pill buttons — Starter / General / Conversation. Each pill is
 // a highest level. Lower levels visually "lit" to show they're covered.
@@ -620,6 +770,14 @@ function MemberModal({ initial, onSave, onClose, loading }) {
               onRemove={clearShift2}
               inputCls={inputCls} labelCls={labelCls}
             />
+          )}
+
+          {/* Extra one-off hours — only on EDIT and only for education
+              (the API needs the member's id to attach entries). Used for
+              trainers who already ended their main shift but come back for
+              a few hours on specific days. */}
+          {form.department === 'education' && initial?.id && (
+            <ExtraShiftsSection memberId={initial.id} inputCls={inputCls} labelCls={labelCls} />
           )}
 
           {/* Teachable courses — education only */}

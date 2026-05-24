@@ -69,6 +69,13 @@ CREATE TABLE IF NOT EXISTS team_members (
   shift2_end_date         TEXT,
   shift2_employment_type  TEXT CHECK(shift2_employment_type IN ('full_time','part_time') OR shift2_employment_type IS NULL),
   shift2_work_days        TEXT,
+  -- ── EXTENDED SHIFTS (unlimited) ─────────────────────────────────────────
+  -- Canonical store for ALL shifts (3+) once a trainer needs more than 2.
+  -- JSON array: [{shift,start,end,rests,voice_notes,employment_type,
+  -- work_days,start_date,end_date}, ...]. The first two entries are mirrored
+  -- back to the legacy shift_*/shift2_* columns above on save for backward
+  -- compatibility with consumers that haven't been migrated yet.
+  shifts_json TEXT,
   job_title   TEXT,
   phone       TEXT,
   user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -92,6 +99,31 @@ CREATE TABLE IF NOT EXISTS team_members (
 CREATE INDEX IF NOT EXISTS idx_team_dept_section ON team_members(department, section);
 CREATE INDEX IF NOT EXISTS idx_team_line         ON team_members(line);
 CREATE INDEX IF NOT EXISTS idx_team_coord_type   ON team_members(coordinator_type);
+
+-- =============================================
+-- TEAM MEMBER EXTRA SHIFTS
+-- One-off extra-hour entries for a team member, typically used AFTER a
+-- trainer's regular shift end_date when they come back for a few extra
+-- hours. Each row is a single day's extra time block; counts toward the
+-- trainer's daily capacity in utilization reports.
+--
+-- Either (start_time + end_time) OR a raw duration_min may be set. When
+-- both endpoints are present, the server stores the computed minutes in
+-- duration_min so all consumers can read a single column.
+-- =============================================
+CREATE TABLE IF NOT EXISTS team_member_extra_shifts (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  team_member_id  INTEGER NOT NULL REFERENCES team_members(id) ON DELETE CASCADE,
+  date            TEXT NOT NULL,          -- YYYY-MM-DD
+  start_time      TEXT,                   -- HH:MM, optional
+  end_time        TEXT,                   -- HH:MM, optional
+  duration_min    INTEGER NOT NULL,       -- minutes worked on `date`
+  notes           TEXT,
+  created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+);
+CREATE INDEX IF NOT EXISTS idx_tmes_member ON team_member_extra_shifts(team_member_id);
+CREATE INDEX IF NOT EXISTS idx_tmes_date   ON team_member_extra_shifts(date);
 
 -- =============================================
 -- CLIENTS (from Active Batches Trainees.xlsx)

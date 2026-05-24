@@ -324,6 +324,80 @@ function escapeLike(s) {
   return s.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
 
+// ─── parseTeamShifts ─────────────────────────────────────────────────────────
+// Returns ALL configured shifts for a team_member row, normalized into the
+// shape every shift-consuming check expects:
+//   { startMin, endMin, days, startDate, endDate, rests, voiceNotes, startStr, endStr }
+//
+// Sources, in order:
+//   1. `t.shifts_json` (canonical, unlimited shifts).
+//   2. Fallback to legacy `shift / shift_*` and `shift2 / shift2_*` columns.
+//
+// Use this in place of `[normalizeShift(t,''), normalizeShift(t,'2')].filter(Boolean)`
+// so 3rd+ shifts are counted in code-problems, trainer-utilization, etc.
+function parseTeamShifts(t) {
+  if (!t) return [];
+  const parseHM  = (s) => {
+    if (!s) return null;
+    const m = String(s).match(/^(\d{1,2}):(\d{2})$/);
+    return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : null;
+  };
+  const parseEnd = (s) => {
+    const v = parseHM(s);
+    return v === 0 ? 1440 : v;          // 00:00 means end-of-day
+  };
+  const parseRests = (raw) => {
+    if (!raw) return [];
+    let arr = raw;
+    if (typeof raw === 'string') { try { arr = JSON.parse(raw); } catch { return []; } }
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .map(r => ({ startMin: parseHM(r && r.start), endMin: parseHM(r && r.end) }))
+      .filter(r => r.startMin != null && r.endMin != null && r.endMin > r.startMin);
+  };
+  const normalize = (s) => {
+    if (!s || !s.shift) return null;
+    const startMin = parseHM(s.start);
+    const endMin   = parseEnd(s.end);
+    if (startMin == null || endMin == null) return null;
+    const days = String(s.work_days || '')
+      .split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
+    return {
+      startMin, endMin, days,
+      startDate: s.start_date || null,
+      endDate:   s.end_date   || null,
+      rests:      parseRests(s.rests),
+      voiceNotes: parseRests(s.voice_notes),
+      startStr:   s.start || '',
+      endStr:     s.end   || '',
+    };
+  };
+
+  // Source 1: canonical JSON column.
+  let raw = null;
+  if (t.shifts_json) {
+    try { raw = JSON.parse(t.shifts_json); } catch { raw = null; }
+  }
+  // Source 2: legacy columns (only when JSON is absent — keeps un-migrated
+  // rows fully functional while the backfill catches up).
+  if (!Array.isArray(raw) || raw.length === 0) {
+    raw = [];
+    if (t.shift) raw.push({
+      shift: t.shift, start: t.shift_start, end: t.shift_end,
+      rests: t.shift_rests, voice_notes: t.voice_notes,
+      employment_type: t.employment_type, work_days: t.work_days,
+      start_date: t.shift_start_date, end_date: t.shift_end_date,
+    });
+    if (t.shift2) raw.push({
+      shift: t.shift2, start: t.shift2_start, end: t.shift2_end,
+      rests: t.shift2_rests, voice_notes: t.shift2_voice_notes,
+      employment_type: t.shift2_employment_type, work_days: t.shift2_work_days,
+      start_date: t.shift2_start_date, end_date: t.shift2_end_date,
+    });
+  }
+  return raw.map(normalize).filter(Boolean);
+}
+
 // Builds the inner UNION+dedup query used by /remarks-notes-main.
 // Returns an SQL string that can be wrapped in `SELECT ... FROM (${innerQ}) t WHERE 1=1 ${havingFilter}`.
 // Used by the endpoint AND by the dashboard KPI so both always agree on the count.
@@ -2021,9 +2095,7 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
     // Evaluate one lecture against a trainer. Returns { ok, reason }.
     // reason is short Arabic text describing why the lecture is out of schedule.
     function evaluateLectureSchedule(lec, teamRow) {
-      const sh1 = normalizeShift(teamRow, '');
-      const sh2 = normalizeShift(teamRow, '2');
-      const shifts = [sh1, sh2].filter(Boolean);
+      const shifts = parseTeamShifts(teamRow);
       if (shifts.length === 0) return { ok: true, reason: null }; // no shift configured → skip
 
       // Skip lectures that pre-date the trainer's earliest shift_start_date.
@@ -2866,12 +2938,27 @@ router.get('/trainer-utilization', (req, res) => {
       }
     }
 
+    // Extra shifts (one-off after-shift-end hour blocks) — pre-fetched for
+    // the whole window so we can add them to the trainer's daily capacity
+    // without an N+1 query inside the per-trainer loop. Keyed by member_id
+    // + date.
+    const extraByMemberDay = {};
+    try {
+      const extraRows = db.prepare(`
+        SELECT team_member_id, date, SUM(duration_min) AS mins
+          FROM team_member_extra_shifts
+         WHERE date BETWEEN ? AND ?
+         GROUP BY team_member_id, date
+      `).all(fromDate, toDate);
+      for (const r of extraRows) {
+        extraByMemberDay[`${r.team_member_id}|${r.date}`] = r.mins || 0;
+      }
+    } catch (_) { /* table might not exist yet on first deploy */ }
+
     // Build response per trainer
     const out = trainerRows.map(t => {
       const tKey = stripParens(t.name).toLowerCase();
-      const sh1 = normalizeShift(t, '');
-      const sh2 = normalizeShift(t, '2');
-      const shifts = [sh1, sh2].filter(Boolean);
+      const shifts = parseTeamShifts(t);
 
       // Build a one-line shift summary like "مسائي 04:00 PM-12:00 AM"
       const SHIFT_AR = { morning: 'صباحي', evening: 'مسائي' };
@@ -2893,6 +2980,11 @@ router.get('/trainer-utilization', (req, res) => {
         // Sum capacity from BOTH shifts on this date
         let availMin = 0;
         for (const sh of shifts) availMin += shiftMinsForDate(sh, date);
+        // Extra-shift minutes (one-off after-end-date entries) add to capacity
+        // for this specific day. Lets a trainer whose main shift ended still
+        // contribute days like "21/5 ended → 24/5 came back 4h".
+        const extraMin = extraByMemberDay[`${t.id}|${date}`] || 0;
+        availMin += extraMin;
         const isWorkDay = availMin > 0;
         if (isWorkDay) workDayCount++;
         // Sum booked
@@ -3157,9 +3249,7 @@ router.get('/trainer-utilization-summary', (req, res) => {
     // ── Per-trainer totals over current period
     const SECTION_AR = { general:'عام', private:'خاص', semi:'شبه خاص', phone_call:'فون كول', all:'الكل' };
     const trainersOut = trainers.map(t => {
-      const sh1 = normalizeShift(t, '');
-      const sh2 = normalizeShift(t, '2');
-      const shifts = [sh1, sh2].filter(Boolean);
+      const shifts = parseTeamShifts(t);
       const curr = totalsForRange(t, shifts, currDates);
       const prev = totalsForRange(t, shifts, prevDates);
       const utilization = curr.available_min > 0
@@ -3204,9 +3294,7 @@ router.get('/trainer-utilization-summary', (req, res) => {
     // Previous period avg
     let prevTotalAvail = 0, prevTotalBooked = 0;
     for (const t of trainers) {
-      const sh1 = normalizeShift(t, '');
-      const sh2 = normalizeShift(t, '2');
-      const shifts = [sh1, sh2].filter(Boolean);
+      const shifts = parseTeamShifts(t);
       const prev = totalsForRange(t, shifts, prevDates);
       prevTotalAvail += prev.available_min;
       prevTotalBooked += prev.booked_min;
@@ -3236,9 +3324,7 @@ router.get('/trainer-utilization-summary', (req, res) => {
       if (wkDates.length === 0) continue;
       let wkAvail = 0, wkBooked = 0;
       for (const t of trainers) {
-        const sh1 = normalizeShift(t, '');
-        const sh2 = normalizeShift(t, '2');
-        const shifts = [sh1, sh2].filter(Boolean);
+        const shifts = parseTeamShifts(t);
         const tot = totalsForRange(t, shifts, wkDates);
         wkAvail  += tot.available_min;
         wkBooked += tot.booked_min;
@@ -3525,9 +3611,7 @@ router.get('/find-available-trainer', (req, res) => {
 
     // For each trainer, evaluate every slot
     const results = eligible.map(t => {
-      const sh1 = normalizeShift(t, '');
-      const sh2 = normalizeShift(t, '2');
-      const shifts = [sh1, sh2].filter(Boolean);
+      const shifts = parseTeamShifts(t);
       const tKey = stripParens(t.name).toLowerCase();
       const earliestStart = shifts.map(s => s.startDate).filter(Boolean).sort()[0];
 

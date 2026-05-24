@@ -205,6 +205,62 @@ initDb().then(db => {
     }
   });
 
+  // ── team_members.shifts_json: canonical store for unlimited shifts ──────
+  // Adds the column if missing, then backfills from existing shift/shift2
+  // columns once (only when the JSON column is empty). After backfill, the
+  // UI saves all shifts to JSON and mirrors the first two back to the legacy
+  // columns — so any consumer that hasn't been migrated keeps working.
+  try {
+    const info = db._raw.exec(`PRAGMA table_info(team_members)`);
+    const cols = info[0]?.values.map(r => r[1]) || [];
+    if (cols.length > 0 && !cols.includes('shifts_json')) {
+      db._raw.run(`ALTER TABLE team_members ADD COLUMN shifts_json TEXT`);
+      saveNow();
+      console.log('✅ Migration: added `shifts_json` column to team_members');
+    }
+    // Backfill — convert legacy shift/shift2 fields into the JSON array for
+    // any member whose shifts_json is still NULL.
+    const pendingMembers = db.prepare(
+      `SELECT id,
+              shift,  shift_start,  shift_end,  shift_rests,  voice_notes,
+              employment_type,  work_days,  shift_start_date,  shift_end_date,
+              shift2, shift2_start, shift2_end, shift2_rests, shift2_voice_notes,
+              shift2_employment_type, shift2_work_days, shift2_start_date, shift2_end_date
+         FROM team_members
+        WHERE shifts_json IS NULL`
+    ).all();
+    if (pendingMembers.length > 0) {
+      const update = db.prepare(`UPDATE team_members SET shifts_json = ? WHERE id = ?`);
+      let backfilled = 0;
+      const tx = db.transaction(() => {
+        for (const m of pendingMembers) {
+          const arr = [];
+          if (m.shift) arr.push({
+            shift: m.shift, start: m.shift_start, end: m.shift_end,
+            rests: m.shift_rests, voice_notes: m.voice_notes,
+            employment_type: m.employment_type, work_days: m.work_days,
+            start_date: m.shift_start_date, end_date: m.shift_end_date,
+          });
+          if (m.shift2) arr.push({
+            shift: m.shift2, start: m.shift2_start, end: m.shift2_end,
+            rests: m.shift2_rests, voice_notes: m.shift2_voice_notes,
+            employment_type: m.shift2_employment_type, work_days: m.shift2_work_days,
+            start_date: m.shift2_start_date, end_date: m.shift2_end_date,
+          });
+          update.run(JSON.stringify(arr), m.id);
+          backfilled += 1;
+        }
+      });
+      tx();
+      if (backfilled > 0) {
+        saveNow();
+        console.log(`✅ Migration: backfilled shifts_json for ${backfilled} team_members`);
+      }
+    }
+  } catch (e) {
+    console.error('team_members.shifts_json migration error:', e.message);
+  }
+
   // ── team_members.line: operational line (Ahmed Hassan / Dardasha / etc.)
   // Lets the org chart split a section into line-specific columns
   // (e.g. "خاص" main line vs "خاص دردشة" Dardasha line).
@@ -258,6 +314,32 @@ initDb().then(db => {
     }
   } catch (e) {
     console.error('team_members.coordinator_type migration error:', e.message);
+  }
+
+  // ── team_member_extra_shifts: one-off extra-hour entries for trainers ────
+  // who come back for a few hours AFTER their main shift end_date. Each row
+  // is a single date's time block; counts toward trainer utilization on
+  // that day. Created via the team-member edit modal.
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS team_member_extra_shifts (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        team_member_id  INTEGER NOT NULL REFERENCES team_members(id) ON DELETE CASCADE,
+        date            TEXT NOT NULL,
+        start_time      TEXT,
+        end_time        TEXT,
+        duration_min    INTEGER NOT NULL,
+        notes           TEXT,
+        created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_tmes_member ON team_member_extra_shifts(team_member_id)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_tmes_date   ON team_member_extra_shifts(date)`);
+    saveNow();
+    console.log('✅ Migration: team_member_extra_shifts table ready');
+  } catch (e) {
+    console.error('team_member_extra_shifts migration error:', e.message);
   }
 
   // ── todos.due_date_end: support multi-day tasks (date ranges) ─────────────
