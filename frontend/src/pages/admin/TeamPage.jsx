@@ -632,7 +632,7 @@ function TeachableCoursesSection({ form, setForm, labelCls }) {
 }
 
 // ─── MEMBER MODAL ─────────────────────────────────────────────────────────────
-function MemberModal({ initial, onSave, onClose, loading }) {
+export function MemberModal({ initial, onSave, onClose, loading }) {
   const [form, setForm] = useState(() => hydrateMember(initial));
   // Unlimited shifts — array of {shift, shift_start, shift_end, ...} objects.
   const [shifts, setShifts] = useState(() => initialShifts(initial));

@@ -1,12 +1,12 @@
 import { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   History, CalendarDays, Search, Loader2, Users, Clock, Plus,
   CheckCircle, XCircle, X, Pencil,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
+import { MemberModal } from './TeamPage';
 
 // ─── CONSTANTS ─────────────────────────────────────────────────────────────────
 const SECTIONS = {
@@ -156,13 +156,17 @@ function SkeletonRows({ cols = 11, rows = 6 }) {
 
 // ─── MAIN COMPONENT ────────────────────────────────────────────────────────────
 export default function TrainerWorkHistory() {
-  const [fromDate, setFromDate] = useState(defaultFromDate);
-  const [toDate,   setToDate]   = useState(defaultToDate);
-  const [section,  setSection]  = useState('all');
-  const [trainer,  setTrainer]  = useState('');
-  const [search,   setSearch]   = useState('');
+  const qc = useQueryClient();
+  const [fromDate,    setFromDate]    = useState(defaultFromDate);
+  const [toDate,      setToDate]      = useState(defaultToDate);
+  const [section,     setSection]     = useState('all');
+  const [trainer,     setTrainer]     = useState('');
+  const [search,      setSearch]      = useState('');
+  const [editMember,  setEditMember]  = useState(null);
 
   // ── trainer dropdown options — all education team members
+  // (also used as the source for the click-to-edit modal — we look up the
+  // full member object by trainer_id here without an extra request).
   const { data: teamData } = useQuery({
     queryKey: ['team', 'education'],
     queryFn: () => api.get('/team', { params: { department: 'education', status: 'all' } }).then(r => r.data),
@@ -172,6 +176,29 @@ export default function TrainerWorkHistory() {
     () => (teamData || []).map(t => t.name).sort((a, b) => a.localeCompare(b, 'ar')),
     [teamData]
   );
+
+  // ── Save mutation for the in-place edit modal — mirrors TeamPage's flow
+  // so changes invalidate BOTH the team-members cache (TeamPage refreshes
+  // automatically) and this report (so the row reflects the new values).
+  const saveMutation = useMutation({
+    mutationFn: (form) =>
+      form.id
+        ? api.put(`/team/${form.id}`, form).then(r => r.data)
+        : api.post('/team', form).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['team-members'] });
+      qc.invalidateQueries({ queryKey: ['team', 'education'] });
+      qc.invalidateQueries({ queryKey: ['trainer-work-history'] });
+      setEditMember(null);
+    },
+  });
+
+  // Click handler: look up the full member object from teamData and open
+  // the shared MemberModal in this page (no navigation).
+  const openTrainerEdit = (trainerId) => {
+    const m = (teamData || []).find(t => String(t.id) === String(trainerId));
+    if (m) setEditMember(m);
+  };
 
   // ── report data
   const { data, isLoading, isError } = useQuery({
@@ -289,16 +316,17 @@ export default function TrainerWorkHistory() {
                filteredRows.map((r, i) => (
                  <tr key={i} className="hover:bg-gray-50/60 transition-colors">
                    <td className="px-3 py-3 font-semibold whitespace-nowrap">
-                     <Link
-                       to={`/admin/team?edit=${r.trainer_id}`}
+                     <button
+                       type="button"
+                       onClick={() => openTrainerEdit(r.trainer_id)}
                        className="group inline-flex items-center gap-1.5 text-gray-900 hover:text-blue-600 transition-colors"
-                       title="فتح صفحة تعديل الموظف"
+                       title="فتح نافذة تعديل الموظف"
                      >
                        <span className="border-b border-dashed border-transparent group-hover:border-blue-500">
                          {r.trainer_name}
                        </span>
                        <Pencil size={11} className="opacity-0 group-hover:opacity-70 transition-opacity" />
-                     </Link>
+                     </button>
                    </td>
                    <td className="px-3 py-3 whitespace-nowrap"><SectionBadge value={r.section} /></td>
                    <td className="px-3 py-3 text-xs text-gray-500 font-mono text-center">{r.shift_index}</td>
@@ -354,6 +382,16 @@ export default function TrainerWorkHistory() {
           </p>
         </div>
       </div>
+
+      {/* ── In-place edit modal — opens when a trainer's name is clicked ── */}
+      {editMember && (
+        <MemberModal
+          initial={editMember}
+          onSave={(form) => saveMutation.mutate({ ...form, id: editMember.id })}
+          onClose={() => setEditMember(null)}
+          loading={saveMutation.isPending}
+        />
+      )}
     </div>
   );
 }
