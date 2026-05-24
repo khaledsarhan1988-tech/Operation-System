@@ -460,6 +460,21 @@ router.post('/backfill-from-drive', requireSuperAdmin, express.json(), async (re
       String(r.line         || '').trim().toLowerCase(),
     ].join('|');
   }
+  // Same-day, sub-30-min time differences are NOT reschedules — they're
+  // Excel time-formatting jitter. Filter them out before INSERT.
+  const SAME_SLOT_TIME_TOLERANCE_MIN = 30;
+  function timeToMins(t) {
+    if (!t) return null;
+    const m = String(t).match(/^(\d{1,2}):(\d{2})/);
+    return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : null;
+  }
+  function isMinorTimeDrift(a, b) {
+    if (!a || !b || a.date !== b.date) return false;
+    const ma = timeToMins(a.time);
+    const mb = timeToMins(b.time);
+    if (ma == null || mb == null) return false;
+    return Math.abs(ma - mb) < SAME_SLOT_TIME_TOLERANCE_MIN;
+  }
 
   // Pre-load holidays so we can flag holiday-shifted rows.
   let holidays = [];
@@ -532,6 +547,8 @@ router.post('/backfill-from-drive', requireSuperAdmin, express.json(), async (re
         return da - db_;
       });
       const newRow = candidates.shift();
+      // Skip false-positive pairs: same date + tiny time drift = Excel jitter
+      if (isMinorTimeDrift(oldRow, newRow)) continue;
       pairs.push({ old: oldRow, new: newRow });
     }
     return pairs;
@@ -631,6 +648,58 @@ router.post('/backfill-from-drive', requireSuperAdmin, express.json(), async (re
     summary,
     sample_log: log.slice(0, 50),   // cap for response size
   });
+});
+
+// ─── POST /api/reschedules/cleanup-false-positives ───────────────────────────
+// Removes already-inserted rows whose old/new are on the SAME date with
+// less than 30 minutes time difference. These are not real reschedules —
+// they're Excel time-formatting jitter (e.g. "18:00:00" → "18:01:00")
+// that got captured before the detection logic was tightened. Safe to run.
+router.post('/cleanup-false-positives', requireSuperAdmin, (req, res) => {
+  try {
+    // Find candidates: same date, both have time set, and parsing the
+    // HH:MM gives a |diff| < 30 minutes.
+    const candidates = db.prepare(`
+      SELECT id, old_date, old_time, new_date, new_time
+        FROM lecture_reschedules
+       WHERE old_date = new_date
+         AND old_time IS NOT NULL
+         AND new_time IS NOT NULL
+    `).all();
+
+    function timeToMins(t) {
+      if (!t) return null;
+      const m = String(t).match(/^(\d{1,2}):(\d{2})/);
+      return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : null;
+    }
+
+    const toDelete = [];
+    for (const c of candidates) {
+      const ma = timeToMins(c.old_time);
+      const mb = timeToMins(c.new_time);
+      if (ma == null || mb == null) continue;
+      if (Math.abs(ma - mb) < 30) toDelete.push(c.id);
+    }
+
+    if (toDelete.length === 0) {
+      return res.json({ ok: true, deleted: 0, message: 'مفيش false positives.' });
+    }
+
+    const del = db.prepare(`DELETE FROM lecture_reschedules WHERE id = ?`);
+    const tx = db.transaction(() => {
+      for (const id of toDelete) del.run(id);
+    });
+    tx();
+
+    return res.json({
+      ok: true,
+      deleted: toDelete.length,
+      message: `تم حذف ${toDelete.length} false positive (نفس اليوم + فرق أقل من 30 دقيقة).`,
+    });
+  } catch (err) {
+    console.error('[reschedules/cleanup-false-positives]', err);
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

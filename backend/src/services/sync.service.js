@@ -620,6 +620,26 @@ function _slotKey(r) {
     String(r.line       || '').trim().toLowerCase(),
   ].join('|');
 }
+// Parse a time field that can be "HH:MM", "HH:MM:SS", or other forms into
+// minutes-since-midnight. Returns null when unparseable.
+function _timeToMins(t) {
+  if (!t) return null;
+  const m = String(t).match(/^(\d{1,2}):(\d{2})/);
+  return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : null;
+}
+// Two slots are "essentially the same" when their date matches AND their
+// time differs by less than this many minutes. Excel imports occasionally
+// produce 1-minute jitter on the time column (e.g. "18:00:00" vs
+// "18:01:00") — those are NOT reschedules.
+const SAME_SLOT_TIME_TOLERANCE_MIN = 30;
+function _isMinorTimeDrift(rowA, rowB) {
+  if (!rowA || !rowB) return false;
+  if (rowA.date !== rowB.date) return false;
+  const ma = _timeToMins(rowA.time);
+  const mb = _timeToMins(rowB.time);
+  if (ma == null || mb == null) return false;
+  return Math.abs(ma - mb) < SAME_SLOT_TIME_TOLERANCE_MIN;
+}
 
 function detectAndRecordReschedules({ snapshot, after, sessionType, line }) {
   // Build slot maps to find truly-changed slots (skip rows that are identical
@@ -686,6 +706,12 @@ function detectAndRecordReschedules({ snapshot, after, sessionType, line }) {
       return da - db_;
     });
     const newRow = candidates.shift();   // consume — each addition matches once
+
+    // Skip false positives: same date + tiny time drift (< 30 min). Excel
+    // imports occasionally jitter the time column by a minute or two
+    // ("18:00:00" → "18:01:00") and we don't want to flag those as
+    // reschedules.
+    if (_isMinorTimeDrift(oldRow, newRow)) continue;
 
     const hol = holidayFor(oldRow.date);
     const reason = hol ? 'official_holiday' : null;

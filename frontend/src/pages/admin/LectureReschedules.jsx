@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   CalendarClock, CheckCircle2, XCircle, Clock, AlertCircle, Search,
-  RefreshCw, FileText, X, Send, Sparkles, ScanSearch, Database,
+  RefreshCw, FileText, X, Send, Sparkles, ScanSearch, Database, Trash2,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -115,10 +115,15 @@ export default function LectureReschedules() {
           <RefreshCw size={14} /> تحديث
         </button>
         {isSuperAdmin && (
-          <button onClick={() => setShowDiagnostic(true)}
-            className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-sm font-bold flex items-center gap-1.5 mr-auto">
-            <ScanSearch size={14} /> فحص ذكي للبيانات التاريخية
-          </button>
+          <>
+            <CleanupFalsePositivesButton
+              onDone={() => qc.invalidateQueries({ queryKey: ['reschedules'] })}
+            />
+            <button onClick={() => setShowDiagnostic(true)}
+              className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-sm font-bold flex items-center gap-1.5 mr-auto">
+              <ScanSearch size={14} /> فحص ذكي للبيانات التاريخية
+            </button>
+          </>
         )}
       </div>
 
@@ -639,5 +644,38 @@ function RescheduleDetailModal({ row, isSuperAdmin, onClose, onChanged }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── Cleanup False Positives button ──────────────────────────────────────────
+// Excel imports occasionally produce 1-minute time-column jitter (e.g.
+// "18:00:00" → "18:01:00"). The old detection logic flagged those as
+// reschedules; the new logic ignores them. This button retroactively
+// deletes any existing rows that match the same pattern.
+function CleanupFalsePositivesButton({ onDone }) {
+  const cleanupMut = useMutation({
+    mutationFn: () => api.post('/reschedules/cleanup-false-positives').then(r => r.data),
+    onSuccess: (res) => {
+      alert(res.message || `تم حذف ${res.deleted} false positive.`);
+      onDone();
+    },
+    onError: (err) => alert(err.response?.data?.error || err.message),
+  });
+
+  return (
+    <button
+      onClick={() => {
+        if (confirm(
+          'هحذف الـ rows اللى عبارة عن نفس اليوم + فرق وقت أقل من 30 دقيقة ' +
+          '(false positives من Excel time jitter). متأكد؟'
+        )) {
+          cleanupMut.mutate();
+        }
+      }}
+      disabled={cleanupMut.isPending}
+      className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold flex items-center gap-1.5 disabled:opacity-50">
+      <Trash2 size={14} />
+      {cleanupMut.isPending ? 'جاري...' : 'مسح Time Jitter'}
+    </button>
   );
 }
