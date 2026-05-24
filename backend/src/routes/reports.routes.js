@@ -398,6 +398,48 @@ function parseTeamShifts(t) {
   return raw.map(normalize).filter(Boolean);
 }
 
+// ─── computeOverallEmployment ────────────────────────────────────────────────
+// "Asmaa Saber" pattern: a trainer with multiple shifts whose work_days
+// happen to cover all 6 work days when combined is effectively Full Time —
+// even though each individual shift is stored as Part Time to allow
+// per-shift rest/voice-note customization.
+//
+// Returns:
+//   { type: 'full_time' | 'part_time' | null,
+//     split: boolean,     // true when ≥2 shifts contributed days
+//     days_covered: 0..6 }
+//
+// Pass either an array of shift bundles (with `work_days` strings) or the
+// raw `shifts_json` rows — both are accepted.
+function computeOverallEmployment(shiftsOrBundles) {
+  const ALL_DAYS = ['saturday','sunday','monday','tuesday','wednesday','thursday'];
+  if (!Array.isArray(shiftsOrBundles) || shiftsOrBundles.length === 0) {
+    return { type: null, split: false, days_covered: 0 };
+  }
+  const daysUnion = new Set();
+  let contributingShifts = 0;
+  for (const sh of shiftsOrBundles) {
+    if (!sh) continue;
+    // Accept either `work_days` (string) or `days` (array from parseTeamShifts)
+    let dayList = [];
+    if (Array.isArray(sh.days)) {
+      dayList = sh.days;
+    } else if (sh.work_days) {
+      dayList = String(sh.work_days).split(',').map(d => d.trim().toLowerCase()).filter(Boolean);
+    }
+    if (dayList.length === 0) continue;
+    contributingShifts += 1;
+    dayList.forEach(d => daysUnion.add(d));
+  }
+  if (daysUnion.size === 0) return { type: null, split: false, days_covered: 0 };
+  const allCovered = ALL_DAYS.every(d => daysUnion.has(d));
+  return {
+    type: allCovered ? 'full_time' : 'part_time',
+    split: contributingShifts > 1,
+    days_covered: daysUnion.size,
+  };
+}
+
 // Builds the inner UNION+dedup query used by /remarks-notes-main.
 // Returns an SQL string that can be wrapped in `SELECT ... FROM (${innerQ}) t WHERE 1=1 ${havingFilter}`.
 // Used by the endpoint AND by the dashboard KPI so both always agree on the count.
@@ -3823,6 +3865,12 @@ router.get('/trainer-work-history', (req, res) => {
 
       const memberExtras = extrasByMember.get(t.id) || [];
 
+      // Overall (aggregated) employment type: union of work_days across ALL
+      // configured shifts. A trainer with 2 Part-Time shifts whose days union
+      // to a full week is reported as Full Time (split=true) so reports
+      // surface the real coverage instead of the per-shift label.
+      const overall = computeOverallEmployment(shifts);
+
       shifts.forEach((sh, idx) => {
         if (!sh || !sh.shift || !sh.start_date) return;
         const shStart = sh.start_date;
@@ -3855,6 +3903,9 @@ router.get('/trainer-work-history', (req, res) => {
           work_days:    daysList.join(','),
           work_days_ar: daysAr,
           employment_type: sh.employment_type || null,
+          overall_employment_type:  overall.type,
+          overall_employment_split: overall.split,
+          overall_days_covered:     overall.days_covered,
           extra_minutes: extra,
         });
         totalExtraMin += extra;

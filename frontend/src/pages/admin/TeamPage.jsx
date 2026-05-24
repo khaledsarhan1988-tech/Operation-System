@@ -953,9 +953,39 @@ function SectionGroup({ section, members, dept, onEdit, onDelete }) {
   );
 }
 
+// ─── computeOverallEmployment ─────────────────────────────────────────────────
+// A trainer with multiple Part-Time shifts whose days cover the full work
+// week is effectively Full Time (split across shifts). Surfaces this in the
+// member row so the user doesn't have to mentally combine shifts.
+function computeOverallEmployment(member) {
+  let shifts = member?.shifts;
+  if (!Array.isArray(shifts) || shifts.length === 0) {
+    shifts = [];
+    if (member?.shift)  shifts.push({ work_days: member.work_days });
+    if (member?.shift2) shifts.push({ work_days: member.shift2_work_days });
+  }
+  const daysUnion = new Set();
+  let contributing = 0;
+  for (const sh of shifts) {
+    if (!sh) continue;
+    const list = String(sh.work_days || '').split(',').map(d => d.trim().toLowerCase()).filter(Boolean);
+    if (list.length === 0) continue;
+    contributing += 1;
+    list.forEach(d => daysUnion.add(d));
+  }
+  if (daysUnion.size === 0) return null;
+  const isFull = ALL_DAYS.every(d => daysUnion.has(d));
+  return {
+    type: isFull ? 'full_time' : 'part_time',
+    split: contributing > 1,
+    days_covered: daysUnion.size,
+  };
+}
+
 // ─── MEMBER ROW ───────────────────────────────────────────────────────────────
 function MemberRow({ member: m, onEdit, onDelete }) {
   const isActive = m.status === 'active';
+  const overall  = computeOverallEmployment(m);
   return (
     <div className={`flex items-center gap-4 px-5 py-3 hover:bg-gray-50/60 transition-colors ${!isActive ? 'opacity-60' : ''}`}>
       {/* Avatar */}
@@ -976,6 +1006,14 @@ function MemberRow({ member: m, onEdit, onDelete }) {
             <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-green-500' : 'bg-red-400'}`} />
             {isActive ? 'نشط' : 'غير نشط'}
           </span>
+          {/* Overall employment — shows "Full Time موزّع" when this trainer
+              works the full week split across multiple Part-Time shifts. */}
+          {overall && overall.type === 'full_time' && overall.split && (
+            <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-bold border bg-violet-50 text-violet-700 border-violet-200"
+              title="مجموع أيام الشيفتات يغطّي أسبوع العمل بالكامل">
+              Full Time <span className="text-[10px] font-normal opacity-80">موزّع</span>
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-3 mt-0.5 flex-wrap">
           {m.job_title && (
