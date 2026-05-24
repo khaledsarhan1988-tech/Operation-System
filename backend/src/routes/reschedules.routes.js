@@ -32,15 +32,50 @@ function requireSuperAdmin(req, res, next) {
   next();
 }
 
+// ─── Stable Prefix Helper ────────────────────────────────────────────────────
+// Extract the prefix BEFORE the first `(` from a group_name. This is the
+// batch's natural identifier — survives BOTH trainer changes (inside parens)
+// and coordinator changes (after parens). Used for aggregating reschedule
+// pairs into one "chain" per group.
+//
+// Example: "Apr_19_Sun_11pm_ General1 _SP(Nashwa Shabaan)alaa"
+//       and "Apr_19_Sun_11pm_ General1 _SP(Yasmeen Mohamed)alaa"
+// both yield "apr_19_sun_11pm_ general1 _sp" → grouped as the SAME batch.
+function stablePrefix(groupName) {
+  const s = String(groupName || '').trim();
+  const idx = s.indexOf('(');
+  const head = idx === -1 ? s : s.substring(0, idx);
+  return head.trim().toLowerCase().replace(/\s+/g, ' ').replace(/[_\s]+$/, '');
+}
+
+// Aggregation priority: pending outranks everything else (still needs
+// decision), then rejected (decided no), approved (decided yes), auto
+// (auto-marked holiday). So a chain is "pending" if ANY pair is pending.
+const STATUS_PRIORITY = { pending: 4, rejected: 3, approved: 2, auto: 1 };
+
 // GET /api/reschedules
+// AGGREGATED LIST — one row per group "chain" (stable prefix + line +
+// session_type). A chain folds together every pair that shares the same
+// stable identifier so the user sees ONE entry for a group that was
+// rescheduled multiple times, not N separate entries. The aggregated row
+// exposes:
+//   • old_date/time/trainer  — from the FIRST cancellation in the chain
+//   • new_date/time/trainer  — from the LAST destination in the chain
+//   • pair_count, pair_ids   — so the modal can drill into every pair
+//   • approval_status        — highest-priority status across the chain
+//                              (pending > rejected > approved > auto)
+//   • trainer_changed        — true when first.old_trainer != last.new_trainer
+//
+// Filters (status/from/to/trainer/group/line/session_type) apply at the PAIR
+// level first; matching pairs are then aggregated. A chain with no matching
+// pair is omitted entirely.
 router.get('/', (req, res) => {
   const { status = 'all', from, to, trainer, group, line, session_type } = req.query;
   const wheres = [];
   const params = [];
-  if (status && status !== 'all') {
-    wheres.push('r.approval_status = ?');
-    params.push(status);
-  }
+
+  // NOTE: status is NOT applied here — it's filtered after aggregation so a
+  // chain with at least one pending pair surfaces in the "pending" tab.
   if (from && /^\d{4}-\d{2}-\d{2}$/.test(from)) {
     wheres.push('r.old_date >= ?'); params.push(from);
   }
@@ -65,7 +100,7 @@ router.get('/', (req, res) => {
   const where = wheres.length ? `WHERE ${wheres.join(' AND ')}` : '';
 
   try {
-    const rows = db.prepare(`
+    const allPairs = db.prepare(`
       SELECT
         r.*,
         u.full_name AS approved_by_name,
@@ -76,18 +111,158 @@ router.get('/', (req, res) => {
       LEFT JOIN users u            ON u.id = r.approved_by
       LEFT JOIN official_holidays h ON h.id = r.holiday_id
       ${where}
-      ORDER BY r.detected_at DESC, r.id DESC
-      LIMIT 1000
+      ORDER BY r.old_date ASC, r.old_time ASC, r.id ASC
     `).all(...params);
 
-    // Counts per status (so the UI tabs can show badges without an extra call)
-    const counts = db.prepare(`
-      SELECT approval_status, COUNT(*) AS cnt
-        FROM lecture_reschedules
-       GROUP BY approval_status
-    `).all().reduce((acc, r) => { acc[r.approval_status] = r.cnt; return acc; }, {});
+    // Group by stable prefix + line + session_type
+    const chainsMap = new Map();
+    for (const p of allPairs) {
+      const sp = stablePrefix(p.group_name);
+      const key = `${sp}|${p.line}|${p.session_type}`;
+      if (!chainsMap.has(key)) chainsMap.set(key, []);
+      chainsMap.get(key).push(p);
+    }
 
-    return res.json({ rows, counts });
+    // Build aggregated rows
+    const aggregated = [];
+    for (const [key, pairs] of chainsMap) {
+      // Already sorted by old_date ASC. First = earliest cancellation,
+      // Last = most recent destination.
+      const first = pairs[0];
+      const last  = pairs[pairs.length - 1];
+
+      // Aggregate status: highest priority wins (pending wins over all)
+      let aggStatus = 'auto';
+      let latestAdminNotes = null;
+      let latestRejectionReason = null;
+      let latestApprovedBy = null;
+      let latestApprovedAt = null;
+      let latestDetectedAt = null;
+      for (const p of pairs) {
+        if ((STATUS_PRIORITY[p.approval_status] || 0) > (STATUS_PRIORITY[aggStatus] || 0)) {
+          aggStatus = p.approval_status;
+        }
+        // Latest non-null admin metadata wins
+        if (p.admin_notes) latestAdminNotes = p.admin_notes;
+        if (p.rejection_reason) latestRejectionReason = p.rejection_reason;
+        if (p.approved_by_name) latestApprovedBy = p.approved_by_name;
+        if (p.approved_at) latestApprovedAt = p.approved_at;
+        if (!latestDetectedAt || p.detected_at > latestDetectedAt) {
+          latestDetectedAt = p.detected_at;
+        }
+      }
+
+      aggregated.push({
+        group_key:        key,
+        group_name:       last.group_name,          // latest known name
+        line:             last.line,
+        session_type:     last.session_type,
+        old_date:         first.old_date,
+        old_time:         first.old_time,
+        old_trainer:      first.old_trainer,
+        old_duration:     first.old_duration,
+        new_date:         last.new_date,
+        new_time:         last.new_time,
+        new_trainer:      last.new_trainer,
+        new_duration:     last.new_duration,
+        approval_status:  aggStatus,
+        pair_count:       pairs.length,
+        pair_ids:         pairs.map(p => p.id),
+        trainer_changed:  (first.old_trainer || '').trim() !== (last.new_trainer || '').trim(),
+        reschedule_reason: last.reschedule_reason,
+        holiday_name:     last.holiday_name,
+        admin_notes:      latestAdminNotes,
+        rejection_reason: latestRejectionReason,
+        approved_by_name: latestApprovedBy,
+        approved_at:      latestApprovedAt,
+        detected_at:      latestDetectedAt,
+      });
+    }
+
+    // Status filter at chain level
+    const filtered = status === 'all'
+      ? aggregated
+      : aggregated.filter(c => c.approval_status === status);
+
+    // Sort by most recent detection first
+    filtered.sort((a, b) => (b.detected_at || '').localeCompare(a.detected_at || ''));
+
+    // Counts per status — measured ACROSS the full aggregated set
+    // (not the filtered set), so tab badges reflect total chains regardless
+    // of which tab the user is currently viewing.
+    const counts = aggregated.reduce((acc, c) => {
+      acc[c.approval_status] = (acc[c.approval_status] || 0) + 1;
+      return acc;
+    }, {});
+
+    return res.json({ rows: filtered.slice(0, 1000), counts });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── PATCH /api/reschedules/group/approve ────────────────────────────────────
+// Bulk approval — applies to every pair in a chain at once. Body: { pair_ids }
+// (must be a non-empty array of numeric ids). Returns count of updated rows.
+router.patch('/group/approve', requireSuperAdmin, express.json(), (req, res) => {
+  const ids = Array.isArray(req.body?.pair_ids)
+    ? req.body.pair_ids.filter(n => Number.isFinite(n))
+    : [];
+  if (!ids.length) return res.status(400).json({ error: 'pair_ids array required' });
+  try {
+    const ph = ids.map(() => '?').join(',');
+    const r = db.prepare(`
+      UPDATE lecture_reschedules
+         SET approval_status  = 'approved',
+             approved_by      = ?,
+             approved_at      = datetime('now', '+2 hours'),
+             rejection_reason = NULL
+       WHERE id IN (${ph})
+    `).run(req.user?.id || null, ...ids);
+    return res.json({ ok: true, updated: r.changes });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── PATCH /api/reschedules/group/reject ─────────────────────────────────────
+// Bulk rejection. Body: { pair_ids, reason? }
+router.patch('/group/reject', requireSuperAdmin, express.json(), (req, res) => {
+  const ids = Array.isArray(req.body?.pair_ids)
+    ? req.body.pair_ids.filter(n => Number.isFinite(n))
+    : [];
+  if (!ids.length) return res.status(400).json({ error: 'pair_ids array required' });
+  const reason = (req.body?.reason || '').trim() || null;
+  try {
+    const ph = ids.map(() => '?').join(',');
+    const r = db.prepare(`
+      UPDATE lecture_reschedules
+         SET approval_status  = 'rejected',
+             approved_by      = ?,
+             approved_at      = datetime('now', '+2 hours'),
+             rejection_reason = ?
+       WHERE id IN (${ph})
+    `).run(req.user?.id || null, reason, ...ids);
+    return res.json({ ok: true, updated: r.changes });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── PATCH /api/reschedules/group/notes ──────────────────────────────────────
+// Bulk-write the same admin note to every pair in a chain.
+router.patch('/group/notes', requireSuperAdmin, express.json(), (req, res) => {
+  const ids = Array.isArray(req.body?.pair_ids)
+    ? req.body.pair_ids.filter(n => Number.isFinite(n))
+    : [];
+  if (!ids.length) return res.status(400).json({ error: 'pair_ids array required' });
+  const notes = (req.body?.notes || '').trim() || null;
+  try {
+    const ph = ids.map(() => '?').join(',');
+    const r = db.prepare(
+      `UPDATE lecture_reschedules SET admin_notes = ? WHERE id IN (${ph})`
+    ).run(notes, ...ids);
+    return res.json({ ok: true, updated: r.changes });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -441,19 +616,7 @@ router.post('/backfill-from-drive', requireSuperAdmin, express.json(), async (re
     }
   }
 
-  // Helper: stable identifier — the part of group_name BEFORE the first
-  // `(`. Survives BOTH trainer-name changes (inside parens) and coordinator
-  // changes (after parens). Pure prefix matching means we don't include
-  // trainer in the key — that's intentional: when a batch's trainer
-  // changes, we want the diff to STILL pair the old and new slots as a
-  // rename, not treat them as cancelled+added.
-  // Falls back to the full group_name if there's no `(`.
-  function stablePrefix(groupName) {
-    const s = String(groupName || '').trim();
-    const idx = s.indexOf('(');
-    const head = idx === -1 ? s : s.substring(0, idx);
-    return head.trim().toLowerCase().replace(/\s+/g, ' ').replace(/[_\s]+$/, '');
-  }
+  // stablePrefix is defined at module level — reused here for stableKey.
   function stableKey(r) {
     return [
       stablePrefix(r.group_name),

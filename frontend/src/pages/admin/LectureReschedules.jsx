@@ -36,7 +36,7 @@ export default function LectureReschedules() {
   const [trainer, setTrainer] = useState('');
   const [from, setFrom]       = useState('');
   const [to, setTo]           = useState('');
-  const [openId, setOpenId]   = useState(null);
+  const [openKey, setOpenKey] = useState(null);
   const [showDiagnostic, setShowDiagnostic] = useState(false);
 
   // Super-admin actions (approve/reject/notes) only available to admin+All
@@ -58,7 +58,7 @@ export default function LectureReschedules() {
 
   const rows   = data?.rows   || [];
   const counts = data?.counts || {};
-  const openRow = openId ? rows.find(r => r.id === openId) : null;
+  const openRow = openKey ? rows.find(r => r.group_key === openKey) : null;
 
   return (
     <div className="space-y-5">
@@ -176,9 +176,22 @@ export default function LectureReschedules() {
               ) : rows.map(r => {
                 const sv = STATUS_VISUAL[r.approval_status] || { label: r.approval_status, cls: 'bg-gray-100 text-gray-700 border-gray-200' };
                 return (
-                  <tr key={r.id} className="border-t border-gray-100 hover:bg-indigo-50/30 cursor-pointer"
-                      onClick={() => setOpenId(r.id)}>
-                    <td className="px-3 py-2.5 font-semibold text-gray-800">{r.group_name}</td>
+                  <tr key={r.group_key} className="border-t border-gray-100 hover:bg-indigo-50/30 cursor-pointer"
+                      onClick={() => setOpenKey(r.group_key)}>
+                    <td className="px-3 py-2.5 font-semibold text-gray-800">
+                      <div className="flex items-center gap-1.5">
+                        <span>{r.group_name}</span>
+                        {/* Multi-pair badge — signals this chain has more than
+                            one reschedule pair folded together. Click row to
+                            see all pairs in the timeline. */}
+                        {r.pair_count > 1 && (
+                          <span className="text-[10px] bg-purple-100 text-purple-700 border border-purple-200 rounded-full px-1.5 py-0.5 font-bold"
+                                title={`${r.pair_count} عمليات إعادة جدولة متتابعة`}>
+                            ×{r.pair_count}
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-3 py-2.5">
                       <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border
                         ${r.session_type === 'main' ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200'}`}>
@@ -186,7 +199,7 @@ export default function LectureReschedules() {
                       </span>
                     </td>
                     <td className="px-3 py-2.5 text-xs">
-                      {r.old_trainer !== r.new_trainer ? (
+                      {r.trainer_changed ? (
                         <span>
                           <span className="text-red-600">{r.old_trainer}</span>
                           <span className="text-gray-400 mx-1">←</span>
@@ -232,7 +245,7 @@ export default function LectureReschedules() {
         <RescheduleDetailModal
           row={openRow}
           isSuperAdmin={isSuperAdmin}
-          onClose={() => setOpenId(null)}
+          onClose={() => setOpenKey(null)}
           onChanged={() => { qc.invalidateQueries({ queryKey: ['reschedules'] }); }}
         />
       )}
@@ -521,16 +534,18 @@ function RescheduleDetailModal({ row, isSuperAdmin, onClose, onChanged }) {
   const [showRejectBox, setRBox]    = useState(false);
   const sv = STATUS_VISUAL[row.approval_status] || STATUS_VISUAL.pending;
 
+  // Bulk endpoints — apply to every pair_id in the chain so the user's one
+  // decision covers all linked reschedules (17→20, 20→24, …) at once.
   const approveMut = useMutation({
-    mutationFn: () => api.patch(`/reschedules/${row.id}/approve`),
+    mutationFn: () => api.patch(`/reschedules/group/approve`, { pair_ids: row.pair_ids }),
     onSuccess: () => { onChanged(); onClose(); },
   });
   const rejectMut = useMutation({
-    mutationFn: () => api.patch(`/reschedules/${row.id}/reject`, { reason: rejectReason }),
+    mutationFn: () => api.patch(`/reschedules/group/reject`, { pair_ids: row.pair_ids, reason: rejectReason }),
     onSuccess: () => { onChanged(); onClose(); },
   });
   const notesMut = useMutation({
-    mutationFn: () => api.patch(`/reschedules/${row.id}/notes`, { notes }),
+    mutationFn: () => api.patch(`/reschedules/group/notes`, { pair_ids: row.pair_ids, notes }),
     onSuccess: () => onChanged(),
   });
 
@@ -545,6 +560,12 @@ function RescheduleDetailModal({ row, isSuperAdmin, onClose, onChanged }) {
               <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-indigo-100 text-indigo-700 border border-indigo-200">
                 {row.session_type === 'main' ? 'محاضرة أساسية' : 'زووم/Side'}
               </span>
+              {row.pair_count > 1 && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-purple-100 text-purple-700 border border-purple-200"
+                      title="عدد عمليات إعادة الجدولة المتتابعة في هذه السلسلة">
+                  ×{row.pair_count} نقل
+                </span>
+              )}
               {row.reschedule_reason === 'official_holiday' && (
                 <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold bg-sky-100 text-sky-700 border border-sky-200">
                   <Sparkles size={10} /> سبب: إجازة رسمية ({row.holiday_name})
@@ -895,6 +916,27 @@ function GroupTimelineSection({ group, line }) {
   // Weekday breakdown summary text — "1 يوم الأحد بتاريخ 17 مايو، 1 يوم الأربعاء بتاريخ 20 مايو"
   const weekdayBreakdown = Object.values(cancelled_by_weekday);
 
+  // ── Clean the event stream ────────────────────────────────────────────────
+  // When a date appears as a "rescheduled-to" target AND later gets cancelled
+  // itself (e.g. 20/05 was the destination of 17→20, but then 20→24 happened),
+  // the "rescheduled" event for 20/05 is redundant noise — the user only
+  // cares that 20/05 got cancelled. Hide it.
+  const cancelledDates = new Set(
+    events.filter(e => e.kind === 'cancelled').map(e => `${e.date}|${e.session_type}`)
+  );
+  const visibleEvents = events.filter(ev => {
+    if (ev.kind === 'rescheduled' && cancelledDates.has(`${ev.date}|${ev.session_type}`)) {
+      return false;
+    }
+    return true;
+  });
+
+  // The "original trainer" for the chain — first cancelled event's trainer.
+  // Used to flag the final destination when the chain ended with a different
+  // trainer (gives the user the "trainer was changed" signal directly in
+  // the narrative).
+  const firstCancelledTrainer = events.find(e => e.kind === 'cancelled')?.trainer || '';
+
   return (
     <div className="bg-gradient-to-br from-purple-50 to-indigo-50 border-2 border-purple-200 rounded-xl p-4 space-y-3">
       <div className="flex items-center gap-2">
@@ -1002,21 +1044,27 @@ function GroupTimelineSection({ group, line }) {
         </div>
       )}
 
-      {/* Chronological event timeline */}
-      {events.length > 0 && (
-        <details className="bg-white border border-purple-200 rounded-lg" open={events.length <= 6}>
+      {/* Chronological event timeline — uses the cleaned set so the user
+          doesn't see "20/05 was scheduled" right before "20/05 was cancelled"
+          on the very next line. */}
+      {visibleEvents.length > 0 && (
+        <details className="bg-white border border-purple-200 rounded-lg" open={visibleEvents.length <= 6}>
           <summary className="cursor-pointer p-2.5 text-xs font-bold text-purple-800 flex items-center gap-1.5">
-            <History size={12} /> سرد القصة بالتواريخ ({events.length} حدث)
+            <History size={12} /> سرد القصة بالتواريخ ({visibleEvents.length} حدث)
           </summary>
           <div className="border-t border-purple-100 p-2 space-y-1.5 max-h-80 overflow-y-auto">
-            {events.map((ev, i) => (
-              <TimelineEvent key={i} ev={ev} />
+            {visibleEvents.map((ev, i) => (
+              <TimelineEvent
+                key={i}
+                ev={ev}
+                firstCancelledTrainer={firstCancelledTrainer}
+              />
             ))}
           </div>
         </details>
       )}
 
-      {events.length === 0 && (
+      {visibleEvents.length === 0 && (
         <p className="text-xs text-purple-500 text-center py-2">
           لا توجد أحداث إعادة جدولة لهذه المجموعة في السجلات.
         </p>
@@ -1025,8 +1073,11 @@ function GroupTimelineSection({ group, line }) {
   );
 }
 
-// One row in the timeline. Two flavors: cancelled vs rescheduled.
-function TimelineEvent({ ev }) {
+// One row in the timeline. Two flavors: cancelled vs rescheduled. The
+// rescheduled flavor compares its trainer to firstCancelledTrainer so the
+// chain's "final destination" shows a clear "trainer was changed" badge
+// when the chain ended with a different trainer than it started with.
+function TimelineEvent({ ev, firstCancelledTrainer = '' }) {
   if (ev.kind === 'cancelled') {
     return (
       <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded p-2">
@@ -1062,7 +1113,14 @@ function TimelineEvent({ ev }) {
     );
   }
 
-  // rescheduled (new side of a pair)
+  // rescheduled (new side of a pair) — only renders if the date was NOT
+  // later cancelled (filtered upstream), so this is always a "final
+  // destination" in its date-line.
+  const trainerChanged =
+    firstCancelledTrainer &&
+    ev.trainer &&
+    firstCancelledTrainer.trim() !== ev.trainer.trim();
+
   return (
     <div className="flex items-start gap-2 bg-emerald-50 border border-emerald-200 rounded p-2">
       <div className="bg-emerald-500 text-white rounded p-1 flex-shrink-0">
@@ -1075,12 +1133,22 @@ function TimelineEvent({ ev }) {
             {ev.weekday?.ar}
           </span>
           <span className="text-emerald-700">{ev.time || ''}</span>
-          <span className="text-emerald-600">
-            — {ev.name_changed ? 'محاضرة جديدة (تغيّر الاسم)' : 'محاضرة مجدولة بدلاً منها'}
-          </span>
+          <span className="text-emerald-600">— محاضرة مجدولة بدلاً منها</span>
+          {/* Trainer-changed badge — explicit signal that the chain
+              ended with a different trainer than it started with. */}
+          {trainerChanged && (
+            <span className="text-[10px] bg-amber-100 text-amber-800 border border-amber-300 rounded-full px-2 py-0.5 font-bold inline-flex items-center gap-1">
+              ⚠ تم تغيير المدرب
+            </span>
+          )}
         </div>
         <p className="text-[11px] text-emerald-700 mt-0.5">
           المدرب: <b>{ev.trainer || '—'}</b>
+          {trainerChanged && (
+            <span className="text-amber-700 mr-1">
+              (كان: <b>{firstCancelledTrainer}</b>)
+            </span>
+          )}
           {ev.moved_from && (
             <span className="text-gray-600 mr-1">
               · بديلاً عن <b className="text-red-700">{ev.moved_from}</b>
@@ -1090,9 +1158,6 @@ function TimelineEvent({ ev }) {
         {ev.name_changed && ev.current_name && (
           <p className="text-[10px] text-purple-700 mt-0.5 italic">
             الاسم الحالي: <span className="font-mono break-all">{ev.current_name}</span>
-            {ev.current_trainer && ev.current_trainer !== ev.trainer && (
-              <span className="mr-1">· مدرب جديد: <b>{ev.current_trainer}</b></span>
-            )}
           </p>
         )}
       </div>
