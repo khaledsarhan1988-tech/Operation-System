@@ -534,16 +534,21 @@ function RescheduleDetailModal({ row, isSuperAdmin, onClose, onChanged }) {
   const [showRejectBox, setRBox]    = useState(false);
   const sv = STATUS_VISUAL[row.approval_status] || STATUS_VISUAL.pending;
 
-  // Bulk endpoints — apply to every pair_id in the chain so the user's one
-  // decision covers all linked reschedules (17→20, 20→24, …) at once.
+  // Smart targeting — only act on the pairs that still need a decision.
+  // This protects past approvals/rejections from being silently overwritten
+  // when a NEW reschedule joins an already-decided chain. Falls back to
+  // all pair_ids only if there are no pending ones (degenerate case).
+  const pendingIds = row.pending_pair_ids?.length ? row.pending_pair_ids : row.pair_ids;
   const approveMut = useMutation({
-    mutationFn: () => api.patch(`/reschedules/group/approve`, { pair_ids: row.pair_ids }),
+    mutationFn: () => api.patch(`/reschedules/group/approve`, { pair_ids: pendingIds }),
     onSuccess: () => { onChanged(); onClose(); },
   });
   const rejectMut = useMutation({
-    mutationFn: () => api.patch(`/reschedules/group/reject`, { pair_ids: row.pair_ids, reason: rejectReason }),
+    mutationFn: () => api.patch(`/reschedules/group/reject`, { pair_ids: pendingIds, reason: rejectReason }),
     onSuccess: () => { onChanged(); onClose(); },
   });
+  // Notes still target every pair in the chain — they're descriptive
+  // context, not a decision. Old notes remain accessible via approved_summary.
   const notesMut = useMutation({
     mutationFn: () => api.patch(`/reschedules/group/notes`, { pair_ids: row.pair_ids, notes }),
     onSuccess: () => onChanged(),
@@ -598,6 +603,39 @@ function RescheduleDetailModal({ row, isSuperAdmin, onClose, onChanged }) {
               <p className="text-xs text-emerald-600 mt-1">المدرب: <b>{row.new_trainer || '—'}</b></p>
             </div>
           </div>
+
+          {/* Decision-state breakdown — only meaningful when the chain has
+              more than one pair AND at least two different statuses (e.g.
+              some pairs approved + a newer pair pending). Shows the user
+              "here's what you already decided, here's what's new." */}
+          {row.pair_count > 1 && (row.approved_summary || row.rejected_summary || row.auto_summary) && row.pending_summary && (
+            <div className="grid grid-cols-1 gap-2">
+              {row.approved_summary && (
+                <DecisionBanner
+                  kind="approved"
+                  summary={row.approved_summary}
+                />
+              )}
+              {row.rejected_summary && (
+                <DecisionBanner
+                  kind="rejected"
+                  summary={row.rejected_summary}
+                />
+              )}
+              {row.auto_summary && (
+                <DecisionBanner
+                  kind="auto"
+                  summary={row.auto_summary}
+                />
+              )}
+              {row.pending_summary && (
+                <DecisionBanner
+                  kind="pending"
+                  summary={row.pending_summary}
+                />
+              )}
+            </div>
+          )}
 
           {/* Detection meta */}
           <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-xs text-gray-600 grid grid-cols-2 gap-2">
@@ -668,7 +706,21 @@ function RescheduleDetailModal({ row, isSuperAdmin, onClose, onChanged }) {
           {/* Approve/Reject (super-admin only, only when pending) */}
           {isSuperAdmin && row.approval_status === 'pending' && (
             <div className="border-t pt-4">
-              <p className="text-xs font-bold text-gray-700 mb-2">قرار المدير</p>
+              <p className="text-xs font-bold text-gray-700 mb-2 flex items-center justify-between gap-2">
+                <span>قرار المدير</span>
+                {/* Tell the admin exactly what will be affected — important
+                    when a chain has mixed statuses (old approved + new pending). */}
+                {pendingIds.length < (row.pair_ids?.length || 0) && (
+                  <span className="text-[10px] font-normal text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-0.5">
+                    القرار هيطبق فقط على {pendingIds.length} نقل جديد — القرارات السابقة محفوظة
+                  </span>
+                )}
+                {pendingIds.length === row.pair_ids?.length && row.pair_count > 1 && (
+                  <span className="text-[10px] font-normal text-gray-600 bg-gray-50 border border-gray-200 rounded px-2 py-0.5">
+                    القرار هيطبق على {pendingIds.length} نقل
+                  </span>
+                )}
+              </p>
               {!showRejectBox ? (
                 <div className="grid grid-cols-2 gap-2">
                   <button onClick={() => approveMut.mutate()}
@@ -882,6 +934,102 @@ function CleanupFalsePositivesButton({ onDone }) {
   );
 }
 
+// ─── Decision Banner — visual block per status sub-range of a chain ────────
+// When a chain has mixed statuses (e.g. some pairs approved + a newer pair
+// pending), each status gets its own banner so the admin can see at a
+// glance: "approved up to X by Y on date Z with note W — pending Q from R".
+function DecisionBanner({ kind, summary }) {
+  if (!summary) return null;
+  const VISUAL = {
+    approved: {
+      Icon: CheckCircle2,
+      title: 'اعتماد سابق',
+      borderCls: 'border-emerald-300',
+      bgCls: 'bg-emerald-50',
+      iconCls: 'text-emerald-600',
+      titleCls: 'text-emerald-900',
+      textCls: 'text-emerald-800',
+      subTextCls: 'text-emerald-700',
+      noteBgCls: 'bg-white/70 border-emerald-200',
+    },
+    pending: {
+      Icon: Clock,
+      title: 'جديد في الانتظار',
+      borderCls: 'border-amber-300',
+      bgCls: 'bg-amber-50',
+      iconCls: 'text-amber-600',
+      titleCls: 'text-amber-900',
+      textCls: 'text-amber-800',
+      subTextCls: 'text-amber-700',
+      noteBgCls: 'bg-white/70 border-amber-200',
+    },
+    rejected: {
+      Icon: XCircle,
+      title: 'تم الرفض',
+      borderCls: 'border-red-300',
+      bgCls: 'bg-red-50',
+      iconCls: 'text-red-600',
+      titleCls: 'text-red-900',
+      textCls: 'text-red-800',
+      subTextCls: 'text-red-700',
+      noteBgCls: 'bg-white/70 border-red-200',
+    },
+    auto: {
+      Icon: Sparkles,
+      title: 'إجازة رسمية (تلقائي)',
+      borderCls: 'border-sky-300',
+      bgCls: 'bg-sky-50',
+      iconCls: 'text-sky-600',
+      titleCls: 'text-sky-900',
+      textCls: 'text-sky-800',
+      subTextCls: 'text-sky-700',
+      noteBgCls: 'bg-white/70 border-sky-200',
+    },
+  };
+  const v = VISUAL[kind] || VISUAL.pending;
+  const Icon = v.Icon;
+
+  return (
+    <div className={`border-2 rounded-xl p-3 ${v.borderCls} ${v.bgCls}`}>
+      <div className="flex items-center gap-2 mb-1.5">
+        <Icon size={14} className={v.iconCls} />
+        <p className={`font-bold text-xs ${v.titleCls}`}>
+          {v.title} ({summary.count} نقل)
+        </p>
+      </div>
+      <p className={`text-xs ${v.textCls}`}>
+        من <b className="font-mono">{summary.first_old_date}</b>
+        <span className="mx-1">←</span>
+        إلى <b className="font-mono">{summary.last_new_date}</b>
+      </p>
+      {kind === 'approved' && summary.approver_name && (
+        <p className={`text-[10px] mt-1 ${v.subTextCls}`}>
+          القرار من <b>{summary.approver_name}</b>
+          {summary.approved_at && (
+            <span> بتاريخ {summary.approved_at.replace('T', ' ').slice(0, 16)}</span>
+          )}
+        </p>
+      )}
+      {kind === 'approved' && summary.note && (
+        <p className={`text-[11px] mt-1.5 rounded p-1.5 border ${v.noteBgCls} ${v.textCls}`}>
+          <FileText size={10} className="inline -mt-0.5 ml-1" />
+          <b>ملاحظة الاعتماد:</b> {summary.note}
+        </p>
+      )}
+      {kind === 'rejected' && summary.reason && (
+        <p className={`text-[11px] mt-1.5 rounded p-1.5 border ${v.noteBgCls} ${v.textCls}`}>
+          <b>سبب الرفض:</b> {summary.reason}
+        </p>
+      )}
+      {kind === 'pending' && (
+        <p className={`text-[10px] mt-1 ${v.subTextCls} italic`}>
+          الموافقة/الرفض هتطبق فقط على الجزء ده — القرارات السابقة محفوظة.
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ─── Group Timeline — full chronological story of one group ─────────────────
 // Fetches /timeline for the group (which chases group_renames so all aliases
 // are merged). Shows: summary card (date range + weekday breakdown +
@@ -1073,6 +1221,26 @@ function GroupTimelineSection({ group, line }) {
   );
 }
 
+// Tiny visual badge that classifies a timeline event's decision state.
+// Renders inline next to the date so the user can scan the chain and
+// immediately see which parts are decided vs still need a call.
+function ApprovalStatusPill({ status }) {
+  const MAP = {
+    approved: { Icon: CheckCircle2, label: 'معتمد',     cls: 'bg-emerald-100 text-emerald-700 border-emerald-300' },
+    rejected: { Icon: XCircle,      label: 'مرفوض',     cls: 'bg-red-100 text-red-700 border-red-300' },
+    pending:  { Icon: Clock,        label: 'في الانتظار', cls: 'bg-amber-100 text-amber-700 border-amber-300' },
+    auto:     { Icon: Sparkles,     label: 'تلقائي',    cls: 'bg-sky-100 text-sky-700 border-sky-300' },
+  };
+  const m = MAP[status] || MAP.pending;
+  const Icon = m.Icon;
+  return (
+    <span className={`text-[9px] inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full font-bold border ${m.cls}`}
+          title={m.label}>
+      <Icon size={9} /> {m.label}
+    </span>
+  );
+}
+
 // One row in the timeline. Two flavors: cancelled vs rescheduled. The
 // rescheduled flavor compares its trainer to firstCancelledTrainer so the
 // chain's "final destination" shows a clear "trainer was changed" badge
@@ -1092,6 +1260,7 @@ function TimelineEvent({ ev, firstCancelledTrainer = '' }) {
             </span>
             <span className="text-red-700">{ev.time || ''}</span>
             <span className="text-red-600">— محاضرة اتلغت</span>
+            <ApprovalStatusPill status={ev.approval_status} />
           </div>
           <p className="text-[11px] text-red-700 mt-0.5">
             المدرب: <b>{ev.trainer || '—'}</b>
@@ -1134,6 +1303,7 @@ function TimelineEvent({ ev, firstCancelledTrainer = '' }) {
           </span>
           <span className="text-emerald-700">{ev.time || ''}</span>
           <span className="text-emerald-600">— محاضرة مجدولة بدلاً منها</span>
+          <ApprovalStatusPill status={ev.approval_status} />
           {/* Trainer-changed badge — explicit signal that the chain
               ended with a different trainer than it started with. */}
           {trainerChanged && (

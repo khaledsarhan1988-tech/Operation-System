@@ -123,6 +123,24 @@ router.get('/', (req, res) => {
       chainsMap.get(key).push(p);
     }
 
+    // Helper: build a {first_old_*, last_new_*, count} summary for a subset
+    // of pairs (used to describe an approval/pending sub-range of a chain).
+    function summarizeRange(arr) {
+      if (!arr.length) return null;
+      // Pairs already sorted by old_date ASC at the SQL level
+      const f = arr[0];
+      const l = arr[arr.length - 1];
+      return {
+        first_old_date: f.old_date,
+        first_old_time: f.old_time,
+        first_old_trainer: f.old_trainer,
+        last_new_date: l.new_date,
+        last_new_time: l.new_time,
+        last_new_trainer: l.new_trainer,
+        count: arr.length,
+      };
+    }
+
     // Build aggregated rows
     const aggregated = [];
     for (const [key, pairs] of chainsMap) {
@@ -131,26 +149,58 @@ router.get('/', (req, res) => {
       const first = pairs[0];
       const last  = pairs[pairs.length - 1];
 
+      // Partition by status so the modal can show "approved up to X, new
+      // pending from Y" instead of treating the chain as one blob.
+      const byStatus = { pending: [], approved: [], rejected: [], auto: [] };
+      for (const p of pairs) {
+        if (byStatus[p.approval_status]) byStatus[p.approval_status].push(p);
+      }
+
       // Aggregate status: highest priority wins (pending wins over all)
       let aggStatus = 'auto';
-      let latestAdminNotes = null;
-      let latestRejectionReason = null;
-      let latestApprovedBy = null;
-      let latestApprovedAt = null;
       let latestDetectedAt = null;
       for (const p of pairs) {
         if ((STATUS_PRIORITY[p.approval_status] || 0) > (STATUS_PRIORITY[aggStatus] || 0)) {
           aggStatus = p.approval_status;
         }
-        // Latest non-null admin metadata wins
-        if (p.admin_notes) latestAdminNotes = p.admin_notes;
-        if (p.rejection_reason) latestRejectionReason = p.rejection_reason;
-        if (p.approved_by_name) latestApprovedBy = p.approved_by_name;
-        if (p.approved_at) latestApprovedAt = p.approved_at;
         if (!latestDetectedAt || p.detected_at > latestDetectedAt) {
           latestDetectedAt = p.detected_at;
         }
       }
+
+      // Approved summary — pick latest approval metadata (approver, date,
+      // note) from the approved subset so the modal can render a card
+      // saying "approved by X on date Y, note: Z".
+      let approvedSummary = null;
+      if (byStatus.approved.length) {
+        const sortedByApproval = byStatus.approved.slice().sort(
+          (a, b) => (b.approved_at || '').localeCompare(a.approved_at || '')
+        );
+        const latestApproved = sortedByApproval[0];
+        approvedSummary = {
+          ...summarizeRange(byStatus.approved),
+          approver_name: latestApproved.approved_by_name || null,
+          approved_at:   latestApproved.approved_at || null,
+          note:          latestApproved.admin_notes || null,
+        };
+      }
+
+      const pendingSummary  = byStatus.pending.length  ? summarizeRange(byStatus.pending)  : null;
+      const rejectedSummary = byStatus.rejected.length ? {
+        ...summarizeRange(byStatus.rejected),
+        reason: byStatus.rejected.slice().sort(
+          (a, b) => (b.approved_at || '').localeCompare(a.approved_at || '')
+        )[0]?.rejection_reason || null,
+      } : null;
+      const autoSummary = byStatus.auto.length ? summarizeRange(byStatus.auto) : null;
+
+      // Latest fallback metadata for cases where the user is viewing a chain
+      // that's entirely pending (no decisions yet) — keeps existing UI fields
+      // populated without forcing the frontend to look inside the summaries.
+      const latestAdminNotes      = pairs.slice().reverse().find(p => p.admin_notes)?.admin_notes || null;
+      const latestRejectionReason = pairs.slice().reverse().find(p => p.rejection_reason)?.rejection_reason || null;
+      const latestApprovedBy      = pairs.slice().reverse().find(p => p.approved_by_name)?.approved_by_name || null;
+      const latestApprovedAt      = pairs.slice().reverse().find(p => p.approved_at)?.approved_at || null;
 
       aggregated.push({
         group_key:        key,
@@ -168,6 +218,16 @@ router.get('/', (req, res) => {
         approval_status:  aggStatus,
         pair_count:       pairs.length,
         pair_ids:         pairs.map(p => p.id),
+        // Per-status breakdown — lets the modal show "X already-approved,
+        // Y still pending" and apply approve/reject only to the right set.
+        pending_pair_ids:  byStatus.pending.map(p => p.id),
+        approved_pair_ids: byStatus.approved.map(p => p.id),
+        rejected_pair_ids: byStatus.rejected.map(p => p.id),
+        auto_pair_ids:     byStatus.auto.map(p => p.id),
+        approved_summary:  approvedSummary,
+        pending_summary:   pendingSummary,
+        rejected_summary:  rejectedSummary,
+        auto_summary:      autoSummary,
         trainer_changed:  (first.old_trainer || '').trim() !== (last.new_trainer || '').trim(),
         reschedule_reason: last.reschedule_reason,
         holiday_name:     last.holiday_name,
