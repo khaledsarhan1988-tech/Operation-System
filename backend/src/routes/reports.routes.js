@@ -3911,6 +3911,11 @@ router.get('/trainer-work-history', (req, res) => {
       // surface the real coverage instead of the per-shift label.
       const overall = computeOverallEmployment(shifts);
 
+      // Build rows for shifts that overlap the window. Extra minutes are
+      // attributed AFTER the loop so we can correctly route extras that
+      // happened AFTER a shift's end_date back to that same shift (the
+      // common "trainer ended on 21/5 but came back 24/5 for 4h" case).
+      const memberRows = [];
       shifts.forEach((sh, idx) => {
         if (!sh || !sh.shift || !sh.start_date) return;
         const shStart = sh.start_date;
@@ -3918,18 +3923,11 @@ router.get('/trainer-work-history', (req, res) => {
         // Overlap test against the report window.
         if (shStart > to || shEnd < from) return;
 
-        // Extra minutes inside BOTH the window AND this shift's own range.
-        const lo = shStart > from ? shStart : from;
-        const hi = shEnd   < to   ? shEnd   : to;
-        const extra = memberExtras
-          .filter(e => e.date >= lo && e.date <= hi)
-          .reduce((acc, e) => acc + (e.duration_min || 0), 0);
-
         const daysList = String(sh.work_days || '')
           .split(',').map(d => d.trim().toLowerCase()).filter(Boolean);
         const daysAr = daysList.map(d => DAY_LABELS[d] || d).join('، ');
 
-        rows.push({
+        memberRows.push({
           trainer_id:   t.id,
           trainer_name: t.name,
           section:      t.section,
@@ -3947,11 +3945,40 @@ router.get('/trainer-work-history', (req, res) => {
           overall_employment_split:   overall.split,
           overall_days_covered:       overall.days_covered,
           overall_uniform_times:      overall.uniform_times,
-          extra_minutes: extra,
+          extra_minutes: 0,   // filled below
         });
-        totalExtraMin += extra;
         trainerIdsSeen.add(t.id);
       });
+
+      // Attribute each extra-shift entry to a row. Rule: the LATEST shift
+      // whose start_date <= extra.date wins. If the extra is after that
+      // shift's end_date, it still belongs to that shift (use case: "came
+      // back for 4h on 24/5 even though shift ended 21/5"). If no shift
+      // started on/before the extra's date, fall back to the earliest row
+      // so the hours are at least visible somewhere.
+      if (memberRows.length > 0) {
+        // Window-filtered extras only — extras outside [from,to] are out of
+        // scope for this report.
+        const inWindow = memberExtras.filter(e => e.date >= from && e.date <= to);
+        // Pre-sort rows by start_date asc for the fallback path.
+        const sortedRowsAsc = [...memberRows].sort(
+          (a, b) => String(a.start_date).localeCompare(String(b.start_date))
+        );
+        for (const e of inWindow) {
+          // Latest shift that started on/before this extra's date
+          let owner = null;
+          for (const row of sortedRowsAsc) {
+            if (row.start_date <= e.date) owner = row;
+          }
+          // If no shift started on/before this date, attribute to the
+          // earliest known shift (the only sensible bucket we have).
+          const targetRow = owner || sortedRowsAsc[0];
+          targetRow.extra_minutes += (e.duration_min || 0);
+          totalExtraMin += (e.duration_min || 0);
+        }
+      }
+
+      rows.push(...memberRows);
     }
 
     return res.json({
