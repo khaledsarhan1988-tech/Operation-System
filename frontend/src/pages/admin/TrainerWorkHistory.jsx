@@ -1,8 +1,9 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import {
   History, CalendarDays, Search, Loader2, Users, Clock, Plus,
-  CheckCircle, XCircle, X,
+  CheckCircle, XCircle, X, Pencil,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -265,7 +266,18 @@ export default function TrainerWorkHistory() {
                ) :
                filteredRows.map((r, i) => (
                  <tr key={i} className="hover:bg-gray-50/60 transition-colors">
-                   <td className="px-3 py-3 font-semibold text-gray-900 whitespace-nowrap">{r.trainer_name}</td>
+                   <td className="px-3 py-3 font-semibold whitespace-nowrap">
+                     <Link
+                       to={`/admin/team?edit=${r.trainer_id}`}
+                       className="group inline-flex items-center gap-1.5 text-gray-900 hover:text-blue-600 transition-colors"
+                       title="فتح صفحة تعديل الموظف"
+                     >
+                       <span className="border-b border-dashed border-transparent group-hover:border-blue-500">
+                         {r.trainer_name}
+                       </span>
+                       <Pencil size={11} className="opacity-0 group-hover:opacity-70 transition-opacity" />
+                     </Link>
+                   </td>
                    <td className="px-3 py-3 whitespace-nowrap"><SectionBadge value={r.section} /></td>
                    <td className="px-3 py-3 text-xs text-gray-500 font-mono text-center">{r.shift_index}</td>
                    <td className="px-3 py-3 text-xs text-gray-700 whitespace-nowrap">

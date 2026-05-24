@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import {
   Users, Plus, Pencil, Trash2, X, Search, Sun, Moon,
   Phone, Briefcase, CheckCircle, XCircle, ChevronDown, UserX,
@@ -1076,6 +1077,25 @@ export default function TeamPage() {
     queryFn: () => api.get('/team', { params: { status: 'all' } }).then(r => r.data),
     staleTime: 2 * 60 * 1000,
   });
+
+  // Deep-link: visiting `/admin/team?edit=<member_id>` auto-opens the edit
+  // modal for that trainer (used by the trainer-work-history report so the
+  // user can jump straight from a row to editing the trainer). Switches the
+  // active dept tab to match the trainer, then clears the URL param so a
+  // refresh doesn't keep re-triggering the modal.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const editId = searchParams.get('edit');
+    if (!editId || !all.length || editMember) return;
+    const m = all.find(x => String(x.id) === String(editId));
+    if (m) {
+      setActiveDept(m.department);
+      setEditMember(m);
+      const next = new URLSearchParams(searchParams);
+      next.delete('edit');
+      setSearchParams(next, { replace: true });
+    }
+  }, [all, searchParams, editMember, setSearchParams]);
 
   const saveMutation = useMutation({
     mutationFn: (form) =>
