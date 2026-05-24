@@ -122,6 +122,46 @@ function hydrateMember(member) {
   };
 }
 
+// Build the dynamic `shifts` array that the UI uses for unlimited-shift
+// editing. Prefers `member.shifts` (returned by the new backend) and falls
+// back to the legacy `shift / shift2` columns for members not yet migrated.
+function initialShifts(member) {
+  if (!member) return [];
+  if (Array.isArray(member.shifts) && member.shifts.length > 0) {
+    return member.shifts.map(s => ({
+      shift:            s.shift           || '',
+      shift_start:      s.start           || '',
+      shift_end:        s.end             || '',
+      shift_rests:      parseRests(s.rests),
+      voice_notes:      parseRests(s.voice_notes),
+      employment_type:  s.employment_type || '',
+      work_days:        s.work_days       || '',
+      shift_start_date: s.start_date      || '',
+      shift_end_date:   s.end_date        || '',
+    }));
+  }
+  const out = [];
+  if (member.shift) out.push({
+    shift: member.shift, shift_start: member.shift_start || '', shift_end: member.shift_end || '',
+    shift_rests: parseRests(member.shift_rests), voice_notes: parseRests(member.voice_notes),
+    employment_type: member.employment_type || '', work_days: member.work_days || '',
+    shift_start_date: member.shift_start_date || '', shift_end_date: member.shift_end_date || '',
+  });
+  if (member.shift2) out.push({
+    shift: member.shift2, shift_start: member.shift2_start || '', shift_end: member.shift2_end || '',
+    shift_rests: parseRests(member.shift2_rests), voice_notes: parseRests(member.shift2_voice_notes),
+    employment_type: member.shift2_employment_type || '', work_days: member.shift2_work_days || '',
+    shift_start_date: member.shift2_start_date || '', shift_end_date: member.shift2_end_date || '',
+  });
+  return out;
+}
+
+// Empty shift slot used when adding a new shift via the "+ إضافة شيفت" button.
+const EMPTY_SHIFT = {
+  shift: '', shift_start: '', shift_end: '', shift_rests: [], voice_notes: [],
+  employment_type: '', work_days: '', shift_start_date: '', shift_end_date: '',
+};
+
 // ─── SHIFT SECTION (reusable for shift 1 and shift 2) ─────────────────────────
 function ShiftSection({
   title, shiftValue, startValue, endValue, restsValue, voiceNotesValue, employmentValue, daysValue,
@@ -593,8 +633,8 @@ function TeachableCoursesSection({ form, setForm, labelCls }) {
 // ─── MEMBER MODAL ─────────────────────────────────────────────────────────────
 function MemberModal({ initial, onSave, onClose, loading }) {
   const [form, setForm] = useState(() => hydrateMember(initial));
-  // Show shift 2 block by default if the loaded employee already has a second shift
-  const [showShift2, setShowShift2] = useState(!!(initial && initial.shift2));
+  // Unlimited shifts — array of {shift, shift_start, shift_end, ...} objects.
+  const [shifts, setShifts] = useState(() => initialShifts(initial));
   const set = (k, v) => setForm(f => {
     // Education trainers are line-agnostic — auto-force line='All' whenever
     // the department is set to 'education'. Other departments keep manual
@@ -605,54 +645,56 @@ function MemberModal({ initial, onSave, onClose, loading }) {
     return { ...f, [k]: v };
   });
 
-  const clearShift2 = () => {
-    setShowShift2(false);
-    setForm(f => ({ ...f, shift2: '', shift2_start: '', shift2_end: '', shift2_rests: [], shift2_voice_notes: [], shift2_start_date: '', shift2_end_date: '', shift2_employment_type: '', shift2_work_days: '' }));
+  // Per-shift handlers
+  const updateShift = (idx, key, value) => {
+    setShifts(s => s.map((sh, i) => (i === idx ? { ...sh, [key]: value } : sh)));
+  };
+  const addShift = () => {
+    setShifts(s => [...s, { ...EMPTY_SHIFT }]);
+  };
+  const removeShift = (idx) => {
+    setShifts(s => s.filter((_, i) => i !== idx));
   };
 
-  // Reset section when dept changes if invalid; clear shift fields if leaving education
+  // Reset section when dept changes if invalid; clear shifts if leaving education
   useEffect(() => {
     if (!DEPT_SECTIONS[form.department]?.includes(form.section)) {
       set('section', DEPT_SECTIONS[form.department][0]);
     }
     if (form.department !== 'education') {
-      setForm(f => ({
-        ...f,
-        shift: '', shift_start: '', shift_end: '', shift_rests: [], voice_notes: [],
-        shift_start_date: '', shift_end_date: '', employment_type: '', work_days: '',
-        shift2: '', shift2_start: '', shift2_end: '', shift2_rests: [], shift2_voice_notes: [],
-        shift2_start_date: '', shift2_end_date: '', shift2_employment_type: '', shift2_work_days: '',
-      }));
-      setShowShift2(false);
+      setShifts([]);
     }
   }, [form.department]);
 
-  // Convert rests arrays back to JSON strings before sending to backend
+  // Convert rests arrays back to JSON strings before sending to backend.
+  // Sends the new `shifts:[]` array — the backend stores it as JSON and
+  // also mirrors the first two entries to the legacy shift_*/shift2_* cols.
   const handleSave = () => {
-    // Required-date check — start_date must be provided whenever a shift is set
-    if (form.shift && !form.shift_start_date) {
-      alert('من فضلك أدخل تاريخ بداية الشيفت الأول');
-      return;
+    for (let i = 0; i < shifts.length; i++) {
+      const sh = shifts[i];
+      if (sh.shift && !sh.shift_start_date) {
+        alert(`من فضلك أدخل تاريخ بداية الشيفت رقم ${i + 1}`);
+        return;
+      }
+      if (sh.shift_start_date && sh.shift_end_date && sh.shift_end_date < sh.shift_start_date) {
+        alert(`تاريخ نهاية الشيفت رقم ${i + 1} يجب أن يكون بعد تاريخ البداية`);
+        return;
+      }
     }
-    if (form.shift2 && !form.shift2_start_date) {
-      alert('من فضلك أدخل تاريخ بداية الشيفت الثاني');
-      return;
-    }
-    if (form.shift_start_date && form.shift_end_date && form.shift_end_date < form.shift_start_date) {
-      alert('تاريخ نهاية الشيفت الأول يجب أن يكون بعد تاريخ البداية');
-      return;
-    }
-    if (form.shift2_start_date && form.shift2_end_date && form.shift2_end_date < form.shift2_start_date) {
-      alert('تاريخ نهاية الشيفت الثاني يجب أن يكون بعد تاريخ البداية');
-      return;
-    }
-    onSave({
-      ...form,
-      shift_rests:        JSON.stringify(form.shift_rests        || []),
-      shift2_rests:       JSON.stringify(form.shift2_rests       || []),
-      voice_notes:        JSON.stringify(form.voice_notes        || []),
-      shift2_voice_notes: JSON.stringify(form.shift2_voice_notes || []),
-    });
+    const shiftsPayload = shifts
+      .filter(sh => sh.shift)
+      .map(sh => ({
+        shift:           sh.shift,
+        start:           sh.shift_start,
+        end:             sh.shift_end,
+        rests:           JSON.stringify(sh.shift_rests || []),
+        voice_notes:     JSON.stringify(sh.voice_notes || []),
+        employment_type: sh.employment_type,
+        work_days:       sh.work_days,
+        start_date:      sh.shift_start_date,
+        end_date:        sh.shift_end_date,
+      }));
+    onSave({ ...form, shifts: shiftsPayload });
   };
 
   const inputCls = 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 bg-white';
@@ -711,65 +753,46 @@ function MemberModal({ initial, onSave, onClose, loading }) {
             )}
           </div>
 
-          {/* Shift 1 — education only */}
+          {/* Shifts — unlimited dynamic list, education only */}
+          {form.department === 'education' && shifts.map((sh, idx) => {
+            const ord = ['الأول','الثاني','الثالث','الرابع','الخامس','السادس','السابع','الثامن','التاسع','العاشر'];
+            const title = `الشيفت ${ord[idx] || `رقم ${idx + 1}`}`;
+            return (
+              <ShiftSection
+                key={idx}
+                title={title}
+                shiftValue={sh.shift}
+                startValue={sh.shift_start}
+                endValue={sh.shift_end}
+                restsValue={sh.shift_rests}
+                voiceNotesValue={sh.voice_notes}
+                employmentValue={sh.employment_type}
+                daysValue={sh.work_days}
+                startDateValue={sh.shift_start_date}
+                endDateValue={sh.shift_end_date}
+                onShiftChange={(v) => updateShift(idx, 'shift', v)}
+                onStartChange={(v) => updateShift(idx, 'shift_start', v)}
+                onEndChange={(v) => updateShift(idx, 'shift_end', v)}
+                onRestsChange={(v) => updateShift(idx, 'shift_rests', v)}
+                onVoiceNotesChange={(v) => updateShift(idx, 'voice_notes', v)}
+                onEmploymentChange={(v) => updateShift(idx, 'employment_type', v)}
+                onDaysChange={(v) => updateShift(idx, 'work_days', v)}
+                onStartDateChange={(v) => updateShift(idx, 'shift_start_date', v)}
+                onEndDateChange={(v) => updateShift(idx, 'shift_end_date', v)}
+                onRemove={() => removeShift(idx)}
+                inputCls={inputCls} labelCls={labelCls}
+              />
+            );
+          })}
+
+          {/* Add another shift — visible whenever the dept is education */}
           {form.department === 'education' && (
-            <ShiftSection
-              title="الشيفت الأول"
-              shiftValue={form.shift}
-              startValue={form.shift_start}
-              endValue={form.shift_end}
-              restsValue={form.shift_rests}
-              voiceNotesValue={form.voice_notes}
-              employmentValue={form.employment_type}
-              daysValue={form.work_days}
-              startDateValue={form.shift_start_date}
-              endDateValue={form.shift_end_date}
-              onShiftChange={(v) => set('shift', v)}
-              onStartChange={(v) => set('shift_start', v)}
-              onEndChange={(v) => set('shift_end', v)}
-              onRestsChange={(v) => set('shift_rests', v)}
-              onVoiceNotesChange={(v) => set('voice_notes', v)}
-              onEmploymentChange={(v) => set('employment_type', v)}
-              onDaysChange={(v) => set('work_days', v)}
-              onStartDateChange={(v) => set('shift_start_date', v)}
-              onEndDateChange={(v) => set('shift_end_date', v)}
-              inputCls={inputCls} labelCls={labelCls}
-            />
-          )}
-
-          {/* Add second shift — only when first shift is set */}
-          {form.department === 'education' && form.shift && !showShift2 && (
             <button type="button"
-              onClick={() => setShowShift2(true)}
+              onClick={addShift}
               className="w-full py-2.5 rounded-xl border-2 border-dashed border-gray-300 text-sm font-semibold text-gray-500 hover:bg-gray-50 hover:border-gray-400 transition-all"
-            >+ إضافة شيفت ثاني</button>
-          )}
-
-          {/* Shift 2 — education only, opt-in */}
-          {form.department === 'education' && showShift2 && (
-            <ShiftSection
-              title="الشيفت الثاني"
-              shiftValue={form.shift2}
-              startValue={form.shift2_start}
-              endValue={form.shift2_end}
-              restsValue={form.shift2_rests}
-              voiceNotesValue={form.shift2_voice_notes}
-              employmentValue={form.shift2_employment_type}
-              daysValue={form.shift2_work_days}
-              startDateValue={form.shift2_start_date}
-              endDateValue={form.shift2_end_date}
-              onShiftChange={(v) => set('shift2', v)}
-              onStartChange={(v) => set('shift2_start', v)}
-              onEndChange={(v) => set('shift2_end', v)}
-              onRestsChange={(v) => set('shift2_rests', v)}
-              onVoiceNotesChange={(v) => set('shift2_voice_notes', v)}
-              onEmploymentChange={(v) => set('shift2_employment_type', v)}
-              onDaysChange={(v) => set('shift2_work_days', v)}
-              onStartDateChange={(v) => set('shift2_start_date', v)}
-              onEndDateChange={(v) => set('shift2_end_date', v)}
-              onRemove={clearShift2}
-              inputCls={inputCls} labelCls={labelCls}
-            />
+            >
+              {shifts.length === 0 ? '+ إضافة الشيفت الأول' : '+ إضافة شيفت آخر'}
+            </button>
           )}
 
           {/* Extra one-off hours — only on EDIT and only for education
