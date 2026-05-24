@@ -37,13 +37,13 @@ const COLOR_MAP = {
 
 // ─── LINKS ─────────────────────────────────────────────────────────────────
 const AGENT_LINKS = [
+  { to: '/agent/profile',            label: 'صفحتي الشخصية',         icon: KeyRound,        color: 'slate' },
   { to: '/agent',                    label: 'nav.dashboard',        icon: LayoutDashboard, end: true, color: 'blue' },
   { to: '/agent/schedule',           label: 'nav.todaySchedule',    icon: Calendar,        color: 'orange' },
   { to: '/agent/absent',             label: 'nav.absentFollowUp',   icon: UserX,           color: 'rose' },
   { to: '/agent/side-session-check', label: 'nav.sideSessionCheck', icon: Video,           color: 'purple' },
   { to: '/agent/clients',            label: 'nav.clientSearch',     icon: Search,          color: 'cyan' },
   { to: '/agent/code-problems',      label: 'nav.codeProblems',     icon: AlertTriangle,   color: 'amber' },
-  { to: '/agent/profile',            label: 'صفحتي الشخصية',         icon: KeyRound,        color: 'slate' },
   { to: '/agent/group-receiving',    label: 'استلام المجموعات',     icon: ClipboardCheck,  color: 'cyan' },
   { to: '/agent/pipeline',           label: 'nav.clientPipeline',   icon: Kanban,          color: 'emerald' },
   { to: '/agent/tasks',              label: 'nav.myTasks',          icon: ClipboardList,   color: 'indigo' },
@@ -61,6 +61,7 @@ const ENROLLMENT_LEADER_LINKS = [
 ];
 
 const LEADER_LINKS = [
+  { to: '/leader/profile',                      label: 'صفحتي الشخصية',         icon: KeyRound,        color: 'slate' },
   { to: '/leader',                              label: 'nav.dashboard',        icon: LayoutDashboard, end: true, color: 'blue' },
   { to: '/leader/team',                         label: 'nav.team',             icon: Users,           color: 'purple' },
   { to: '/leader/org-chart',                    label: 'الهيكل التنظيمي',       icon: Network,         color: 'indigo' },
@@ -70,7 +71,6 @@ const LEADER_LINKS = [
   { to: '/leader/tasks',                        label: 'nav.taskDistribution', icon: ClipboardList,   color: 'indigo' },
   { to: '/leader/todos',                        label: 'مهام الفريق',          icon: ListTodo,        color: 'pink' },
   { to: '/leader/code-problems',                label: 'nav.codeProblems',     icon: AlertTriangle,   color: 'amber' },
-  { to: '/leader/profile',                      label: 'صفحتي الشخصية',         icon: KeyRound,        color: 'slate' },
   { to: '/leader/group-receiving',              label: 'استلام المجموعات',     icon: ClipboardCheck,  color: 'cyan' },
   { to: '/leader/pipeline',                     label: 'nav.clientPipeline',   icon: Kanban,          color: 'emerald' },
   { to: '/agent/my-progression',                label: 'nav.myProgression',    icon: TrendingUp,      color: 'violet' },
@@ -105,6 +105,7 @@ const managementMap = {
 function getAdminLinks(user) {
   const isSuperAdmin = user?.management === 'All';
   const base = [
+    { to: '/admin/profile',      label: 'صفحتي الشخصية',      icon: KeyRound,        color: 'slate' },
     { to: '/admin',              label: 'nav.dashboard',     icon: LayoutDashboard, end: true, color: 'blue' },
     { to: '/admin/users',        label: 'nav.users',         icon: UserCog,         color: 'indigo' },
     // Excel upload + Drive sync — Super Admin (management='All') only.
@@ -116,7 +117,6 @@ function getAdminLinks(user) {
     ] : []),
     { to: '/admin/team',         label: 'nav.team',          icon: Users,           color: 'purple' },
     { to: '/admin/org-chart',    label: 'الهيكل التنظيمي',    icon: Network,         color: 'indigo' },
-    { to: '/admin/profile',      label: 'صفحتي الشخصية',      icon: KeyRound,        color: 'slate' },
     { to: '/admin/group-receiving', label: 'استلام المجموعات', icon: ClipboardCheck, color: 'cyan' },
     { to: '/admin/control',      label: 'nav.controlPanel',       icon: LayoutDashboard, color: 'pink' },
     { to: '/admin/distribution', label: 'nav.clientDistribution', icon: Shuffle,         color: 'cyan' },
