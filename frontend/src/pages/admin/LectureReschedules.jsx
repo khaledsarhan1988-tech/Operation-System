@@ -8,13 +8,16 @@ import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import { useAuth } from '../../auth/AuthContext';
 
-// Approval status tabs + their visual treatment
+// Approval status tabs + their visual treatment.
+// activeBg uses STATIC class names (Tailwind JIT won't pick up dynamically
+// constructed `bg-${color}-500` strings, so the class would never make it
+// into the CSS bundle and the buttons would render uncoloured).
 const TABS = [
-  { key: 'pending',  label: 'في الانتظار', icon: Clock,         color: 'amber'   },
-  { key: 'approved', label: 'تمت الموافقة', icon: CheckCircle2,  color: 'emerald' },
-  { key: 'rejected', label: 'مرفوضة',      icon: XCircle,       color: 'red'     },
-  { key: 'auto',     label: 'إجازة رسمية',  icon: Sparkles,      color: 'sky'     },
-  { key: 'all',      label: 'الكل',         icon: CalendarClock, color: 'indigo'  },
+  { key: 'pending',  label: 'في الانتظار',  icon: Clock,         activeBg: 'bg-amber-500'   },
+  { key: 'approved', label: 'تمت الموافقة', icon: CheckCircle2,  activeBg: 'bg-emerald-500' },
+  { key: 'rejected', label: 'مرفوضة',       icon: XCircle,       activeBg: 'bg-red-500'     },
+  { key: 'auto',     label: 'إجازة رسمية',  icon: Sparkles,      activeBg: 'bg-sky-500'     },
+  { key: 'all',      label: 'الكل',          icon: CalendarClock, activeBg: 'bg-indigo-500'  },
 ];
 
 const STATUS_VISUAL = {
@@ -75,11 +78,8 @@ export default function LectureReschedules() {
             <button key={t.key} onClick={() => setTab(t.key)}
               className={`flex-1 min-w-[120px] px-3 py-2.5 rounded-xl text-sm font-bold transition flex items-center justify-center gap-2
                 ${isActive
-                  ? `bg-${t.color}-500 text-white shadow-md`
-                  : 'text-gray-600 hover:bg-gray-50'}`}
-              style={isActive ? {
-                background: `linear-gradient(135deg, var(--tw-gradient-from, #6366f1), var(--tw-gradient-to, #8b5cf6))`,
-              } : {}}>
+                  ? `${t.activeBg} text-white shadow-md`
+                  : 'text-gray-600 hover:bg-gray-50'}`}>
               <Icon size={14} />
               {t.label}
               {cnt > 0 && (
