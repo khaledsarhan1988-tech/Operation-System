@@ -666,8 +666,10 @@ function CleanupFalsePositivesButton({ onDone }) {
     <button
       onClick={() => {
         if (confirm(
-          'هحذف الـ rows اللى عبارة عن نفس اليوم + فرق وقت أقل من 30 دقيقة ' +
-          '(false positives من Excel time jitter). متأكد؟'
+          'هحذف الـ rows اللى:\n' +
+          '• نفس اليوم + فرق وقت أقل من 30 دقيقة (Excel jitter)\n' +
+          '• المحاضرة اتحركت لتاريخ سابق (مش reschedule حقيقي)\n\n' +
+          'متأكد؟'
         )) {
           cleanupMut.mutate();
         }
@@ -675,7 +677,7 @@ function CleanupFalsePositivesButton({ onDone }) {
       disabled={cleanupMut.isPending}
       className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold flex items-center gap-1.5 disabled:opacity-50">
       <Trash2 size={14} />
-      {cleanupMut.isPending ? 'جاري...' : 'مسح Time Jitter'}
+      {cleanupMut.isPending ? 'جاري...' : 'مسح False Positives'}
     </button>
   );
 }

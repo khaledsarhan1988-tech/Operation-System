@@ -549,6 +549,10 @@ router.post('/backfill-from-drive', requireSuperAdmin, express.json(), async (re
       const newRow = candidates.shift();
       // Skip false-positive pairs: same date + tiny time drift = Excel jitter
       if (isMinorTimeDrift(oldRow, newRow)) continue;
+      // Skip "backward" pairs (new is BEFORE old) — these are compensation
+      // lectures or the student taking the lecture earlier than planned, not
+      // a disruptive reschedule.
+      if (newRow.date < oldRow.date) continue;
       pairs.push({ old: oldRow, new: newRow });
     }
     return pairs;
@@ -651,50 +655,66 @@ router.post('/backfill-from-drive', requireSuperAdmin, express.json(), async (re
 });
 
 // ─── POST /api/reschedules/cleanup-false-positives ───────────────────────────
-// Removes already-inserted rows whose old/new are on the SAME date with
-// less than 30 minutes time difference. These are not real reschedules —
-// they're Excel time-formatting jitter (e.g. "18:00:00" → "18:01:00")
-// that got captured before the detection logic was tightened. Safe to run.
+// Removes already-inserted rows that match one of two false-positive patterns:
+//   A) same date + < 30 minutes time difference  → Excel time-formatting jitter
+//   B) new_date BEFORE old_date                   → compensation / early take
+// Both patterns are NOT disruptive reschedules per business rules. Safe to
+// re-run; only deletes rows matching the patterns.
 router.post('/cleanup-false-positives', requireSuperAdmin, (req, res) => {
   try {
-    // Find candidates: same date, both have time set, and parsing the
-    // HH:MM gives a |diff| < 30 minutes.
-    const candidates = db.prepare(`
-      SELECT id, old_date, old_time, new_date, new_time
-        FROM lecture_reschedules
-       WHERE old_date = new_date
-         AND old_time IS NOT NULL
-         AND new_time IS NOT NULL
-    `).all();
-
     function timeToMins(t) {
       if (!t) return null;
       const m = String(t).match(/^(\d{1,2}):(\d{2})/);
       return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : null;
     }
 
-    const toDelete = [];
-    for (const c of candidates) {
+    // Pattern A: same date + tiny time diff
+    const sameDayCandidates = db.prepare(`
+      SELECT id, old_time, new_time
+        FROM lecture_reschedules
+       WHERE old_date = new_date
+         AND old_time IS NOT NULL
+         AND new_time IS NOT NULL
+    `).all();
+    const toDeleteJitter = [];
+    for (const c of sameDayCandidates) {
       const ma = timeToMins(c.old_time);
       const mb = timeToMins(c.new_time);
       if (ma == null || mb == null) continue;
-      if (Math.abs(ma - mb) < 30) toDelete.push(c.id);
+      if (Math.abs(ma - mb) < 30) toDeleteJitter.push(c.id);
     }
 
-    if (toDelete.length === 0) {
-      return res.json({ ok: true, deleted: 0, message: 'مفيش false positives.' });
+    // Pattern B: backward reschedules (new_date < old_date)
+    const backwardIds = db.prepare(`
+      SELECT id FROM lecture_reschedules
+       WHERE new_date < old_date
+    `).all().map(r => r.id);
+
+    const allIds = Array.from(new Set([...toDeleteJitter, ...backwardIds]));
+    if (allIds.length === 0) {
+      return res.json({
+        ok: true,
+        deleted: 0,
+        message: 'مفيش false positives (لا time jitter ولا تواريخ سابقة).',
+      });
     }
 
     const del = db.prepare(`DELETE FROM lecture_reschedules WHERE id = ?`);
     const tx = db.transaction(() => {
-      for (const id of toDelete) del.run(id);
+      for (const id of allIds) del.run(id);
     });
     tx();
 
     return res.json({
       ok: true,
-      deleted: toDelete.length,
-      message: `تم حذف ${toDelete.length} false positive (نفس اليوم + فرق أقل من 30 دقيقة).`,
+      deleted: allIds.length,
+      breakdown: {
+        time_jitter:        toDeleteJitter.length,
+        backward_dates:     backwardIds.length,
+      },
+      message:
+        `تم حذف ${allIds.length} false positive ` +
+        `(${toDeleteJitter.length} time jitter + ${backwardIds.length} تواريخ سابقة).`,
     });
   } catch (err) {
     console.error('[reschedules/cleanup-false-positives]', err);

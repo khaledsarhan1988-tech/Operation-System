@@ -712,6 +712,11 @@ function detectAndRecordReschedules({ snapshot, after, sessionType, line }) {
     // ("18:00:00" → "18:01:00") and we don't want to flag those as
     // reschedules.
     if (_isMinorTimeDrift(oldRow, newRow)) continue;
+    // Skip "backward" pairs (new_date is BEFORE old_date). These are not
+    // disruptive reschedules — they're compensation lectures or cases
+    // where the student took the lecture earlier than originally planned.
+    // Business rule: only forward reschedules count.
+    if (newRow.date < oldRow.date) continue;
 
     const hol = holidayFor(oldRow.date);
     const reason = hol ? 'official_holiday' : null;
