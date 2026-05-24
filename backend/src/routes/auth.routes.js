@@ -198,7 +198,11 @@ router.post('/change-password', authenticate, (req, res) => {
 // GET /api/auth/me
 router.get('/me', authenticate, (req, res) => {
   const user = db.prepare(
-    'SELECT id, username, full_name, role, department, management, line, language, avatar_url, is_active FROM users WHERE id = ?'
+    `SELECT id, username, full_name, role,
+            department, extra_departments,
+            management, extra_managements,
+            line, language, avatar_url, is_active
+       FROM users WHERE id = ?`
   ).get(req.user.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
   return res.json(user);
