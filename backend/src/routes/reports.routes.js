@@ -3732,6 +3732,151 @@ router.get('/find-available-trainer', (req, res) => {
   }
 });
 
+// ─── GET /api/reports/trainer-work-history ───────────────────────────────────
+// Per-shift work history for education trainers within a date window.
+//
+// Returns ONE ROW PER SHIFT that overlaps [from, to]. A shift overlaps when:
+//   shift_start_date <= to  AND  (shift_end_date IS NULL OR shift_end_date >= from)
+//
+// Extra hours per row = SUM(team_member_extra_shifts.duration_min) for that
+// trainer where the entry's date is BOTH inside [from, to] AND inside the
+// shift's own [start_date, end_date] range — so loose extras after a shift
+// ended don't get attributed to an earlier shift.
+//
+// Query params:
+//   from, to       — YYYY-MM-DD (required; defaults to current month)
+//   section        — 'general' | 'private' | 'semi' | 'phone_call' | 'all' (any → no filter)
+//   trainer        — exact team_members.name (any → no filter)
+router.get('/trainer-work-history', (req, res) => {
+  const safeDate = (s) => (/^\d{4}-\d{2}-\d{2}$/.test(String(s || '')) ? String(s) : '');
+  const now = new Date(Date.now() + 2 * 60 * 60 * 1000); // Cairo UTC+2
+  const yyyy = now.getUTCFullYear();
+  const mm   = String(now.getUTCMonth() + 1).padStart(2, '0');
+  const monthFirst = `${yyyy}-${mm}-01`;
+  const monthLast  = `${yyyy}-${mm}-${String(new Date(Date.UTC(yyyy, now.getUTCMonth() + 1, 0)).getUTCDate()).padStart(2, '0')}`;
+  const from = safeDate(req.query.from) || monthFirst;
+  const to   = safeDate(req.query.to)   || monthLast;
+  const section = (req.query.section || '').trim();
+  const trainer = (req.query.trainer || '').trim();
+
+  const DAY_LABELS = {
+    saturday: 'السبت', sunday: 'الأحد', monday: 'الاثنين',
+    tuesday: 'الثلاثاء', wednesday: 'الأربعاء', thursday: 'الخميس', friday: 'الجمعة',
+  };
+
+  try {
+    // Pull every active+inactive education trainer (status filter NOT applied;
+    // the report shows everyone whose shifts overlap the window, including
+    // recently-deactivated ones, with their status as a column).
+    let where = `WHERE department='education'`;
+    const params = [];
+    if (section && section !== 'all') { where += ` AND section = ?`; params.push(section); }
+    if (trainer)                       { where += ` AND name = ?`;    params.push(trainer); }
+    const trainers = db.prepare(
+      `SELECT id, name, section, status, shifts_json,
+              shift,  shift_start,  shift_end,  shift_rests,  voice_notes,
+              employment_type,  work_days,  shift_start_date,  shift_end_date,
+              shift2, shift2_start, shift2_end, shift2_rests, shift2_voice_notes,
+              shift2_employment_type, shift2_work_days, shift2_start_date, shift2_end_date
+         FROM team_members ${where}
+         ORDER BY name COLLATE NOCASE`
+    ).all(...params);
+
+    // Sum extra-shift minutes per (trainer_id, date) within the window once,
+    // then bucket per shift in JS based on the shift's own date range.
+    const extrasRows = db.prepare(
+      `SELECT team_member_id, date, duration_min
+         FROM team_member_extra_shifts
+        WHERE date BETWEEN ? AND ?`
+    ).all(from, to);
+    const extrasByMember = new Map();
+    for (const e of extrasRows) {
+      if (!extrasByMember.has(e.team_member_id)) extrasByMember.set(e.team_member_id, []);
+      extrasByMember.get(e.team_member_id).push(e);
+    }
+
+    const rows = [];
+    let totalExtraMin = 0;
+    const trainerIdsSeen = new Set();
+
+    for (const t of trainers) {
+      // Read shifts: prefer shifts_json, fall back to legacy columns.
+      let shifts = null;
+      if (t.shifts_json) {
+        try { shifts = JSON.parse(t.shifts_json); } catch { shifts = null; }
+      }
+      if (!Array.isArray(shifts) || shifts.length === 0) {
+        shifts = [];
+        if (t.shift) shifts.push({
+          shift: t.shift, start: t.shift_start, end: t.shift_end,
+          rests: t.shift_rests, voice_notes: t.voice_notes,
+          employment_type: t.employment_type, work_days: t.work_days,
+          start_date: t.shift_start_date, end_date: t.shift_end_date,
+        });
+        if (t.shift2) shifts.push({
+          shift: t.shift2, start: t.shift2_start, end: t.shift2_end,
+          rests: t.shift2_rests, voice_notes: t.shift2_voice_notes,
+          employment_type: t.shift2_employment_type, work_days: t.shift2_work_days,
+          start_date: t.shift2_start_date, end_date: t.shift2_end_date,
+        });
+      }
+
+      const memberExtras = extrasByMember.get(t.id) || [];
+
+      shifts.forEach((sh, idx) => {
+        if (!sh || !sh.shift || !sh.start_date) return;
+        const shStart = sh.start_date;
+        const shEnd   = sh.end_date || '9999-12-31';
+        // Overlap test against the report window.
+        if (shStart > to || shEnd < from) return;
+
+        // Extra minutes inside BOTH the window AND this shift's own range.
+        const lo = shStart > from ? shStart : from;
+        const hi = shEnd   < to   ? shEnd   : to;
+        const extra = memberExtras
+          .filter(e => e.date >= lo && e.date <= hi)
+          .reduce((acc, e) => acc + (e.duration_min || 0), 0);
+
+        const daysList = String(sh.work_days || '')
+          .split(',').map(d => d.trim().toLowerCase()).filter(Boolean);
+        const daysAr = daysList.map(d => DAY_LABELS[d] || d).join('، ');
+
+        rows.push({
+          trainer_id:   t.id,
+          trainer_name: t.name,
+          section:      t.section,
+          status:       t.status,
+          shift_index:  idx + 1,
+          shift_kind:   sh.shift,                    // 'morning' | 'evening'
+          shift_start:  sh.start || '',              // HH:MM
+          shift_end:    sh.end   || '',              // HH:MM
+          start_date:   sh.start_date,
+          end_date:     sh.end_date,                 // null = ongoing
+          work_days:    daysList.join(','),
+          work_days_ar: daysAr,
+          employment_type: sh.employment_type || null,
+          extra_minutes: extra,
+        });
+        totalExtraMin += extra;
+        trainerIdsSeen.add(t.id);
+      });
+    }
+
+    return res.json({
+      rows,
+      summary: {
+        trainers_count:   trainerIdsSeen.size,
+        shifts_count:     rows.length,
+        total_extra_min:  totalExtraMin,
+      },
+      window: { from, to },
+    });
+  } catch (err) {
+    console.error('[reports] trainer-work-history error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/reports/remarks-notes-options ──────────────────────────────────
 // Returns dropdown options for coordinator, category, assigned_to
 router.get('/remarks-notes-options', (req, res) => {

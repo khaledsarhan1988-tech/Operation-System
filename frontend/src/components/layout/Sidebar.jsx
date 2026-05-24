@@ -86,6 +86,7 @@ const REPORT_LINKS = [
   { to: '/admin/reports/trainer-utilization',   label: 'nav.trainerUtilization', icon: Activity,      color: 'teal',    management: 'Education', sub: true },
   { to: '/admin/reports/find-available-trainer', label: 'nav.findAvailableTrainer', icon: Sparkles,    color: 'cyan',    management: 'Education', sub: true },
   { to: '/admin/reports/trainer-dashboard',      label: 'nav.trainerDashboard',     icon: BarChart3,   color: 'indigo',  management: 'Education', sub: true },
+  { to: '/admin/reports/trainer-work-history',   label: 'سجل عمل المدربين',          icon: History,     color: 'violet',  management: 'Education', sub: true },
   { to: '/admin/reports/quality',               label: 'nav.qualityReports',     icon: ShieldCheck,   color: 'green',   management: 'Quality' },
   { to: '/admin/reports/quality-snapshots',     label: 'nav.qualitySnapshots',   icon: Snowflake,     color: 'cyan',    management: 'Quality', sub: true },
 ];

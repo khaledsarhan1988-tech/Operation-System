@@ -45,6 +45,7 @@ import OrgChart from './pages/admin/OrgChart';
 import TrainerUtilization from './pages/admin/TrainerUtilization';
 import TrainerAvailabilityFinder from './pages/admin/TrainerAvailabilityFinder';
 import TrainerUtilizationDashboard from './pages/admin/TrainerUtilizationDashboard';
+import TrainerWorkHistory from './pages/admin/TrainerWorkHistory';
 import DashboardDetail from './pages/admin/DashboardDetail';
 import ClientDistribution from './pages/admin/ClientDistribution';
 import AdminPipeline from './pages/admin/AdminPipeline';
@@ -138,6 +139,7 @@ const router = createBrowserRouter([
       { path: 'reports/trainer-utilization',  element: <TrainerUtilization /> },
       { path: 'reports/find-available-trainer', element: <TrainerAvailabilityFinder /> },
       { path: 'reports/trainer-dashboard',      element: <TrainerUtilizationDashboard /> },
+      { path: 'reports/trainer-work-history',   element: <TrainerWorkHistory /> },
       { path: 'control',                      element: <LeaderDashboard /> },
       { path: 'reports/customer-services',    element: <SystemReports /> },
       { path: 'reports/education',            element: <EducationReports /> },
