@@ -2934,8 +2934,15 @@ router.get('/trainer-utilization', (req, res) => {
   }
 
   try {
-    // Trainers — Educational Administration only
-    let trainerWhere = `WHERE department='education' AND status='active'`;
+    // Trainers — Educational Administration. Status filter is INTENTIONALLY
+    // not applied here: a trainer who's currently `inactive` may still have
+    // historical lectures/work-days inside the filter window (e.g. resigned
+    // last week, but we're reporting on the previous month). The per-date
+    // shiftCoversDay() check naturally returns 0 for dates outside the
+    // trainer's shift window, and the post-filter at the bottom drops any
+    // trainer with no activity in the requested range — so deactivated
+    // trainers don't clutter the report unless they actually contributed.
+    let trainerWhere = `WHERE department='education'`;
     if (section && section !== 'all') {
       const s = String(section).replace(/'/g, "''");
       trainerWhere += ` AND section='${s}'`;
@@ -3070,6 +3077,7 @@ router.get('/trainer-utilization', (req, res) => {
         name: stripParens(t.name) || t.name,
         full_name: t.name,
         section: t.section,
+        status: t.status,                  // 'active' | 'inactive' — for the badge
         shift_summary: shiftSummary,
         has_voice_notes: hasVoiceNotes,
         totals: {
@@ -3081,7 +3089,14 @@ router.get('/trainer-utilization', (req, res) => {
         },
         days,
       };
-    }).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+    })
+    // Drop trainers with zero activity in the entire window. Without this,
+    // deactivated trainers whose shift ended long before the filter range
+    // would still appear with empty rows. We keep trainers who had EITHER
+    // available capacity OR booked work (covers both: was on shift, and
+    // had lectures attributed even after shift technically ended).
+    .filter(t => (t.totals.available_min || 0) > 0 || (t.totals.booked_min || 0) > 0)
+    .sort((a, b) => a.name.localeCompare(b.name, 'ar'));
 
     return res.json({ dates, trainers: out });
   } catch (err) {
@@ -3228,7 +3243,11 @@ router.get('/trainer-utilization-summary', (req, res) => {
 
   try {
     // ── Fetch trainers + filter by section + optional name search
-    let trainerWhere = `WHERE department='education' AND status='active'`;
+    // Status filter intentionally omitted (same reasoning as
+    // /trainer-utilization). Deactivated trainers stay visible while they
+    // had any activity in the window; they're filtered out at the totals
+    // stage if they contributed nothing.
+    let trainerWhere = `WHERE department='education'`;
     if (section && section !== 'all') {
       const s = String(section).replace(/'/g, "''");
       trainerWhere += ` AND section='${s}'`;
@@ -3318,6 +3337,10 @@ router.get('/trainer-utilization-summary', (req, res) => {
         id: t.id,
         name: stripParens(t.name) || t.name,
         section: t.section,
+        // Expose current employee-status flag so the UI can badge a row as
+        // "غير نشط حالياً" when an inactive trainer surfaced because of
+        // historical activity inside the filter range.
+        member_status: t.status,
         shift_summary: shiftSummary,
         utilization_pct: utilization,
         prev_utilization_pct: prev.available_min > 0 ? Math.round((prev.booked_min / prev.available_min) * 100) : null,
@@ -3326,7 +3349,12 @@ router.get('/trainer-utilization-summary', (req, res) => {
         free_hours: freeHours,
         status,
       };
-    });
+    })
+    // Drop trainers with NO activity in the current period — without this,
+    // deactivated trainers whose shift ended before the filter range would
+    // show as empty 0-hour rows. We keep trainers with either available
+    // capacity OR booked work (covers both scenarios).
+    .filter(t => (t.available_hours || 0) > 0 || (t.booked_hours || 0) > 0);
 
     // ── Summary KPIs
     const totalAvail  = trainersOut.reduce((s, t) => s + (t.available_hours * 60), 0);

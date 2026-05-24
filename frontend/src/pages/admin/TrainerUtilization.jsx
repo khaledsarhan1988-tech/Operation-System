@@ -554,7 +554,19 @@ export default function TrainerUtilization() {
                 <tr key={t.id} className="border-b border-gray-50 hover:bg-slate-50/40 transition-colors">
                   {/* Trainer cell */}
                   <td className="px-4 py-2 sticky right-0 bg-white border-l border-slate-100">
-                    <div className="font-bold text-gray-900 text-xs">{t.name}</div>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`font-bold text-xs ${t.status === 'inactive' ? 'text-gray-500 line-through decoration-gray-300' : 'text-gray-900'}`}>
+                        {t.name}
+                      </span>
+                      {/* Trainer is currently inactive but surfaced in this
+                          report because they had activity inside the filter
+                          range — flag it clearly so the reader knows. */}
+                      {t.status === 'inactive' && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold bg-gray-200 text-gray-700 border border-gray-300">
+                          غير نشط حالياً
+                        </span>
+                      )}
+                    </div>
                     <div className="flex items-center gap-1 mt-0.5">
                       <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold border ${SECTION_TONE[t.section] || SECTION_TONE.all}`}>
                         {SECTIONS[t.section] || t.section}

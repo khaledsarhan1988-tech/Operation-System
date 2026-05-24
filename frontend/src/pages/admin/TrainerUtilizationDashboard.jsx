@@ -451,7 +451,20 @@ export default function TrainerUtilizationDashboard() {
                       {trainers.map(t => (
                         <tr key={t.id} className="border-t border-gray-50 hover:bg-slate-50/40 transition-colors">
                           <td className="px-5 py-2.5">
-                            <div className="font-bold text-gray-900">{t.name}</div>
+                            <div className="flex items-center gap-1.5">
+                              <span className={`font-bold ${t.member_status === 'inactive' ? 'text-gray-500 line-through decoration-gray-300' : 'text-gray-900'}`}>
+                                {t.name}
+                              </span>
+                              {/* Trainer is deactivated NOW but had activity
+                                  during the filter range — surface a chip so
+                                  the dashboard reader doesn't think the row
+                                  is a current-team metric. */}
+                              {t.member_status === 'inactive' && (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold bg-gray-200 text-gray-700 border border-gray-300">
+                                  غير نشط حالياً
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-3 py-2.5">
                             <span className={`inline-block text-[10px] px-2 py-0.5 rounded-full font-semibold border ${SECTION_TONE[t.section] || SECTION_TONE.all}`}>
