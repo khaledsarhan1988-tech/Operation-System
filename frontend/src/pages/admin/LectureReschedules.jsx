@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   CalendarClock, CheckCircle2, XCircle, Clock, AlertCircle, Search,
   RefreshCw, FileText, X, Send, Sparkles, ScanSearch, Database, Trash2,
+  FileCheck2,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -580,6 +581,13 @@ function RescheduleDetailModal({ row, isSuperAdmin, onClose, onChanged }) {
             )}
           </div>
 
+          {/* Verify-source section — confirms the group still exists in the
+              current synced Excel state (so the admin knows the row reflects
+              real data, not a sync artifact). */}
+          {isSuperAdmin && (
+            <VerifySourceSection group={row.group_name} line={row.line} />
+          )}
+
           {/* Admin notes — read by all, edit by super-admin only */}
           <div className={`border rounded-xl p-3 ${isSuperAdmin ? 'bg-amber-50/50 border-amber-200' : 'bg-gray-50 border-gray-200'}`}>
             <div className="flex items-center gap-2 mb-2">
@@ -658,6 +666,132 @@ function RescheduleDetailModal({ row, isSuperAdmin, onClose, onChanged }) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Verify Source — confirms the group exists in current lectures table ────
+// Lazy-loaded: the admin clicks "تحقق من المصدر" and only THEN does the
+// fetch run. Avoids hammering the API for every modal open.
+function VerifySourceSection({ group, line }) {
+  const [show, setShow] = useState(false);
+  const { data, isLoading } = useQuery({
+    queryKey: ['verify-source', group, line],
+    queryFn: () => api.get('/reschedules/verify-source', {
+      params: { group, line },
+    }).then(r => r.data),
+    enabled: show,
+  });
+
+  if (!show) {
+    return (
+      <button onClick={() => setShow(true)}
+        className="w-full px-3 py-2.5 rounded-xl border-2 border-dashed border-indigo-300 text-sm font-bold text-indigo-700 hover:bg-indigo-50 inline-flex items-center justify-center gap-2">
+        <FileCheck2 size={14} />
+        🔍 تحقق من البيانات في ملف Excel الحالي
+      </button>
+    );
+  }
+
+  if (isLoading) {
+    return <div className="text-center text-xs text-gray-400 py-4">جاري الفحص...</div>;
+  }
+  if (!data) return null;
+
+  const totalLectures   = data.lectures.count;
+  const mainCount       = data.lectures.by_session_type.main || 0;
+  const sideCount       = data.lectures.by_session_type.side || 0;
+  const reschedCount    = data.reschedules.count;
+
+  return (
+    <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-bold text-indigo-900 flex items-center gap-1.5">
+          <FileCheck2 size={14} /> النتيجة من ملف Excel الحالي
+        </p>
+        <button onClick={() => setShow(false)} className="p-1 hover:bg-white rounded">
+          <X size={12} className="text-gray-500" />
+        </button>
+      </div>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-3 gap-2 text-center">
+        <div className="bg-white rounded p-2 border border-gray-200">
+          <p className="text-[10px] text-gray-500">إجمالي محاضرات</p>
+          <p className="text-lg font-black text-indigo-700">{totalLectures}</p>
+        </div>
+        <div className="bg-white rounded p-2 border border-gray-200">
+          <p className="text-[10px] text-blue-600">أساسية</p>
+          <p className="text-lg font-black text-blue-700">{mainCount}</p>
+        </div>
+        <div className="bg-white rounded p-2 border border-gray-200">
+          <p className="text-[10px] text-fuchsia-600">زوم</p>
+          <p className="text-lg font-black text-fuchsia-700">{sideCount}</p>
+        </div>
+      </div>
+
+      {/* Verdict */}
+      {totalLectures === 0 ? (
+        <div className="bg-amber-50 border border-amber-200 rounded p-2 text-xs text-amber-800">
+          ⚠ المجموعة <b>{group}</b> مش موجودة في ملف Excel الحالي ضمن آخر 30 يوم.
+          ممكن تكون اتشالت من الملف بعد ما الـ reschedule اتسجل، أو الـ sync ما اتعملش.
+        </div>
+      ) : (
+        <div className="bg-emerald-50 border border-emerald-200 rounded p-2 text-xs text-emerald-800">
+          ✓ المجموعة موجودة في ملف Excel — <b>{totalLectures}</b> محاضرة في آخر 30 يوم.
+          البيانات اللى الـ reschedule اتسجل عليها أصلية ومن المصدر.
+        </div>
+      )}
+
+      {/* Lectures list */}
+      {totalLectures > 0 && (
+        <details className="text-xs">
+          <summary className="cursor-pointer font-bold text-indigo-700">
+            عرض كل محاضرات المجموعة ({totalLectures})
+          </summary>
+          <div className="mt-2 max-h-60 overflow-y-auto space-y-1">
+            {data.lectures.rows.map(l => (
+              <div key={l.id} className={`p-2 rounded border ${
+                l.session_type === 'side'
+                  ? 'bg-fuchsia-50 border-fuchsia-200'
+                  : 'bg-blue-50 border-blue-200'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-gray-800">{l.date}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-gray-600 border">
+                    {l.session_type === 'main' ? 'أساسية' : 'زوم'}
+                  </span>
+                </div>
+                <p className="text-gray-600 mt-0.5">
+                  {l.time} · {l.duration} · {l.trainer}
+                </p>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      {/* Matching batches (sanity check that the group exists in batches table) */}
+      {data.matches.count > 0 && (
+        <details className="text-xs">
+          <summary className="cursor-pointer font-bold text-indigo-700">
+            الـ batches المطابقة ({data.matches.count})
+          </summary>
+          <div className="mt-2 space-y-1">
+            {data.matches.rows.map((b, i) => (
+              <div key={i} className="bg-white p-2 rounded border border-gray-200">
+                <p className="font-bold text-gray-800">{b.group_name}</p>
+                <p className="text-[10px] text-gray-500">
+                  {b.line} · {b.status} · {b.dept_type} · أيام: {b.training_schedule || '—'}
+                </p>
+                {b.coordinators && (
+                  <p className="text-[10px] text-gray-500">منسق: {b.coordinators}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
     </div>
   );
 }

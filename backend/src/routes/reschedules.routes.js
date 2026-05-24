@@ -722,4 +722,108 @@ router.post('/cleanup-false-positives', requireSuperAdmin, (req, res) => {
   }
 });
 
+// ─── GET /api/reschedules/verify-source ──────────────────────────────────────
+// Verifies that a specific group exists in the CURRENT lectures table (i.e.
+// the latest synced Excel state). Lets admins double-check that a flagged
+// reschedule was actually based on real Excel data — not a sync glitch.
+//
+// Query:
+//   ?group=...      (required, partial match via LIKE)
+//   ?line=...       (optional — filters to one line)
+//   ?from=YYYY-MM-DD  (optional, default 30 days ago)
+//   ?to=YYYY-MM-DD    (optional, default today)
+//
+// Returns:
+//   {
+//     group_query, line, window,
+//     matches:        [batches matching the group_name LIKE — name, dept_type, status],
+//     lectures: {
+//       count, by_session_type: {main, side},
+//       rows: [...]           // sorted by date+time
+//     },
+//     reschedules: {
+//       count,
+//       rows: [...]           // all reschedule audit rows for this group
+//     },
+//   }
+router.get('/verify-source', requireSuperAdmin, (req, res) => {
+  const group = String(req.query.group || '').trim();
+  const line  = (req.query.line || '').trim();
+  if (!group) return res.status(400).json({ error: 'group is required' });
+
+  const today = new Date(Date.now() + 2 * 60 * 60 * 1000)
+    .toISOString().slice(0, 10);
+  const thirty = new Date(Date.now() - 30 * 86400000 + 2 * 60 * 60 * 1000)
+    .toISOString().slice(0, 10);
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(req.query.from || '') ? req.query.from : thirty;
+  const to   = /^\d{4}-\d{2}-\d{2}$/.test(req.query.to   || '') ? req.query.to   : today;
+
+  try {
+    const lineClause   = line ? ' AND line = ?' : '';
+    const lineLClause  = line ? ' AND l.line = ?' : '';
+    const lineParam    = line ? [line] : [];
+    const groupLike    = `%${group}%`;
+
+    // Matching batches (so the admin sees if the group_name matches multiple
+    // batches — e.g. cross-line)
+    const matches = db.prepare(`
+      SELECT group_name, line, status, dept_type, course, training_schedule, coordinators
+        FROM batches
+       WHERE group_name LIKE ?${lineClause}
+       ORDER BY line, group_name
+       LIMIT 25
+    `).all(groupLike, ...lineParam);
+
+    // All lectures for the group inside the window
+    const lectures = db.prepare(`
+      SELECT l.id, l.group_name, l.date, l.time, l.duration, l.trainer,
+             l.status, l.session_type, l.side_session_category, l.line, l.synced_at
+        FROM lectures l
+       WHERE l.group_name LIKE ?${lineLClause}
+         AND l.date BETWEEN ? AND ?
+       ORDER BY l.date, l.time, l.session_type
+       LIMIT 500
+    `).all(groupLike, ...lineParam, from, to);
+
+    const byType = lectures.reduce((acc, l) => {
+      acc[l.session_type] = (acc[l.session_type] || 0) + 1;
+      return acc;
+    }, { main: 0, side: 0 });
+
+    // All reschedules ever recorded for the group
+    const reschedules = db.prepare(`
+      SELECT id, group_name, line, session_type,
+             old_date, old_time, old_trainer,
+             new_date, new_time, new_trainer,
+             approval_status, reschedule_reason, detected_at
+        FROM lecture_reschedules
+       WHERE group_name LIKE ?${lineClause}
+       ORDER BY old_date DESC
+       LIMIT 100
+    `).all(groupLike, ...lineParam);
+
+    return res.json({
+      group_query: group,
+      line:        line || 'all',
+      window:      { from, to },
+      matches: {
+        count: matches.length,
+        rows:  matches,
+      },
+      lectures: {
+        count:           lectures.length,
+        by_session_type: byType,
+        rows:            lectures,
+      },
+      reschedules: {
+        count: reschedules.length,
+        rows:  reschedules,
+      },
+    });
+  } catch (err) {
+    console.error('[reschedules/verify-source]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
