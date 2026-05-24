@@ -66,6 +66,7 @@ import EnrollmentPipeline from './pages/enrollment/Pipeline';
 import FixReport from './pages/shared/FixReport';
 import AttendanceAbsenceReport from './pages/shared/AttendanceAbsenceReport';
 import GroupReceiving from './pages/shared/GroupReceiving';
+import Profile from './pages/shared/Profile';
 
 const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
@@ -85,6 +86,7 @@ const router = createBrowserRouter([
       { path: 'side-session-check', element: <SideSessionCheck /> },
       { path: 'code-problems',      element: <AgentCodeProblems /> },
       { path: 'group-receiving',    element: <GroupReceiving /> },
+      { path: 'profile',            element: <Profile /> },
       { path: 'pipeline',           element: <Pipeline /> },
       { path: 'my-progression',     element: <MyProgression /> },
       { path: 'todos',              element: <MyTodos /> },
@@ -109,6 +111,7 @@ const router = createBrowserRouter([
       { path: 'upload',                       element: <ExcelUpload /> },
       { path: 'code-problems',                element: <LeaderCodeProblems /> },
       { path: 'group-receiving',              element: <GroupReceiving /> },
+      { path: 'profile',                      element: <Profile /> },
       { path: 'performance',                  element: <LeaderPerformance /> },
       { path: 'pipeline',                     element: <LeaderPipeline /> },
       { path: 'reports/customer-services',    element: <SystemReports /> },
@@ -138,6 +141,7 @@ const router = createBrowserRouter([
       { path: 'team',                         element: <TeamPage /> },
       { path: 'org-chart',                    element: <OrgChart /> },
       { path: 'group-receiving',              element: <GroupReceiving /> },
+      { path: 'profile',                      element: <Profile /> },
       { path: 'reports/trainer-utilization',  element: <TrainerUtilization /> },
       { path: 'reports/find-available-trainer', element: <TrainerAvailabilityFinder /> },
       { path: 'reports/trainer-dashboard',      element: <TrainerUtilizationDashboard /> },

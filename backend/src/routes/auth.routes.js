@@ -160,6 +160,41 @@ router.post('/logout', authenticate, (req, res) => {
   return res.json({ message: 'Logged out' });
 });
 
+// POST /api/auth/change-password — user changes their OWN password.
+// Verifies the current password, validates length, then rotates the bcrypt
+// hash. Existing refresh tokens are revoked so the user is logged out from
+// other devices (forces a fresh login with the new password).
+router.post('/change-password', authenticate, (req, res) => {
+  const { current_password, new_password } = req.body || {};
+  if (!current_password || !new_password) {
+    return res.status(400).json({ error: 'كلمة السر الحالية والجديدة مطلوبتان' });
+  }
+  if (String(new_password).length < 6) {
+    return res.status(400).json({ error: 'كلمة السر الجديدة يجب أن تكون 6 أحرف على الأقل' });
+  }
+  if (String(new_password) === String(current_password)) {
+    return res.status(400).json({ error: 'كلمة السر الجديدة لا يمكن أن تكون نفس الحالية' });
+  }
+
+  const user = db.prepare('SELECT id, password_hash FROM users WHERE id = ?').get(req.user.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  if (!bcrypt.compareSync(String(current_password), user.password_hash)) {
+    return res.status(401).json({ error: 'كلمة السر الحالية غير صحيحة' });
+  }
+
+  const newHash = bcrypt.hashSync(String(new_password), 12);
+  db.prepare(
+    "UPDATE users SET password_hash = ?, updated_at = datetime('now', '+2 hours') WHERE id = ?"
+  ).run(newHash, user.id);
+
+  // Revoke all refresh tokens for this user — other devices/sessions get
+  // signed out and must log in again with the new password.
+  db.prepare('DELETE FROM refresh_tokens WHERE user_id = ?').run(user.id);
+
+  return res.json({ ok: true, message: 'تم تغيير كلمة السر بنجاح' });
+});
+
 // GET /api/auth/me
 router.get('/me', authenticate, (req, res) => {
   const user = db.prepare(
