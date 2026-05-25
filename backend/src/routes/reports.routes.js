@@ -4496,8 +4496,10 @@ const RENAME_REQUIRED_TYPES = new Set([
 ]);
 // Statuses that allow (and sometimes require) entering new_group_code
 const RENAME_ALLOWED_STATUSES = new Set(['resolved', 'wont_repeat', 'exception']);
-// Valid group code regex: Month(3 letters)_Day_Weekday_...(Trainer)Coordinator
-const GROUP_CODE_REGEX = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)_\d{1,2}_(Sat|Sun|Mon|Tue|Wed|Thu|Fri)_.+\(.+\).+$/;
+// Valid group code regex: Month(3 letters)_Day_Weekday_...(Trainer)[Coordinator]
+// Suffix بعد القوس الأخير اختياري — مجموعات Conversation/Dardasha بنمط
+// "..._SP_D(Trainer)" ما عندهاش اسم منسق بعد القوس، فاستخدمنا .* بدل .+
+const GROUP_CODE_REGEX = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)_\d{1,2}_(Sat|Sun|Mon|Tue|Wed|Thu|Fri)_.+\(.+\).*$/;
 
 router.put('/problem-status', (req, res) => {
   const { group_name, problem_type, session_type = 'main', status, note, actual, new_group_code, line: bodyLine } = req.body;

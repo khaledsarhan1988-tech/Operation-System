@@ -1369,7 +1369,9 @@ const RENAME_ALLOWED_STATUSES = new Set(['resolved', 'wont_repeat', 'exception']
 // Problem types where the new group code is REQUIRED (mandatory field)
 const RENAME_REQUIRED_TYPES   = new Set(['تاريخ أول محاضرة غلط', 'محاضرات على أيام غلط']);
 // Group-code format validation (client-side mirror of backend regex)
-const GROUP_CODE_REGEX = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)_\d{1,2}_(Sat|Sun|Mon|Tue|Wed|Thu|Fri)_.+\(.+\).+$/i;
+// Suffix بعد القوس الأخير اختياري — مجموعات Conversation/Dardasha بنمط
+// "..._SP_D(Trainer)" ما عندهاش اسم منسق بعد القوس، فاستخدمنا .* بدل .+
+const GROUP_CODE_REGEX = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)_\d{1,2}_(Sat|Sun|Mon|Tue|Wed|Thu|Fri)_.+\(.+\).*$/i;
 
 function CodeProblemsModal({ params, onClose }) {
   const qc = useQueryClient();
