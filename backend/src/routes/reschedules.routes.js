@@ -1323,32 +1323,42 @@ router.get('/timeline', requireSuperAdmin, (req, res) => {
   }
 });
 
-// ─── POST /api/reschedules/wipe-all ──────────────────────────────────────────
-// Hard-deletes EVERY row from `lecture_reschedules`. Used once after disabling
-// live detection (in sync.service.js) so the table can be rebuilt cleanly from
-// `/backfill-from-drive` — guaranteeing every remaining row's source is a
-// real Google Drive Excel snapshot, not a DB live-diff.
+// ─── POST /api/reschedules/wipe-pending ──────────────────────────────────────
+// Deletes ONLY rows where approval_status = 'pending'. Approved, rejected,
+// and auto-marked rows are PRESERVED. Intended use: the admin reviewed all
+// pending items and wants a clean slate for the "في الانتظار" tab so the
+// next Drive backfill can surface fresh reschedules to review — without
+// losing the audit trail of past decisions.
 //
-// Optional body: { confirm: true }  — required, prevents accidental wipes.
-// Returns: { ok, deleted, message }
-router.post('/wipe-all', requireSuperAdmin, express.json(), (req, res) => {
+// Body: { confirm: true }   — required guard against accidental wipes.
+// Returns: { ok, deleted, message, preserved }
+router.post('/wipe-pending', requireSuperAdmin, express.json(), (req, res) => {
   if (req.body?.confirm !== true) {
     return res.status(400).json({
-      error: 'حذف كامل لكل سجلات إعادة الجدولة — مطلوب confirm:true في الـ body للتأكيد',
+      error: 'حذف سجلات الانتظار — مطلوب confirm:true في الـ body للتأكيد',
     });
   }
   try {
-    const before = db.prepare(`SELECT COUNT(*) AS n FROM lecture_reschedules`).get().n;
-    db.prepare(`DELETE FROM lecture_reschedules`).run();
+    const pendingCount = db.prepare(
+      `SELECT COUNT(*) AS n FROM lecture_reschedules WHERE approval_status = 'pending'`
+    ).get().n;
+    const preservedCount = db.prepare(
+      `SELECT COUNT(*) AS n FROM lecture_reschedules WHERE approval_status != 'pending'`
+    ).get().n;
+    db.prepare(
+      `DELETE FROM lecture_reschedules WHERE approval_status = 'pending'`
+    ).run();
     return res.json({
       ok: true,
-      deleted: before,
+      deleted: pendingCount,
+      preserved: preservedCount,
       message:
-        `تم مسح ${before} سجل إعادة جدولة. ` +
-        `استخدم "فحص من Drive" لإعادة بناء البيانات من ملفات Google Drive فقط.`,
+        `تم مسح ${pendingCount} سجل في الانتظار. ` +
+        `${preservedCount} سجل (معتمد / مرفوض / إجازة) محفوظ بدون تأثير. ` +
+        `استخدم "الفحص الحقيقي من Drive" لاكتشاف السجلات الجديدة.`,
     });
   } catch (err) {
-    console.error('[reschedules/wipe-all]', err);
+    console.error('[reschedules/wipe-pending]', err);
     return res.status(500).json({ error: err.message });
   }
 });

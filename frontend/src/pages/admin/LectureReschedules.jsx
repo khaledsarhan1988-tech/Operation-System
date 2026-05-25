@@ -82,7 +82,8 @@ export default function LectureReschedules() {
           <p className="text-emerald-800">
             كل سجل في الجدول جاي من مقارنة ملفات Excel الفعلية المخزنة على Drive (يوم D vs يوم D+1).
             الكشف اللحظي من قاعدة البيانات اتعطّل ومش بيكتب سجلات جديدة.
-            لو حابب تعيد البناء من الصفر، استخدم زر <b>"مسح كل السجلات"</b> ثم <b>"الفحص الحقيقي من Drive"</b>.
+            لو حابب تعيد مراجعة الانتظار من الصفر، استخدم زر <b>"مسح سجلات الانتظار"</b> ثم <b>"الفحص الحقيقي من Drive"</b>
+            — السجلات المعتمدة والمرفوضة هتفضل محفوظة.
           </p>
         </div>
       </div>
@@ -138,8 +139,9 @@ export default function LectureReschedules() {
             <CleanupFalsePositivesButton
               onDone={() => qc.invalidateQueries({ queryKey: ['reschedules'] })}
             />
-            <WipeAllButton
-              total={Object.values(counts).reduce((s, n) => s + n, 0)}
+            <WipePendingButton
+              pendingCount={counts.pending || 0}
+              preservedCount={(counts.approved || 0) + (counts.rejected || 0) + (counts.auto || 0)}
               onDone={() => qc.invalidateQueries({ queryKey: ['reschedules'] })}
             />
             <button onClick={() => setShowDiagnostic(true)}
@@ -1349,40 +1351,45 @@ function TimelineEvent({ ev, firstCancelledTrainer = '' }) {
   );
 }
 
-// ─── Wipe ALL Reschedules button ─────────────────────────────────────────────
-// Hard reset for the audit table. After this, the table is empty until the
-// admin runs "الفحص الحقيقي من Drive" — guaranteeing every remaining row's
-// source is a real Excel snapshot, not a DB live-diff. Uses two confirmation
-// prompts (text + checkbox-style intent) because the action is irreversible.
-function WipeAllButton({ total, onDone }) {
+// ─── Wipe PENDING-only Reschedules button ────────────────────────────────────
+// Targeted reset for the "في الانتظار" tab. Approved / rejected / auto rows
+// are PRESERVED — the past decision trail is never touched. After the wipe,
+// the admin runs "الفحص الحقيقي من Drive" to surface the latest fresh set
+// of pending reschedules for review. Double-confirm guards against typos.
+function WipePendingButton({ pendingCount, preservedCount, onDone }) {
   const wipeMut = useMutation({
-    mutationFn: () => api.post('/reschedules/wipe-all', { confirm: true }).then(r => r.data),
+    mutationFn: () => api.post('/reschedules/wipe-pending', { confirm: true }).then(r => r.data),
     onSuccess: (res) => {
-      alert(res.message || `تم مسح ${res.deleted} سجل.`);
+      alert(res.message || `تم مسح ${res.deleted} سجل في الانتظار.`);
       onDone();
     },
     onError: (err) => alert(err.response?.data?.error || err.message),
   });
 
+  // Disabled when nothing pending — avoids confusing the admin
+  const disabled = wipeMut.isPending || pendingCount === 0;
+
   return (
     <button
       onClick={() => {
         const c1 = confirm(
-          `⚠ هتمسح ${total} سجل إعادة جدولة بالكامل (كل التابات).\n\n` +
-          'الهدف: تبدأ من جديد بحيث كل البيانات تكون من Drive بس عن طريق ' +
-          '"الفحص الحقيقي من Drive".\n\n' +
-          'العملية دي لا يمكن التراجع عنها. متأكد؟'
+          `⚠ هتمسح ${pendingCount} سجل من تاب "في الانتظار" فقط.\n\n` +
+          `✓ آمن: ${preservedCount} سجل (معتمد / مرفوض / إجازة) هتفضل محفوظة بدون تأثير.\n\n` +
+          'الهدف: تبدأ من جديد لمراجعة تأجيلات جديدة من Drive.\n\n' +
+          'العملية دي لا يمكن التراجع عنها للسجلات المنتظرة. متأكد؟'
         );
         if (!c1) return;
         const c2 = prompt('اكتب كلمة "مسح" للتأكيد النهائي:');
         if (c2 === 'مسح') wipeMut.mutate();
         else if (c2 !== null) alert('تم الإلغاء — النص اللى كتبته مش مطابق.');
       }}
-      disabled={wipeMut.isPending}
-      title="مسح كل السجلات للبدء من جديد بـ Drive فقط"
-      className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-bold flex items-center gap-1.5 disabled:opacity-50">
+      disabled={disabled}
+      title={pendingCount === 0
+        ? 'مفيش سجلات في الانتظار للمسح'
+        : `مسح ${pendingCount} سجل في الانتظار فقط — السجلات المعتمدة والمرفوضة محفوظة`}
+      className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-bold flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
       <ShieldAlert size={14} />
-      {wipeMut.isPending ? 'جاري المسح...' : `مسح كل السجلات (${total})`}
+      {wipeMut.isPending ? 'جاري المسح...' : `مسح سجلات الانتظار (${pendingCount})`}
     </button>
   );
 }
