@@ -169,9 +169,11 @@ function classifySideSession(durationStr, positionInGroup, totalInGroup) {
   const dur = normalizeDuration(durationStr);
   if (dur === null) return 'regular';
   if (dur === 15) return 'regular';
+  // 30-min sessions are phone-call format (فون كول) — treated same as 15-min zoom calls
+  if (dur === 30) return 'regular';
   if (positionInGroup === 1 && dur > 50) return 'compensatory';
-  if (positionInGroup === 1 && dur > 15) return 'onboarding';
-  if (positionInGroup > 1 && dur > 15) return 'offboarding';
+  if (positionInGroup === 1 && dur > 30) return 'onboarding';
+  if (positionInGroup > 1 && dur > 30) return 'offboarding';
   return 'regular';
 }
 
