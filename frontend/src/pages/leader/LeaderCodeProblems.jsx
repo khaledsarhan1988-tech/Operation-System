@@ -7,6 +7,14 @@ import {
 import api from '../../api/axios';
 import CopyButton from '../../components/ui/CopyButton';
 import PageHero from '../../components/ui/PageHero';
+import { useAuth } from '../../auth/AuthContext';
+
+// Arabic labels for the leader's department names (matches users.department).
+const DEPT_LABEL = {
+  General: 'عام',
+  Private: 'خاص',
+  Semi:    'شبه خاص',
+};
 
 // ─── STATUS CONFIG ─────────────────────────────────────────────────────────────
 const STATUS_CFG = {
@@ -75,13 +83,24 @@ function problemBadge(type) {
 // ─── MAIN COMPONENT ────────────────────────────────────────────────────────────
 export default function LeaderCodeProblems() {
   const qc = useQueryClient();
+  const { user } = useAuth();
+
+  // The leader's departments (primary + extras). Used to (a) decide whether
+  // to show the dept filter at all, and (b) populate its options.
+  const leaderDepts = (() => {
+    const primary = user?.department ? [user.department] : [];
+    const extras = String(user?.extra_departments || '')
+      .split(',').map(s => s.trim()).filter(Boolean);
+    return [...new Set([...primary, ...extras])];
+  })();
 
   // ── filters
-  const [search,     setSearch]     = useState('');
-  const [fSection,   setFSection]   = useState('all');
-  const [fStatus,    setFStatus]    = useState('');
-  const [fProbType,  setFProbType]  = useState('');
-  const [fEmployee,  setFEmployee]  = useState('');
+  const [search,       setSearch]       = useState('');
+  const [fSection,     setFSection]     = useState('all');
+  const [fStatus,      setFStatus]      = useState('');
+  const [fProbType,    setFProbType]    = useState('');
+  const [fEmployee,    setFEmployee]    = useState('');
+  const [fDepartment,  setFDepartment]  = useState('');
 
   // ── status editor
   const [editKey,   setEditKey]   = useState(null);
@@ -99,9 +118,13 @@ export default function LeaderCodeProblems() {
 
   // ── data — always show_resolved:true so counts match inside/outside
   const { data, isLoading } = useQuery({
-    queryKey: ['leader-code-problems', fEmployee],
+    queryKey: ['leader-code-problems', fEmployee, fDepartment],
     queryFn: () => api.get('/reports/code-problems', {
-      params: { show_resolved: true, ...(fEmployee ? { employee: fEmployee } : {}) },
+      params: {
+        show_resolved: true,
+        ...(fEmployee   ? { employee:   fEmployee }   : {}),
+        ...(fDepartment ? { department: fDepartment } : {}),
+      },
     }).then(r => r.data),
     staleTime: 5 * 60 * 1000,
   });
@@ -198,7 +221,7 @@ export default function LeaderCodeProblems() {
   };
 
   const selectCls  = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f] min-w-[140px]';
-  const hasFilters = search || fSection !== 'all' || fProbType || fStatus || fEmployee;
+  const hasFilters = search || fSection !== 'all' || fProbType || fStatus || fEmployee || fDepartment;
 
   const achieved  = statusCounts.wont_repeat + statusCounts.exception + statusCounts.resolved;
   const remaining = totalAll - achieved;
@@ -373,13 +396,26 @@ export default function LeaderCodeProblems() {
             <option value="main">أساسية فقط</option>
             <option value="side">جانبية فقط</option>
           </select>
+          {leaderDepts.length > 1 && (
+            <select
+              value={fDepartment}
+              onChange={e => setFDepartment(e.target.value)}
+              className={selectCls}
+              title="فلتر بالقسم"
+            >
+              <option value="">كل الأقسام</option>
+              {leaderDepts.map(d => (
+                <option key={d} value={d}>{DEPT_LABEL[d] || d}</option>
+              ))}
+            </select>
+          )}
           <select value={fProbType} onChange={e => setFProbType(e.target.value)} className={selectCls}>
             <option value="">كل أنواع المشاكل</option>
             {probTypes.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
           {hasFilters && (
             <button
-              onClick={() => { setSearch(''); setFSection('all'); setFProbType(''); setFStatus(''); setFEmployee(''); }}
+              onClick={() => { setSearch(''); setFSection('all'); setFProbType(''); setFStatus(''); setFEmployee(''); setFDepartment(''); }}
               className="px-3 py-2 text-xs text-gray-500 hover:text-red-600 border border-gray-200 rounded-xl hover:border-red-200 transition-all font-medium whitespace-nowrap"
             >✕ مسح الكل</button>
           )}
