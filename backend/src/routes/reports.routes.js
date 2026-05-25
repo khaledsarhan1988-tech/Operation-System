@@ -6,7 +6,7 @@ const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { lineFilter } = require('../utils/lineFilter');
 const { nameInListInline } = require('../utils/nameMatch');
-const { resolveLeaderDepts } = require('../utils/leader-scope');
+const { resolveLeaderDepts, leaderDeptList } = require('../utils/leader-scope');
 
 const router = express.Router();
 router.use(authenticate, requireRole('agent'));
@@ -1919,25 +1919,34 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
   if (user.role === 'agent' || user.role === 'enrollment') {
     deptFilter = '';
   } else if (user.role === 'leader' || user.role === 'enrollment_leader') {
-    // Leader: coordinator's registered dept is source of truth.
-    // Include group if:
-    //   (1) coordinator registered in leader's dept (path 1), OR
-    //   (2) coordinator exists but NOT registered AND batch.dept_type matches (path 2), OR
-    //   (3) coordinator is NULL/empty/-- AND batch.dept_type matches (path 3 — NEW)
+    // Multi-dept leader support: a leader's primary department + any
+    // extra_departments combine into the FULL set of depts they oversee.
+    // Include group if (for ANY of the leader's depts):
+    //   (1) coordinator registered in that dept, OR
+    //   (2) coordinator exists but NOT registered AND batch.dept_type matches, OR
+    //   (3) coordinator is NULL/empty/-- AND batch.dept_type matches
     // Path 3 ensures "مجموعة بدون منسق" problems still surface to the
     // leader of the group's dept_type even though there's no coordinator
     // to anchor the dept assignment.
-    const dept = (!department || department === 'All') ? user.department : department;
-    if (dept && dept !== 'All') {
-      const s = dept.replace(/'/g, "''");
+    const allDepts = leaderDeptList(db, user);  // ['General', 'Private'] etc.
+    // If a specific `?department=` was requested AND it falls inside the
+    // leader's scope, narrow to that one. Otherwise show ALL of them.
+    let scopedDepts = allDepts;
+    if (department && department !== 'All') {
+      const reqDept = String(department).trim().toLowerCase();
+      const match = allDepts.find(d => d.toLowerCase() === reqDept);
+      if (match) scopedDepts = [match];
+    }
+    if (scopedDepts.length > 0) {
+      const sqlList = scopedDepts.map(d => `'${d.replace(/'/g, "''")}'`).join(', ');
       deptFilter = ` AND (
           EXISTS (
             SELECT 1 FROM users u
             WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(b.coordinators))
-              AND u.department = '${s}'
+              AND u.department IN (${sqlList})
           )
           OR (
-            b.dept_type = '${s}'
+            b.dept_type IN (${sqlList})
             AND b.coordinators IS NOT NULL AND TRIM(b.coordinators) NOT IN ('', '--')
             AND NOT EXISTS (
               SELECT 1 FROM users u
@@ -1946,7 +1955,7 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
             )
           )
           OR (
-            b.dept_type = '${s}'
+            b.dept_type IN (${sqlList})
             AND (b.coordinators IS NULL OR TRIM(b.coordinators) IN ('', '--'))
           )
         )`;
