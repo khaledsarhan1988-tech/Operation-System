@@ -350,14 +350,16 @@ function syncBatches(buffer, line) {
           closed += 1;
         }
       }
-      // added — always use sync time (nowIso). Date-aware attribution of
-      // historical events is handled separately via the `group_renames`
-      // table, which links new group_names to their old form when a group
-      // is renamed (e.g., when coordinator suffix changes). This preserves
-      // proper per-coordinator history without per-row backfill heuristics.
+      // added — use start_date (YYYY-MM-DD) as effective_from so historical
+      // sessions uploaded BEFORE the first sync are correctly attributed to the
+      // coordinator. If start_date is absent, fall back to nowIso.
+      // NOTE: for mid-group coordinator CHANGES the "removed" branch above
+      // closes the old record first, so the new record's effective_from never
+      // back-dates past the old record's effective_to.
       for (const [key, original] of newMap) {
         if (!oldMap.has(key)) {
-          openStmt.run(r.group_name, line, original, nowIso);
+          const effectiveFrom = r.start_date || nowIso;
+          openStmt.run(r.group_name, line, original, effectiveFrom);
           opened += 1;
         }
       }

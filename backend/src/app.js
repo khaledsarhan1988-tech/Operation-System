@@ -435,6 +435,50 @@ initDb().then(db => {
     console.error('todos.due_date_end migration error:', e.message);
   }
 
+  // ── coordinator_history: backfill effective_from to earliest lecture date ──
+  // Root cause: when a group is first synced, effective_from was set to the
+  // sync timestamp (nowIso). If sessions were uploaded with dates BEFORE the
+  // first sync, coordFilterAtDate('l.date' <= effective_from) returns nothing.
+  //
+  // Fix: for each coordinator_history row whose effective_from is LATER than
+  // the group's earliest lecture, set effective_from = earliest lecture date.
+  // SAFETY guard: only backdate records that are the INITIAL coordinator
+  // assignment for this group (no prior closed record exists that ended before
+  // this one started) — so mid-group coordinator changes are never backdated.
+  try {
+    const fixed = db._raw.exec(`
+      UPDATE coordinator_history
+      SET effective_from = (
+        SELECT MIN(l.date)
+        FROM lectures l
+        WHERE l.group_name = coordinator_history.group_name
+          AND l.line       = coordinator_history.line
+          AND l.status    != 'غير مؤكدة'
+      )
+      WHERE (
+        SELECT MIN(l.date)
+        FROM lectures l
+        WHERE l.group_name = coordinator_history.group_name
+          AND l.line       = coordinator_history.line
+          AND l.status    != 'غير مؤكدة'
+      ) < DATE(coordinator_history.effective_from)
+      AND NOT EXISTS (
+        SELECT 1 FROM coordinator_history ch2
+        WHERE ch2.group_name   = coordinator_history.group_name
+          AND ch2.line         = coordinator_history.line
+          AND ch2.effective_to IS NOT NULL
+          AND DATE(ch2.effective_to) <= DATE(coordinator_history.effective_from)
+      )
+    `);
+    const n = db._raw.exec(`SELECT changes()`)[0]?.values[0][0] || 0;
+    if (n > 0) {
+      saveNow();
+      console.log(`✅ Migration: backdated ${n} coordinator_history row(s) to earliest lecture date`);
+    }
+  } catch (e) {
+    console.error('coordinator_history backfill migration error:', e.message);
+  }
+
   // ── team_members SAFETY: restore from snapshot if rows vanished ─────────
   // Runs after all team_members DDL (step 4a). If anything above wiped or
   // failed to preserve rows, this brings them back from the JSON snapshot
