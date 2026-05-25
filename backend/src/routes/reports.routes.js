@@ -1277,7 +1277,7 @@ router.get('/lectures-list', (req, res) => {
   const searchEsc         = search.replace(/%/g, '\\%').replace(/_/g, '\\_');
   const searchFilter      = search      ? ` AND l.group_name LIKE '%${searchEsc}%' ESCAPE '\\'` : '';
   const trainerFilter     = trainer     ? ` AND l.trainer LIKE '%${trainer}%'` : '';
-  const coordFilter       = buildCoordFilter('b', coordinator);
+  const coordFilter       = coordFilterAtDate('l.group_name', 'l.line', 'l.date', coordinator);
   const groupFilter       = group_name  ? ` AND l.group_name = '${group_name.replace(/'/g, "''")}'` : '';
   const categoryFilter    = category    ? ` AND l.side_session_category = '${category}'` : '';
   // Duration filters (HH:MM string comparison works correctly for same-format values)
@@ -1493,8 +1493,14 @@ router.get('/absent-side-list', (req, res) => {
     : activeTo   ? ` AND l.date <= '${activeTo}'` : '';
 
   // ── Prefer absent_zoom_students when uploaded (student-level rows) ────────
+  // When a group-name search is active, check specifically for that group's data
+  // so groups with no absent_zoom_students rows fall through to the lectures-based Path B,
+  // matching the same calculation the dashboard (attendance-absence) uses.
+  const azExistWhere = search
+    ? `WHERE 1=1${line ? ` AND line = '${line.replace(/'/g, "''")}'` : ''} AND group_name LIKE '%${escapeLike(search)}%' ESCAPE '\\'`
+    : (line ? `WHERE line = '${line.replace(/'/g, "''")}'` : '');
   const hasZoomAbsentData = db.prepare(
-    `SELECT EXISTS(SELECT 1 FROM absent_zoom_students${line ? ` WHERE line = '${line.replace(/'/g, "''")}'` : ''}) as has_data`
+    `SELECT EXISTS(SELECT 1 FROM absent_zoom_students ${azExistWhere}) as has_data`
   ).get()?.has_data;
 
   if (hasZoomAbsentData) {
