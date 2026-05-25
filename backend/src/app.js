@@ -494,7 +494,7 @@ initDb().then(db => {
     const n2 = db._raw.exec(`SELECT changes()`)[0]?.values[0][0] || 0;
     if (n2 > 0) {
       saveNow();
-      console.log(\`✅ Migration: reclassified \${n2} 30-min side session(s) from onboarding/offboarding → regular\`);
+      console.log('✅ Migration: reclassified ' + n2 + ' 30-min side session(s) from onboarding/offboarding → regular');
     }
   } catch (e) {
     console.error('lectures 30-min side session reclassify migration error:', e.message);
