@@ -758,7 +758,7 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
         COUNT(*) AS slot_count_on_date
       FROM lectures l
       WHERE l.session_type = 'side' AND l.status = 'مؤكدة'
-        AND (l.duration IS NULL OR l.duration <= '00:15')${line ? ` AND l.line = '${line.replace(/'/g, "''")}'` : ''}
+        AND (l.duration IS NULL OR l.duration <= '00:30') AND l.side_session_category = 'regular'${line ? ` AND l.line = '${line.replace(/'/g, "''")}'` : ''}
       GROUP BY l.group_name, l.date, l.line
       HAVING SUM(CASE WHEN l.attendance IS NOT NULL AND TRIM(l.attendance) != ''
                  AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END) = 0
@@ -1132,7 +1132,7 @@ router.get('/dashboard', (req, res) => {
            INNER JOIN ${absentSideBatchSubQ} b ON l.group_name = b.group_name AND l.line = b.line
            WHERE l.session_type = 'side'
              AND l.status = 'مؤكدة'
-             AND (l.duration IS NULL OR l.duration <= '00:15')
+             AND (l.duration IS NULL OR l.duration <= '00:30') AND l.side_session_category = 'regular'
            ${buildDateFilter('l.date', from_date, to_date)}
            ${deptB}${empFilterAbsentL}
            GROUP BY l.group_name, l.date
@@ -1462,7 +1462,7 @@ router.get('/absent-list', (req, res) => {
 // Grouped per group_name + date
 // present_count  = sessions where attendance > 0
 // absent_count   = trainee_count - present_count
-// Only valid side sessions: duration <= '00:15' (excludes Onboarding/Offboarding)
+// Only valid side sessions: category='regular' AND duration <= '00:30' (excludes Onboarding/Offboarding)
 router.get('/absent-side-list', (req, res) => {
   const {
     from_date, to_date, department, employee,
@@ -1581,7 +1581,7 @@ router.get('/absent-side-list', (req, res) => {
   const baseWhere = `
     WHERE l.session_type = 'side'
       AND l.status = 'مؤكدة'
-      AND (l.duration IS NULL OR l.duration <= '00:15')
+      AND (l.duration IS NULL OR l.duration <= '00:30') AND l.side_session_category = 'regular'
     ${dateFilter}${deptFilter}${empFilter}${trainerFilter}${coordFilter}${searchFilter}`;
 
   // NOTE: Side sessions are per-student 15-min slots — each row in `lectures`
@@ -4932,7 +4932,7 @@ router.get('/attendance-absence', (req, res) => {
         INNER JOIN ${zoomBatchSubQ} b ON l.group_name = b.group_name AND l.line = b.line
         WHERE l.session_type = 'side'
           AND l.status = 'مؤكدة'
-          AND (l.duration IS NULL OR l.duration <= '00:15')
+          AND (l.duration IS NULL OR l.duration <= '00:30') AND l.side_session_category = 'regular'
         ${dateFilterL}${coordDeptAtDateFilter('b', 'l.date', activeDept)}${coordFilterB}
         GROUP BY coordinator, l.group_name, l.date
       ) sub
@@ -4952,7 +4952,7 @@ router.get('/attendance-absence', (req, res) => {
         INNER JOIN ${zoomBatchSubQ} b ON l.group_name = b.group_name AND l.line = b.line
         WHERE l.session_type = 'side'
           AND l.status = 'مؤكدة'
-          AND (l.duration IS NULL OR l.duration <= '00:15')
+          AND (l.duration IS NULL OR l.duration <= '00:30') AND l.side_session_category = 'regular'
         ${dateFilterL}${coordDeptAtDateFilter('b', 'l.date', activeDept)}${coordFilterB}
         GROUP BY coordinator, l.group_name, l.date
         HAVING absent_count > 0
@@ -5158,7 +5158,7 @@ router.get('/attendance-absence-by-department', (req, res) => {
         INNER JOIN ${zoomBatchSubQ} b ON l.group_name = b.group_name AND l.line = b.line
         WHERE l.session_type = 'side'
           AND l.status = 'مؤكدة'
-          AND (l.duration IS NULL OR l.duration <= '00:15')
+          AND (l.duration IS NULL OR l.duration <= '00:30') AND l.side_session_category = 'regular'
         ${dateFilterL}${deptFilterB}${coordFilterB}
         GROUP BY b.dept_type, l.group_name, l.date
       ) sub
@@ -5176,7 +5176,7 @@ router.get('/attendance-absence-by-department', (req, res) => {
         INNER JOIN ${zoomBatchSubQ} b ON l.group_name = b.group_name AND l.line = b.line
         WHERE l.session_type = 'side'
           AND l.status = 'مؤكدة'
-          AND (l.duration IS NULL OR l.duration <= '00:15')
+          AND (l.duration IS NULL OR l.duration <= '00:30') AND l.side_session_category = 'regular'
         ${dateFilterL}${deptFilterB}${coordFilterB}
         GROUP BY b.dept_type, l.group_name, l.date
         HAVING absent_count > 0
@@ -5456,7 +5456,7 @@ router.get('/quality-employee', (req, res) => {
       SELECT COUNT(*) AS cnt FROM lectures l
       INNER JOIN batches b ON b.group_name = l.group_name${line ? ' AND b.line = l.line' : ''}
       WHERE l.session_type = 'side' AND l.status = 'مؤكدة'
-        AND (l.duration IS NULL OR l.duration <= '00:15')${lineLA}${dateMainLec}
+        AND (l.duration IS NULL OR l.duration <= '00:30') AND l.side_session_category = 'regular'${lineLA}${dateMainLec}
         AND ${coordMatch}
     `).get(...(line ? [line] : []), ...dateMainLecParams);
     const zoom_expected_count = zoomExpectedRow?.cnt || 0;
@@ -5469,7 +5469,7 @@ router.get('/quality-employee', (req, res) => {
         FROM lectures l
         INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
         WHERE l.session_type = 'side' AND l.status = 'مؤكدة'
-          AND (l.duration IS NULL OR l.duration <= '00:15')${lineLA}${dateMainLec}
+          AND (l.duration IS NULL OR l.duration <= '00:30') AND l.side_session_category = 'regular'${lineLA}${dateMainLec}
           AND ${coordMatch}
         GROUP BY l.group_name, l.date
         HAVING absent_count > 0

@@ -2602,7 +2602,7 @@ export default function SystemReports() {
             gradient="linear-gradient(135deg, #0891b2 0%, #06b6d4 100%)"
             loading={isLoading}
             onClick={() => setListModal({
-              title: 'زووم كول (جلسات 15 دقيقة)',
+              title: 'زووم كول (جلسات ≤30 دقيقة)',
               endpoint: '/reports/lectures-list',
               params: { session_type: 'side', category: 'regular', ...applied },
               columns: [
