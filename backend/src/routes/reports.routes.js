@@ -2516,6 +2516,9 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
       // Intensive groups (مكثف): group name contains 2+ day abbreviations
       // (e.g. "Sat_Sun", "Mon_Tue") → 4 zoom calls per trainee.
       // Regular groups (1 day): 7 zoom calls per trainee.
+      // GUARD: skip check for groups that have no confirmed main lectures yet
+      // (new groups just synced from Drive, or helper/internal groups). This
+      // prevents false "زووم كول ناقصة" errors for groups that haven't started.
       {
         const DAY_TOKENS = ['sat','sun','mon','tue','wed','thu','fri'];
         const lowerGn   = gn.toLowerCase();
@@ -2524,7 +2527,7 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
         const zoomPerTrainee   = isIntensive ? 4 : 7;
         const expectedSide     = (batch.trainee_count || 0) * zoomPerTrainee;
         const intensiveLabel   = isIntensive ? ' مكثف' : '';
-        if (expectedSide > 0 && sideDates.length !== expectedSide) {
+        if (expectedSide > 0 && sideDates.length !== expectedSide && mainRows.length > 0) {
           addProblem(zoomProblems, { ...meta, trainee_count: batch.trainee_count, first_date: firstSideDate,
             problem_type: sideDates.length < expectedSide ? 'زووم كول ناقصة' : 'زووم كول زيادة',
             detail: `الموجود: ${sideDates.length} | المطلوب: ${expectedSide} (${batch.trainee_count}×${zoomPerTrainee}${intensiveLabel})`,

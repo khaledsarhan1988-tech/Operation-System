@@ -1059,6 +1059,67 @@ router.post('/backup/restore', (req, res) => {
       fs.renameSync(tmp, DB_PATH);
       // Force reload from disk
       db.reload('manual restore');
+      // ── Re-run key startup migrations on the restored data ─────────────────
+      // The normal startup migrations in app.js only run at process start.
+      // After a restore, we need to re-apply the data-correction migrations
+      // so the restored DB is in the same clean state it would be after a restart.
+      try {
+        // 1. coordinator_history: backdate effective_from to earliest lecture date
+        db._raw.run(`
+          UPDATE coordinator_history
+          SET effective_from = (
+            SELECT MIN(l.date) FROM lectures l
+            WHERE l.group_name = coordinator_history.group_name
+              AND l.line       = coordinator_history.line
+              AND l.status    != 'غير مؤكدة'
+          )
+          WHERE (
+            SELECT MIN(l.date) FROM lectures l
+            WHERE l.group_name = coordinator_history.group_name
+              AND l.line       = coordinator_history.line
+              AND l.status    != 'غير مؤكدة'
+          ) < DATE(coordinator_history.effective_from)
+          AND NOT EXISTS (
+            SELECT 1 FROM coordinator_history ch2
+            WHERE ch2.group_name   = coordinator_history.group_name
+              AND ch2.line         = coordinator_history.line
+              AND ch2.effective_to IS NOT NULL
+              AND DATE(ch2.effective_to) <= DATE(coordinator_history.effective_from)
+          )
+        `);
+        const n1 = db._raw.exec('SELECT changes()')[0]?.values[0][0] || 0;
+        if (n1 > 0) console.log('[backup/restore] backdated ' + n1 + ' coordinator_history row(s)');
+
+        // 2. Fix 30-min side sessions wrongly classified as onboarding/offboarding
+        db._raw.run(`
+          UPDATE lectures SET side_session_category = 'regular'
+          WHERE session_type = 'side' AND duration = '00:30'
+            AND side_session_category IN ('onboarding', 'offboarding')
+        `);
+        const n2 = db._raw.exec('SELECT changes()')[0]?.values[0][0] || 0;
+        if (n2 > 0) console.log('[backup/restore] reclassified ' + n2 + ' 30-min side session(s) → regular');
+
+        // 3. Reclassify first-session side sessions ≥20 min → onboarding
+        db._raw.run(`
+          UPDATE lectures SET side_session_category = 'onboarding'
+          WHERE session_type = 'side' AND status != 'غير مؤكدة'
+            AND side_session_category = 'regular' AND duration IS NOT NULL
+            AND (CAST(SUBSTR(duration,1,2) AS INTEGER)*60 + CAST(SUBSTR(duration,4,2) AS INTEGER)) >= 20
+            AND (CAST(SUBSTR(duration,1,2) AS INTEGER)*60 + CAST(SUBSTR(duration,4,2) AS INTEGER)) <= 50
+            AND (date || '|' || COALESCE(time,'')) = (
+              SELECT MIN(l2.date || '|' || COALESCE(l2.time,''))
+              FROM lectures l2
+              WHERE l2.group_name = lectures.group_name AND l2.line = lectures.line
+                AND l2.session_type = 'side' AND l2.status != 'غير مؤكدة'
+            )
+        `);
+        const n3 = db._raw.exec('SELECT changes()')[0]?.values[0][0] || 0;
+        if (n3 > 0) console.log('[backup/restore] reclassified ' + n3 + ' first-session(s) ≥20min → onboarding');
+
+        saveNow();
+      } catch (migErr) {
+        console.error('[backup/restore] post-restore migration error:', migErr.message);
+      }
       console.log('[backup/restore] DB restored from upload, size=' + data.length);
       res.json({ ok: true, size: data.length });
     } catch (err) {
