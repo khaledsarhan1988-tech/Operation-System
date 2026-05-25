@@ -1273,7 +1273,9 @@ router.get('/lectures-list', (req, res) => {
   const line = lineFilter(req);
   const lineL = buildLineFilter('l', line);
   const deptFilter        = buildDeptFilter('b', department);
-  const empFilter         = buildCoordFilter('b', employee);
+  // Date-aware: attribute lectures to coordinator who was responsible ON l.date
+  // (not current batches.coordinators which is NULL for ended groups)
+  const empFilter         = coordFilterAtDate('l.group_name', 'l.line', 'l.date', employee);
   const searchEsc         = search.replace(/%/g, '\\%').replace(/_/g, '\\_');
   const searchFilter      = search      ? ` AND l.group_name LIKE '%${searchEsc}%' ESCAPE '\\'` : '';
   const trainerFilter     = trainer     ? ` AND l.trainer LIKE '%${trainer}%'` : '';
