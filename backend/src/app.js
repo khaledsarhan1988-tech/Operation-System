@@ -1648,6 +1648,48 @@ initDb().then(db => {
     console.log('📁 Drive prep-folders cron disabled (set DRIVE_PREP_FOLDERS_ENABLED=1 to enable).');
   }
 
+  // ─── DRIVE PREP-TOMORROW CRON ────────────────────────────────────────────
+  // Runs at 23:30 Cairo nightly to pre-create TOMORROW's folders. This is the
+  // primary defense — by the time midnight strikes and the new day starts,
+  // tomorrow's folders are ALREADY THERE. No gap, no waiting.
+  //
+  // Controlled by:
+  //   DRIVE_PREP_TOMORROW_CRON='30 23 * * *'  (default: 23:30 daily)
+  //   DRIVE_PREP_FOLDERS_TZ='Africa/Cairo'    (shared with today-prep)
+  //
+  // Auto-enabled whenever DRIVE_PREP_FOLDERS_ENABLED is set — no separate flag.
+  if (process.env.DRIVE_PREP_FOLDERS_ENABLED === '1') {
+    try {
+      const cron = require('node-cron');
+      const googleDrive = require('./services/googleDrive.service');
+      const { VALID_LINES: prepLines } = require('./services/sync.service');
+      const cronExpr = process.env.DRIVE_PREP_TOMORROW_CRON || '30 23 * * *';
+      const tz       = process.env.DRIVE_PREP_FOLDERS_TZ   || 'Africa/Cairo';
+
+      if (!cron.validate(cronExpr)) {
+        console.error(`Drive prep-tomorrow: invalid cron expression "${cronExpr}", skipping schedule.`);
+      } else {
+        cron.schedule(cronExpr, async () => {
+          const driveSyncSvc = require('./services/driveSync.service');
+          const tomorrow = driveSyncSvc.tomorrowInTimezone(tz);
+          for (const line of prepLines) {
+            try {
+              const r = await googleDrive.prepareDayFolders(line, tomorrow);
+              const made = r.folders.filter(f => f.created).length;
+              const kept = r.folders.length - made;
+              console.log(`📁 Drive prep-tomorrow ${line} ${r.date}: created=${made} existing=${kept}`);
+            } catch (e) {
+              console.error(`Drive prep-tomorrow ${line} failed:`, e.message);
+            }
+          }
+        }, { timezone: tz });
+        console.log(`⏰ Drive prep-TOMORROW cron scheduled (${cronExpr}, ${tz})`);
+      }
+    } catch (e) {
+      console.error('Failed to schedule Drive prep-tomorrow cron:', e.message);
+    }
+  }
+
   // ─── DRIVE PREP-FOLDERS SAFETY NET ───────────────────────────────────────
   // The cron fires once per day at 00:30 Cairo. If the server happens to be
   // restarting at that exact moment (e.g. during a deploy), the cron MISSES
@@ -1667,19 +1709,26 @@ initDb().then(db => {
         const { VALID_LINES: prepLines } = require('./services/sync.service');
         const tz = process.env.DRIVE_PREP_FOLDERS_TZ || 'Africa/Cairo';
         const today = driveSyncSvc.todayInTimezone(tz);
-        console.log(`📁 Safety-net: ensuring today's folders exist for ${today.toISOString().slice(0,10)} (${tz})...`);
+        const tomorrow = driveSyncSvc.tomorrowInTimezone(tz);
+        // Prepare BOTH today and tomorrow on every startup. Tomorrow's prep
+        // protects against the "deploy happens just before midnight" case:
+        // even if the 23:30 cron is missed because the server is restarting,
+        // the post-startup safety creates them.
+        console.log(`📁 Safety-net: ensuring today (${today.toISOString().slice(0,10)}) AND tomorrow (${tomorrow.toISOString().slice(0,10)}) folders exist (${tz})...`);
         for (const line of prepLines) {
-          try {
-            const r = await googleDrive.prepareDayFolders(line, today);
-            const made = r.folders.filter(f => f.created).length;
-            const kept = r.folders.length - made;
-            if (made > 0) {
-              console.log(`📁 Safety-net ${line} ${r.date}: created=${made} existing=${kept}  ← caught missing folders`);
-            } else {
-              console.log(`📁 Safety-net ${line} ${r.date}: all ${kept} folders already exist ✓`);
+          for (const [label, date] of [['today', today], ['tomorrow', tomorrow]]) {
+            try {
+              const r = await googleDrive.prepareDayFolders(line, date);
+              const made = r.folders.filter(f => f.created).length;
+              const kept = r.folders.length - made;
+              if (made > 0) {
+                console.log(`📁 Safety-net ${line} ${r.date} (${label}): created=${made} existing=${kept}  ← caught missing folders`);
+              } else {
+                console.log(`📁 Safety-net ${line} ${r.date} (${label}): all ${kept} folders already exist ✓`);
+              }
+            } catch (e) {
+              console.error(`Safety-net prep ${line} ${label} failed:`, e.message);
             }
-          } catch (e) {
-            console.error(`Safety-net prep ${line} failed:`, e.message);
           }
         }
       } catch (e) {

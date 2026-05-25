@@ -49,6 +49,16 @@ function todayInTimezone(timeZone = 'Africa/Cairo') {
 }
 
 /**
+ * Returns "tomorrow" relative to the given timezone, as a Date at noon UTC.
+ * Used by the pre-midnight prep cron to create the next day's folders BEFORE
+ * the day actually starts — so when midnight strikes, folders are already there.
+ */
+function tomorrowInTimezone(timeZone = 'Africa/Cairo') {
+  const today = todayInTimezone(timeZone);
+  return new Date(today.getTime() + 24 * 60 * 60 * 1000);
+}
+
+/**
  * Returns metadata about the most-recent successful import for (fileType, line):
  *   { timeMs: number, driveFileId: string|null }
  *
@@ -436,5 +446,6 @@ module.exports = {
   detectAnomaly,
   countRowsInXlsx,
   todayInTimezone,
+  tomorrowInTimezone,
   SYSTEM_USER_ID,
 };
