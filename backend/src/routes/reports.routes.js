@@ -2510,14 +2510,25 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
         }
       }
 
-      // 2. Zoom call count ≠ trainee_count × 7
-      const expectedSide = (batch.trainee_count || 0) * 7;
-      if (expectedSide > 0 && sideDates.length !== expectedSide) {
-        addProblem(zoomProblems, { ...meta, trainee_count: batch.trainee_count, first_date: firstSideDate,
-          problem_type: sideDates.length < expectedSide ? 'زووم كول ناقصة' : 'زووم كول زيادة',
-          detail: `الموجود: ${sideDates.length} | المطلوب: ${expectedSide} (${batch.trainee_count}×7)`,
-          actual: sideDates.length, expected: expectedSide,
-        }, 'side');
+      // 2. Zoom call count ≠ trainee_count × expected-per-trainee
+      // Intensive groups (مكثف): group name contains 2+ day abbreviations
+      // (e.g. "Sat_Sun", "Mon_Tue") → 4 zoom calls per trainee.
+      // Regular groups (1 day): 7 zoom calls per trainee.
+      {
+        const DAY_TOKENS = ['sat','sun','mon','tue','wed','thu','fri'];
+        const lowerGn   = gn.toLowerCase();
+        const dayCount  = DAY_TOKENS.filter(d => new RegExp('(^|_)' + d + '(_|$)').test(lowerGn)).length;
+        const isIntensive      = dayCount >= 2;
+        const zoomPerTrainee   = isIntensive ? 4 : 7;
+        const expectedSide     = (batch.trainee_count || 0) * zoomPerTrainee;
+        const intensiveLabel   = isIntensive ? ' مكثف' : '';
+        if (expectedSide > 0 && sideDates.length !== expectedSide) {
+          addProblem(zoomProblems, { ...meta, trainee_count: batch.trainee_count, first_date: firstSideDate,
+            problem_type: sideDates.length < expectedSide ? 'زووم كول ناقصة' : 'زووم كول زيادة',
+            detail: `الموجود: ${sideDates.length} | المطلوب: ${expectedSide} (${batch.trainee_count}×${zoomPerTrainee}${intensiveLabel})`,
+            actual: sideDates.length, expected: expectedSide,
+          }, 'side');
+        }
       }
 
       // 3. MAIN — last session date mismatch
