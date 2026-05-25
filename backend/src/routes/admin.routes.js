@@ -1038,6 +1038,36 @@ router.get('/backup/download', (req, res) => {
   }
 });
 
+// POST /api/admin/backup/restore  — admin only, replaces DB with uploaded file
+router.post('/backup/restore', (req, res) => {
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin only' });
+  }
+  const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../../data/academy.db');
+  const chunks = [];
+  req.on('data', chunk => chunks.push(chunk));
+  req.on('end', () => {
+    try {
+      const data = Buffer.concat(chunks);
+      if (data.length < 100) return res.status(400).json({ error: 'File too small — invalid DB' });
+      // Verify SQLite magic header
+      if (data.slice(0, 6).toString() !== 'SQLite') {
+        return res.status(400).json({ error: 'Not a valid SQLite file' });
+      }
+      const tmp = DB_PATH + '.restore.tmp';
+      fs.writeFileSync(tmp, data);
+      fs.renameSync(tmp, DB_PATH);
+      // Force reload from disk
+      db.reload('manual restore');
+      console.log('[backup/restore] DB restored from upload, size=' + data.length);
+      res.json({ ok: true, size: data.length });
+    } catch (err) {
+      console.error('[backup/restore]', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+});
+
 // ─── GROUP RENAMES MANAGEMENT ─────────────────────────────────────────────────
 // Manages the `group_renames` table that links new group_names to their old
 // form when a group is renamed (e.g., coordinator suffix changes). Date-aware
