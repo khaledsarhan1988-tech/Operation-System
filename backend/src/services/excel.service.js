@@ -161,19 +161,33 @@ function normalizeDuration(val) {
 }
 
 /**
- * Classify side session category by duration and position
- * positionInGroup: 1-indexed position of this session among all sessions for this group
- * totalInGroup: total sessions in the group
+ * Classify side session category by duration and position.
+ * positionInGroup : 1-indexed position of this session among all sessions for this group
+ * totalInGroup    : total sessions in the group
+ * prevDurations   : array of normalizeDuration() results for all sessions BEFORE this one
+ *
+ * Rules:
+ *   compensatory  → position 1, duration > 50 min
+ *   onboarding    → position 1, duration > 30 min (and ≤ 50)
+ *   offboarding   → position 7, AND at least 5 of the previous sessions are 15-min sessions
+ *   regular       → everything else (15-min, 30-min فون كول, null duration, …)
  */
-function classifySideSession(durationStr, positionInGroup, totalInGroup) {
+function classifySideSession(durationStr, positionInGroup, totalInGroup, prevDurations = []) {
   const dur = normalizeDuration(durationStr);
-  if (dur === null) return 'regular';
-  if (dur === 15) return 'regular';
-  // 30-min sessions are phone-call format (فون كول) — treated same as 15-min zoom calls
-  if (dur === 30) return 'regular';
-  if (positionInGroup === 1 && dur > 50) return 'compensatory';
-  if (positionInGroup === 1 && dur > 30) return 'onboarding';
-  if (positionInGroup > 1 && dur > 30) return 'offboarding';
+
+  // ── Position-1 special cases ──────────────────────────────────────────────
+  if (positionInGroup === 1) {
+    if (dur !== null && dur > 50) return 'compensatory';
+    if (dur !== null && dur > 30) return 'onboarding';
+  }
+
+  // ── Offboarding: session #7 with ≥5 preceding 15-min sessions ────────────
+  if (positionInGroup === 7) {
+    const prev15 = prevDurations.filter(d => d === 15).length;
+    if (prev15 >= 5) return 'offboarding';
+  }
+
+  // ── Default: regular (covers 15-min, 30-min فون كول, unknown duration) ───
   return 'regular';
 }
 
@@ -358,6 +372,11 @@ function parseSideSessions(buffer) {
     const total = sorted.length;
     sorted.forEach((r, idx) => {
       const duration = r[3] ? String(r[3]).trim() : null;
+      // Build normalized-duration array for all sessions that came BEFORE this one
+      // (needed so classifySideSession can count preceding 15-min sessions for offboarding)
+      const prevDurations = sorted.slice(0, idx).map(pr =>
+        normalizeDuration(pr[3] ? String(pr[3]).trim() : null)
+      );
       result.push({
         group_name: groupName,
         date: normalizeDate(r[1]),
@@ -368,7 +387,7 @@ function parseSideSessions(buffer) {
         location: r[6] ? String(r[6]).trim() : null,
         attendance: r[7] ? String(r[7]).trim() : null,
         session_type: 'side',
-        side_session_category: classifySideSession(duration, idx + 1, total),
+        side_session_category: classifySideSession(duration, idx + 1, total, prevDurations),
       });
     });
   }
