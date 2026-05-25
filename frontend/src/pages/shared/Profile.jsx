@@ -40,6 +40,21 @@ function InfoRow({ icon, label, value }) {
   );
 }
 
+// Translate a raw management value to its Arabic label (or leave as-is).
+function mgmtLabel(v) {
+  return MANAGEMENT_LABEL[v] || v || '';
+}
+
+// Combine primary + extras into one display string, e.g. "General + Private".
+// Extras come as a comma-separated string from the backend.
+function combineWithExtras(primary, extrasStr) {
+  const extras = String(extrasStr || '')
+    .split(',').map(s => s.trim()).filter(Boolean)
+    .filter(s => s.toLowerCase() !== String(primary || '').toLowerCase());
+  if (!primary && extras.length === 0) return '';
+  return [primary, ...extras].filter(Boolean).join(' + ');
+}
+
 // ─── MAIN COMPONENT ────────────────────────────────────────────────────────────
 export default function Profile() {
   const { user } = useAuth();
@@ -106,8 +121,22 @@ export default function Profile() {
           </div>
           <div className="p-4 space-y-2.5">
             <InfoRow icon={Shield}    label="الدور"    value={ROLE_LABEL[user?.role] || user?.role} />
-            <InfoRow icon={Briefcase} label="القسم"   value={user?.department} />
-            <InfoRow icon={Mail}      label="الإدارة" value={MANAGEMENT_LABEL[user?.management] || user?.management} />
+            <InfoRow
+              icon={Briefcase}
+              label="القسم"
+              value={combineWithExtras(user?.department, user?.extra_departments)}
+            />
+            <InfoRow
+              icon={Mail}
+              label="الإدارة"
+              value={combineWithExtras(
+                mgmtLabel(user?.management),
+                String(user?.extra_managements || '').split(',')
+                  .map(s => mgmtLabel(s.trim()))
+                  .filter(Boolean)
+                  .join(','),
+              )}
+            />
             <InfoRow icon={Briefcase} label="الـ Line" value={user?.line} />
           </div>
         </div>
