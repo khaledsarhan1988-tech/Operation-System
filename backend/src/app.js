@@ -500,6 +500,39 @@ initDb().then(db => {
     console.error('lectures 30-min side session reclassify migration error:', e.message);
   }
 
+  // ── lectures: reclassify first-session side sessions >= 20 min → onboarding ─
+  // New rule: onboarding = position 1 (earliest session for the group) AND
+  // duration >= 20 min. Previously the threshold was > 30 min.
+  // Backfill: find sessions that ARE the earliest for their group AND have
+  // 20 ≤ duration ≤ 50 min AND are currently classified as 'regular'.
+  try {
+    db._raw.run(`
+      UPDATE lectures
+      SET side_session_category = 'onboarding'
+      WHERE session_type = 'side'
+        AND status != 'غير مؤكدة'
+        AND side_session_category = 'regular'
+        AND duration IS NOT NULL
+        AND (CAST(SUBSTR(duration,1,2) AS INTEGER)*60 + CAST(SUBSTR(duration,4,2) AS INTEGER)) >= 20
+        AND (CAST(SUBSTR(duration,1,2) AS INTEGER)*60 + CAST(SUBSTR(duration,4,2) AS INTEGER)) <= 50
+        AND (date || '|' || COALESCE(time,'')) = (
+          SELECT MIN(l2.date || '|' || COALESCE(l2.time,''))
+          FROM lectures l2
+          WHERE l2.group_name   = lectures.group_name
+            AND l2.line         = lectures.line
+            AND l2.session_type = 'side'
+            AND l2.status      != 'غير مؤكدة'
+        )
+    `);
+    const nb = db._raw.exec(`SELECT changes()`)[0]?.values[0][0] || 0;
+    if (nb > 0) {
+      saveNow();
+      console.log('✅ Migration: reclassified ' + nb + ' side session(s) to onboarding (>=20min first session)');
+    }
+  } catch (e) {
+    console.error('lectures onboarding>=20min migration error:', e.message);
+  }
+
   // ── team_members SAFETY: restore from snapshot if rows vanished ─────────
   // Runs after all team_members DDL (step 4a). If anything above wiped or
   // failed to preserve rows, this brings them back from the JSON snapshot

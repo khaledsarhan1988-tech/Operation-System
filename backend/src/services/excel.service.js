@@ -168,17 +168,17 @@ function normalizeDuration(val) {
  *
  * Rules:
  *   compensatory  → position 1, duration > 50 min
- *   onboarding    → position 1, duration > 30 min (and ≤ 50)
+ *   onboarding    → position 1, duration >= 20 min (and ≤ 50)
  *   offboarding   → position 7, AND at least 5 of the previous sessions are 15-min sessions
- *   regular       → everything else (15-min, 30-min فون كول, null duration, …)
+ *   regular       → everything else (< 20 min at position 1, or any later session)
  */
 function classifySideSession(durationStr, positionInGroup, totalInGroup, prevDurations = []) {
   const dur = normalizeDuration(durationStr);
 
   // ── Position-1 special cases ──────────────────────────────────────────────
   if (positionInGroup === 1) {
-    if (dur !== null && dur > 50) return 'compensatory';
-    if (dur !== null && dur > 30) return 'onboarding';
+    if (dur !== null && dur > 50)  return 'compensatory';
+    if (dur !== null && dur >= 20) return 'onboarding';
   }
 
   // ── Offboarding: session #7 with ≥5 preceding 15-min sessions ────────────
