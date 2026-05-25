@@ -479,6 +479,27 @@ initDb().then(db => {
     console.error('coordinator_history backfill migration error:', e.message);
   }
 
+  // ── lectures: fix wrongly classified 30-min side sessions ─────────────────
+  // 30-minute phone-call sessions were classified as onboarding/offboarding
+  // because classifySideSession only treated 15-min sessions as 'regular'.
+  // We now also treat 30-min sessions as 'regular'. Backfill existing rows.
+  try {
+    db._raw.run(`
+      UPDATE lectures
+      SET side_session_category = 'regular'
+      WHERE session_type = 'side'
+        AND duration = '00:30'
+        AND side_session_category IN ('onboarding', 'offboarding')
+    `);
+    const n2 = db._raw.exec(`SELECT changes()`)[0]?.values[0][0] || 0;
+    if (n2 > 0) {
+      saveNow();
+      console.log(\`✅ Migration: reclassified \${n2} 30-min side session(s) from onboarding/offboarding → regular\`);
+    }
+  } catch (e) {
+    console.error('lectures 30-min side session reclassify migration error:', e.message);
+  }
+
   // ── team_members SAFETY: restore from snapshot if rows vanished ─────────
   // Runs after all team_members DDL (step 4a). If anything above wiped or
   // failed to preserve rows, this brings them back from the JSON snapshot
