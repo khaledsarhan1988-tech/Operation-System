@@ -7,7 +7,8 @@ import {
   Video, Users, BarChart2, Globe, UserCog, Upload, FileText,
   LogOut, Headphones, GraduationCap, ShieldCheck, AlertTriangle, Activity, Shuffle, Kanban,
   TrendingUp, Target, Settings, Award, Snowflake, Goal, Database, ChevronDown, Sparkles, BarChart3,
-  Cloud, History, Network, ListTodo, ClipboardCheck, CalendarClock, KeyRound,
+  Cloud, History, Network, ListTodo, ClipboardCheck, CalendarClock, KeyRound, Wallet,
+  Link as LinkIcon, GitBranch,
 } from 'lucide-react';
 import UserAvatar from '../ui/UserAvatar';
 
@@ -127,8 +128,11 @@ function getAdminLinks(user) {
     // System-wide config — super-admin (management='All') only.
     // Department-scoped admins (Customer Services / Quality / Education) don't see these.
     ...(isSuperAdmin ? [
-      { to: '/admin/settings',  label: 'nav.systemSettings', icon: Settings, color: 'slate' },
-      { to: '/admin/db-status', label: 'nav.dbStatus',       icon: Database, color: 'blue'  },
+      { to: '/admin/finance/sync',      label: 'مزامنة Center App', icon: Wallet,    color: 'emerald' },
+      { to: '/admin/finance/matching',  label: 'مطابقة العملاء',     icon: LinkIcon,  color: 'violet',  sub: true },
+      { to: '/admin/finance/lifecycle', label: 'رحلة العميل',        icon: GitBranch, color: 'cyan',    sub: true },
+      { to: '/admin/settings',          label: 'nav.systemSettings', icon: Settings,  color: 'slate' },
+      { to: '/admin/db-status',         label: 'nav.dbStatus',       icon: Database,  color: 'blue'  },
     ] : []),
     { type: 'section', label: 'nav.reportsSection' },
   ];

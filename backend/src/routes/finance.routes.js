@@ -1,0 +1,419 @@
+'use strict';
+
+/**
+ * Internal Finance routes — Phase 1.
+ *
+ * Wraps the local mirror of Center App transactions for the academy admin UI.
+ * Read operations serve straight from the local DB (no Center App round-trip);
+ * write operations are limited to sync control (trigger / backfill / reconcile).
+ *
+ * Authorization (Phase 1): Super Admin only — admin role + management='All'.
+ * In Phase 5 we'll relax this to also allow specific managers/leaders.
+ */
+
+const express = require('express');
+const db = require('../config/database');
+const { authenticate } = require('../middleware/auth');
+const { requireSuperAdmin } = require('../middleware/roles');
+const financeSync = require('../services/financeSync.service');
+const matcher = require('../services/financeMatcher.service');
+const lifecycle = require('../services/clientLifecycle.service');
+
+const router = express.Router();
+router.use(authenticate);
+router.use(requireSuperAdmin);
+
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+
+function clampInt(v, min, max, def) {
+  const n = parseInt(v, 10);
+  if (!Number.isFinite(n)) return def;
+  return Math.max(min, Math.min(max, n));
+}
+
+function isIsoDate(v) {
+  return typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+}
+
+// ─── SYNC CONTROL ─────────────────────────────────────────────────────────────
+
+// GET /api/finance/sync/status — full health snapshot
+router.get('/sync/status', (req, res) => {
+  try {
+    const status = financeSync.getStatus();
+    res.json(status);
+  } catch (e) {
+    console.error('GET /finance/sync/status error:', e.message);
+    res.status(500).json({ error: 'Failed to load sync status' });
+  }
+});
+
+// POST /api/finance/sync/trigger — fire a one-off incremental poll
+router.post('/sync/trigger', async (req, res) => {
+  try {
+    const r = await financeSync.pollIncremental({ triggeredBy: `manual:${req.user.id}` });
+    res.json(r);
+  } catch (e) {
+    console.error('POST /finance/sync/trigger error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/finance/sync/backfill — body: { from?, to?, reset? }
+router.post('/sync/backfill', async (req, res) => {
+  const { from, to, reset } = req.body || {};
+  if (from && !isIsoDate(from)) {
+    return res.status(400).json({ error: 'from must be YYYY-MM-DD' });
+  }
+  if (to && !isIsoDate(to)) {
+    return res.status(400).json({ error: 'to must be YYYY-MM-DD' });
+  }
+  try {
+    const r = await financeSync.runBackfill({
+      from: from || undefined,
+      to: to || undefined,
+      reset: !!reset,
+      triggeredBy: `manual:${req.user.id}`,
+    });
+    res.json(r);
+  } catch (e) {
+    console.error('POST /finance/sync/backfill error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/finance/sync/reconcile — manual reconciliation, body: { windowDays? }
+router.post('/sync/reconcile', async (req, res) => {
+  const windowDays = clampInt(req.body?.windowDays, 1, 3650, 90);
+  try {
+    const r = await financeSync.runReconciliation({
+      windowDays,
+      triggeredBy: `manual:${req.user.id}`,
+    });
+    res.json(r);
+  } catch (e) {
+    console.error('POST /finance/sync/reconcile error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── READ-ONLY DATA ───────────────────────────────────────────────────────────
+
+/**
+ * GET /api/finance/transactions
+ *   Query: from, to, status, type, currency, agent_id, department_id,
+ *          q (phone/name substring), page (1+), limit (1..500)
+ *   Returns: { page, limit, total, transactions: [...] }
+ *
+ * Serves from the LOCAL mirror — no Center App call. This is what every UI
+ * feature should use; reach out to Center App only via the sync engine.
+ */
+router.get('/transactions', (req, res) => {
+  try {
+    const page  = clampInt(req.query.page, 1, 10_000, 1);
+    const limit = clampInt(req.query.limit, 1, 500, 50);
+    const offset = (page - 1) * limit;
+
+    const wheres = [];
+    const params = [];
+    if (isIsoDate(req.query.from)) { wheres.push('date >= ?'); params.push(req.query.from); }
+    if (isIsoDate(req.query.to))   { wheres.push('date <= ?'); params.push(req.query.to); }
+    if (req.query.status)          { wheres.push('status = ?'); params.push(String(req.query.status)); }
+    if (req.query.type)            { wheres.push('type = ?'); params.push(String(req.query.type)); }
+    if (req.query.currency)        { wheres.push('currency = ?'); params.push(String(req.query.currency)); }
+    if (req.query.agent_id)        { wheres.push('agent_id = ?'); params.push(String(req.query.agent_id)); }
+    if (req.query.department_id)   { wheres.push('department_id = ?'); params.push(String(req.query.department_id)); }
+    if (req.query.q) {
+      const q = `%${String(req.query.q).trim()}%`;
+      wheres.push('(client_name LIKE ? COLLATE NOCASE OR client_phone LIKE ?)');
+      params.push(q, q);
+    }
+
+    const whereSql = wheres.length ? `WHERE ${wheres.join(' AND ')}` : '';
+
+    const total = db.prepare(
+      `SELECT COUNT(*) AS n FROM finance_transactions ${whereSql}`
+    ).get(...params)?.n || 0;
+
+    const rows = db.prepare(`
+      SELECT id, date, client_name, client_phone, type, amount, currency, category,
+             status, discount_label, discount_pct, has_installments,
+             product_id, product_name, deal_type, governorate,
+             agent_id, agent_name, created_by, created_by_name,
+             approved_by, approved_by_name, approved_at, rejection_reason,
+             department_id, department_name, created_at, updated_at,
+             synced_at, matched_client_id
+        FROM finance_transactions
+        ${whereSql}
+       ORDER BY date DESC, updated_at DESC
+       LIMIT ? OFFSET ?
+    `).all(...params, limit, offset);
+
+    res.json({ page, limit, total, transactions: rows });
+  } catch (e) {
+    console.error('GET /finance/transactions error:', e.message);
+    res.status(500).json({ error: 'Failed to load transactions' });
+  }
+});
+
+/**
+ * GET /api/finance/transactions/:id
+ *   Returns full row + installments[] + audit_events[] (whatever we have
+ *   cached locally — Phase 1 doesn't auto-fetch the audit endpoint).
+ */
+router.get('/transactions/:id', (req, res) => {
+  const id = String(req.params.id || '').trim();
+  if (!id) return res.status(400).json({ error: 'id required' });
+
+  try {
+    const tx = db.prepare(`SELECT * FROM finance_transactions WHERE id = ?`).get(id);
+    if (!tx) return res.status(404).json({ error: 'Not found' });
+
+    const installments = db.prepare(`
+      SELECT installment_no, amount, due_date, paid, paid_at, note
+        FROM finance_installments
+       WHERE transaction_id = ?
+       ORDER BY installment_no ASC
+    `).all(id);
+
+    const audit = db.prepare(`
+      SELECT event_type, event_at, actor_id, actor_name, details, fetched_at
+        FROM finance_audit_events
+       WHERE transaction_id = ?
+       ORDER BY event_at ASC
+    `).all(id);
+
+    res.json({ transaction: tx, installments, audit });
+  } catch (e) {
+    console.error('GET /finance/transactions/:id error:', e.message);
+    res.status(500).json({ error: 'Failed to load transaction' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PHASE 2 — CLIENT MATCHING
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET /api/finance/match/stats — counts by match_method bucket
+router.get('/match/stats', (req, res) => {
+  try {
+    res.json(matcher.getMatchStats());
+  } catch (e) {
+    console.error('GET /finance/match/stats error:', e.message);
+    res.status(500).json({ error: 'Failed to load match stats' });
+  }
+});
+
+// GET /api/finance/match/transactions — list transactions filtered by match state
+//   ?state=matched|ambiguous|unmatched|not_attempted   (default: all)
+//   + standard q/page/limit
+router.get('/match/transactions', (req, res) => {
+  try {
+    const page  = clampInt(req.query.page, 1, 10_000, 1);
+    const limit = clampInt(req.query.limit, 1, 500, 50);
+    const offset = (page - 1) * limit;
+    const state = String(req.query.state || '').toLowerCase();
+
+    const wheres = [];
+    const params = [];
+    if (state === 'matched')        wheres.push(`matched_client_id IS NOT NULL`);
+    else if (state === 'ambiguous') wheres.push(`match_method = 'ambiguous'`);
+    else if (state === 'unmatched') wheres.push(`match_method = 'unmatched'`);
+    else if (state === 'not_attempted') wheres.push(`match_attempted_at IS NULL`);
+
+    if (req.query.q) {
+      const q = `%${String(req.query.q).trim()}%`;
+      wheres.push('(client_name LIKE ? COLLATE NOCASE OR client_phone LIKE ?)');
+      params.push(q, q);
+    }
+
+    const whereSql = wheres.length ? `WHERE ${wheres.join(' AND ')}` : '';
+    const total = db.prepare(`SELECT COUNT(*) AS n FROM finance_transactions ${whereSql}`).get(...params)?.n || 0;
+    const rows = db.prepare(`
+      SELECT t.id, t.date, t.client_name, t.client_phone, t.type, t.amount, t.currency,
+             t.status, t.product_name, t.matched_client_id, t.match_method,
+             t.match_confidence, t.match_attempted_at, t.matched_by,
+             c.name AS matched_client_name, c.phone AS matched_client_phone, c.group_name AS matched_client_group
+        FROM finance_transactions t
+        LEFT JOIN clients c ON c.id = t.matched_client_id
+        ${whereSql}
+       ORDER BY t.date DESC, t.updated_at DESC
+       LIMIT ? OFFSET ?
+    `).all(...params, limit, offset);
+
+    res.json({ page, limit, total, transactions: rows });
+  } catch (e) {
+    console.error('GET /finance/match/transactions error:', e.message);
+    res.status(500).json({ error: 'Failed to load transactions' });
+  }
+});
+
+// GET /api/finance/match/candidates/:tx_id — candidates for ambiguous matches
+router.get('/match/candidates/:tx_id', (req, res) => {
+  try {
+    res.json({ candidates: matcher.getCandidatesForTx(req.params.tx_id) });
+  } catch (e) {
+    console.error('GET /finance/match/candidates error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/finance/match/transaction/:tx_id — auto-match a single tx, optionally forcing re-run
+router.post('/match/transaction/:tx_id', (req, res) => {
+  try {
+    const lifecycleSvc = lifecycle;
+    const r = matcher.matchTransaction(req.params.tx_id, {
+      force: !!req.body?.force,
+      onMatched: (clientId, txId) => {
+        try { lifecycleSvc.regenerateFromTransactionId(txId); }
+        catch (e) { console.error('lifecycle hook error:', e.message); }
+      },
+    });
+    res.json(r);
+  } catch (e) {
+    console.error('POST /finance/match/transaction error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/finance/match/transaction/:tx_id/manual — admin picks a client
+//   body: { client_id: <id> | null }   null → unmatch
+router.post('/match/transaction/:tx_id/manual', (req, res) => {
+  try {
+    const clientId = req.body?.client_id;
+    const lifecycleSvc = lifecycle;
+    const r = matcher.manualMatch(req.params.tx_id, clientId, req.user.id, {
+      onMatched: (cid, txId) => {
+        try { lifecycleSvc.regenerateFromTransactionId(txId); }
+        catch (e) { console.error('lifecycle hook error:', e.message); }
+      },
+    });
+    res.json(r);
+  } catch (e) {
+    const status = e.status || 500;
+    res.status(status).json({ error: e.message });
+  }
+});
+
+// POST /api/finance/match/run-all — bulk re-match
+//   body: { scope: 'unattempted' | 'unmatched' | 'all' }   default 'unattempted'
+router.post('/match/run-all', (req, res) => {
+  try {
+    const scope = ['unattempted', 'unmatched', 'all'].includes(req.body?.scope) ? req.body.scope : 'unattempted';
+    const lifecycleSvc = lifecycle;
+    const r = matcher.matchAll({
+      scope,
+      onMatched: (cid, txId) => {
+        try { lifecycleSvc.regenerateFromTransactionId(txId); }
+        catch (e) { console.error('lifecycle hook error:', e.message); }
+      },
+    });
+    res.json(r);
+  } catch (e) {
+    console.error('POST /finance/match/run-all error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/finance/match/clients/search — search academy clients for manual match UI
+router.get('/match/clients/search', (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) return res.json({ clients: [] });
+    const like = `%${q}%`;
+    const rows = db.prepare(`
+      SELECT id, name, phone, group_name, line
+        FROM clients
+       WHERE name LIKE ? COLLATE NOCASE OR phone LIKE ?
+       ORDER BY name ASC
+       LIMIT 50
+    `).all(like, like);
+    res.json({ clients: rows });
+  } catch (e) {
+    console.error('GET /finance/match/clients/search error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PHASE 3 — CLIENT LIFECYCLE
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET /api/finance/lifecycle/stats — counts by event_type/category/level
+router.get('/lifecycle/stats', (req, res) => {
+  try {
+    res.json(lifecycle.getStats());
+  } catch (e) {
+    console.error('GET /finance/lifecycle/stats error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/finance/lifecycle/client/:client_id — full timeline for one client
+router.get('/lifecycle/client/:client_id', (req, res) => {
+  const cid = parseInt(req.params.client_id, 10);
+  if (!Number.isFinite(cid)) return res.status(400).json({ error: 'invalid client_id' });
+  try {
+    const client = db.prepare(`SELECT id, name, phone, group_name, line FROM clients WHERE id = ?`).get(cid);
+    if (!client) return res.status(404).json({ error: 'Client not found' });
+    const events = lifecycle.getClientTimeline(cid, { limit: clampInt(req.query.limit, 1, 1000, 500) });
+    res.json({ client, events });
+  } catch (e) {
+    console.error('GET /finance/lifecycle/client error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/finance/lifecycle/regenerate-all — rebuild every matched tx → event
+router.post('/lifecycle/regenerate-all', (req, res) => {
+  try {
+    res.json(lifecycle.regenerateAll());
+  } catch (e) {
+    console.error('POST /finance/lifecycle/regenerate-all error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/finance/lifecycle/search-clients — quick client lookup (alias to match search)
+router.get('/lifecycle/search-clients', (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) return res.json({ clients: [] });
+    const like = `%${q}%`;
+    // Only return clients that have at least one lifecycle event — the UI
+    // browses people who've actually interacted with finance.
+    const rows = db.prepare(`
+      SELECT DISTINCT c.id, c.name, c.phone, c.group_name, c.line,
+             (SELECT COUNT(*) FROM client_lifecycle_events WHERE client_id = c.id) AS events
+        FROM clients c
+       WHERE (c.name LIKE ? COLLATE NOCASE OR c.phone LIKE ?)
+       ORDER BY c.name ASC
+       LIMIT 50
+    `).all(like, like);
+    res.json({ clients: rows.filter(r => r.events > 0) });
+  } catch (e) {
+    console.error('GET /finance/lifecycle/search-clients error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/finance/sync/logs — paginated log of every sync run
+router.get('/sync/logs', (req, res) => {
+  const page  = clampInt(req.query.page, 1, 10_000, 1);
+  const limit = clampInt(req.query.limit, 1, 200, 50);
+  const offset = (page - 1) * limit;
+  try {
+    const total = db.prepare(`SELECT COUNT(*) AS n FROM finance_sync_log`).get()?.n || 0;
+    const rows = db.prepare(`
+      SELECT * FROM finance_sync_log
+       ORDER BY started_at DESC
+       LIMIT ? OFFSET ?
+    `).all(limit, offset);
+    res.json({ page, limit, total, logs: rows });
+  } catch (e) {
+    console.error('GET /finance/sync/logs error:', e.message);
+    res.status(500).json({ error: 'Failed to load logs' });
+  }
+});
+
+module.exports = router;

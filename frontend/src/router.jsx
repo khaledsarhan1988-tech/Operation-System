@@ -56,6 +56,9 @@ import TargetsManagement from './pages/admin/TargetsManagement';
 import MyProgression from './pages/agent/MyProgression';
 import MyTodos from './pages/agent/MyTodos';
 import SystemSettings from './pages/admin/SystemSettings';
+import FinanceSync from './pages/admin/FinanceSync';
+import FinanceMatching from './pages/admin/FinanceMatching';
+import FinanceLifecycle from './pages/admin/FinanceLifecycle';
 import TeamProgression from './pages/leader/TeamProgression';
 import EvaluateGoals from './pages/leader/EvaluateGoals';
 
@@ -162,6 +165,9 @@ const router = createBrowserRouter([
       { path: 'employee-progression',          element: <EmployeeProgression /> },
       { path: 'targets',                       element: <TargetsManagement /> },
       { path: 'settings',                      element: <PrivateRoute superAdmin><SystemSettings /></PrivateRoute> },
+      { path: 'finance/sync',                  element: <PrivateRoute superAdmin><FinanceSync /></PrivateRoute> },
+      { path: 'finance/matching',              element: <PrivateRoute superAdmin><FinanceMatching /></PrivateRoute> },
+      { path: 'finance/lifecycle',             element: <PrivateRoute superAdmin><FinanceLifecycle /></PrivateRoute> },
     ],
   },
 
