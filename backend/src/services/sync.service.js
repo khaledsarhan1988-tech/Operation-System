@@ -839,16 +839,17 @@ function syncAbsent(buffer, line) {
   // ── Phone-based name enrichment ────────────────────────────────────────────
   // When a row has a phone but no student name (e.g. Arabic name in a PDF that
   // OCR couldn't extract), look up the name from the clients table.
-  // Tries phone as-is, then with a leading '0' (handles local vs. stored format).
+  // No line constraint — phone alone is unique enough and avoids misses when
+  // the client's stored line differs from the upload context line.
   {
     const nameByPhone = db.prepare(
       `SELECT name FROM clients
-       WHERE (phone = ? OR phone = '0' || ?) AND line = ?
+       WHERE (phone = ? OR phone = '0' || ?)
        LIMIT 1`
     );
     rows.forEach(r => {
       if ((!r.student_name || !String(r.student_name).trim()) && r.phone) {
-        const hit = nameByPhone.get(r.phone, r.phone, line);
+        const hit = nameByPhone.get(r.phone, r.phone);
         if (hit && hit.name) r.student_name = String(hit.name).trim();
       }
     });
@@ -893,15 +894,17 @@ function syncAbsentZoom(buffer, line) {
   const rows = excel.parseAbsent(buffer);
 
   // ── Phone-based name enrichment (same rule as syncAbsent) ─────────────────
+  // No line constraint — phone alone is unique enough and avoids misses when
+  // the client's stored line differs from the upload context line.
   {
     const nameByPhone = db.prepare(
       `SELECT name FROM clients
-       WHERE (phone = ? OR phone = '0' || ?) AND line = ?
+       WHERE (phone = ? OR phone = '0' || ?)
        LIMIT 1`
     );
     rows.forEach(r => {
       if ((!r.student_name || !String(r.student_name).trim()) && r.phone) {
-        const hit = nameByPhone.get(r.phone, r.phone, line);
+        const hit = nameByPhone.get(r.phone, r.phone);
         if (hit && hit.name) r.student_name = String(hit.name).trim();
       }
     });

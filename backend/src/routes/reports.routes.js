@@ -510,9 +510,9 @@ function buildRemarksNotesMainInnerQ({ from_date, to_date, department, employee,
       ) AS dept_type
     FROM absent_students a
     LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
-    LEFT JOIN (SELECT phone, line, MIN(name) AS name FROM clients${line ? ` WHERE line = '${line.replace(/'/g, "''")}'` : ''} GROUP BY phone, line) c_lu
+    LEFT JOIN (SELECT phone, MIN(name) AS name FROM clients GROUP BY phone) c_lu
       ON (a.student_name IS NULL OR TRIM(a.student_name)='')
-      AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)${line ? ' AND c_lu.line = a.line' : ''}
+      AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)
     LEFT JOIN (
       SELECT group_name, date, line,
         ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
@@ -522,7 +522,7 @@ function buildRemarksNotesMainInnerQ({ from_date, to_date, department, employee,
       AND a.lecture_no IS NOT NULL AND lec_inf.lec_num = a.lecture_no${line ? ' AND lec_inf.line = a.line' : ''}
     WHERE (
       (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
-      OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+      OR (a.phone IS NOT NULL AND TRIM(a.phone)!='')
     )
     AND EXISTS (
       SELECT 1 FROM lectures l_chk
@@ -690,13 +690,13 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
       ) AS dept_type
     FROM absent_students a
     INNER JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
-    LEFT JOIN (SELECT phone, line, MIN(name) AS name FROM clients${line ? ` WHERE line = '${line.replace(/'/g, "''")}'` : ''} GROUP BY phone, line) c_lu
+    LEFT JOIN (SELECT phone, MIN(name) AS name FROM clients GROUP BY phone) c_lu
       ON (a.student_name IS NULL OR TRIM(a.student_name) = '')
       AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
-      AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)${line ? ' AND c_lu.line = a.line' : ''}
+      AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)
     WHERE (
       (a.student_name IS NOT NULL AND TRIM(a.student_name) != '')
-      OR (a.phone IS NOT NULL AND TRIM(a.phone) != '' AND c_lu.name IS NOT NULL)
+      OR (a.phone IS NOT NULL AND TRIM(a.phone) != '')
     )
     AND a.date IS NOT NULL AND TRIM(a.date) != ''
     AND EXISTS (
@@ -727,13 +727,13 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
       ) AS dept_type
     FROM absent_zoom_students a
     INNER JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
-    LEFT JOIN (SELECT phone, line, MIN(name) AS name FROM clients${line ? ` WHERE line = '${line.replace(/'/g, "''")}'` : ''} GROUP BY phone, line) c_lu
+    LEFT JOIN (SELECT phone, MIN(name) AS name FROM clients GROUP BY phone) c_lu
       ON (a.student_name IS NULL OR TRIM(a.student_name) = '')
       AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
-      AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)${line ? ' AND c_lu.line = a.line' : ''}
+      AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)
     WHERE (
       (a.student_name IS NOT NULL AND TRIM(a.student_name) != '')
-      OR (a.phone IS NOT NULL AND TRIM(a.phone) != '' AND c_lu.name IS NOT NULL)
+      OR (a.phone IS NOT NULL AND TRIM(a.phone) != '')
     )
     AND a.date IS NOT NULL AND TRIM(a.date) != ''
     AND EXISTS (
@@ -1036,7 +1036,7 @@ router.get('/dashboard', (req, res) => {
              AND lec_inf.lec_num = a.lecture_no${line ? ' AND lec_inf.line = a.line' : ''}
            WHERE (
              (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
-             OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND EXISTS (SELECT 1 FROM clients c WHERE (c.phone = a.phone OR c.phone = '0' || a.phone OR a.phone = '0' || c.phone)${line ? ' AND c.line = a.line' : ''}))
+             OR (a.phone IS NOT NULL AND TRIM(a.phone)!='')
            )
            ${absentDeptB}${absentEmpB}${lineA}
          ) p1_inner
@@ -1093,10 +1093,10 @@ router.get('/dashboard', (req, res) => {
         `SELECT COUNT(DISTINCT a.id) as cnt FROM absent_zoom_students a
          LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
          LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
-           AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)${line ? ' AND c_lu.line = a.line' : ''}
+           AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)
          WHERE (
            (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
-           OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+           OR (a.phone IS NOT NULL AND TRIM(a.phone)!='')
          )
          AND EXISTS (
            SELECT 1 FROM lectures l
@@ -1417,7 +1417,7 @@ router.get('/absent-list', (req, res) => {
         AND lec_inf.lec_num = a.lecture_no${line ? ' AND lec_inf.line = a.line' : ''}
       WHERE (
         (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
-        OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND EXISTS (SELECT 1 FROM clients c WHERE (c.phone = a.phone OR c.phone = '0' || a.phone OR a.phone = '0' || c.phone)${line ? ' AND c.line = a.line' : ''}))
+        OR (a.phone IS NOT NULL AND TRIM(a.phone)!='')
       )
       ${deptFilter}${empFilter}${coordFilter}${searchFilter}${lineA}
     ) p1_inner
@@ -1530,10 +1530,10 @@ router.get('/absent-side-list', (req, res) => {
       FROM absent_zoom_students a
       LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
       LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
-        AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)${line ? ' AND c_lu.line = a.line' : ''}
+        AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)
       WHERE (
         (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
-        OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+        OR (a.phone IS NOT NULL AND TRIM(a.phone)!='')
       )
       AND EXISTS (
         SELECT 1 FROM lectures l
@@ -4886,7 +4886,7 @@ router.get('/attendance-absence', (req, res) => {
         FROM absent_students a
         LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
         LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
-          AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)${line ? ' AND c_lu.line = a.line' : ''}
+          AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)
         LEFT JOIN (
           SELECT group_name, date, line,
             ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
@@ -4897,7 +4897,7 @@ router.get('/attendance-absence', (req, res) => {
           AND lec_inf.lec_num = a.lecture_no${line ? ' AND lec_inf.line = a.line' : ''}
         WHERE (
           (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
-          OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+          OR (a.phone IS NOT NULL AND TRIM(a.phone)!='')
         )
         ${deptFilterAbsentP1}${coordFilterB}${lineA}
       ) p1
@@ -5128,7 +5128,7 @@ router.get('/attendance-absence-by-department', (req, res) => {
         FROM absent_students a
         LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
         LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
-          AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)${line ? ' AND c_lu.line = a.line' : ''}
+          AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)
         LEFT JOIN (
           SELECT group_name, date, line,
             ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
@@ -5139,7 +5139,7 @@ router.get('/attendance-absence-by-department', (req, res) => {
           AND lec_inf.lec_num = a.lecture_no${line ? ' AND lec_inf.line = a.line' : ''}
         WHERE (
           (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
-          OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+          OR (a.phone IS NOT NULL AND TRIM(a.phone)!='')
         )
         ${deptFilterB}${coordFilterB}${lineA}
       ) p1
@@ -5430,7 +5430,7 @@ router.get('/quality-employee', (req, res) => {
         FROM absent_students a
         LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
         LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
-          AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)${line ? ' AND c_lu.line = a.line' : ''}
+          AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)
         LEFT JOIN (
           SELECT group_name, date, line,
             ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
@@ -5441,7 +5441,7 @@ router.get('/quality-employee', (req, res) => {
           AND lec_inf.lec_num = a.lecture_no${line ? ' AND lec_inf.line = a.line' : ''}
         WHERE (
           (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
-          OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+          OR (a.phone IS NOT NULL AND TRIM(a.phone)!='')
         )
         AND ${coordMatch}
       ) p1
@@ -5649,7 +5649,7 @@ router.get('/quality-employee/details', (req, res) => {
         FROM absent_students a
         INNER JOIN batches b ON b.group_name = a.group_name${line ? ' AND b.line = a.line' : ''}
         LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
-          AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)${line ? ' AND c_lu.line = a.line' : ''}
+          AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)
         LEFT JOIN (
           SELECT group_name, date, line,
             ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
@@ -5660,7 +5660,7 @@ router.get('/quality-employee/details', (req, res) => {
           AND lec_inf.lec_num = a.lecture_no${line ? ' AND lec_inf.line = a.line' : ''}
         WHERE (
           (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
-          OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+          OR (a.phone IS NOT NULL AND TRIM(a.phone)!='')
         )
         AND ${coordMatch}
       ) p1
@@ -5986,7 +5986,7 @@ router.get('/quality-diagnostic', (req, res) => {
         FROM absent_students a
         LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
         LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
-          AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)${line ? ' AND c_lu.line = a.line' : ''}
+          AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)
         LEFT JOIN (
           SELECT group_name, date, line,
             ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
@@ -5997,7 +5997,7 @@ router.get('/quality-diagnostic', (req, res) => {
           AND lec_inf.lec_num = a.lecture_no${line ? ' AND lec_inf.line = a.line' : ''}
         WHERE (
           (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
-          OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND c_lu.name IS NOT NULL)
+          OR (a.phone IS NOT NULL AND TRIM(a.phone)!='')
         )${lineA}${deptFilterB}
       ) p1
       WHERE resolved_date BETWEEN '${from}' AND '${to}'
