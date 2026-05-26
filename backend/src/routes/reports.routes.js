@@ -1036,7 +1036,7 @@ router.get('/dashboard', (req, res) => {
              AND lec_inf.lec_num = a.lecture_no${line ? ' AND lec_inf.line = a.line' : ''}
            WHERE (
              (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
-             OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND EXISTS (SELECT 1 FROM clients c WHERE c.phone = a.phone${line ? ' AND c.line = a.line' : ''}))
+             OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND EXISTS (SELECT 1 FROM clients c WHERE (c.phone = a.phone OR c.phone = '0' || a.phone OR a.phone = '0' || c.phone)${line ? ' AND c.line = a.line' : ''}))
            )
            ${absentDeptB}${absentEmpB}${lineA}
          ) p1_inner
@@ -1417,7 +1417,7 @@ router.get('/absent-list', (req, res) => {
         AND lec_inf.lec_num = a.lecture_no${line ? ' AND lec_inf.line = a.line' : ''}
       WHERE (
         (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
-        OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND EXISTS (SELECT 1 FROM clients c WHERE c.phone = a.phone${line ? ' AND c.line = a.line' : ''}))
+        OR (a.phone IS NOT NULL AND TRIM(a.phone)!='' AND EXISTS (SELECT 1 FROM clients c WHERE (c.phone = a.phone OR c.phone = '0' || a.phone OR a.phone = '0' || c.phone)${line ? ' AND c.line = a.line' : ''}))
       )
       ${deptFilter}${empFilter}${coordFilter}${searchFilter}${lineA}
     ) p1_inner
