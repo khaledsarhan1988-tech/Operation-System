@@ -836,6 +836,24 @@ function syncSideSessions(buffer, line) {
 function syncAbsent(buffer, line) {
   const rows = excel.parseAbsent(buffer);
 
+  // ── Phone-based name enrichment ────────────────────────────────────────────
+  // When a row has a phone but no student name (e.g. Arabic name in a PDF that
+  // OCR couldn't extract), look up the name from the clients table.
+  // Tries phone as-is, then with a leading '0' (handles local vs. stored format).
+  {
+    const nameByPhone = db.prepare(
+      `SELECT name FROM clients
+       WHERE (phone = ? OR phone = '0' || ?) AND line = ?
+       LIMIT 1`
+    );
+    rows.forEach(r => {
+      if ((!r.student_name || !String(r.student_name).trim()) && r.phone) {
+        const hit = nameByPhone.get(r.phone, r.phone, line);
+        if (hit && hit.name) r.student_name = String(hit.name).trim();
+      }
+    });
+  }
+
   // Snapshot follow-up data BEFORE delete — SCOPED by line
   const preserved = {};
   db.prepare('SELECT group_name, student_name, date, lecture_no, follow_up_status, follow_up_note, follow_up_by, follow_up_at FROM absent_students WHERE line = ?')
@@ -873,6 +891,21 @@ function syncAbsent(buffer, line) {
 function syncAbsentZoom(buffer, line) {
   // Same parser as the main absent file — columns are identical
   const rows = excel.parseAbsent(buffer);
+
+  // ── Phone-based name enrichment (same rule as syncAbsent) ─────────────────
+  {
+    const nameByPhone = db.prepare(
+      `SELECT name FROM clients
+       WHERE (phone = ? OR phone = '0' || ?) AND line = ?
+       LIMIT 1`
+    );
+    rows.forEach(r => {
+      if ((!r.student_name || !String(r.student_name).trim()) && r.phone) {
+        const hit = nameByPhone.get(r.phone, r.phone, line);
+        if (hit && hit.name) r.student_name = String(hit.name).trim();
+      }
+    });
+  }
 
   // Snapshot follow-up data BEFORE delete — SCOPED by line
   const preserved = {};

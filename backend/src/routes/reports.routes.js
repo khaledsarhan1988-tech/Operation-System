@@ -1388,7 +1388,9 @@ router.get('/absent-list', (req, res) => {
       SELECT
         COALESCE(
           CASE WHEN a.phone IS NOT NULL AND TRIM(a.phone)!='' THEN
-            (SELECT c.name FROM clients c WHERE c.phone = a.phone LIMIT 1)
+            (SELECT c.name FROM clients c
+             WHERE c.phone = a.phone OR c.phone = '0' || a.phone OR a.phone = '0' || c.phone
+             LIMIT 1)
           END,
           NULLIF(TRIM(a.student_name),'')
         ) AS student_name,
