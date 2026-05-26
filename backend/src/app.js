@@ -500,6 +500,39 @@ initDb().then(db => {
     console.error('lectures 30-min side session reclassify migration error:', e.message);
   }
 
+  // ── lectures: fix short side sessions (< 20 min) wrongly classified ─────────
+  // Any side session shorter than 20 minutes is always a regular zoom call.
+  // Some sessions (e.g. 14-min) may have been mis-classified as onboarding or
+  // offboarding due to format edge-cases. Fix them now.
+  // Uses the same HH:MM / MM:SS disambiguation as normalizeDuration() in JS:
+  //   first segment >= 5  → MM:SS format, minutes = first segment
+  //   first segment < 5   → HH:MM format, minutes = first*60 + second
+  try {
+    db._raw.run(`
+      UPDATE lectures
+      SET side_session_category = 'regular'
+      WHERE session_type = 'side'
+        AND duration IS NOT NULL AND TRIM(duration) != ''
+        AND INSTR(duration, ':') > 0
+        AND side_session_category IN ('onboarding', 'offboarding')
+        AND (
+          CASE
+            WHEN CAST(SUBSTR(duration, 1, INSTR(duration,':')-1) AS INTEGER) >= 5
+            THEN CAST(SUBSTR(duration, 1, INSTR(duration,':')-1) AS INTEGER)
+            ELSE CAST(SUBSTR(duration, 1, INSTR(duration,':')-1) AS INTEGER) * 60
+                 + CAST(SUBSTR(duration, INSTR(duration,':')+1, 2) AS INTEGER)
+          END
+        ) < 20
+    `);
+    const nShort = db._raw.exec(`SELECT changes()`)[0]?.values[0][0] || 0;
+    if (nShort > 0) {
+      saveNow();
+      console.log('✅ Migration: fixed ' + nShort + ' short side session(s) (< 20 min) → regular');
+    }
+  } catch (e) {
+    console.error('lectures short side session fix migration error:', e.message);
+  }
+
   // ── lectures: reclassify first-session side sessions >= 20 min → onboarding ─
   // New rule: onboarding = position 1 (earliest session for the group) AND
   // duration >= 20 min. Previously the threshold was > 30 min.
@@ -1529,6 +1562,241 @@ initDb().then(db => {
     console.error('batches dept_type re-classification migration error:', e.message);
   }
 
+  // ── FINANCE INTEGRATION (Phase 1): Center App transactions mirror ────────
+  // Read-only sync of the Finance Transactions API from center-app-2 (separate
+  // app, same academy). Foundation for the client-level-progression system —
+  // every new_enrollment / renewal / upgrade transaction becomes a lifecycle
+  // event for the client.
+  //
+  // The sync engine (services/financeSync.service.js) polls
+  //   GET /api/external/transactions?since=<cursor>&limit=500
+  // every 30s and upserts here by `id` (Center App UUID = stable PK).
+  //
+  // 5 tables, all independent of existing schema. Safe to recreate / drop without
+  // affecting any other feature.
+  //
+  // Notes on field choices:
+  //   • `amount` stored as TEXT, not REAL — sql.js coerces decimals to float and
+  //     loses precision. We keep the raw API string and parse on read.
+  //   • `raw_json` keeps the full API payload — if the API adds fields we don't
+  //     know about yet, or we hit a bug, we can replay/inspect without re-fetching.
+  //   • `matched_client_id` stays NULL in Phase 1; Phase 2 will populate it from
+  //     phone/name match against the academy `clients` table.
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS finance_transactions (
+        id                  TEXT PRIMARY KEY,
+        date                TEXT,
+        client_name         TEXT,
+        client_phone        TEXT,
+        type                TEXT,
+        amount              TEXT,
+        currency            TEXT,
+        category            TEXT,
+        status              TEXT,
+        discount_label      TEXT,
+        discount_pct        TEXT,
+        job                 TEXT,
+        classify            TEXT,
+        note                TEXT,
+        has_installments    INTEGER NOT NULL DEFAULT 0,
+        product_id          TEXT,
+        product_name        TEXT,
+        deal_type           TEXT,
+        governorate         TEXT,
+        agent_id            TEXT,
+        agent_name          TEXT,
+        created_by          TEXT,
+        created_by_name     TEXT,
+        approved_by         TEXT,
+        approved_by_name    TEXT,
+        approved_at         TEXT,
+        rejection_reason    TEXT,
+        department_id       TEXT,
+        department_name     TEXT,
+        created_at          TEXT,
+        updated_at          TEXT,
+        synced_at           TEXT,
+        matched_client_id   INTEGER,
+        raw_json            TEXT
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_finance_tx_updated ON finance_transactions(updated_at)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_finance_tx_date    ON finance_transactions(date)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_finance_tx_phone   ON finance_transactions(client_phone)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_finance_tx_name    ON finance_transactions(client_name COLLATE NOCASE)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_finance_tx_status  ON finance_transactions(status)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_finance_tx_type    ON finance_transactions(type)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_finance_tx_matched ON finance_transactions(matched_client_id)`);
+
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS finance_installments (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        transaction_id  TEXT NOT NULL REFERENCES finance_transactions(id) ON DELETE CASCADE,
+        installment_no  INTEGER,
+        amount          TEXT,
+        due_date        TEXT,
+        paid            INTEGER NOT NULL DEFAULT 0,
+        paid_at         TEXT,
+        note            TEXT,
+        synced_at       TEXT
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_finance_inst_tx ON finance_installments(transaction_id)`);
+
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS finance_audit_events (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        transaction_id  TEXT NOT NULL REFERENCES finance_transactions(id) ON DELETE CASCADE,
+        event_type      TEXT,
+        event_at        TEXT,
+        actor_id        TEXT,
+        actor_name      TEXT,
+        details         TEXT,
+        fetched_at      TEXT
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_finance_audit_tx ON finance_audit_events(transaction_id)`);
+
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS finance_sync_state (
+        id                    INTEGER PRIMARY KEY,
+        cursor                TEXT,
+        last_poll_at          TEXT,
+        last_success_at       TEXT,
+        last_error            TEXT,
+        last_error_at         TEXT,
+        total_synced          INTEGER NOT NULL DEFAULT 0,
+        consecutive_errors    INTEGER NOT NULL DEFAULT 0,
+        backfill_completed    INTEGER NOT NULL DEFAULT 0,
+        backfill_started_at   TEXT,
+        backfill_finished_at  TEXT
+      )
+    `);
+    // Single-row table — seed id=1 so the sync engine can always UPDATE WHERE id=1.
+    db._raw.run(`INSERT OR IGNORE INTO finance_sync_state (id) VALUES (1)`);
+
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS finance_sync_log (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        started_at      TEXT,
+        finished_at     TEXT,
+        mode            TEXT,
+        rows_fetched    INTEGER NOT NULL DEFAULT 0,
+        rows_inserted   INTEGER NOT NULL DEFAULT 0,
+        rows_updated    INTEGER NOT NULL DEFAULT 0,
+        rows_skipped    INTEGER NOT NULL DEFAULT 0,
+        pages_fetched   INTEGER NOT NULL DEFAULT 0,
+        cursor_before   TEXT,
+        cursor_after    TEXT,
+        status          TEXT,
+        error           TEXT,
+        triggered_by    TEXT
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_finance_log_started ON finance_sync_log(started_at DESC)`);
+
+    saveNow();
+    console.log('✅ Migration: finance_* tables ready (transactions, installments, audit_events, sync_state, sync_log)');
+  } catch (e) {
+    console.error('finance tables migration error:', e.message);
+  }
+
+  // ── FINANCE INTEGRATION (Phase 2): client matching ───────────────────────
+  // Add columns to finance_transactions tracking the auto-/manual-match state,
+  // and a candidates table holding multiple possible client matches when
+  // disambiguation is needed. Phase 1's `matched_client_id` becomes the final
+  // resolved match — these new columns trace HOW we got there.
+  //
+  // match_method values:
+  //   NULL          → never attempted yet
+  //   'auto_phone'  → matched by normalized phone, single candidate, high conf
+  //   'auto_name'   → matched by token-exact name, single candidate
+  //   'manual'      → admin picked from candidates UI
+  //   'ambiguous'   → 2+ candidates found, needs manual review
+  //   'unmatched'   → 0 candidates found
+  try {
+    const ftCols = db._raw.exec(`PRAGMA table_info(finance_transactions)`)[0]?.values.map(r => r[1]) || [];
+    if (ftCols.length > 0) {
+      if (!ftCols.includes('match_method')) {
+        db._raw.run(`ALTER TABLE finance_transactions ADD COLUMN match_method TEXT`);
+      }
+      if (!ftCols.includes('match_confidence')) {
+        db._raw.run(`ALTER TABLE finance_transactions ADD COLUMN match_confidence TEXT`);
+      }
+      if (!ftCols.includes('match_attempted_at')) {
+        db._raw.run(`ALTER TABLE finance_transactions ADD COLUMN match_attempted_at TEXT`);
+      }
+      if (!ftCols.includes('matched_by')) {
+        db._raw.run(`ALTER TABLE finance_transactions ADD COLUMN matched_by INTEGER REFERENCES users(id) ON DELETE SET NULL`);
+      }
+      db._raw.run(`CREATE INDEX IF NOT EXISTS idx_finance_tx_match_method ON finance_transactions(match_method)`);
+    }
+
+    // Candidates: only populated when match_method='ambiguous'. Lets the
+    // admin pick from a known list rather than searching from scratch.
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS finance_match_candidates (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        transaction_id  TEXT NOT NULL REFERENCES finance_transactions(id) ON DELETE CASCADE,
+        client_id       INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        method          TEXT NOT NULL,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        UNIQUE(transaction_id, client_id)
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_finance_match_cand_tx     ON finance_match_candidates(transaction_id)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_finance_match_cand_client ON finance_match_candidates(client_id)`);
+
+    saveNow();
+    console.log('✅ Migration: finance matching schema ready (match columns + candidates table)');
+  } catch (e) {
+    console.error('finance matching migration error:', e.message);
+  }
+
+  // ── FINANCE INTEGRATION (Phase 3): client lifecycle events ───────────────
+  // Per-client timeline derived from matched finance_transactions. A future
+  // phase (Level Progression Engine) reads this ledger to decide when a client
+  // moves between levels. Phase 3 only fills `level_raw` (regex extract from
+  // product_name) — `level_canonical` stays NULL until Phase 4 owns it.
+  //
+  // UNIQUE(source_transaction_id, event_type) makes regeneration idempotent —
+  // re-running on the same transaction is a no-op.
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS client_lifecycle_events (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id             INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        event_type            TEXT NOT NULL,
+        event_date            TEXT NOT NULL,
+        source_transaction_id TEXT REFERENCES finance_transactions(id) ON DELETE SET NULL,
+        product_id            TEXT,
+        product_name          TEXT,
+        amount                TEXT,
+        currency              TEXT,
+        category              TEXT,
+        level_raw             TEXT,
+        level_canonical       TEXT,
+        status                TEXT,
+        notes                 TEXT,
+        created_at            TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        updated_at            TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        UNIQUE(source_transaction_id, event_type)
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_lifecycle_client     ON client_lifecycle_events(client_id)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_lifecycle_event_date ON client_lifecycle_events(event_date)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_lifecycle_event_type ON client_lifecycle_events(event_type)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_lifecycle_tx         ON client_lifecycle_events(source_transaction_id)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_lifecycle_category   ON client_lifecycle_events(category)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_lifecycle_level_raw  ON client_lifecycle_events(level_raw)`);
+
+    saveNow();
+    console.log('✅ Migration: client_lifecycle_events table ready');
+  } catch (e) {
+    console.error('client_lifecycle_events migration error:', e.message);
+  }
+
   // ── Auto-upsert admin user on every startup ───────────────────────────────
   // Ensures admin always exists even after DB reset (e.g. Railway redeploy).
   try {
@@ -1608,6 +1876,7 @@ initDb().then(db => {
   app.use('/api/distribution',       require('./routes/distribution.routes'));
   app.use('/api/enrollment',         require('./routes/enrollment.routes'));
   app.use('/api/enrollment-leader',  require('./routes/enrollment-leader.routes'));
+  app.use('/api/finance',            require('./routes/finance.routes'));
 
   // 404
   app.use((req, res) => res.status(404).json({ error: 'Not found' }));
@@ -1889,6 +2158,93 @@ initDb().then(db => {
       console.error('Daily-todos startup catch-up error:', e.message);
     }
   }, 7000);
+
+  // ─── FINANCE SYNC: incremental polling ───────────────────────────────────
+  // Mirrors Center App's Finance Transactions API into the local finance_*
+  // tables every N seconds. Only runs when explicitly opted in via env so
+  // staging / dev never hits production data.
+  //
+  // Env vars:
+  //   FINANCE_SYNC_ENABLED=1               must be set to enable
+  //   FINANCE_SYNC_INTERVAL_SEC=30         default 30 (clamped to >= 15)
+  //   CENTER_APP_API_KEY=<key>             required — sync silently skips without it
+  //
+  // setInterval (not node-cron) because 30s is below cron's sane resolution;
+  // also lets the engine self-throttle via its in-process mutex if a tick
+  // takes longer than the interval.
+  if (process.env.FINANCE_SYNC_ENABLED === '1') {
+    try {
+      const financeSync = require('./services/financeSync.service');
+      const requested = parseInt(process.env.FINANCE_SYNC_INTERVAL_SEC || '30', 10);
+      const intervalSec = Number.isFinite(requested) && requested >= 15 ? requested : 30;
+      const intervalMs = intervalSec * 1000;
+
+      // Fire the first poll ~10s after boot so the server can fully come up
+      // before we start hitting an external API. Then run every intervalSec.
+      setTimeout(() => {
+        // First poll on boot — useful for catching anything that changed while
+        // the server was redeploying.
+        financeSync.pollIncremental({ triggeredBy: 'startup' }).catch(e => {
+          console.error('Finance-sync startup poll error:', e.message);
+        });
+      }, 10_000);
+
+      setInterval(() => {
+        // Fire-and-forget — the engine handles its own errors and mutex.
+        financeSync.pollIncremental({ triggeredBy: 'cron' }).catch(e => {
+          console.error('Finance-sync interval poll error:', e.message);
+        });
+      }, intervalMs);
+
+      console.log(`💰 Finance-sync poll scheduled every ${intervalSec}s`);
+    } catch (e) {
+      console.error('Failed to schedule finance-sync polling:', e.message);
+    }
+  } else {
+    console.log('💰 Finance-sync disabled (set FINANCE_SYNC_ENABLED=1 to enable).');
+  }
+
+  // ─── FINANCE SYNC: daily reconciliation ──────────────────────────────────
+  // Catches DELETED transactions. The API only returns living rows; without
+  // this cron, a transaction deleted upstream would stay in our mirror forever.
+  // Runs at 03:00 Cairo (quiet hour, no overlap with Drive prep jobs).
+  //
+  // Env vars:
+  //   FINANCE_SYNC_ENABLED=1               must be set (same flag as polling)
+  //   FINANCE_RECONCILE_CRON='0 3 * * *'   default 03:00 daily
+  //   FINANCE_RECONCILE_TZ='Africa/Cairo'  default Cairo
+  //   FINANCE_RECONCILE_WINDOW_DAYS=90     default 90-day lookback
+  if (process.env.FINANCE_SYNC_ENABLED === '1') {
+    try {
+      const cron = require('node-cron');
+      const financeSync = require('./services/financeSync.service');
+      const cronExpr = process.env.FINANCE_RECONCILE_CRON || '0 3 * * *';
+      const tz       = process.env.FINANCE_RECONCILE_TZ   || 'Africa/Cairo';
+      const windowDays = parseInt(process.env.FINANCE_RECONCILE_WINDOW_DAYS || '90', 10) || 90;
+
+      if (!cron.validate(cronExpr)) {
+        console.error(`Finance-reconcile: invalid cron expression "${cronExpr}", skipping schedule.`);
+      } else {
+        cron.schedule(cronExpr, async () => {
+          try {
+            const r = await financeSync.runReconciliation({ windowDays, triggeredBy: 'cron' });
+            if (r.error) {
+              console.error(`💰 Finance-reconcile error: ${r.error}`);
+            } else if (r.skipped) {
+              console.log(`💰 Finance-reconcile skipped: ${r.skipped}`);
+            } else {
+              console.log(`💰 Finance-reconcile (${r.window_from}): fetched=${r.fetched} pages=${r.pages} deleted=${r.deleted}`);
+            }
+          } catch (e) {
+            console.error('Finance-reconcile cron error:', e.message);
+          }
+        }, { timezone: tz });
+        console.log(`⏰ Finance-reconcile cron scheduled (${cronExpr}, ${tz}, window=${windowDays}d)`);
+      }
+    } catch (e) {
+      console.error('Failed to schedule finance-reconcile cron:', e.message);
+    }
+  }
 
   // Graceful shutdown
   process.on('SIGTERM', () => { db.close(); process.exit(0); });

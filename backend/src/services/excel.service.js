@@ -175,6 +175,12 @@ function normalizeDuration(val) {
 function classifySideSession(durationStr, positionInGroup, totalInGroup, prevDurations = []) {
   const dur = normalizeDuration(durationStr);
 
+  // ── Short-duration guard (< 20 min) ──────────────────────────────────────
+  // Any session shorter than 20 min is ALWAYS a regular zoom call regardless
+  // of its position in the group. Prevents edge cases (e.g. 14-min sessions
+  // at position 1) from being wrongly classified as onboarding.
+  if (dur !== null && dur < 20) return 'regular';
+
   // ── Position-1 special cases ──────────────────────────────────────────────
   if (positionInGroup === 1) {
     if (dur !== null && dur > 50)  return 'compensatory';

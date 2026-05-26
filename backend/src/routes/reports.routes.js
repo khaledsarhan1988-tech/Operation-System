@@ -741,8 +741,11 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
        WHERE l.group_name = a.group_name
          AND l.date       = a.date
          AND l.session_type = 'side'
-         AND l.side_session_category = 'regular'
-         AND l.status != 'غير مؤكدة'${line ? ' AND l.line = a.line' : ''}
+         AND l.status != 'غير مؤكدة'
+         AND (l.side_session_category = 'regular'
+              OR (l.duration IS NOT NULL AND LENGTH(l.duration) >= 5
+                  AND CAST(SUBSTR(l.duration,1,2) AS INTEGER)*60
+                      + CAST(SUBSTR(l.duration,4,2) AS INTEGER) < 20))${line ? ' AND l.line = a.line' : ''}
     )
     ${dept1}${emp1}${coord1}${srchA}${lineA}`;
 
@@ -990,13 +993,17 @@ router.get('/dashboard', (req, res) => {
        ${deptBatches}${empFilterLectures}${lineL}`
     ).get();
 
-    // 4b. Zoom calls count — confirmed regular side sessions (15 min only)
+    // 4b. Zoom calls count — confirmed regular side sessions.
+    // Safety net: also count any session < 20 min even if wrongly classified.
     const zoomCallsRow = db.prepare(
       `SELECT COUNT(*) as cnt FROM lectures
        INNER JOIN batches ON lectures.group_name = batches.group_name${line ? ' AND batches.line = lectures.line' : ''}
        WHERE lectures.session_type = 'side'
          AND lectures.status != 'غير مؤكدة'
-         AND lectures.side_session_category = 'regular'
+         AND (lectures.side_session_category = 'regular'
+              OR (lectures.duration IS NOT NULL AND LENGTH(lectures.duration) >= 5
+                  AND CAST(SUBSTR(lectures.duration,1,2) AS INTEGER)*60
+                      + CAST(SUBSTR(lectures.duration,4,2) AS INTEGER) < 20))
        ${buildDateFilter('lectures.date', from_date, to_date)}
        ${deptBatches}${empFilterLectures}${lineL}`
     ).get();
@@ -1103,7 +1110,10 @@ router.get('/dashboard', (req, res) => {
             WHERE l.group_name = a.group_name
               AND l.date       = a.date
               AND l.session_type = 'side'
-              AND l.side_session_category = 'regular'${line ? ' AND l.line = a.line' : ''}
+              AND (l.side_session_category = 'regular'
+                   OR (l.duration IS NOT NULL AND LENGTH(l.duration) >= 5
+                       AND CAST(SUBSTR(l.duration,1,2) AS INTEGER)*60
+                           + CAST(SUBSTR(l.duration,4,2) AS INTEGER) < 20))${line ? ' AND l.line = a.line' : ''}
          )
          ${deptB}${empFilterAbsentA}${lineAZ}${azDateF}`
       ).get();
@@ -1540,7 +1550,10 @@ router.get('/absent-side-list', (req, res) => {
          WHERE l.group_name = a.group_name
            AND l.date       = a.date
            AND l.session_type = 'side'
-           AND l.side_session_category = 'regular'${line ? ' AND l.line = a.line' : ''}
+           AND (l.side_session_category = 'regular'
+                OR (l.duration IS NOT NULL AND LENGTH(l.duration) >= 5
+                    AND CAST(SUBSTR(l.duration,1,2) AS INTEGER)*60
+                        + CAST(SUBSTR(l.duration,4,2) AS INTEGER) < 20))${line ? ' AND l.line = a.line' : ''}
       )
       ${azDateFilter}${azDeptFilter}${azEmpFilter}${azCoordFilter}${azSearchFilter}${lineA}`;
 
