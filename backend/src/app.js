@@ -566,6 +566,36 @@ initDb().then(db => {
     console.error('lectures onboarding>=20min migration error:', e.message);
   }
 
+  // ── absent_zoom_students: normalize group_name to match batches canonical names ──
+  // Excel uploads may have group names with extra/missing spaces vs. batches/lectures.
+  // E.g. absent has "May_4_Mon_3Pm_Starter3_P(Sara Salah)magdy"
+  //      batches has "May_4_Mon_3Pm_ Starter3_P(Sara Salah)magdy"  ← extra space
+  // Fix: update every absent_zoom row whose group_name differs from batches only by
+  // spaces, aligning it to the exact canonical batches name so JOINs work naturally.
+  try {
+    db._raw.run(`
+      UPDATE absent_zoom_students
+      SET group_name = (
+        SELECT b.group_name
+        FROM batches b
+        WHERE REPLACE(b.group_name, ' ', '') = REPLACE(absent_zoom_students.group_name, ' ', '')
+        LIMIT 1
+      )
+      WHERE EXISTS (
+        SELECT 1 FROM batches b
+        WHERE REPLACE(b.group_name, ' ', '') = REPLACE(absent_zoom_students.group_name, ' ', '')
+          AND b.group_name != absent_zoom_students.group_name
+      )
+    `);
+    const nNorm = db._raw.exec(`SELECT changes()`)[0]?.values[0][0] || 0;
+    if (nNorm > 0) {
+      saveNow();
+      console.log(`✅ Migration: normalized ${nNorm} absent_zoom_students group_name(s) to match batches canonical names`);
+    }
+  } catch (e) {
+    console.error('absent_zoom_students group_name normalization error:', e.message);
+  }
+
   // ── team_members SAFETY: restore from snapshot if rows vanished ─────────
   // Runs after all team_members DDL (step 4a). If anything above wiped or
   // failed to preserve rows, this brings them back from the JSON snapshot

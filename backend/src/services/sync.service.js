@@ -919,7 +919,20 @@ function syncAbsentZoom(buffer, line) {
       preserved[key] = { follow_up_status: r.follow_up_status, follow_up_note: r.follow_up_note, follow_up_by: r.follow_up_by, follow_up_at: r.follow_up_at };
     });
 
-  const uniqueAbsentGroups = [...new Set(rows.map(r => r.group_name).filter(Boolean))];
+  // Build a lookup map: normalized-name (no spaces) → canonical batches group_name.
+  // This ensures that if the Excel file has "3Pm_Starter3" but batches has "3Pm_ Starter3"
+  // (or vice versa), the inserted row uses the exact batches name so JOINs work correctly.
+  const batchesGroupRows = db.prepare('SELECT DISTINCT group_name FROM batches WHERE line = ?').all(line);
+  const batchesNormMap = {};
+  batchesGroupRows.forEach(b => {
+    if (b.group_name) batchesNormMap[b.group_name.replace(/ /g, '')] = b.group_name;
+  });
+  const canonicalGroupName = (name) => {
+    if (!name) return name;
+    return batchesNormMap[name.replace(/ /g, '')] || name;
+  };
+
+  const uniqueAbsentGroups = [...new Set(rows.map(r => canonicalGroupName(r.group_name)).filter(Boolean))];
   const run = db.transaction(() => {
     db.prepare('DELETE FROM absent_zoom_students WHERE line = ?').run(line);
     // Claim exclusive ownership of these groups' zoom-absent records
@@ -929,9 +942,10 @@ function syncAbsentZoom(buffer, line) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
     `);
     rows.forEach(r => {
-      const key = `${r.group_name}|${r.student_name}|${r.date}|${r.lecture_no}`;
+      const gn = canonicalGroupName(r.group_name);
+      const key = `${gn}|${r.student_name}|${r.date}|${r.lecture_no}`;
       const p = preserved[key] || {};
-      insert.run(r.group_name, r.student_name, r.phone, r.date, r.time, r.lecture_no,
+      insert.run(gn, r.student_name, r.phone, r.date, r.time, r.lecture_no,
         p.follow_up_status || 'pending', p.follow_up_note || null, p.follow_up_by || null, p.follow_up_at || null,
         line);
     });

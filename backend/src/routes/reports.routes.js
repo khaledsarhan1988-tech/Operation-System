@@ -726,7 +726,7 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
         b.dept_type
       ) AS dept_type
     FROM absent_zoom_students a
-    INNER JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
+    INNER JOIN batches b ON REPLACE(a.group_name,' ','') = REPLACE(b.group_name,' ','')${line ? ' AND b.line = a.line' : ''}
     LEFT JOIN (SELECT phone, MIN(name) AS name FROM clients GROUP BY phone) c_lu
       ON (a.student_name IS NULL OR TRIM(a.student_name) = '')
       AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
@@ -738,7 +738,7 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
     AND a.date IS NOT NULL AND TRIM(a.date) != ''
     AND EXISTS (
       SELECT 1 FROM lectures l
-       WHERE l.group_name = a.group_name
+       WHERE REPLACE(l.group_name,' ','') = REPLACE(a.group_name,' ','')
          AND l.date       = a.date
          AND l.session_type = 'side'
          AND l.status != 'غير مؤكدة'
@@ -1098,7 +1098,7 @@ router.get('/dashboard', (req, res) => {
       const azDateF = buildDateFilter('a.date', from_date, to_date);
       absentSideRow = db.prepare(
         `SELECT COUNT(DISTINCT a.id) as cnt FROM absent_zoom_students a
-         LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
+         LEFT JOIN batches b ON REPLACE(a.group_name,' ','') = REPLACE(b.group_name,' ','')${line ? ' AND b.line = a.line' : ''}
          LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
            AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)
          WHERE (
@@ -1107,7 +1107,7 @@ router.get('/dashboard', (req, res) => {
          )
          AND EXISTS (
            SELECT 1 FROM lectures l
-            WHERE l.group_name = a.group_name
+            WHERE REPLACE(l.group_name,' ','') = REPLACE(a.group_name,' ','')
               AND l.date       = a.date
               AND l.session_type = 'side'
               AND (l.side_session_category = 'regular'
@@ -1538,7 +1538,7 @@ router.get('/absent-side-list', (req, res) => {
     // 15-min slot counts as a zoom call.
     const azBaseFrom = `
       FROM absent_zoom_students a
-      LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
+      LEFT JOIN batches b ON REPLACE(a.group_name,' ','') = REPLACE(b.group_name,' ','')${line ? ' AND b.line = a.line' : ''}
       LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
         AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)
       WHERE (
@@ -1547,7 +1547,7 @@ router.get('/absent-side-list', (req, res) => {
       )
       AND EXISTS (
         SELECT 1 FROM lectures l
-         WHERE l.group_name = a.group_name
+         WHERE REPLACE(l.group_name,' ','') = REPLACE(a.group_name,' ','')
            AND l.date       = a.date
            AND l.session_type = 'side'
            AND (l.side_session_category = 'regular'
@@ -4269,7 +4269,7 @@ router.get('/team-summary-detail', (req, res) => {
         rows = db.prepare(
           `SELECT DISTINCT a.student_name, a.phone, a.group_name, a.date
            FROM absent_zoom_students a
-           INNER JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
+           INNER JOIN batches b ON REPLACE(a.group_name,' ','') = REPLACE(b.group_name,' ','')${line ? ' AND b.line = a.line' : ''}
            WHERE 1=1
              ${empFB_aDate}
              ${deptF}${dateA}${lineA}
@@ -4431,7 +4431,7 @@ router.get('/team-summary', (req, res) => {
         // Date-aware: coordinator-on-a.date drives attribution.
         `SELECT COUNT(*) as cnt
          FROM absent_zoom_students a
-         INNER JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
+         INNER JOIN batches b ON REPLACE(a.group_name,' ','') = REPLACE(b.group_name,' ','')${line ? ' AND b.line = a.line' : ''}
          WHERE 1=1
            ${coordFilterAtDatePrepared('a.group_name', 'a.line', 'a.date')}
            ${deptF}${dateA}${lineA}
@@ -5727,7 +5727,7 @@ router.get('/quality-employee/details', (req, res) => {
              a.phone, a.group_name, a.date, a.time, a.lecture_no,
              a.follow_up_status, a.follow_up_note
       FROM absent_zoom_students a
-      INNER JOIN batches b ON b.group_name = a.group_name${line ? ' AND b.line = a.line' : ''}
+      INNER JOIN batches b ON REPLACE(b.group_name,' ','') = REPLACE(a.group_name,' ','')${line ? ' AND b.line = a.line' : ''}
       ${part1Where}
       ORDER BY a.date DESC LIMIT 500
     `).all(...part1Params);
