@@ -128,9 +128,6 @@ function getAdminLinks(user) {
     // System-wide config — super-admin (management='All') only.
     // Department-scoped admins (Customer Services / Quality / Education) don't see these.
     ...(isSuperAdmin ? [
-      { to: '/admin/finance/sync',      label: 'مزامنة Center App', icon: Wallet,    color: 'emerald' },
-      { to: '/admin/finance/matching',  label: 'مطابقة العملاء',     icon: LinkIcon,  color: 'violet',  sub: true },
-      { to: '/admin/finance/lifecycle', label: 'رحلة العميل',        icon: GitBranch, color: 'cyan',    sub: true },
       { to: '/admin/settings',          label: 'nav.systemSettings', icon: Settings,  color: 'slate' },
       { to: '/admin/db-status',         label: 'nav.dbStatus',       icon: Database,  color: 'blue'  },
     ] : []),
@@ -153,7 +150,20 @@ function getAdminLinks(user) {
     { to: '/admin/remarks-monitor/category', label: 'توزيع التصنيفات', icon: BarChart3, color: 'pink', sub: true },
   ];
 
-  return [...base, ...reports, ...monitoring];
+  const clientsSection = [
+    { type: 'section', label: 'Clients' },
+    { to: '/admin/clients', label: 'العمليات المالية', icon: Users, color: 'violet' },
+  ];
+
+  // Finance / Center App sync — super-admin only, pinned to the very bottom.
+  const financeSection = isSuperAdmin ? [
+    { type: 'section', label: 'Center App' },
+    { to: '/admin/finance/sync',      label: 'مزامنة Center App', icon: Wallet,    color: 'emerald' },
+    { to: '/admin/finance/matching',  label: 'مطابقة العملاء',     icon: LinkIcon,  color: 'violet',  sub: true },
+    { to: '/admin/finance/lifecycle', label: 'رحلة العميل',        icon: GitBranch, color: 'cyan',    sub: true },
+  ] : [];
+
+  return [...base, ...reports, ...monitoring, ...clientsSection, ...financeSection];
 }
 
 // Avatar visuals are owned by the shared UserAvatar component now.
