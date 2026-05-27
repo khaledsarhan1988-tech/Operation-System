@@ -361,6 +361,132 @@ router.post('/coordinator/auto-assign-all', requireRole('admin'), (req, res) => 
   }
 });
 
+// ─── REMINDERS + NOTES ────────────────────────────────────────────────────────
+
+/**
+ * GET /api/cs/reminders/by-phone/:phone
+ * All reminders for a client. ?include_deleted=1 (admin/leader only).
+ */
+router.get('/reminders/by-phone/:phone', requireRole('admin', 'leader', 'agent'), (req, res) => {
+  try {
+    const { csPrimaryPhone } = require('../utils/csPhoneNormalize');
+    const csRem = require('../services/csReminders.service');
+    const phoneNorm = csPrimaryPhone(req.params.phone);
+    if (!phoneNorm) return res.status(400).json({ ok: false, error: 'Invalid phone' });
+
+    const includeDeleted = (req.query.include_deleted === '1') &&
+                           (req.user.role === 'admin' || req.user.role === 'leader');
+    res.json({ ok: true, phone: phoneNorm, reminders: csRem.listForClient({ phoneNorm, includeDeleted }) });
+  } catch (e) {
+    console.error('GET /cs/reminders/by-phone error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * GET /api/cs/reminders/pending/mine
+ * Pending reminders within the current user's scope.
+ */
+router.get('/reminders/pending/mine', (req, res) => {
+  try {
+    const csRem = require('../services/csReminders.service');
+    res.json({ ok: true, reminders: csRem.pendingForUser(req.user, { limit: 500 }) });
+  } catch (e) {
+    console.error('GET /cs/reminders/pending/mine error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * POST /api/cs/reminders
+ * Body: { phone, reminder_at, note, severity?, reminder_type? }
+ * Any authenticated user can add (within their scope).
+ */
+router.post('/reminders', (req, res) => {
+  try {
+    const { csPrimaryPhone } = require('../utils/csPhoneNormalize');
+    const csRem = require('../services/csReminders.service');
+    const { phone, reminder_at, note, severity, reminder_type = 'manual' } = req.body || {};
+    const phoneNorm = csPrimaryPhone(phone);
+    if (!phoneNorm)    return res.status(400).json({ ok: false, error: 'Invalid phone' });
+    if (!reminder_at)  return res.status(400).json({ ok: false, error: 'reminder_at required' });
+    if (!note)         return res.status(400).json({ ok: false, error: 'note required' });
+
+    // Resolve client_id
+    const cRow = db.prepare(`SELECT id FROM clients WHERE phone = ? OR phone = ? OR phone = '0' || ? LIMIT 1`)
+      .get(phoneNorm, phoneNorm.replace(/^0/, ''), phoneNorm.replace(/^0/, ''));
+
+    const id = csRem.addReminder({
+      clientId: cRow?.id || null,
+      phoneNorm,
+      reminderAt: reminder_at,
+      note,
+      severity: severity || null,
+      reminderType: reminder_type,
+      createdByUserId: req.user.id,
+    });
+    res.json({ ok: true, reminder_id: id });
+  } catch (e) {
+    console.error('POST /cs/reminders error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * PATCH /api/cs/reminders/:id
+ * Body: any of { reminder_at, severity, note, status, snoozed_until }
+ */
+router.patch('/reminders/:id', (req, res) => {
+  try {
+    const csRem = require('../services/csReminders.service');
+    const reminderId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(reminderId)) return res.status(400).json({ ok: false, error: 'Invalid id' });
+    const updated = csRem.editReminder({ reminderId, fields: req.body || {}, byUserId: req.user.id });
+    if (!updated) return res.status(404).json({ ok: false, error: 'Reminder not found or already deleted' });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('PATCH /cs/reminders error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * POST /api/cs/reminders/:id/done
+ * Mark as done.
+ */
+router.post('/reminders/:id/done', (req, res) => {
+  try {
+    const csRem = require('../services/csReminders.service');
+    const reminderId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(reminderId)) return res.status(400).json({ ok: false, error: 'Invalid id' });
+    const ok = csRem.setReminderStatus({ reminderId, status: 'done', byUserId: req.user.id });
+    if (!ok) return res.status(404).json({ ok: false, error: 'Not found' });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('POST /cs/reminders/:id/done error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * DELETE /api/cs/reminders/:id
+ * Soft delete. Admin OR manager (management='All') only.
+ */
+router.delete('/reminders/:id', (req, res) => {
+  try {
+    const csRem = require('../services/csReminders.service');
+    const reminderId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(reminderId)) return res.status(400).json({ ok: false, error: 'Invalid id' });
+    const ok = csRem.deleteReminder({ reminderId, byUser: req.user });
+    if (!ok) return res.status(404).json({ ok: false, error: 'Not found' });
+    res.json({ ok: true });
+  } catch (e) {
+    if (e.code === 'FORBIDDEN') return res.status(403).json({ ok: false, error: e.message });
+    console.error('DELETE /cs/reminders error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ─── PER-CLIENT PLAN (paid vs taken vs pending) ───────────────────────────────
 
 /**
