@@ -60,6 +60,11 @@ import FinanceSync from './pages/admin/FinanceSync';
 import FinanceMatching from './pages/admin/FinanceMatching';
 import FinanceLifecycle from './pages/admin/FinanceLifecycle';
 import Clients from './pages/admin/Clients';
+
+// Subscription Tracker (cs_*) — standalone subsystem
+import CsMyClients from './pages/subscriptions/CsMyClients';
+import CsClientProfile from './pages/subscriptions/CsClientProfile';
+
 import TeamProgression from './pages/leader/TeamProgression';
 import EvaluateGoals from './pages/leader/EvaluateGoals';
 
@@ -170,6 +175,18 @@ const router = createBrowserRouter([
       { path: 'finance/matching',              element: <PrivateRoute superAdmin><FinanceMatching /></PrivateRoute> },
       { path: 'finance/lifecycle',             element: <PrivateRoute superAdmin><FinanceLifecycle /></PrivateRoute> },
       { path: 'clients',                       element: <Clients /> },
+    ],
+  },
+
+  // ── Subscription Tracker (cs_*) routes ───────────────────────────
+  // Accessible to any authenticated role; per-route visibility filtered server-side.
+  {
+    path: '/subscriptions',
+    element: <PrivateRoute><AppShell /></PrivateRoute>,
+    children: [
+      { index: true,                element: <Navigate to="my-clients" replace /> },
+      { path: 'my-clients',         element: <CsMyClients /> },
+      { path: 'client/:phone',      element: <CsClientProfile /> },
     ],
   },
 

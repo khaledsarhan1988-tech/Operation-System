@@ -55,10 +55,12 @@ const AGENT_LINKS = [
 
 const ENROLLMENT_LINKS = [
   { to: '/enrollment/pipeline', label: 'nav.clientPipeline', icon: Kanban, color: 'emerald' },
+  { to: '/subscriptions/my-clients', label: 'متابعة الاشتراكات', icon: Users, color: 'violet' },
 ];
 
 const ENROLLMENT_LEADER_LINKS = [
   { to: '/enrollment-leader/pipeline', label: 'nav.clientPipeline', icon: Kanban, color: 'emerald' },
+  { to: '/subscriptions/my-clients', label: 'متابعة الاشتراكات', icon: Users, color: 'violet' },
 ];
 
 const LEADER_LINKS = [
@@ -79,6 +81,8 @@ const LEADER_LINKS = [
   { to: '/leader/reports/fix-report',           label: 'nav.fixReports',          icon: FileText, color: 'orange' },
   { to: '/leader/reports/attendance-absence',   label: 'nav.attendanceReports',   icon: Activity, color: 'teal' },
   { to: '/leader/targets',                      label: 'nav.targets',             icon: Target,   color: 'green' },
+  { type: 'section', label: 'Clients' },
+  { to: '/subscriptions/my-clients',            label: 'متابعة الاشتراكات',         icon: Users,    color: 'violet' },
 ];
 
 const REPORT_LINKS = [
@@ -161,7 +165,8 @@ function getAdminLinks(user) {
   // Clients — pinned to the very bottom (below Center App).
   const clientsSection = [
     { type: 'section', label: 'Clients' },
-    { to: '/admin/clients', label: 'العمليات المالية', icon: Users, color: 'violet' },
+    { to: '/admin/clients',        label: 'العمليات المالية',  icon: Users, color: 'violet' },
+    { to: '/subscriptions/my-clients', label: 'متابعة الاشتراكات', icon: Users, color: 'cyan', sub: true },
   ];
 
   return [...base, ...reports, ...monitoring, ...financeSection, ...clientsSection];
