@@ -59,6 +59,7 @@ import SystemSettings from './pages/admin/SystemSettings';
 import FinanceSync from './pages/admin/FinanceSync';
 import FinanceMatching from './pages/admin/FinanceMatching';
 import FinanceLifecycle from './pages/admin/FinanceLifecycle';
+import Clients from './pages/admin/Clients';
 import TeamProgression from './pages/leader/TeamProgression';
 import EvaluateGoals from './pages/leader/EvaluateGoals';
 
@@ -168,6 +169,7 @@ const router = createBrowserRouter([
       { path: 'finance/sync',                  element: <PrivateRoute superAdmin><FinanceSync /></PrivateRoute> },
       { path: 'finance/matching',              element: <PrivateRoute superAdmin><FinanceMatching /></PrivateRoute> },
       { path: 'finance/lifecycle',             element: <PrivateRoute superAdmin><FinanceLifecycle /></PrivateRoute> },
+      { path: 'clients',                       element: <Clients /> },
     ],
   },
 

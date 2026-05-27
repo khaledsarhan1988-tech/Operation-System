@@ -1907,6 +1907,7 @@ initDb().then(db => {
   app.use('/api/enrollment',         require('./routes/enrollment.routes'));
   app.use('/api/enrollment-leader',  require('./routes/enrollment-leader.routes'));
   app.use('/api/finance',            require('./routes/finance.routes'));
+  app.use('/api/clients-finance',    require('./routes/clients-finance.routes'));
 
   // 404
   app.use((req, res) => res.status(404).json({ error: 'Not found' }));
