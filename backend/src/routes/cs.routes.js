@@ -274,6 +274,93 @@ router.get('/subscriptions/summary', requireRole('admin', 'leader'), (req, res) 
   }
 });
 
+// ─── COORDINATORS ─────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/cs/coordinators
+ * Eligible team_members (enrollment / scheduling staff).
+ */
+router.get('/coordinators', requireRole('admin', 'leader', 'agent'), (req, res) => {
+  try {
+    const csCoord = require('../services/csCoordinator.service');
+    res.json({ ok: true, coordinators: csCoord.listEligibleCoordinators() });
+  } catch (e) {
+    console.error('GET /cs/coordinators error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * GET /api/cs/coordinator/by-phone/:phone
+ * Current coordinator + full history for one client.
+ */
+router.get('/coordinator/by-phone/:phone', requireRole('admin', 'leader', 'agent'), (req, res) => {
+  try {
+    const { csPrimaryPhone } = require('../utils/csPhoneNormalize');
+    const csCoord = require('../services/csCoordinator.service');
+    const phoneNorm = csPrimaryPhone(req.params.phone);
+    if (!phoneNorm) return res.status(400).json({ ok: false, error: 'Invalid phone' });
+    const current = csCoord.getCurrentAssignment({ phoneNorm });
+    const history = csCoord.getAssignmentHistory({ phoneNorm });
+    res.json({ ok: true, phone: phoneNorm, current, history });
+  } catch (e) {
+    console.error('GET /cs/coordinator/by-phone error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * POST /api/cs/coordinator/assign
+ * Body: { phone, coordinator_id, notes? }
+ * Assigns (or reassigns) a coordinator to a client. Admin/Leader only — agents
+ * can only view, not change.
+ */
+router.post('/coordinator/assign', requireRole('admin', 'leader'), (req, res) => {
+  try {
+    const { csPrimaryPhone } = require('../utils/csPhoneNormalize');
+    const csCoord = require('../services/csCoordinator.service');
+    const { phone, coordinator_id, notes = null } = req.body || {};
+    const phoneNorm = csPrimaryPhone(phone);
+    if (!phoneNorm) return res.status(400).json({ ok: false, error: 'Invalid phone' });
+    const coordId = parseInt(coordinator_id, 10);
+    if (!Number.isFinite(coordId)) return res.status(400).json({ ok: false, error: 'Invalid coordinator_id' });
+
+    // Resolve client_id from phone (best-effort)
+    const cRow = db.prepare(`
+      SELECT id FROM clients WHERE phone = ? OR phone = ? OR phone = '0' || ? LIMIT 1
+    `).get(phoneNorm, phoneNorm.replace(/^0/, ''), phoneNorm.replace(/^0/, ''));
+
+    const newId = csCoord.assignCoordinator({
+      clientId: cRow?.id || null,
+      phoneNorm,
+      coordinatorId: coordId,
+      assignedByUserId: req.user.id,
+      reason: 'manual',
+      notes,
+    });
+    res.json({ ok: true, assignment_id: newId });
+  } catch (e) {
+    console.error('POST /cs/coordinator/assign error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * POST /api/cs/coordinator/auto-assign-all
+ * Walk all known phones and auto-assign their last-known coordinator from
+ * distribution_items, where available. Admin only.
+ */
+router.post('/coordinator/auto-assign-all', requireRole('admin'), (req, res) => {
+  try {
+    const csCoord = require('../services/csCoordinator.service');
+    const result = csCoord.bulkAutoAssign({});
+    res.json({ ok: true, result });
+  } catch (e) {
+    console.error('POST /cs/coordinator/auto-assign-all error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ─── PER-CLIENT PLAN (paid vs taken vs pending) ───────────────────────────────
 
 /**
