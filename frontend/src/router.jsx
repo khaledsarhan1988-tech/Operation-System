@@ -64,6 +64,7 @@ import Clients from './pages/admin/Clients';
 // Subscription Tracker (cs_*) — standalone subsystem
 import CsMyClients from './pages/subscriptions/CsMyClients';
 import CsClientProfile from './pages/subscriptions/CsClientProfile';
+import CsDashboard from './pages/subscriptions/CsDashboard';
 
 import TeamProgression from './pages/leader/TeamProgression';
 import EvaluateGoals from './pages/leader/EvaluateGoals';
@@ -187,6 +188,7 @@ const router = createBrowserRouter([
       { index: true,                element: <Navigate to="my-clients" replace /> },
       { path: 'my-clients',         element: <CsMyClients /> },
       { path: 'client/:phone',      element: <CsClientProfile /> },
+      { path: 'dashboard',          element: <CsDashboard /> },
     ],
   },
 

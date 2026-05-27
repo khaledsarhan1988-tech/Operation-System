@@ -629,4 +629,146 @@ router.get('/plan/by-phone/:phone', requireRole('admin', 'leader', 'agent'), (re
   }
 });
 
+// ─── ADMIN/LEADER DASHBOARD AGGREGATES ────────────────────────────────────────
+
+/**
+ * GET /api/cs/dashboard/overview
+ * Big-picture stats: totals, by-dept, by-severity, active notifs, pending-counts.
+ */
+router.get('/dashboard/overview', requireRole('admin', 'leader'), (req, res) => {
+  try {
+    const subsSummary = db.prepare(`
+      SELECT
+        COUNT(*)                                              AS total_subs,
+        COUNT(DISTINCT client_phone_norm)                     AS distinct_clients,
+        SUM(CASE WHEN dept='General' THEN 1 ELSE 0 END)       AS general,
+        SUM(CASE WHEN dept='Private' THEN 1 ELSE 0 END)       AS private_,
+        SUM(CASE WHEN dept='Semi'    THEN 1 ELSE 0 END)       AS semi,
+        SUM(CASE WHEN is_installment=1 THEN 1 ELSE 0 END)     AS installments,
+        SUM(CASE WHEN is_ignored=1 THEN 1 ELSE 0 END)         AS ignored
+      FROM cs_subscriptions
+    `).get();
+
+    const levelSummary = db.prepare(`
+      SELECT
+        COUNT(*) AS rows_total,
+        COUNT(DISTINCT client_phone_norm) AS distinct_clients,
+        SUM(CASE WHEN track='Starter'      THEN 1 ELSE 0 END) AS starter,
+        SUM(CASE WHEN track='General'      THEN 1 ELSE 0 END) AS general,
+        SUM(CASE WHEN track='Conversation' THEN 1 ELSE 0 END) AS conversation
+      FROM cs_completed_levels
+    `).get();
+
+    const notifSummary = db.prepare(`
+      SELECT
+        SUM(CASE WHEN severity='critical' AND is_active=1 THEN 1 ELSE 0 END) AS critical,
+        SUM(CASE WHEN severity='urgent'   AND is_active=1 THEN 1 ELSE 0 END) AS urgent,
+        SUM(CASE WHEN severity='warning'  AND is_active=1 THEN 1 ELSE 0 END) AS warning,
+        SUM(CASE WHEN severity='info'     AND is_active=1 THEN 1 ELSE 0 END) AS info,
+        SUM(CASE WHEN is_active=1 THEN 1 ELSE 0 END) AS total_active
+      FROM cs_notifications
+    `).get();
+
+    const remindSummary = db.prepare(`
+      SELECT
+        SUM(CASE WHEN status='pending'  AND deleted_at IS NULL THEN 1 ELSE 0 END) AS pending,
+        SUM(CASE WHEN status='done'     AND deleted_at IS NULL THEN 1 ELSE 0 END) AS done,
+        SUM(CASE WHEN status='snoozed'  AND deleted_at IS NULL THEN 1 ELSE 0 END) AS snoozed,
+        SUM(CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS deleted
+      FROM cs_reminders
+    `).get();
+
+    const coordSummary = db.prepare(`
+      SELECT COUNT(DISTINCT client_phone_norm) AS assigned_clients,
+             COUNT(DISTINCT coordinator_id)    AS distinct_coords
+      FROM cs_client_coordinator
+      WHERE unassigned_at IS NULL
+    `).get();
+
+    res.json({
+      ok: true,
+      subscriptions: subsSummary,
+      completed_levels: levelSummary,
+      notifications: notifSummary,
+      reminders: remindSummary,
+      coordinators: coordSummary,
+    });
+  } catch (e) {
+    console.error('GET /cs/dashboard/overview error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * GET /api/cs/dashboard/extra-courses
+ * Clients who reached Conversation 5 and have remaining paid months —
+ * eligible for extra courses (business / conversation extras).
+ */
+router.get('/dashboard/extra-courses', requireRole('admin', 'leader'), (req, res) => {
+  try {
+    // Phones with completed Conversation 5 (level_order=13)
+    const con5Phones = db.prepare(`
+      SELECT DISTINCT client_phone_norm, client_name_raw
+        FROM cs_completed_levels
+       WHERE level_order = 13
+    `).all();
+
+    const out = [];
+    const csPlan = require('../services/csClientPlan.service');
+    for (const r of con5Phones) {
+      const plan = csPlan.getClientPlan(r.client_phone_norm);
+      if (plan && plan.extra_courses_eligible) {
+        out.push({
+          phone: r.client_phone_norm,
+          name: r.client_name_raw || plan.completed?.[0]?.client_name_raw || null,
+          paid_months: plan.summary.paid_months,
+          completed_count: plan.summary.completed_count,
+          overflow_months: plan.summary.overflow_months,
+          depts: plan.summary.depts_paid,
+        });
+      }
+    }
+    res.json({ ok: true, total: out.length, clients: out });
+  } catch (e) {
+    console.error('GET /cs/dashboard/extra-courses error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * GET /api/cs/dashboard/at-risk
+ * Clients with the most-severe active notifications, paginated by severity.
+ */
+router.get('/dashboard/at-risk', requireRole('admin', 'leader'), (req, res) => {
+  try {
+    const sev = (req.query.severity || '').trim();
+    const where = ['n.is_active = 1'];
+    const params = [];
+    if (['critical', 'urgent', 'warning', 'info'].includes(sev)) {
+      where.push('n.severity = ?'); params.push(sev);
+    }
+
+    const rows = db.prepare(`
+      SELECT n.id, n.client_id, n.client_phone_norm, n.notif_type, n.severity,
+             n.title, n.message, n.meta_json, n.triggered_at,
+             (SELECT c.name FROM clients c WHERE c.id = n.client_id LIMIT 1) AS client_name,
+             (SELECT tm.name FROM cs_client_coordinator cc
+                 LEFT JOIN team_members tm ON tm.id = cc.coordinator_id
+                WHERE cc.unassigned_at IS NULL AND cc.client_phone_norm = n.client_phone_norm
+                LIMIT 1) AS coordinator_name
+        FROM cs_notifications n
+       WHERE ${where.join(' AND ')}
+       ORDER BY
+         CASE n.severity WHEN 'critical' THEN 1 WHEN 'urgent' THEN 2 WHEN 'warning' THEN 3 ELSE 4 END,
+         n.triggered_at DESC
+       LIMIT 500
+    `).all(...params);
+
+    res.json({ ok: true, total: rows.length, clients: rows });
+  } catch (e) {
+    console.error('GET /cs/dashboard/at-risk error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 module.exports = router;
