@@ -52,8 +52,11 @@ function csNormalizePhone(raw) {
     return s;
   }
 
-  // Unknown country code: return cleaned digits (best-effort, do NOT lose data)
-  return s;
+  // Unknown country code: accept ONLY if it looks like a real international
+  // number (≥ 9 digits). Shorter strings are almost certainly noise from
+  // adjacent text (emails with digits, ID codes, etc.) — return null.
+  if (s.length >= 9 && s.length <= 15) return s;
+  return null;
 }
 
 /**

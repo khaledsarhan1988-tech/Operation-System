@@ -96,6 +96,96 @@ router.get('/ingest/membership/preview', requireRole('admin'), async (req, res) 
   }
 });
 
+// ─── INGESTION: Drive Level Files ─────────────────────────────────────────────
+
+/**
+ * POST /api/cs/ingest/levels
+ * Walk all dept folders (A-H Genaral / A-H Private / Private 2 in 1) and
+ * ingest every level Excel found. Admin only.
+ */
+router.post('/ingest/levels', requireRole('admin'), async (req, res) => {
+  try {
+    const csLevels = require('../services/csIngestLevels.service');
+    const onlyDept = req.body?.dept || req.query?.dept || null;
+    const dryRun   = (req.body?.dry_run ?? req.query?.dry_run) === '1'
+                  || (req.body?.dry_run ?? req.query?.dry_run) === true;
+    const result = await csLevels.runIngestionAll({ onlyDept, dryRun });
+    res.json({ ok: true, result });
+  } catch (e) {
+    console.error('POST /cs/ingest/levels error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ─── COMPLETED LEVELS ─────────────────────────────────────────────────────────
+
+/**
+ * GET /api/cs/completed-levels
+ * Paginated list of every completed level row. Admin/Leader.
+ */
+router.get('/completed-levels', requireRole('admin', 'leader'), (req, res) => {
+  try {
+    const { q = '', dept = '', track = '', level = '' } = req.query;
+    const page  = clampInt(req.query.page, 1, 100000, 1);
+    const limit = clampInt(req.query.limit, 1, 500, 100);
+    const offset = (page - 1) * limit;
+
+    const where = [];
+    const params = [];
+
+    if (q && q.trim()) {
+      const t = `%${q.trim()}%`;
+      where.push('(client_name_raw LIKE ? COLLATE NOCASE OR client_phone_norm LIKE ? OR group_name_raw LIKE ?)');
+      params.push(t, t, t);
+    }
+    if (dept && ['General', 'Private', 'Semi'].includes(dept))      { where.push('dept = ?');   params.push(dept); }
+    if (track && ['Starter', 'General', 'Conversation'].includes(track)) { where.push('track = ?'); params.push(track); }
+    if (level && /^[1-5]$/.test(level)) { where.push('level_number = ?'); params.push(parseInt(level, 10)); }
+
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const total = db.prepare(`SELECT COUNT(*) AS n FROM cs_completed_levels ${whereSql}`).get(...params).n;
+
+    const rows = db.prepare(`
+      SELECT id, client_id, client_phone_norm, client_name_raw,
+             track, level_number, level_order,
+             drive_file_name, drive_folder, dept,
+             group_name_raw, registration_date, synced_at
+      FROM cs_completed_levels
+      ${whereSql}
+      ORDER BY level_order ASC, client_name_raw ASC
+      LIMIT ? OFFSET ?
+    `).all(...params, limit, offset);
+
+    res.json({ ok: true, page, limit, total, pages: Math.ceil(total / limit), rows });
+  } catch (e) {
+    console.error('GET /cs/completed-levels error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * GET /api/cs/completed-levels/by-phone/:phone
+ * Returns every completed level for a single client (by normalized phone).
+ */
+router.get('/completed-levels/by-phone/:phone', requireRole('admin', 'leader', 'agent'), (req, res) => {
+  try {
+    const { csPrimaryPhone } = require('../utils/csPhoneNormalize');
+    const phoneNorm = csPrimaryPhone(req.params.phone);
+    if (!phoneNorm) return res.status(400).json({ ok: false, error: 'Invalid phone' });
+    const rows = db.prepare(`
+      SELECT id, track, level_number, level_order, drive_file_name, drive_folder,
+             dept, group_name_raw, registration_date, synced_at
+      FROM cs_completed_levels
+      WHERE client_phone_norm = ?
+      ORDER BY level_order ASC
+    `).all(phoneNorm);
+    res.json({ ok: true, phone: phoneNorm, levels: rows });
+  } catch (e) {
+    console.error('GET /cs/completed-levels/by-phone error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ─── SUBSCRIPTIONS LIST ───────────────────────────────────────────────────────
 
 /**
@@ -180,6 +270,25 @@ router.get('/subscriptions/summary', requireRole('admin', 'leader'), (req, res) 
     res.json({ ok: true, summary: row || {} });
   } catch (e) {
     console.error('GET /cs/subscriptions/summary error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ─── PER-CLIENT PLAN (paid vs taken vs pending) ───────────────────────────────
+
+/**
+ * GET /api/cs/plan/by-phone/:phone
+ * Returns the full subscription plan for one client: how many months paid,
+ * which levels are completed, which are pending, and metadata for the UI.
+ */
+router.get('/plan/by-phone/:phone', requireRole('admin', 'leader', 'agent'), (req, res) => {
+  try {
+    const csPlan = require('../services/csClientPlan.service');
+    const result = csPlan.getClientPlan(req.params.phone);
+    if (!result) return res.status(404).json({ ok: false, error: 'No data for this phone' });
+    res.json({ ok: true, plan: result });
+  } catch (e) {
+    console.error('GET /cs/plan/by-phone error:', e.message);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
