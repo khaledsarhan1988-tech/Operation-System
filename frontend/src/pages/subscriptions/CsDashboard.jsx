@@ -6,7 +6,7 @@ import {
   DollarSign, GraduationCap, CheckCircle, Coins, Clock, Award,
 } from 'lucide-react';
 import api from '../../api/axios';
-import { useAuth } from '../../context/AuthContext';
+import { useAuth } from '../../auth/AuthContext';
 import PageHero from '../../components/ui/PageHero';
 import SectionCard from '../../components/ui/SectionCard';
 import ModernButton from '../../components/ui/ModernButton';
