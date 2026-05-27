@@ -2359,6 +2359,41 @@ initDb().then(db => {
     }
   }, 7000);
 
+  // ─── CS ALERTS — daily auto-alert sweep ──────────────────────────────────
+  // Evaluates every known subscription-tracker client and triggers / resolves
+  // notifications per the business rules (paid-no-group / no-level-10/15/20 /
+  // extra-courses-available). Default 03:30 Cairo. Opt-in via env so dev /
+  // staging never spam users.
+  //
+  // Env vars:
+  //   CS_ALERTS_ENABLED=1            must be set to schedule
+  //   CS_ALERTS_CRON='30 3 * * *'    default 03:30 daily
+  //   CS_ALERTS_TZ='Africa/Cairo'    default Cairo
+  if (process.env.CS_ALERTS_ENABLED === '1') {
+    try {
+      const cron = require('node-cron');
+      const csAlerts = require('./services/csAlerts.service');
+      const cronExpr = process.env.CS_ALERTS_CRON || '30 3 * * *';
+      const tz       = process.env.CS_ALERTS_TZ   || 'Africa/Cairo';
+
+      if (!cron.validate(cronExpr)) {
+        console.error(`cs-alerts cron: invalid expression "${cronExpr}", skipping schedule.`);
+      } else {
+        cron.schedule(cronExpr, () => {
+          try {
+            const r = csAlerts.runOnce({});
+            console.log(`🔔 cs-alerts cron: scanned=${r.scanned} resolved=${r.resolved} triggered=${JSON.stringify(r.triggered)} dur=${r.duration_ms}ms`);
+          } catch (e) {
+            console.error('cs-alerts cron error:', e.message);
+          }
+        }, { timezone: tz });
+        console.log(`⏰ cs-alerts cron scheduled (${cronExpr}, ${tz})`);
+      }
+    } catch (e) {
+      console.error('Failed to schedule cs-alerts cron:', e.message);
+    }
+  }
+
   // ─── FINANCE SYNC: incremental polling ───────────────────────────────────
   // Mirrors Center App's Finance Transactions API into the local finance_*
   // tables every N seconds. Only runs when explicitly opted in via env so

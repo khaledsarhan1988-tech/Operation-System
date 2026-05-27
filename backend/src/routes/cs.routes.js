@@ -487,6 +487,129 @@ router.delete('/reminders/:id', (req, res) => {
   }
 });
 
+// ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/cs/notifications/mine
+ * Active notifications for the current user (as recipient).
+ *   ?include_read=1 — also include already-read ones
+ *   ?include_resolved=1 — also include resolved notifications (history)
+ */
+router.get('/notifications/mine', (req, res) => {
+  try {
+    const includeRead     = req.query.include_read === '1';
+    const includeResolved = req.query.include_resolved === '1';
+
+    const where = ['nr.user_id = ?'];
+    const params = [req.user.id];
+    if (!includeResolved) where.push('n.is_active = 1');
+    if (!includeRead)     where.push('nr.is_read = 0');
+
+    const rows = db.prepare(`
+      SELECT n.id, n.client_id, n.client_phone_norm, n.notif_type, n.severity,
+             n.title, n.message, n.meta_json, n.triggered_at, n.is_active,
+             n.resolved_at, n.resolution_reason,
+             nr.role_context, nr.is_read, nr.read_at,
+             (SELECT c.name FROM clients c WHERE c.id = n.client_id LIMIT 1) AS client_name
+        FROM cs_notifications n
+        INNER JOIN cs_notif_recipients nr ON nr.notif_id = n.id
+       WHERE ${where.join(' AND ')}
+       ORDER BY
+         CASE n.severity
+           WHEN 'critical' THEN 1 WHEN 'urgent' THEN 2
+           WHEN 'warning'  THEN 3 WHEN 'info'   THEN 4
+           ELSE 5
+         END ASC,
+         n.triggered_at DESC
+       LIMIT 500
+    `).all(...params);
+    res.json({ ok: true, notifications: rows });
+  } catch (e) {
+    console.error('GET /cs/notifications/mine error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * POST /api/cs/notifications/:id/read
+ * Mark a notification as read by the current user.
+ */
+router.post('/notifications/:id/read', (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ ok: false, error: 'Invalid id' });
+    const now = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
+    const info = db.prepare(`
+      UPDATE cs_notif_recipients
+         SET is_read = 1, read_at = ?
+       WHERE notif_id = ? AND user_id = ? AND is_read = 0
+    `).run(now, id, req.user.id);
+    res.json({ ok: true, updated: info.changes });
+  } catch (e) {
+    console.error('POST /cs/notifications/:id/read error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * POST /api/cs/notifications/read-all
+ * Mark all of the current user's active notifications as read.
+ */
+router.post('/notifications/read-all', (req, res) => {
+  try {
+    const now = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
+    const info = db.prepare(`
+      UPDATE cs_notif_recipients
+         SET is_read = 1, read_at = ?
+       WHERE user_id = ? AND is_read = 0
+    `).run(now, req.user.id);
+    res.json({ ok: true, updated: info.changes });
+  } catch (e) {
+    console.error('POST /cs/notifications/read-all error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * POST /api/cs/alerts/run-now
+ * Manually trigger the alert sweep. Admin only.
+ *   ?dry_run=1 → analyze without writing notifications
+ */
+router.post('/alerts/run-now', requireRole('admin'), (req, res) => {
+  try {
+    const csAlerts = require('../services/csAlerts.service');
+    const dryRun = (req.query.dry_run === '1') || (req.body?.dry_run === true);
+    const result = csAlerts.runOnce({ dryRun });
+    res.json({ ok: true, result });
+  } catch (e) {
+    console.error('POST /cs/alerts/run-now error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * GET /api/cs/notifications/by-phone/:phone
+ * All notifications (active + resolved) for one client. For the client-profile UI.
+ */
+router.get('/notifications/by-phone/:phone', requireRole('admin', 'leader', 'agent'), (req, res) => {
+  try {
+    const { csPrimaryPhone } = require('../utils/csPhoneNormalize');
+    const phoneNorm = csPrimaryPhone(req.params.phone);
+    if (!phoneNorm) return res.status(400).json({ ok: false, error: 'Invalid phone' });
+    const rows = db.prepare(`
+      SELECT id, notif_type, severity, title, message, meta_json,
+             triggered_at, is_active, resolved_at, resolution_reason
+        FROM cs_notifications
+       WHERE client_phone_norm = ?
+       ORDER BY is_active DESC, triggered_at DESC
+    `).all(phoneNorm);
+    res.json({ ok: true, phone: phoneNorm, notifications: rows });
+  } catch (e) {
+    console.error('GET /cs/notifications/by-phone error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ─── PER-CLIENT PLAN (paid vs taken vs pending) ───────────────────────────────
 
 /**
