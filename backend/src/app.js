@@ -1827,6 +1827,174 @@ initDb().then(db => {
     console.error('client_lifecycle_events migration error:', e.message);
   }
 
+  // ── CLIENT SUBSCRIPTION TRACKER (cs_*) — standalone subsystem ─────────────
+  // Tracks: who paid for how many levels, who completed which levels, current
+  // coordinator + history, reminders + notes, auto-generated alerts, and a
+  // full audit log. Zero touches on existing tables — all reads from clients/
+  // team_members/finance_transactions are SELECT-only.
+  //
+  // See backend/src/utils/cs*.js helpers for parsing rules.
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS cs_subscriptions (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id             INTEGER,                           -- nullable until matched
+        client_phone_raw      TEXT,
+        client_phone_norm     TEXT,
+        client_name_raw       TEXT,
+        source                TEXT NOT NULL,                     -- 'finance_api' | 'excel_membership'
+        source_ref            TEXT,                              -- transaction id, or sheet:row
+        product_name_raw      TEXT,
+        dept                  TEXT,                              -- 'General'|'Private'|'Semi'
+        months                INTEGER,                           -- 1, 3, 6, 9, ...
+        total_levels          INTEGER,                           -- usually = months
+        is_installment        INTEGER NOT NULL DEFAULT 0,
+        amount                TEXT,
+        currency              TEXT,
+        subscription_date     TEXT,
+        is_ignored            INTEGER NOT NULL DEFAULT 0,        -- 1 = Your American Day / Business / etc.
+        ignore_reason         TEXT,
+        notes                 TEXT,
+        created_at            TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        updated_at            TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        UNIQUE(source, source_ref)
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_sub_client   ON cs_subscriptions(client_id)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_sub_phone    ON cs_subscriptions(client_phone_norm)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_sub_dept     ON cs_subscriptions(dept)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_sub_date     ON cs_subscriptions(subscription_date)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_sub_source   ON cs_subscriptions(source)`);
+
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS cs_completed_levels (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id             INTEGER,
+        client_phone_norm     TEXT,
+        client_name_raw       TEXT,
+        track                 TEXT NOT NULL,                     -- 'Starter'|'General'|'Conversation'
+        level_number          INTEGER NOT NULL,                  -- 1..5
+        level_order           INTEGER NOT NULL,                  -- 1..13 (global)
+        drive_file_id         TEXT,
+        drive_file_name       TEXT,
+        drive_folder          TEXT,                              -- 'A-H Genaral'|'A-H Private'|'Private 2 in 1'
+        dept                  TEXT,                              -- derived from drive_folder
+        group_name_raw        TEXT,
+        registration_date     TEXT,
+        synced_at             TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        UNIQUE(client_phone_norm, track, level_number)
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_lvl_client   ON cs_completed_levels(client_id)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_lvl_phone    ON cs_completed_levels(client_phone_norm)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_lvl_order    ON cs_completed_levels(level_order)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_lvl_track    ON cs_completed_levels(track)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_lvl_dept     ON cs_completed_levels(dept)`);
+
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS cs_client_coordinator (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id             INTEGER,
+        client_phone_norm     TEXT,
+        coordinator_id        INTEGER NOT NULL,                  -- FK→team_members.id (read-only)
+        assigned_at           TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        unassigned_at         TEXT,                              -- NULL = current
+        assigned_by_user_id   INTEGER,
+        assignment_reason     TEXT,                              -- 'auto_last_known'|'manual'|'reassign'
+        notes                 TEXT
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_coord_client     ON cs_client_coordinator(client_id)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_coord_phone      ON cs_client_coordinator(client_phone_norm)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_coord_coord      ON cs_client_coordinator(coordinator_id)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_coord_current    ON cs_client_coordinator(unassigned_at)`);
+
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS cs_reminders (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id             INTEGER,
+        client_phone_norm     TEXT,
+        coordinator_id        INTEGER,                           -- who created (team_members.id)
+        created_by_user_id    INTEGER,                           -- users.id
+        reminder_at           TEXT NOT NULL,                     -- when to remind
+        reminder_type         TEXT NOT NULL DEFAULT 'manual',    -- 'manual'|'auto'
+        severity              TEXT,                              -- 'soft'|'medium'|'hard'|'critical'
+        note                  TEXT NOT NULL,                     -- per-reminder note
+        status                TEXT NOT NULL DEFAULT 'pending',   -- 'pending'|'done'|'snoozed'
+        done_at               TEXT,
+        done_by_user_id       INTEGER,
+        snoozed_until         TEXT,
+        created_at            TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        updated_at            TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        updated_by_user_id    INTEGER,
+        deleted_at            TEXT,
+        deleted_by_user_id    INTEGER
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_rem_client       ON cs_reminders(client_id)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_rem_phone        ON cs_reminders(client_phone_norm)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_rem_coord        ON cs_reminders(coordinator_id)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_rem_status       ON cs_reminders(status)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_rem_due          ON cs_reminders(reminder_at)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_rem_deleted      ON cs_reminders(deleted_at)`);
+
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS cs_notifications (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id             INTEGER,
+        client_phone_norm     TEXT,
+        notif_type            TEXT NOT NULL,                     -- 'paid_no_group_7d'|'no_level_10d'|'no_level_15d'|'no_level_20d'|'extra_courses_available'
+        severity              TEXT NOT NULL,                     -- 'info'|'warning'|'urgent'|'critical'
+        title                 TEXT,
+        message               TEXT,
+        meta_json             TEXT,                              -- arbitrary data (e.g. days_silent, paid_total, etc.)
+        triggered_at          TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        is_active             INTEGER NOT NULL DEFAULT 1,        -- 0 = resolved (client completed level / enrolled)
+        resolved_at           TEXT,
+        resolution_reason     TEXT,                              -- 'completed_level'|'enrolled_group'|'manual_dismiss'
+        UNIQUE(client_phone_norm, notif_type, is_active)         -- one active notif of each kind per client
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_notif_client     ON cs_notifications(client_id)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_notif_phone      ON cs_notifications(client_phone_norm)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_notif_active     ON cs_notifications(is_active, severity)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_notif_type       ON cs_notifications(notif_type)`);
+
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS cs_notif_recipients (
+        notif_id              INTEGER NOT NULL REFERENCES cs_notifications(id) ON DELETE CASCADE,
+        user_id               INTEGER NOT NULL,                  -- users.id
+        role_context          TEXT,                              -- 'coordinator'|'leader'|'admin'
+        is_read               INTEGER NOT NULL DEFAULT 0,
+        read_at               TEXT,
+        PRIMARY KEY (notif_id, user_id)
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_notifrcp_user    ON cs_notif_recipients(user_id, is_read)`);
+
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS cs_audit_log (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id             INTEGER,
+        client_phone_norm     TEXT,
+        event_type            TEXT NOT NULL,                     -- 'coord_changed'|'reminder_added'|'reminder_edited'|'reminder_deleted'|'level_completed'|'subscription_added'|'notification_triggered'|'notification_resolved'
+        event_data            TEXT,                              -- JSON
+        actor_user_id         INTEGER,
+        actor_name            TEXT,
+        created_at            TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_audit_client     ON cs_audit_log(client_id)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_audit_phone      ON cs_audit_log(client_phone_norm)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_audit_type       ON cs_audit_log(event_type)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_audit_created    ON cs_audit_log(created_at)`);
+
+    saveNow();
+    console.log('✅ Migration: cs_* subscription tracker tables ready (7 tables: subscriptions, completed_levels, client_coordinator, reminders, notifications, notif_recipients, audit_log)');
+  } catch (e) {
+    console.error('cs_* subscription tracker migration error:', e.message);
+  }
+
   // ── Auto-upsert admin user on every startup ───────────────────────────────
   // Ensures admin always exists even after DB reset (e.g. Railway redeploy).
   try {
