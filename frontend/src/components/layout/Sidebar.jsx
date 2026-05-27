@@ -82,8 +82,8 @@ const LEADER_LINKS = [
   { to: '/leader/reports/attendance-absence',   label: 'nav.attendanceReports',   icon: Activity, color: 'teal' },
   { to: '/leader/targets',                      label: 'nav.targets',             icon: Target,   color: 'green' },
   { type: 'section', label: 'Clients' },
-  { to: '/subscriptions/dashboard',             label: 'لوحة الاشتراكات',          icon: Users,    color: 'violet' },
-  { to: '/subscriptions/my-clients',            label: 'قائمة العملاء',             icon: Users,    color: 'cyan',  sub: true },
+  { to: '/subscriptions/dashboard',             label: 'لوحة الاشتراكات',          icon: LayoutDashboard, color: 'violet' },
+  { to: '/subscriptions/my-clients',            label: 'قائمة العملاء',             icon: Users,    color: 'cyan' },
 ];
 
 const REPORT_LINKS = [
@@ -167,8 +167,8 @@ function getAdminLinks(user) {
   const clientsSection = [
     { type: 'section', label: 'Clients' },
     { to: '/admin/clients',                label: 'العمليات المالية',  icon: Users, color: 'violet' },
-    { to: '/subscriptions/dashboard',      label: 'لوحة الاشتراكات',   icon: Users, color: 'cyan',   sub: true },
-    { to: '/subscriptions/my-clients',     label: 'قائمة العملاء',      icon: Users, color: 'cyan',   sub: true },
+    { to: '/subscriptions/dashboard',      label: 'لوحة الاشتراكات',   icon: LayoutDashboard, color: 'cyan' },
+    { to: '/subscriptions/my-clients',     label: 'قائمة العملاء',      icon: Users, color: 'emerald' },
   ];
 
   return [...base, ...reports, ...monitoring, ...financeSection, ...clientsSection];
