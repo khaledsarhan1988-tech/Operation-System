@@ -150,11 +150,6 @@ function getAdminLinks(user) {
     { to: '/admin/remarks-monitor/category', label: 'توزيع التصنيفات', icon: BarChart3, color: 'pink', sub: true },
   ];
 
-  const clientsSection = [
-    { type: 'section', label: 'Clients' },
-    { to: '/admin/clients', label: 'العمليات المالية', icon: Users, color: 'violet' },
-  ];
-
   // Finance / Center App sync — super-admin only, pinned to the very bottom.
   const financeSection = isSuperAdmin ? [
     { type: 'section', label: 'Center App' },
@@ -163,7 +158,7 @@ function getAdminLinks(user) {
     { to: '/admin/finance/lifecycle', label: 'رحلة العميل',        icon: GitBranch, color: 'cyan',    sub: true },
   ] : [];
 
-  return [...base, ...reports, ...monitoring, ...clientsSection, ...financeSection];
+  return [...base, ...reports, ...monitoring, ...financeSection];
 }
 
 // Avatar visuals are owned by the shared UserAvatar component now.
