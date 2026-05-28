@@ -316,6 +316,129 @@ router.post('/match/run-all', (req, res) => {
   }
 });
 
+// GET /api/finance/match/suggestions/:tx_id — smart suggestions for manual match
+//   Returns:
+//     - same_name:     clients whose tokenized name matches the transaction's
+//     - similar_phone: clients whose normalized phone is within Levenshtein
+//                      distance ≤ 2 of the transaction's phone (typo tolerance)
+//   These are HINTS for the admin only — never auto-matched.
+const { tokenizeName } = require('../services/financeMatcher.service');
+const { normalizePhone, extractAllPhones } = require('../utils/phoneNormalize');
+
+// Tiny Levenshtein implementation — fine for short Egyptian phone strings (≤ 14 chars).
+function levenshtein(a, b) {
+  if (a === b) return 0;
+  if (!a) return b.length;
+  if (!b) return a.length;
+  const m = a.length, n = b.length;
+  const prev = new Array(n + 1);
+  const curr = new Array(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+    }
+    for (let j = 0; j <= n; j++) prev[j] = curr[j];
+  }
+  return prev[n];
+}
+
+// Two names match if they share the same SET of tokens (order-agnostic).
+function sameTokens(aTokens, bTokens) {
+  if (aTokens.length === 0 || bTokens.length === 0) return false;
+  if (aTokens.length !== bTokens.length) return false;
+  const sa = [...aTokens].sort();
+  const sb = [...bTokens].sort();
+  return sa.every((t, i) => t === sb[i]);
+}
+
+router.get('/match/suggestions/:tx_id', (req, res) => {
+  try {
+    const txId = req.params.tx_id;
+    const tx = db.prepare(
+      `SELECT id, client_name, client_phone FROM finance_transactions WHERE id = ?`
+    ).get(txId);
+    if (!tx) return res.status(404).json({ error: 'Transaction not found' });
+
+    const txTokens = tokenizeName(tx.client_name);
+    const txPhones = extractAllPhones(tx.client_phone);
+    const PHONE_DISTANCE_THRESHOLD = 2;
+
+    // ── SAME NAME (token-exact, but discoverable for ANY phone difference) ──
+    let sameName = [];
+    if (txTokens.length > 0) {
+      // Prefilter by the longest token for speed
+      const longest = [...txTokens].sort((a, b) => b.length - a.length)[0];
+      if (longest && longest.length >= 2) {
+        const rows = db.prepare(
+          `SELECT id, name, phone, group_name, line FROM clients
+            WHERE name LIKE ? COLLATE NOCASE
+            LIMIT 500`
+        ).all(`%${longest}%`);
+        sameName = rows.filter(c => sameTokens(tokenizeName(c.name), txTokens));
+      }
+    }
+
+    // ── SIMILAR PHONE (Levenshtein ≤ 2 on normalized 11-digit form) ────────
+    let similarPhone = [];
+    if (txPhones.length > 0) {
+      // Prefilter: any client whose phone column contains a 6-digit run
+      // sharing 6 of the transaction's 9 trailing digits. Loose pre-filter
+      // — exact-distance check happens in JS.
+      const txTails = txPhones.map(p => p.slice(-9));
+      const candidates = new Map();
+      for (const tail of txTails) {
+        // Prefix probing: try the first 6 digits of the tail to catch typos
+        // in any of the last 3 positions
+        const probe = tail.slice(0, 6);
+        if (probe.length < 6) continue;
+        const rows = db.prepare(
+          `SELECT id, name, phone, group_name, line FROM clients
+            WHERE phone LIKE ? LIMIT 500`
+        ).all(`%${probe}%`);
+        for (const c of rows) candidates.set(c.id, c);
+      }
+
+      const seenInSame = new Set(sameName.map(c => c.id));
+      for (const c of candidates.values()) {
+        if (seenInSame.has(c.id)) continue; // already in same_name
+        const clientPhones = extractAllPhones(c.phone);
+        if (clientPhones.length === 0) continue;
+        let minDist = Infinity;
+        for (const tp of txPhones) {
+          for (const cp of clientPhones) {
+            const d = levenshtein(tp, cp);
+            if (d < minDist) minDist = d;
+          }
+        }
+        if (minDist > 0 && minDist <= PHONE_DISTANCE_THRESHOLD) {
+          similarPhone.push({ ...c, distance: minDist });
+        }
+      }
+      // Sort closest-first then limit
+      similarPhone.sort((a, b) => a.distance - b.distance);
+      similarPhone = similarPhone.slice(0, 20);
+    }
+
+    res.json({
+      tx: {
+        id: tx.id,
+        client_name: tx.client_name,
+        client_phone: tx.client_phone,
+      },
+      suggestions: {
+        same_name: sameName.slice(0, 20),
+        similar_phone: similarPhone,
+      },
+    });
+  } catch (e) {
+    console.error('GET /finance/match/suggestions error:', e.message);
+    res.status(500).json({ error: 'Failed to load suggestions' });
+  }
+});
+
 // GET /api/finance/match/clients/search — search academy clients for manual match UI
 router.get('/match/clients/search', (req, res) => {
   try {

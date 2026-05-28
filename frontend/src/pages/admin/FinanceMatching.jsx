@@ -86,6 +86,12 @@ function ManualMatchDialog({ tx, onClose, onMatched }) {
     queryFn: () => api.get(`/finance/match/candidates/${encodeURIComponent(tx.id)}`).then(r => r.data),
     enabled: !!tx.id,
   });
+  const suggestionsQ = useQuery({
+    queryKey: ['finance', 'match-suggestions', tx.id],
+    queryFn: () => api.get(`/finance/match/suggestions/${encodeURIComponent(tx.id)}`).then(r => r.data),
+    enabled: !!tx.id,
+    staleTime: 30_000,
+  });
   const searchQ = useQuery({
     queryKey: ['finance', 'match-client-search', q],
     queryFn: () => api.get('/finance/match/clients/search', { params: { q } }).then(r => r.data),
@@ -105,11 +111,17 @@ function ManualMatchDialog({ tx, onClose, onMatched }) {
   });
 
   const candidates = candidatesQ.data?.candidates || [];
+  const sameNameSugg    = suggestionsQ.data?.suggestions?.same_name      || [];
+  const similarPhoneSugg = suggestionsQ.data?.suggestions?.similar_phone || [];
   const searchResults = searchQ.data?.clients || [];
 
-  // Hide already-listed candidates from search results
-  const candIds = new Set(candidates.map(c => c.client_id));
-  const extra = searchResults.filter(c => !candIds.has(c.id));
+  // Hide already-listed entries from search results
+  const listedIds = new Set([
+    ...candidates.map(c => c.client_id),
+    ...sameNameSugg.map(c => c.id),
+    ...similarPhoneSugg.map(c => c.id),
+  ]);
+  const extra = searchResults.filter(c => !listedIds.has(c.id));
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" dir="rtl">
@@ -140,6 +152,72 @@ function ManualMatchDialog({ tx, onClose, onMatched }) {
         </div>
 
         <div className="overflow-y-auto p-5 space-y-4">
+          {/* ── SMART SUGGESTIONS: same-name matches ──────────────────────── */}
+          {sameNameSugg.length > 0 ? (
+            <div>
+              <h4 className="text-sm font-black text-gray-700 mb-2 flex items-center gap-2">
+                <CheckCircle2 size={16} className="text-emerald-600" />
+                اقتراح ذكي — نفس الاسم بالظبط
+              </h4>
+              <ul className="space-y-2">
+                {sameNameSugg.map(c => (
+                  <li key={'sn-' + c.id}>
+                    <button
+                      onClick={() => matchMut.mutate(c.id)}
+                      disabled={matchMut.isPending}
+                      className="w-full text-right border-2 border-emerald-200 hover:border-emerald-400 hover:bg-emerald-50 rounded-xl p-3 transition"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-bold text-gray-900">{c.name}</p>
+                          <p className="text-xs text-gray-600 mt-0.5">
+                            {c.phone || '—'} · {c.group_name || '—'} · {c.line}
+                          </p>
+                        </div>
+                        <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-2 py-1 rounded-full">
+                          اسم متطابق
+                        </span>
+                      </div>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {/* ── SMART SUGGESTIONS: similar phone (typo tolerance) ─────────── */}
+          {similarPhoneSugg.length > 0 ? (
+            <div>
+              <h4 className="text-sm font-black text-gray-700 mb-2 flex items-center gap-2">
+                <Phone size={16} className="text-amber-600" />
+                اقتراح ذكي — تليفون قريب (احتمال typo)
+              </h4>
+              <ul className="space-y-2">
+                {similarPhoneSugg.map(c => (
+                  <li key={'sp-' + c.id}>
+                    <button
+                      onClick={() => matchMut.mutate(c.id)}
+                      disabled={matchMut.isPending}
+                      className="w-full text-right border-2 border-amber-200 hover:border-amber-400 hover:bg-amber-50 rounded-xl p-3 transition"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-bold text-gray-900">{c.name}</p>
+                          <p className="text-xs text-gray-600 mt-0.5">
+                            {c.phone || '—'} · {c.group_name || '—'} · {c.line}
+                          </p>
+                        </div>
+                        <span className="text-xs font-bold text-amber-700 bg-amber-100 px-2 py-1 rounded-full">
+                          فرق {c.distance} {c.distance === 1 ? 'رقم' : 'أرقام'}
+                        </span>
+                      </div>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
           {candidates.length > 0 ? (
             <div>
               <h4 className="text-sm font-black text-gray-700 mb-2">المرشحون التلقائيون</h4>
