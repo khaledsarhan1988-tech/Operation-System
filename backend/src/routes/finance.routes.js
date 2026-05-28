@@ -231,9 +231,11 @@ router.get('/match/transactions', (req, res) => {
     const total = db.prepare(`SELECT COUNT(*) AS n FROM finance_transactions ${whereSql}`).get(...params)?.n || 0;
     const rows = db.prepare(`
       SELECT t.id, t.date, t.client_name, t.client_phone, t.type, t.amount, t.currency,
-             t.status, t.product_name, t.matched_client_id, t.match_method,
+             t.status, t.product_name, t.classify,
+             t.matched_client_id, t.match_method,
              t.match_confidence, t.match_attempted_at, t.matched_by,
-             c.name AS matched_client_name, c.phone AS matched_client_phone, c.group_name AS matched_client_group
+             c.name AS matched_client_name, c.phone AS matched_client_phone,
+             c.group_name AS matched_client_group, c.line AS matched_client_line
         FROM finance_transactions t
         LEFT JOIN clients c ON c.id = t.matched_client_id
         ${whereSql}
@@ -273,6 +275,32 @@ router.post('/match/transaction/:tx_id', (req, res) => {
     res.json(r);
   } catch (e) {
     console.error('POST /finance/match/transaction error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /api/finance/match/transaction/:tx_id/classify — admin overrides the
+// line tag (classify) on a transaction.
+//   body: { classify: 'Ahmed Hassan' | 'Dardasha' | null }   null → clear
+// After updating, the caller usually runs re-match so the new line filter
+// takes effect. We deliberately don't trigger that here to keep the action
+// fast and predictable from the UI.
+router.patch('/match/transaction/:tx_id/classify', (req, res) => {
+  try {
+    const txId = req.params.tx_id;
+    const ALLOWED = ['Ahmed Hassan', 'Dardasha'];
+    let value = req.body?.classify;
+    if (value === null || value === undefined || value === '') value = null;
+    if (value !== null && !ALLOWED.includes(value)) {
+      return res.status(400).json({ error: `classify must be one of ${ALLOWED.join(', ')} or null` });
+    }
+    const tx = db.prepare(`SELECT id FROM finance_transactions WHERE id = ?`).get(txId);
+    if (!tx) return res.status(404).json({ error: 'Transaction not found' });
+
+    db.prepare(`UPDATE finance_transactions SET classify = ? WHERE id = ?`).run(value, txId);
+    res.json({ txId, classify: value });
+  } catch (e) {
+    console.error('PATCH /finance/match/transaction/:tx_id/classify error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });

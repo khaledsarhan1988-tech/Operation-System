@@ -41,6 +41,18 @@ const METHOD_BADGE = {
   unmatched:  'bg-rose-100    text-rose-700    border-rose-300',
 };
 
+// Classify (line tag) badge colors — comes from Center App's classify field.
+const CLASSIFY_BADGE = {
+  'Ahmed Hassan': 'bg-emerald-100 text-emerald-700 border-emerald-300',
+  'Dardasha':     'bg-fuchsia-100 text-fuchsia-700 border-fuchsia-300',
+};
+function classifyLabel(c) {
+  if (!c) return null;
+  const trimmed = String(c).trim();
+  if (!trimmed || trimmed === '-' || trimmed === '.' || trimmed === '0') return null;
+  return trimmed;
+}
+
 // Transaction status badge colors — pending stands out in red for action visibility
 const STATUS_BADGE = {
   pending:  'bg-rose-100    text-rose-700    border border-rose-300',
@@ -73,6 +85,73 @@ function StatTile({ label, value, icon: Icon, color = 'blue' }) {
         <p className="text-xs font-bold opacity-70">{label}</p>
         <p className="text-2xl font-black tabular-nums">{value != null ? Number(value).toLocaleString('ar-EG') : '—'}</p>
       </div>
+    </div>
+  );
+}
+
+// ─── CLASSIFY CELL ─────────────────────────────────────────────────────────
+// One cell in the matching table that shows the line tag (classify) for a tx.
+// Priority:
+//   1. tx.classify when it's a known value
+//   2. fall back to the matched client's line if the tx is matched
+//   3. otherwise show a dropdown so the admin can pick a line manually
+//      (POSTs to PATCH /classify and then triggers a global refresh)
+function ClassifyCell({ tx, onSaved }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  const explicit = classifyLabel(tx.classify);
+  const fromMatch = !explicit && tx.matched_client_line
+    ? (CLASSIFY_BADGE[tx.matched_client_line] ? tx.matched_client_line : null)
+    : null;
+  const finalLabel = explicit || fromMatch;
+
+  if (finalLabel) {
+    const cls = CLASSIFY_BADGE[finalLabel] || 'bg-gray-100 text-gray-700 border-gray-300';
+    return (
+      <div className="flex items-center gap-1">
+        <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${cls}`}>
+          {finalLabel}
+        </span>
+        {!explicit && fromMatch && (
+          <span className="text-[10px] text-gray-400" title="من بيانات العميل المطابَق">
+            (من العميل)
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  // No explicit classify, no match line — let admin choose
+  const setClassify = async (val) => {
+    try {
+      setSaving(true);
+      setError(null);
+      await api.patch(
+        `/finance/match/transaction/${encodeURIComponent(tx.id)}/classify`,
+        { classify: val },
+      );
+      if (typeof onSaved === 'function') onSaved();
+    } catch (e) {
+      setError(e?.response?.data?.error || e?.message || 'فشل التحديث');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <select
+        disabled={saving}
+        defaultValue=""
+        onChange={(e) => { if (e.target.value) setClassify(e.target.value); }}
+        className="text-xs border border-gray-200 rounded-md px-1.5 py-0.5 bg-white hover:border-violet-300 focus:border-violet-400 outline-none disabled:opacity-50"
+      >
+        <option value="" disabled>— اختر —</option>
+        <option value="Ahmed Hassan">Ahmed Hassan</option>
+        <option value="Dardasha">Dardasha</option>
+      </select>
+      {error && <span className="text-[10px] text-rose-600">{error}</span>}
     </div>
   );
 }
@@ -463,6 +542,7 @@ export default function FinanceMatching() {
                 <th className="p-2 text-right">المنتج</th>
                 <th className="p-2 text-right">المبلغ</th>
                 <th className="p-2 text-right">الحالة</th>
+                <th className="p-2 text-right">Line (Classify)</th>
                 <th className="p-2 text-right">المطابقة</th>
                 <th className="p-2 text-right">العميل المطابَق</th>
                 <th className="p-2 text-right">إجراء</th>
@@ -470,9 +550,9 @@ export default function FinanceMatching() {
             </thead>
             <tbody>
               {listQ.isLoading ? (
-                <tr><td colSpan={9} className="text-center py-8 text-gray-400">جارى التحميل...</td></tr>
+                <tr><td colSpan={10} className="text-center py-8 text-gray-400">جارى التحميل...</td></tr>
               ) : transactions.length === 0 ? (
-                <tr><td colSpan={9} className="text-center py-8 text-gray-400">لا توجد معاملات</td></tr>
+                <tr><td colSpan={10} className="text-center py-8 text-gray-400">لا توجد معاملات</td></tr>
               ) : transactions.map(t => (
                 <tr key={t.id} className="border-t hover:bg-gray-50">
                   <td className="p-2 whitespace-nowrap font-mono text-xs">{t.date || '—'}</td>
@@ -484,6 +564,9 @@ export default function FinanceMatching() {
                     <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${STATUS_BADGE[t.status] || 'bg-gray-100 text-gray-600'}`}>
                       {t.status || '—'}
                     </span>
+                  </td>
+                  <td className="p-2 whitespace-nowrap">
+                    <ClassifyCell tx={t} onSaved={refreshAll} />
                   </td>
                   <td className="p-2 whitespace-nowrap">
                     {t.match_method ? (
