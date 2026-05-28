@@ -432,6 +432,14 @@ export default function FinanceMatching() {
     },
   });
 
+  const fixLinesMut = useMutation({
+    mutationFn: () => api.post('/finance/match/fix-lines').then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['finance', 'match-stats'] });
+      qc.invalidateQueries({ queryKey: ['finance', 'match-transactions'] });
+    },
+  });
+
   const retryMut = useMutation({
     mutationFn: (txId) => api.post(`/finance/match/transaction/${encodeURIComponent(txId)}`, { force: true }).then(r => r.data),
     onSuccess: () => {
@@ -500,9 +508,31 @@ export default function FinanceMatching() {
           >
             إعادة محاولة الكل (قد تكون بطيئة)
           </ModernButton>
+          <ModernButton
+            variant="primary"
+            onClick={() => {
+              if (window.confirm('هيتم تصحيح line العملاء بناءً على جدول batches، ثم إعادة المطابقة. تتابع؟')) {
+                fixLinesMut.mutate();
+              }
+            }}
+            disabled={fixLinesMut.isPending}
+          >
+            {fixLinesMut.isPending ? 'جارٍ الإصلاح...' : '🔧 إصلاح Lines + إعادة مطابقة'}
+          </ModernButton>
           {runAllMut.data ? (
             <span className="text-xs bg-emerald-50 border border-emerald-200 rounded px-2 py-1 font-mono">
               ✅ تمت محاولة {runAllMut.data.attempted}: matched={runAllMut.data.matched} ambiguous={runAllMut.data.ambiguous} unmatched={runAllMut.data.unmatched}
+            </span>
+          ) : null}
+          {fixLinesMut.data ? (
+            <span className="text-xs bg-violet-50 border border-violet-200 rounded px-2 py-1 font-mono">
+              ✅ صُحّح line لـ {fixLinesMut.data.clients_updated} عميل (من {fixLinesMut.data.clients_examined}) ·
+              {' '}re-match: matched={fixLinesMut.data.rematch.matched} unmatched={fixLinesMut.data.rematch.unmatched}
+            </span>
+          ) : null}
+          {fixLinesMut.isError ? (
+            <span className="text-xs bg-rose-50 border border-rose-200 rounded px-2 py-1 text-rose-700">
+              ❌ {fixLinesMut.error?.response?.data?.error || fixLinesMut.error?.message}
             </span>
           ) : null}
         </div>

@@ -324,6 +324,66 @@ router.post('/match/transaction/:tx_id/manual', (req, res) => {
   }
 });
 
+// POST /api/finance/match/fix-lines — repair clients.line using batches as the
+//   single source of truth. Updates any client whose group already lives in
+//   batches under a different line, then triggers a full re-match so the
+//   classify-based line filter picks up the corrected data.
+//
+//   This is a one-click rescue for the situation where the same trainees
+//   Excel was uploaded to both line folders before the batches-aware sync
+//   rule shipped (see sync.service.js syncTrainees). It does not touch
+//   clients whose group is not in batches yet (legacy / brand-new groups).
+router.post('/match/fix-lines', (req, res) => {
+  try {
+    // Find clients whose line disagrees with batches' line for the same group.
+    const mismatched = db.prepare(`
+      SELECT c.id, c.name, c.phone, c.group_name, c.line AS old_line, b.line AS new_line
+        FROM clients c
+        INNER JOIN (
+          SELECT group_name, line FROM batches
+            WHERE group_name IS NOT NULL AND group_name != ''
+            GROUP BY group_name
+        ) b ON b.group_name = c.group_name
+       WHERE c.line != b.line
+    `).all();
+
+    let updated = 0;
+    if (mismatched.length > 0) {
+      const stmt = db.prepare(`UPDATE clients SET line = ? WHERE id = ?`);
+      const tx = db.transaction(() => {
+        for (const m of mismatched) { stmt.run(m.new_line, m.id); updated++; }
+      });
+      tx();
+    }
+
+    // Trigger a full re-match so the line filter picks up the fixed clients.
+    const lifecycleSvc = lifecycle;
+    const matchRes = matcher.matchAll({
+      scope: 'all',
+      onMatched: (cid, txId) => {
+        try { lifecycleSvc.regenerateFromTransactionId(txId); }
+        catch (e) { console.error('lifecycle hook error:', e.message); }
+      },
+    });
+
+    res.json({
+      clients_examined: mismatched.length,
+      clients_updated: updated,
+      sample: mismatched.slice(0, 5).map(m => ({
+        name: m.name,
+        phone: m.phone,
+        group: m.group_name,
+        from: m.old_line,
+        to: m.new_line,
+      })),
+      rematch: matchRes,
+    });
+  } catch (e) {
+    console.error('POST /finance/match/fix-lines error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /api/finance/match/run-all — bulk re-match
 //   body: { scope: 'unattempted' | 'unmatched' | 'all' }   default 'unattempted'
 router.post('/match/run-all', (req, res) => {
