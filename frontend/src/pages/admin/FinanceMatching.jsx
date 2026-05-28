@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Link as LinkIcon, RefreshCw, Search, Check, X, Users, AlertCircle,
-  CheckCircle2, HelpCircle, UserX, Play, Phone, Wallet,
+  CheckCircle2, HelpCircle, UserX, Play, Phone, Wallet, List,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -18,6 +18,7 @@ import ModernButton from '../../components/ui/ModernButton';
  */
 
 const STATE_TABS = [
+  { key: 'all',           label: 'الكل',           icon: List,          color: 'violet'  },
   { key: 'ambiguous',     label: 'يحتاج مراجعة',  icon: HelpCircle,    color: 'amber'   },
   { key: 'unmatched',     label: 'غير مطابق',     icon: UserX,         color: 'rose'    },
   { key: 'matched',       label: 'مطابَق',         icon: CheckCircle2,  color: 'emerald' },
@@ -218,7 +219,7 @@ function ManualMatchDialog({ tx, onClose, onMatched }) {
 // ─── MAIN ─────────────────────────────────────────────────────────────────────
 export default function FinanceMatching() {
   const qc = useQueryClient();
-  const [state, setState] = useState('ambiguous');
+  const [state, setState] = useState('all');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [dialogTx, setDialogTx] = useState(null);
@@ -344,9 +345,9 @@ export default function FinanceMatching() {
               >
                 <t.icon size={16} />
                 {t.label}
-                {state === t.key && stats[t.key === 'not_attempted' ? 'not_attempted' : t.key] != null ? (
+                {state === t.key && stats[t.key === 'all' ? 'total' : t.key] != null ? (
                   <span className="text-[10px] bg-white px-1.5 py-0.5 rounded-full">
-                    {Number(stats[t.key === 'not_attempted' ? 'not_attempted' : t.key]).toLocaleString('ar-EG')}
+                    {Number(stats[t.key === 'all' ? 'total' : t.key]).toLocaleString('ar-EG')}
                   </span>
                 ) : null}
               </button>
