@@ -32,6 +32,12 @@ function normalizePhone(raw) {
   let s = String(raw).replace(/\D+/g, '');
   if (!s) return null;
 
+  // International dialing prefix "00" (e.g. "0020 1060801216")
+  // Strip it first so the rest of the logic handles the country code uniformly.
+  if (s.startsWith('00')) {
+    s = s.slice(2);
+  }
+
   if (s.length === 12 && s.startsWith('20')) {
     s = s.slice(2);
   }

@@ -58,65 +58,39 @@ function namesMatchExact(a, b) {
  * Given a transaction, return the set of academy clients that match — first
  * by phone, then by name. Result shape:
  *   {
- *     method: 'phone' | 'name' | null,
+ *     method: 'phone' | null,
  *     candidates: [{ id, name, phone, group_name, line }, ...]
  *   }
  *
- * Phone takes priority: if ANY phone match exists, we ignore name matches
- * entirely. Mixing methods would lead to false positives (same name, wrong
- * person). Only when no phone match exists do we fall back to name.
+ * Phone-only matching rule (2026-05-28): the phone number is the source of
+ * truth. If no client matches the transaction phone (after normalization),
+ * the transaction is unmatched — it represents a new client to add. Name
+ * matching was removed because identical names with different phones are
+ * different people in practice.
  */
 function findCandidates(tx) {
   const phones = extractAllPhones(tx.client_phone);
-  const allClients = [];
-
-  // ── PHONE PASS ─────────────────────────────────────────────────────────
-  if (phones.length > 0) {
-    // We can't directly index-search normalized phones (clients.phone is
-    // stored raw), but the dataset is small enough (<100K rows) to load
-    // candidates by approximate match and filter in JS.
-    const rawPhones = phones.map(p => p.slice(-9));  // last 9 digits — most stable suffix
-    const phoneFilter = rawPhones.map(() => `phone LIKE ?`).join(' OR ');
-    const phoneParams = rawPhones.map(p => `%${p}%`);
-    const rows = db.prepare(`
-      SELECT id, name, phone, group_name, line
-        FROM clients
-       WHERE ${phoneFilter}
-    `).all(...phoneParams);
-
-    const matches = rows.filter(c => {
-      const clientPhones = extractAllPhones(c.phone);
-      return clientPhones.some(p => phones.includes(p));
-    });
-    if (matches.length > 0) {
-      return { method: 'phone', candidates: matches };
-    }
-  }
-
-  // ── NAME PASS ──────────────────────────────────────────────────────────
-  const name = (tx.client_name || '').trim();
-  if (!name) {
+  if (phones.length === 0) {
     return { method: null, candidates: [] };
   }
 
-  // Pull every client whose name has a token in common with the tx name.
-  // Cheaper than scanning the whole table; lets the JS filter do the
-  // exact-set comparison.
-  const tokens = tokenizeName(name);
-  if (tokens.length === 0) return { method: null, candidates: [] };
-
-  // Build a NAME LIKE filter on the longest token (most discriminating).
-  const longest = tokens.slice().sort((a, b) => b.length - a.length)[0];
-  if (!longest || longest.length < 2) return { method: null, candidates: [] };
-
+  // We can't directly index-search normalized phones (clients.phone is
+  // stored raw), but the dataset is small enough (<100K rows) to load
+  // candidates by approximate match and filter in JS.
+  const rawPhones = phones.map(p => p.slice(-9));  // last 9 digits — most stable suffix
+  const phoneFilter = rawPhones.map(() => `phone LIKE ?`).join(' OR ');
+  const phoneParams = rawPhones.map(p => `%${p}%`);
   const rows = db.prepare(`
     SELECT id, name, phone, group_name, line
       FROM clients
-     WHERE name LIKE ? COLLATE NOCASE
-  `).all(`%${longest}%`);
+     WHERE ${phoneFilter}
+  `).all(...phoneParams);
 
-  const matches = rows.filter(c => namesMatchExact(c.name, name));
-  return { method: matches.length > 0 ? 'name' : null, candidates: matches };
+  const matches = rows.filter(c => {
+    const clientPhones = extractAllPhones(c.phone);
+    return clientPhones.some(p => phones.includes(p));
+  });
+  return { method: matches.length > 0 ? 'phone' : null, candidates: matches };
 }
 
 // ─── PERSISTENCE ──────────────────────────────────────────────────────────────
@@ -187,29 +161,26 @@ function matchTransaction(txId, { force = false, onMatched = null } = {}) {
     return { txId, status: 'unmatched' };
   }
 
-  if (candidates.length === 1) {
-    const c = candidates[0];
-    setMatchResult(txId, {
-      matched_client_id: c.id,
-      match_method: method === 'phone' ? 'auto_phone' : 'auto_name',
-      match_confidence: method === 'phone' ? 'high' : 'medium',
-      matched_by: null,
-    });
-    if (typeof onMatched === 'function') {
-      try { onMatched(c.id, txId); } catch (e) { console.error('[FinanceMatcher] onMatched hook error:', e.message); }
-    }
-    return { txId, status: 'matched', client_id: c.id, method: method === 'phone' ? 'auto_phone' : 'auto_name' };
-  }
-
-  // Ambiguous: persist candidates for manual review, leave matched_client_id NULL.
-  persistCandidates(txId, method, candidates);
+  // 1+ candidates — all matched by phone (after normalization). Multiple
+  // records with the same phone in the clients table are the SAME PERSON
+  // (e.g. registered in several groups), so we auto-match to the first one.
+  const c = candidates[0];
   setMatchResult(txId, {
-    matched_client_id: null,
-    match_method: 'ambiguous',
-    match_confidence: 'low',
+    matched_client_id: c.id,
+    match_method: 'auto_phone',
+    match_confidence: 'high',
     matched_by: null,
   });
-  return { txId, status: 'ambiguous', candidate_count: candidates.length };
+  if (typeof onMatched === 'function') {
+    try { onMatched(c.id, txId); } catch (e) { console.error('[FinanceMatcher] onMatched hook error:', e.message); }
+  }
+  return {
+    txId,
+    status: 'matched',
+    client_id: c.id,
+    method: 'auto_phone',
+    matched_count: candidates.length,
+  };
 }
 
 // ─── PUBLIC: matchBatch (used by sync engine) ─────────────────────────────────
