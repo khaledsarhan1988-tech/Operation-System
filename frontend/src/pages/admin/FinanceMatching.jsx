@@ -180,6 +180,10 @@ function ClassifyCell({ tx, onSaved }) {
 // ─── MANUAL MATCH DIALOG ─────────────────────────────────────────────────────
 function ManualMatchDialog({ tx, onClose, onMatched }) {
   const [q, setQ] = useState(tx.client_name || '');
+  // Local mirror so the Line dropdown reflects updates immediately while a
+  // PATCH is in flight. Reset whenever the tx prop changes.
+  const [localClassify, setLocalClassify] = useState(classifyLabel(tx.classify));
+  const [classifySaving, setClassifySaving] = useState(false);
 
   const candidatesQ = useQuery({
     queryKey: ['finance', 'match-candidates', tx.id],
@@ -199,11 +203,40 @@ function ManualMatchDialog({ tx, onClose, onMatched }) {
     staleTime: 5_000,
   });
 
+  // Persist a manual Line override on the transaction. Used both by the
+  // explicit dropdown at the top of the dialog and as an auto-side-effect
+  // when the admin picks a candidate (the candidate's line becomes the
+  // transaction's classify if classify isn't already set).
+  const patchClassify = async (val) => {
+    setClassifySaving(true);
+    try {
+      await api.patch(
+        `/finance/match/transaction/${encodeURIComponent(tx.id)}/classify`,
+        { classify: val },
+      );
+      setLocalClassify(val);
+    } finally {
+      setClassifySaving(false);
+    }
+  };
+
+  // Manual match: optionally set classify first (when the chosen candidate
+  // sits on a known line and the tx classify is still empty), then run the
+  // existing manualMatch endpoint.
   const matchMut = useMutation({
-    mutationFn: (clientId) => api.post(
-      `/finance/match/transaction/${encodeURIComponent(tx.id)}/manual`,
-      { client_id: clientId },
-    ).then(r => r.data),
+    mutationFn: async ({ clientId, lineHint }) => {
+      if (
+        lineHint &&
+        !localClassify &&
+        CLASSIFY_BADGE[lineHint]
+      ) {
+        try { await patchClassify(lineHint); } catch (_) { /* best-effort */ }
+      }
+      return api.post(
+        `/finance/match/transaction/${encodeURIComponent(tx.id)}/manual`,
+        { client_id: clientId },
+      ).then(r => r.data);
+    },
     onSuccess: () => {
       onMatched();
       onClose();
@@ -249,6 +282,27 @@ function ManualMatchDialog({ tx, onClose, onMatched }) {
               className="w-full pr-9 pl-3 py-2.5 border-2 border-gray-200 rounded-lg text-sm focus:border-violet-400 outline-none"
             />
           </div>
+
+          {/* Line (classify) inline editor — saves immediately on change */}
+          <div className="mt-3 flex items-center gap-2">
+            <span className="text-xs font-bold text-gray-600">Line (Classify):</span>
+            <select
+              value={localClassify || ''}
+              disabled={classifySaving}
+              onChange={(e) => patchClassify(e.target.value || null).catch(() => {})}
+              className="text-xs border border-gray-200 rounded-md px-2 py-1 bg-white hover:border-violet-300 focus:border-violet-400 outline-none disabled:opacity-50"
+            >
+              <option value="">— بدون —</option>
+              <option value="Ahmed Hassan">Ahmed Hassan</option>
+              <option value="Dardasha">Dardasha</option>
+            </select>
+            {classifySaving && <span className="text-[11px] text-gray-400">جارٍ الحفظ...</span>}
+            {localClassify && CLASSIFY_BADGE[localClassify] && (
+              <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${CLASSIFY_BADGE[localClassify]}`}>
+                {localClassify}
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="overflow-y-auto p-5 space-y-4">
@@ -263,7 +317,7 @@ function ManualMatchDialog({ tx, onClose, onMatched }) {
                 {sameNameSugg.map(c => (
                   <li key={'sn-' + c.id}>
                     <button
-                      onClick={() => matchMut.mutate(c.id)}
+                      onClick={() => matchMut.mutate({ clientId: c.id, lineHint: c.line })}
                       disabled={matchMut.isPending}
                       className="w-full text-right border-2 border-emerald-200 hover:border-emerald-400 hover:bg-emerald-50 rounded-xl p-3 transition"
                     >
@@ -296,7 +350,7 @@ function ManualMatchDialog({ tx, onClose, onMatched }) {
                 {similarPhoneSugg.map(c => (
                   <li key={'sp-' + c.id}>
                     <button
-                      onClick={() => matchMut.mutate(c.id)}
+                      onClick={() => matchMut.mutate({ clientId: c.id, lineHint: c.line })}
                       disabled={matchMut.isPending}
                       className="w-full text-right border-2 border-amber-200 hover:border-amber-400 hover:bg-amber-50 rounded-xl p-3 transition"
                     >
@@ -325,7 +379,7 @@ function ManualMatchDialog({ tx, onClose, onMatched }) {
                 {candidates.map(c => (
                   <li key={c.client_id}>
                     <button
-                      onClick={() => matchMut.mutate(c.client_id)}
+                      onClick={() => matchMut.mutate({ clientId: c.client_id, lineHint: c.line })}
                       disabled={matchMut.isPending}
                       className="w-full text-right border-2 border-amber-200 hover:border-amber-400 hover:bg-amber-50 rounded-xl p-3 transition"
                     >
@@ -354,7 +408,7 @@ function ManualMatchDialog({ tx, onClose, onMatched }) {
                 {extra.map(c => (
                   <li key={c.id}>
                     <button
-                      onClick={() => matchMut.mutate(c.id)}
+                      onClick={() => matchMut.mutate({ clientId: c.id, lineHint: c.line })}
                       disabled={matchMut.isPending}
                       className="w-full text-right border-2 border-gray-200 hover:border-violet-400 hover:bg-violet-50 rounded-xl p-3 transition"
                     >
@@ -388,7 +442,7 @@ function ManualMatchDialog({ tx, onClose, onMatched }) {
           <ModernButton
             variant="danger"
             icon={X}
-            onClick={() => matchMut.mutate(null)}
+            onClick={() => matchMut.mutate({ clientId: null })}
             disabled={matchMut.isPending || !tx.matched_client_id}
           >
             إلغاء المطابقة

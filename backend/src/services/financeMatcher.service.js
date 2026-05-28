@@ -79,9 +79,29 @@ function namesMatchExact(a, b) {
  */
 const VALID_LINES = ['Ahmed Hassan', 'Dardasha'];
 
+// Pull every digit out of a free-text phone field. Unlike normalizePhone /
+// extractAllPhones (which only recognise Egyptian formats), this is format-
+// agnostic: works for Saudi 966xxx, UAE 971xxx, etc. Returns the cleaned
+// digit string or null if there aren't enough digits to be plausible.
+function rawDigitSuffix(raw) {
+  if (!raw) return null;
+  const s = String(raw).replace(/\D+/g, '');
+  if (s.length < 7) return null;        // too short to be a phone
+  return s.slice(-9);                   // last 9 digits — stable across formats
+}
+
 function findCandidates(tx) {
-  const phones = extractAllPhones(tx.client_phone);
-  if (phones.length === 0) {
+  // ── Egyptian-format normalisation pass ─────────────────────────────────
+  const egPhones = extractAllPhones(tx.client_phone);
+
+  // ── International fallback: format-agnostic raw-digit match ────────────
+  // Center App also stores Saudi (966xxx) and UAE (971xxx) numbers for
+  // Gulf-based clients. extractAllPhones returns [] for those, but the
+  // clients table holds the same raw digits, so a last-9-digit suffix
+  // comparison reliably catches them.
+  const fallbackSuffix = egPhones.length === 0 ? rawDigitSuffix(tx.client_phone) : null;
+
+  if (egPhones.length === 0 && !fallbackSuffix) {
     return { method: null, candidates: [] };
   }
 
@@ -92,22 +112,32 @@ function findCandidates(tx) {
     : '';
   const lineParams = VALID_LINES.includes(tx.classify) ? [tx.classify] : [];
 
-  // We can't directly index-search normalized phones (clients.phone is
-  // stored raw), but the dataset is small enough (<100K rows) to load
-  // candidates by approximate match and filter in JS.
-  const rawPhones = phones.map(p => p.slice(-9));  // last 9 digits — most stable suffix
-  const phoneFilter = rawPhones.map(() => `phone LIKE ?`).join(' OR ');
-  const phoneParams = rawPhones.map(p => `%${p}%`);
+  // Build the candidate phone-filter from whichever pass produced suffixes.
+  const suffixes = egPhones.length > 0
+    ? egPhones.map(p => p.slice(-9))
+    : [fallbackSuffix];
+
+  const phoneFilter = suffixes.map(() => `phone LIKE ?`).join(' OR ');
+  const phoneParams = suffixes.map(s => `%${s}%`);
   const rows = db.prepare(`
     SELECT id, name, phone, group_name, line
       FROM clients
      WHERE (${phoneFilter})${lineFilter}
   `).all(...phoneParams, ...lineParams);
 
-  const matches = rows.filter(c => {
-    const clientPhones = extractAllPhones(c.phone);
-    return clientPhones.some(p => phones.includes(p));
-  });
+  let matches;
+  if (egPhones.length > 0) {
+    matches = rows.filter(c => {
+      const clientPhones = extractAllPhones(c.phone);
+      return clientPhones.some(p => egPhones.includes(p));
+    });
+  } else {
+    // Fallback path: compare last-9 raw digits
+    matches = rows.filter(c => {
+      const cSuffix = rawDigitSuffix(c.phone);
+      return cSuffix && cSuffix === fallbackSuffix;
+    });
+  }
   return { method: matches.length > 0 ? 'phone' : null, candidates: matches };
 }
 
