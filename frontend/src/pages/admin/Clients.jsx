@@ -245,12 +245,108 @@ function Field({ label, value, mono = false, className = '' }) {
   );
 }
 
+// ─── DATE HELPERS ─────────────────────────────────────────────────────────────
+function ymd(d) { return d.toISOString().slice(0, 10); }
+
+function presetRange(preset) {
+  const today = new Date();
+  if (preset === 'today') {
+    const s = ymd(today);
+    return { from: s, to: s };
+  }
+  if (preset === 'week') {
+    // Week starts Saturday (Arabic convention)
+    const day = today.getDay();        // 0 = Sun .. 6 = Sat
+    const daysSinceSaturday = (day + 1) % 7;
+    const start = new Date(today);
+    start.setDate(today.getDate() - daysSinceSaturday);
+    return { from: ymd(start), to: ymd(today) };
+  }
+  if (preset === 'month') {
+    const start = new Date(today.getFullYear(), today.getMonth(), 1);
+    return { from: ymd(start), to: ymd(today) };
+  }
+  return { from: '', to: '' };
+}
+
+// ─── STATUS TAB ───────────────────────────────────────────────────────────────
+const TAB_COLORS = {
+  all:      { active: 'bg-indigo-600 text-white',  countActive: 'bg-white/20 text-white', countIdle: 'bg-indigo-100 text-indigo-700' },
+  pending:  { active: 'bg-amber-500 text-white',   countActive: 'bg-white/20 text-white', countIdle: 'bg-amber-100 text-amber-700' },
+  approved: { active: 'bg-blue-600 text-white',    countActive: 'bg-white/20 text-white', countIdle: 'bg-blue-100 text-blue-700' },
+  paid:     { active: 'bg-emerald-600 text-white', countActive: 'bg-white/20 text-white', countIdle: 'bg-emerald-100 text-emerald-700' },
+  rejected: { active: 'bg-rose-600 text-white',    countActive: 'bg-white/20 text-white', countIdle: 'bg-rose-100 text-rose-700' },
+};
+
+function StatusTab({ label, count, active, onClick, tone = 'all' }) {
+  const c = TAB_COLORS[tone] || TAB_COLORS.all;
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-2 px-4 py-2 rounded-2xl text-sm font-bold transition whitespace-nowrap ${
+        active ? c.active + ' shadow-md' : 'text-gray-600 hover:bg-gray-100'
+      }`}
+    >
+      {label}
+      <span className={`text-xs font-black px-2 py-0.5 rounded-full ${
+        active ? c.countActive : c.countIdle
+      }`}>
+        {(Number(count) || 0).toLocaleString('en-US')}
+      </span>
+    </button>
+  );
+}
+
 // ─── FILTER BAR ───────────────────────────────────────────────────────────────
 function FilterBar({ filters, setFilters, filterOpts, onReset }) {
   const update = (k, v) => setFilters(f => ({ ...f, [k]: v, page: 1 }));
+  const applyPreset = (preset) => {
+    const { from, to } = presetRange(preset);
+    setFilters(f => ({ ...f, from, to, page: 1 }));
+  };
+  const clearDates = () => setFilters(f => ({ ...f, from: '', to: '', page: 1 }));
+
+  // Check which preset (if any) is currently active — for visual highlight
+  const activePreset = (() => {
+    if (!filters.from || !filters.to) return null;
+    for (const p of ['today', 'week', 'month']) {
+      const r = presetRange(p);
+      if (r.from === filters.from && r.to === filters.to) return p;
+    }
+    return null;
+  })();
+
+  const presetBtn = (preset, label) => (
+    <button
+      onClick={() => applyPreset(preset)}
+      className={`px-3 py-1 text-xs font-bold rounded-lg transition ${
+        activePreset === preset
+          ? 'bg-indigo-600 text-white shadow-sm'
+          : 'text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200'
+      }`}
+    >
+      {label}
+    </button>
+  );
 
   return (
     <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-4 space-y-3">
+      {/* Quick date presets */}
+      <div className="flex flex-wrap items-center gap-2 pb-1">
+        <span className="text-xs font-bold text-gray-500">اختصارات التاريخ:</span>
+        {presetBtn('today', 'اليوم')}
+        {presetBtn('week',  'هذا الأسبوع')}
+        {presetBtn('month', 'هذا الشهر')}
+        {(filters.from || filters.to) && (
+          <button
+            onClick={clearDates}
+            className="px-3 py-1 text-xs font-bold rounded-lg text-gray-500 hover:bg-gray-100 transition"
+          >
+            مسح التواريخ
+          </button>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {/* Search */}
         <div className="relative">
@@ -473,6 +569,45 @@ export default function Clients() {
         filterOpts={filterOpts}
         onReset={onReset}
       />
+
+      {/* Status tabs — quick filter by lifecycle stage */}
+      <div className="bg-white rounded-3xl border border-gray-100 shadow-sm px-2 py-2 flex items-center gap-1 overflow-x-auto">
+        <StatusTab
+          label="الكل"
+          count={summary?.total_tx}
+          active={!filters.status}
+          onClick={() => setFilters(f => ({ ...f, status: '', page: 1 }))}
+          tone="all"
+        />
+        <StatusTab
+          label="Pending"
+          count={summary?.pending}
+          active={filters.status === 'pending'}
+          onClick={() => setFilters(f => ({ ...f, status: 'pending', page: 1 }))}
+          tone="pending"
+        />
+        <StatusTab
+          label="Approved"
+          count={summary?.approved}
+          active={filters.status === 'approved'}
+          onClick={() => setFilters(f => ({ ...f, status: 'approved', page: 1 }))}
+          tone="approved"
+        />
+        <StatusTab
+          label="Paid"
+          count={summary?.paid}
+          active={filters.status === 'paid'}
+          onClick={() => setFilters(f => ({ ...f, status: 'paid', page: 1 }))}
+          tone="paid"
+        />
+        <StatusTab
+          label="Rejected"
+          count={summary?.rejected}
+          active={filters.status === 'rejected'}
+          onClick={() => setFilters(f => ({ ...f, status: 'rejected', page: 1 }))}
+          tone="rejected"
+        />
+      </div>
 
       {/* Table */}
       <SectionCard
