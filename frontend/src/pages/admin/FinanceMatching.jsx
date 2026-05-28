@@ -41,6 +41,14 @@ const METHOD_BADGE = {
   unmatched:  'bg-rose-100    text-rose-700    border-rose-300',
 };
 
+// Transaction status badge colors — pending stands out in red for action visibility
+const STATUS_BADGE = {
+  pending:  'bg-rose-100    text-rose-700    border border-rose-300',
+  approved: 'bg-blue-100    text-blue-700    border border-blue-300',
+  paid:     'bg-emerald-100 text-emerald-700 border border-emerald-300',
+  rejected: 'bg-gray-200    text-gray-600    border border-gray-300',
+};
+
 function fmtAmount(amount, currency) {
   if (amount == null) return '—';
   const n = Number(amount);
@@ -394,7 +402,11 @@ export default function FinanceMatching() {
                   <td className="p-2 text-xs font-mono">{t.client_phone || '—'}</td>
                   <td className="p-2 text-xs">{t.product_name || '—'}</td>
                   <td className="p-2 tabular-nums whitespace-nowrap">{fmtAmount(t.amount, t.currency)}</td>
-                  <td className="p-2"><span className="text-xs px-2 py-0.5 rounded-full bg-gray-100">{t.status || '—'}</span></td>
+                  <td className="p-2">
+                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${STATUS_BADGE[t.status] || 'bg-gray-100 text-gray-600'}`}>
+                      {t.status || '—'}
+                    </span>
+                  </td>
                   <td className="p-2 whitespace-nowrap">
                     {t.match_method ? (
                       <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${METHOD_BADGE[t.match_method] || ''}`}>

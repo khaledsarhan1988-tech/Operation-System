@@ -237,7 +237,8 @@ router.get('/match/transactions', (req, res) => {
         FROM finance_transactions t
         LEFT JOIN clients c ON c.id = t.matched_client_id
         ${whereSql}
-       ORDER BY t.date DESC, t.updated_at DESC
+       ORDER BY CASE WHEN t.status = 'pending' THEN 0 ELSE 1 END,
+                t.date DESC, t.updated_at DESC
        LIMIT ? OFFSET ?
     `).all(...params, limit, offset);
 
