@@ -67,12 +67,30 @@ function namesMatchExact(a, b) {
  * the transaction is unmatched — it represents a new client to add. Name
  * matching was removed because identical names with different phones are
  * different people in practice.
+ *
+ * Line filter via `classify` (2026-05-28): Center App tags every transaction
+ * with `classify` = 'Ahmed Hassan' | 'Dardasha' to indicate which operational
+ * line the customer belongs to. When classify is one of these known values
+ * we restrict the phone search to clients on that line — preventing a
+ * Dardasha client from being matched to an Ahmed Hassan transaction (or vice
+ * versa) just because they happen to share a phone-number suffix or were
+ * registered before classify existed. When classify is empty/unknown we fall
+ * back to searching all lines (legacy behaviour).
  */
+const VALID_LINES = ['Ahmed Hassan', 'Dardasha'];
+
 function findCandidates(tx) {
   const phones = extractAllPhones(tx.client_phone);
   if (phones.length === 0) {
     return { method: null, candidates: [] };
   }
+
+  // Use the Center App `classify` value as a line filter when it's a known
+  // line name. Anything else (NULL, "-", ".", "0", legacy rows) → no filter.
+  const lineFilter = VALID_LINES.includes(tx.classify)
+    ? ` AND line = ?`
+    : '';
+  const lineParams = VALID_LINES.includes(tx.classify) ? [tx.classify] : [];
 
   // We can't directly index-search normalized phones (clients.phone is
   // stored raw), but the dataset is small enough (<100K rows) to load
@@ -83,8 +101,8 @@ function findCandidates(tx) {
   const rows = db.prepare(`
     SELECT id, name, phone, group_name, line
       FROM clients
-     WHERE ${phoneFilter}
-  `).all(...phoneParams);
+     WHERE (${phoneFilter})${lineFilter}
+  `).all(...phoneParams, ...lineParams);
 
   const matches = rows.filter(c => {
     const clientPhones = extractAllPhones(c.phone);
