@@ -246,11 +246,49 @@ function syncEmployees(buffer, line) {
 }
 
 function syncTrainees(buffer, line) {
-  const rows = excel.parseTrainees(buffer);
+  const allRows = excel.parseTrainees(buffer);
+
+  // ── Ahmed Hassan priority rule (2026-05-29) ──────────────────────────────
+  // The Quality team sometimes ships the same Active Batches Trainees Excel
+  // to BOTH line folders (Ahmed Hassan + Dardasha). Without protection, the
+  // line whose sync runs last wins, and clients that genuinely belong to
+  // Ahmed Hassan get re-tagged as Dardasha.
+  //
+  // Rule: when uploading the Dardasha file, any row whose group_name already
+  // exists in the Ahmed Hassan side of `clients` is treated as Ahmed Hassan
+  // duplicate noise and dropped. Pure-Dardasha groups (not present on the
+  // Ahmed Hassan side) flow through normally so Dardasha-only data still
+  // ingests.
+  //
+  // If you ever need to MOVE a group from Ahmed Hassan → Dardasha, remove
+  // it from the Ahmed Hassan Excel first.
+  let rows = allRows;
+  let droppedAhDup = 0;
+  if (line === 'Dardasha') {
+    const ahGroupsRes = db.prepare(
+      `SELECT DISTINCT group_name FROM clients WHERE line = 'Ahmed Hassan'`
+    ).all();
+    const ahGroups = new Set(ahGroupsRes.map(r => r.group_name).filter(Boolean));
+    if (ahGroups.size > 0) {
+      const filtered = [];
+      for (const r of allRows) {
+        if (r.group_name && ahGroups.has(r.group_name)) { droppedAhDup++; continue; }
+        filtered.push(r);
+      }
+      rows = filtered;
+      if (droppedAhDup > 0) {
+        console.log(`[syncTrainees:Dardasha] dropped ${droppedAhDup} row(s) belonging to Ahmed-Hassan groups`);
+      }
+    }
+  }
+
   const uniqueGroups = [...new Set(rows.map(r => r.group_name).filter(Boolean))];
   const run = db.transaction(() => {
     db.prepare('DELETE FROM clients WHERE line = ?').run(line);
-    // Claim exclusive ownership of these groups' trainees
+    // Claim exclusive ownership of these groups' trainees — but for Dardasha
+    // we've already filtered out groups that Ahmed Hassan owns, so eviction
+    // here only removes orphans from other lines (or the same Dardasha groups
+    // recorded earlier).
     evictFromOtherLines('clients', line, uniqueGroups);
     const insert = db.prepare(`
       INSERT INTO clients (name, phone, email, group_name, via_company, registration_time, line, synced_at)
