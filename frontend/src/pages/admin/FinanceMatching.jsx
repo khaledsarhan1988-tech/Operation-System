@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Link as LinkIcon, RefreshCw, Search, Check, X, Users, AlertCircle,
-  CheckCircle2, HelpCircle, UserX, Play, Phone, Wallet, List,
+  CheckCircle2, HelpCircle, UserX, Play, Phone, Wallet, List, Pencil,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -97,6 +97,7 @@ function StatTile({ label, value, icon: Icon, color = 'blue' }) {
 //   3. otherwise show a dropdown so the admin can pick a line manually
 //      (POSTs to PATCH /classify and then triggers a global refresh)
 function ClassifyCell({ tx, onSaved }) {
+  const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
@@ -106,23 +107,6 @@ function ClassifyCell({ tx, onSaved }) {
     : null;
   const finalLabel = explicit || fromMatch;
 
-  if (finalLabel) {
-    const cls = CLASSIFY_BADGE[finalLabel] || 'bg-gray-100 text-gray-700 border-gray-300';
-    return (
-      <div className="flex items-center gap-1">
-        <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${cls}`}>
-          {finalLabel}
-        </span>
-        {!explicit && fromMatch && (
-          <span className="text-[10px] text-gray-400" title="من بيانات العميل المطابَق">
-            (من العميل)
-          </span>
-        )}
-      </div>
-    );
-  }
-
-  // No explicit classify, no match line — let admin choose
   const setClassify = async (val) => {
     try {
       setSaving(true);
@@ -131,6 +115,7 @@ function ClassifyCell({ tx, onSaved }) {
         `/finance/match/transaction/${encodeURIComponent(tx.id)}/classify`,
         { classify: val },
       );
+      setEditing(false);
       if (typeof onSaved === 'function') onSaved();
     } catch (e) {
       setError(e?.response?.data?.error || e?.message || 'فشل التحديث');
@@ -139,19 +124,55 @@ function ClassifyCell({ tx, onSaved }) {
     }
   };
 
+  // ── EDIT MODE: dropdown with confirm/cancel ─────────────────────────────
+  if (editing || !finalLabel) {
+    return (
+      <div className="flex flex-col gap-0.5">
+        <div className="flex items-center gap-1">
+          <select
+            disabled={saving}
+            defaultValue={explicit || ''}
+            onChange={(e) => { if (e.target.value !== undefined) setClassify(e.target.value || null); }}
+            className="text-xs border border-gray-200 rounded-md px-1.5 py-0.5 bg-white hover:border-violet-300 focus:border-violet-400 outline-none disabled:opacity-50"
+          >
+            <option value="">— اختر —</option>
+            <option value="Ahmed Hassan">Ahmed Hassan</option>
+            <option value="Dardasha">Dardasha</option>
+          </select>
+          {finalLabel && (
+            <button
+              onClick={() => { setEditing(false); setError(null); }}
+              title="إلغاء"
+              className="text-gray-400 hover:text-gray-700 p-0.5"
+            >
+              <X size={12} />
+            </button>
+          )}
+        </div>
+        {error && <span className="text-[10px] text-rose-600">{error}</span>}
+      </div>
+    );
+  }
+
+  // ── DISPLAY MODE: badge + edit button ───────────────────────────────────
+  const cls = CLASSIFY_BADGE[finalLabel] || 'bg-gray-100 text-gray-700 border-gray-300';
   return (
-    <div className="flex flex-col gap-0.5">
-      <select
-        disabled={saving}
-        defaultValue=""
-        onChange={(e) => { if (e.target.value) setClassify(e.target.value); }}
-        className="text-xs border border-gray-200 rounded-md px-1.5 py-0.5 bg-white hover:border-violet-300 focus:border-violet-400 outline-none disabled:opacity-50"
+    <div className="flex items-center gap-1 group">
+      <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${cls}`}>
+        {finalLabel}
+      </span>
+      {!explicit && fromMatch && (
+        <span className="text-[10px] text-gray-400" title="من بيانات العميل المطابَق">
+          (من العميل)
+        </span>
+      )}
+      <button
+        onClick={() => { setEditing(true); setError(null); }}
+        title="تعديل"
+        className="text-gray-400 hover:text-violet-600 p-0.5 opacity-60 group-hover:opacity-100 transition"
       >
-        <option value="" disabled>— اختر —</option>
-        <option value="Ahmed Hassan">Ahmed Hassan</option>
-        <option value="Dardasha">Dardasha</option>
-      </select>
-      {error && <span className="text-[10px] text-rose-600">{error}</span>}
+        <Pencil size={11} />
+      </button>
     </div>
   );
 }
