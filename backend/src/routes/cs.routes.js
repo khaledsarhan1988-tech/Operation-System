@@ -96,6 +96,32 @@ router.get('/ingest/membership/preview', requireRole('admin'), async (req, res) 
   }
 });
 
+// ─── INGESTION: Finance API (Center App) ──────────────────────────────────────
+
+/**
+ * POST /api/cs/ingest/finance
+ * Walk finance_transactions and create matching cs_subscriptions rows
+ * (source='finance_api'). Auto-marks duplicate Excel rows as superseded.
+ * Admin only.
+ *
+ * Body / query:
+ *   since_date='YYYY-MM-DD'  — only process newer txs (default: all)
+ *   dry_run=1                — analyze without writing
+ */
+router.post('/ingest/finance', requireRole('admin'), (req, res) => {
+  try {
+    const csFinance = require('../services/csIngestFinance.service');
+    const sinceDate = req.body?.since_date || req.query?.since_date || null;
+    const dryRun    = (req.body?.dry_run ?? req.query?.dry_run) === '1'
+                  || (req.body?.dry_run ?? req.query?.dry_run) === true;
+    const result = csFinance.runIngestion({ sinceDate, dryRun });
+    res.json({ ok: true, result });
+  } catch (e) {
+    console.error('POST /cs/ingest/finance error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ─── INGESTION: Drive Level Files ─────────────────────────────────────────────
 
 /**

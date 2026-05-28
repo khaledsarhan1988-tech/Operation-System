@@ -56,6 +56,17 @@ export default function CsDashboard() {
     onError: (e) => alert('فشل الاستيراد: ' + (e.response?.data?.error || e.message)),
   });
 
+  const ingestFinance = useMutation({
+    mutationFn: () => api.post('/cs/ingest/finance'),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['cs-dashboard-overview'] });
+      qc.invalidateQueries({ queryKey: ['cs-dashboard-at-risk'] });
+      const r = res.data?.result || {};
+      alert(`تم: processed=${r.processed} matched=${r.matched_to_client} superseded_excel=${r.excel_rows_superseded}`);
+    },
+    onError: (e) => alert('فشل الاستيراد: ' + (e.response?.data?.error || e.message)),
+  });
+
   const ingestLevels = useMutation({
     mutationFn: () => api.post('/cs/ingest/levels'),
     onSuccess: () => {
@@ -105,6 +116,9 @@ export default function CsDashboard() {
       {user?.role === 'admin' && (
         <SectionCard title="إجراءات الاستيراد والصيانة" icon={RefreshCw} className="mt-4">
           <div className="p-3 flex flex-wrap gap-2">
+            <ModernButton onClick={() => ingestFinance.mutate()} disabled={ingestFinance.isLoading}>
+              {ingestFinance.isLoading ? '...جاري الاستيراد' : 'استيراد من Finance API (Center App)'}
+            </ModernButton>
             <ModernButton onClick={() => ingestExcel.mutate()} disabled={ingestExcel.isLoading}>
               {ingestExcel.isLoading ? '...جاري الاستيراد' : 'استيراد ملف Membership Excel'}
             </ModernButton>

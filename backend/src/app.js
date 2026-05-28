@@ -2381,6 +2381,14 @@ initDb().then(db => {
       } else {
         cron.schedule(cronExpr, () => {
           try {
+            // Pull any new finance_transactions into cs_subscriptions first,
+            // so the alert sweep sees the freshest paid-state.
+            try {
+              const csFinance = require('./services/csIngestFinance.service');
+              const fr = csFinance.runIngestion({});
+              console.log(`📥 cs-alerts cron (pre-ingest finance): processed=${fr.processed} matched=${fr.matched_to_client} superseded_excel=${fr.excel_rows_superseded}`);
+            } catch (e) { console.error('cs-alerts cron (finance ingest) error:', e.message); }
+
             const r = csAlerts.runOnce({});
             console.log(`🔔 cs-alerts cron: scanned=${r.scanned} resolved=${r.resolved} triggered=${JSON.stringify(r.triggered)} dur=${r.duration_ms}ms`);
           } catch (e) {
