@@ -248,38 +248,34 @@ function syncEmployees(buffer, line) {
 function syncTrainees(buffer, line) {
   const allRows = excel.parseTrainees(buffer);
 
-  // ── Ahmed Hassan priority rule (2026-05-29) ──────────────────────────────
+  // ── Batches table is the source of truth for line ownership (2026-05-29) ─
   // The Quality team sometimes ships the same Active Batches Trainees Excel
-  // to BOTH line folders (Ahmed Hassan + Dardasha). Without protection, the
-  // line whose sync runs last wins, and clients that genuinely belong to
-  // Ahmed Hassan get re-tagged as Dardasha.
+  // into BOTH line folders. Letting the last sync win re-tags Ahmed-Hassan
+  // clients as Dardasha (or vice versa).
   //
-  // Rule: when uploading the Dardasha file, any row whose group_name already
-  // exists in the Ahmed Hassan side of `clients` is treated as Ahmed Hassan
-  // duplicate noise and dropped. Pure-Dardasha groups (not present on the
-  // Ahmed Hassan side) flow through normally so Dardasha-only data still
-  // ingests.
+  // Rule: every group_name appears in batches with its true line. When a
+  // trainees upload contains a row whose group already lives in batches on
+  // a DIFFERENT line, drop that row — it's duplicate noise from the wrong
+  // folder. Rows for groups not yet in batches flow through using the
+  // upload's line (legacy behaviour, lets brand-new groups ingest).
   //
-  // If you ever need to MOVE a group from Ahmed Hassan → Dardasha, remove
-  // it from the Ahmed Hassan Excel first.
-  let rows = allRows;
-  let droppedAhDup = 0;
-  if (line === 'Dardasha') {
-    const ahGroupsRes = db.prepare(
-      `SELECT DISTINCT group_name FROM clients WHERE line = 'Ahmed Hassan'`
-    ).all();
-    const ahGroups = new Set(ahGroupsRes.map(r => r.group_name).filter(Boolean));
-    if (ahGroups.size > 0) {
-      const filtered = [];
-      for (const r of allRows) {
-        if (r.group_name && ahGroups.has(r.group_name)) { droppedAhDup++; continue; }
-        filtered.push(r);
-      }
-      rows = filtered;
-      if (droppedAhDup > 0) {
-        console.log(`[syncTrainees:Dardasha] dropped ${droppedAhDup} row(s) belonging to Ahmed-Hassan groups`);
-      }
-    }
+  // To MOVE a group between lines, fix it in the Batches Excel first, then
+  // re-run trainees sync.
+  const batchLineRes = db.prepare(
+    `SELECT group_name, line FROM batches WHERE group_name IS NOT NULL AND group_name != ''`
+  ).all();
+  const batchLineMap = new Map();
+  for (const b of batchLineRes) batchLineMap.set(b.group_name, b.line);
+
+  let droppedWrongLine = 0;
+  const rows = [];
+  for (const r of allRows) {
+    const trueLine = r.group_name ? batchLineMap.get(r.group_name) : null;
+    if (trueLine && trueLine !== line) { droppedWrongLine++; continue; }
+    rows.push(r);
+  }
+  if (droppedWrongLine > 0) {
+    console.log(`[syncTrainees:${line}] dropped ${droppedWrongLine} row(s) — batches table assigns their group to a different line`);
   }
 
   const uniqueGroups = [...new Set(rows.map(r => r.group_name).filter(Boolean))];
