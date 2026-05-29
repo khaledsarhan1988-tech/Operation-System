@@ -55,12 +55,10 @@ const AGENT_LINKS = [
 
 const ENROLLMENT_LINKS = [
   { to: '/enrollment/pipeline', label: 'nav.clientPipeline', icon: Kanban, color: 'emerald' },
-  { to: '/subscriptions/my-clients', label: 'متابعة الاشتراكات', icon: Users, color: 'violet' },
 ];
 
 const ENROLLMENT_LEADER_LINKS = [
   { to: '/enrollment-leader/pipeline', label: 'nav.clientPipeline', icon: Kanban, color: 'emerald' },
-  { to: '/subscriptions/my-clients', label: 'متابعة الاشتراكات', icon: Users, color: 'violet' },
 ];
 
 const LEADER_LINKS = [
@@ -81,9 +79,6 @@ const LEADER_LINKS = [
   { to: '/leader/reports/fix-report',           label: 'nav.fixReports',          icon: FileText, color: 'orange' },
   { to: '/leader/reports/attendance-absence',   label: 'nav.attendanceReports',   icon: Activity, color: 'teal' },
   { to: '/leader/targets',                      label: 'nav.targets',             icon: Target,   color: 'green' },
-  { type: 'section', label: 'Clients' },
-  { to: '/subscriptions/dashboard',             label: 'لوحة الاشتراكات',          icon: LayoutDashboard, color: 'violet' },
-  { to: '/subscriptions/my-clients',            label: 'قائمة العملاء',             icon: Users,    color: 'cyan' },
 ];
 
 const REPORT_LINKS = [
@@ -163,15 +158,12 @@ function getAdminLinks(user) {
     { to: '/admin/finance/lifecycle', label: 'رحلة العميل',        icon: GitBranch, color: 'cyan',    sub: true },
   ] : [];
 
-  // Clients — pinned to the very bottom (below Center App).
-  const clientsSection = [
-    { type: 'section', label: 'Clients' },
-    { to: '/admin/clients',                label: 'العمليات المالية',  icon: Users, color: 'violet' },
-    { to: '/subscriptions/dashboard',      label: 'لوحة الاشتراكات',   icon: LayoutDashboard, color: 'cyan' },
-    { to: '/subscriptions/my-clients',     label: 'قائمة العملاء',      icon: Users, color: 'emerald' },
-  ];
+  // Clients section (العمليات المالية / لوحة الاشتراكات / قائمة العملاء) was
+  // hidden from the sidebar per user request. The pages, routes, backend and
+  // data are all left intact — only the nav links were removed. Center App
+  // section above is deliberately untouched.
 
-  return [...base, ...reports, ...monitoring, ...financeSection, ...clientsSection];
+  return [...base, ...reports, ...monitoring, ...financeSection];
 }
 
 // Avatar visuals are owned by the shared UserAvatar component now.
