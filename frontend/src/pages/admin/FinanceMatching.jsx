@@ -222,9 +222,10 @@ function ManualMatchDialog({ tx, onClose, onMatched }) {
 
   // Manual match: optionally set classify first (when the chosen candidate
   // sits on a known line and the tx classify is still empty), then run the
-  // existing manualMatch endpoint.
+  // existing manualMatch endpoint. Accepts either a regular clientId or a
+  // subscriptionId (archive entry that gets materialised server-side).
   const matchMut = useMutation({
-    mutationFn: async ({ clientId, lineHint }) => {
+    mutationFn: async ({ clientId, subscriptionId, lineHint }) => {
       if (
         lineHint &&
         !localClassify &&
@@ -232,9 +233,12 @@ function ManualMatchDialog({ tx, onClose, onMatched }) {
       ) {
         try { await patchClassify(lineHint); } catch (_) { /* best-effort */ }
       }
+      const body = subscriptionId
+        ? { subscription_id: subscriptionId }
+        : { client_id: clientId };
       return api.post(
         `/finance/match/transaction/${encodeURIComponent(tx.id)}/manual`,
-        { client_id: clientId },
+        body,
       ).then(r => r.data);
     },
     onSuccess: () => {
@@ -246,6 +250,7 @@ function ManualMatchDialog({ tx, onClose, onMatched }) {
   const candidates = candidatesQ.data?.candidates || [];
   const sameNameSugg    = suggestionsQ.data?.suggestions?.same_name      || [];
   const similarPhoneSugg = suggestionsQ.data?.suggestions?.similar_phone || [];
+  const archiveSugg      = suggestionsQ.data?.suggestions?.archive       || [];
   const searchResults = searchQ.data?.clients || [];
 
   // Hide already-listed entries from search results
@@ -330,6 +335,45 @@ function ManualMatchDialog({ tx, onClose, onMatched }) {
                         </div>
                         <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-2 py-1 rounded-full">
                           اسم متطابق
+                        </span>
+                      </div>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {/* ── ARCHIVE: subscription_clients matches (historical roster) ─── */}
+          {archiveSugg.length > 0 ? (
+            <div>
+              <h4 className="text-sm font-black text-gray-700 mb-2 flex items-center gap-2">
+                <span className="text-violet-600">📚</span>
+                من الأرشيف — Customer Subscriptions
+              </h4>
+              <ul className="space-y-2">
+                {archiveSugg.map(c => (
+                  <li key={'arch-' + c.id}>
+                    <button
+                      onClick={() => matchMut.mutate({ subscriptionId: c.id, lineHint: c.line })}
+                      disabled={matchMut.isPending}
+                      className="w-full text-right border-2 border-violet-200 hover:border-violet-400 hover:bg-violet-50 rounded-xl p-3 transition"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-bold text-gray-900">{c.name}</p>
+                          <p className="text-xs text-gray-600 mt-0.5">
+                            {c.phone_raw || c.phone || '—'} · {c.group_name || '—'}
+                            {c.group_status ? ' · ' + c.group_status : ''} · {c.line}
+                          </p>
+                          {c.source_file ? (
+                            <p className="text-[10px] text-violet-500 font-mono mt-0.5">
+                              📁 {c.source_file}
+                            </p>
+                          ) : null}
+                        </div>
+                        <span className="text-xs font-bold text-violet-700 bg-violet-100 px-2 py-1 rounded-full">
+                          أرشيف
                         </span>
                       </div>
                     </button>

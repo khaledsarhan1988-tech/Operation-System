@@ -316,10 +316,36 @@ router.patch('/match/transaction/:tx_id/classify', (req, res) => {
 });
 
 // POST /api/finance/match/transaction/:tx_id/manual — admin picks a client
-//   body: { client_id: <id> | null }   null → unmatch
+//   body: { client_id: <id> | null, subscription_id: <id>? }
+//     null  → unmatch
+//     subscription_id → materialise the archive row into clients (or pick the
+//                       existing matching row by phone+line), then match.
 router.post('/match/transaction/:tx_id/manual', (req, res) => {
   try {
-    const clientId = req.body?.client_id;
+    let clientId = req.body?.client_id;
+    const subscriptionId = req.body?.subscription_id;
+
+    if (subscriptionId && !clientId) {
+      const sub = db.prepare(
+        `SELECT id, name, phone, phone_raw, group_name, line FROM subscription_clients WHERE id = ?`
+      ).get(subscriptionId);
+      if (!sub) {
+        return res.status(404).json({ error: 'Subscription client not found' });
+      }
+      const phoneForClient = sub.phone_raw || sub.phone;
+      const existing = db.prepare(
+        `SELECT id FROM clients WHERE phone = ? AND line = ? LIMIT 1`
+      ).get(phoneForClient, sub.line);
+      if (existing) {
+        clientId = existing.id;
+      } else {
+        const ins = db.prepare(
+          `INSERT INTO clients (name, phone, group_name, line) VALUES (?, ?, ?, ?)`
+        ).run(sub.name, phoneForClient, sub.group_name, sub.line);
+        clientId = ins.lastInsertRowid;
+      }
+    }
+
     const lifecycleSvc = lifecycle;
     const r = matcher.manualMatch(req.params.tx_id, clientId, req.user.id, {
       onMatched: (cid, txId) => {
@@ -339,13 +365,26 @@ router.post('/match/transaction/:tx_id/manual', (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 // POST /api/finance/subscriptions/sync — pull the 38 historical-roster
-// Excels from Drive into subscription_clients. Runs synchronously and
-// returns the totals; takes ~30s on first run, a few seconds on incremental.
+// Excels from Drive into subscription_clients, then immediately re-run the
+// matcher on every unmatched transaction so any archive hits land as real
+// matches without a second click. Runs synchronously; ~30s on cold cache.
 router.post('/subscriptions/sync', async (req, res) => {
   try {
     const triggeredBy = `manual:${req.user.id}`;
     const r = await subscriptionSync.syncAll({ triggeredBy });
-    res.json(r);
+
+    // Cascade: only the unmatched scope, since matched/manual rows are
+    // already correct and shouldn't be perturbed.
+    const lifecycleSvc = lifecycle;
+    const rematch = matcher.matchAll({
+      scope: 'unmatched',
+      onMatched: (cid, txId) => {
+        try { lifecycleSvc.regenerateFromTransactionId(txId); }
+        catch (e) { console.error('lifecycle hook error:', e.message); }
+      },
+    });
+
+    res.json({ ...r, rematch });
   } catch (e) {
     console.error('POST /finance/subscriptions/sync error:', e.message);
     res.status(500).json({ error: e.message });
@@ -544,6 +583,43 @@ router.get('/match/suggestions/:tx_id', (req, res) => {
       similarPhone = similarPhone.slice(0, 20);
     }
 
+    // ── ARCHIVE: subscription_clients matches ──────────────────────────────
+    // Surface historical-roster hits so the admin can recover ended-group
+    // customers in one click. Match by phone (any digit suffix) OR by full
+    // name token set (same rule as clients).
+    let archive = [];
+    {
+      const archConds = [];
+      const archParams = [];
+      if (txPhones.length > 0) {
+        for (const p of txPhones) {
+          archConds.push(`phone_raw LIKE ?`);
+          archParams.push(`%${p.slice(-9)}%`);
+        }
+      }
+      if (txTokens.length > 0) {
+        const longest = [...txTokens].sort((a, b) => b.length - a.length)[0];
+        if (longest && longest.length >= 2) {
+          archConds.push(`name LIKE ? COLLATE NOCASE`);
+          archParams.push(`%${longest}%`);
+        }
+      }
+      if (archConds.length > 0) {
+        const archRows = db.prepare(
+          `SELECT id, name, phone, phone_raw, group_name, group_status, line, source_file
+             FROM subscription_clients
+            WHERE ${archConds.join(' OR ')}
+            LIMIT 500`
+        ).all(...archParams);
+        archive = archRows.filter(c => {
+          const archPhones = extractAllPhones(c.phone_raw);
+          const phoneHit = txPhones.length > 0 && archPhones.some(p => txPhones.includes(p));
+          const nameHit = sameTokens(tokenizeName(c.name), txTokens);
+          return phoneHit || nameHit;
+        }).slice(0, 20).map(c => ({ ...c, match_kind: 'archive' }));
+      }
+    }
+
     res.json({
       tx: {
         id: tx.id,
@@ -553,6 +629,7 @@ router.get('/match/suggestions/:tx_id', (req, res) => {
       suggestions: {
         same_name: sameName.slice(0, 20),
         similar_phone: similarPhone,
+        archive,
       },
     });
   } catch (e) {
