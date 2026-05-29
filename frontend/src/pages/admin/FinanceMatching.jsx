@@ -494,6 +494,19 @@ export default function FinanceMatching() {
     },
   });
 
+  const subscriptionStatusQ = useQuery({
+    queryKey: ['finance', 'subscriptions-status'],
+    queryFn: () => api.get('/finance/subscriptions/status').then(r => r.data),
+    refetchInterval: 30_000,
+  });
+
+  const syncSubscriptionsMut = useMutation({
+    mutationFn: () => api.post('/finance/subscriptions/sync').then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['finance', 'subscriptions-status'] });
+    },
+  });
+
   const retryMut = useMutation({
     mutationFn: (txId) => api.post(`/finance/match/transaction/${encodeURIComponent(txId)}`, { force: true }).then(r => r.data),
     onSuccess: () => {
@@ -573,6 +586,35 @@ export default function FinanceMatching() {
           >
             {fixLinesMut.isPending ? 'جارٍ الإصلاح...' : '🔧 إصلاح Lines + إعادة مطابقة'}
           </ModernButton>
+          <ModernButton
+            variant="secondary"
+            onClick={() => {
+              if (window.confirm('هيتم سحب 38 ملف Excel من Customer Subscription folders على Drive. قد ياخد ~30 ثانية. تتابع؟')) {
+                syncSubscriptionsMut.mutate();
+              }
+            }}
+            disabled={syncSubscriptionsMut.isPending}
+          >
+            {syncSubscriptionsMut.isPending ? 'جارٍ المزامنة...' : '📚 مزامنة Customer Subscriptions (Archive)'}
+          </ModernButton>
+          {subscriptionStatusQ.data ? (
+            <span className="text-xs bg-violet-50 border border-violet-200 rounded px-2 py-1 font-mono">
+              📚 {(subscriptionStatusQ.data.rows_total_current || 0).toLocaleString('ar-EG')} عميل في الأرشيف
+              {subscriptionStatusQ.data.last_finished_at ? (
+                <> · آخر مزامنة: {new Date(subscriptionStatusQ.data.last_finished_at).toLocaleString('ar-EG', { hour12: false })}</>
+              ) : ' · لم تتم بعد'}
+            </span>
+          ) : null}
+          {syncSubscriptionsMut.data ? (
+            <span className="text-xs bg-emerald-50 border border-emerald-200 rounded px-2 py-1 font-mono">
+              ✅ تمت المزامنة: {syncSubscriptionsMut.data.files_processed} ملف، {syncSubscriptionsMut.data.rows_total} صف
+            </span>
+          ) : null}
+          {syncSubscriptionsMut.isError ? (
+            <span className="text-xs bg-rose-50 border border-rose-200 rounded px-2 py-1 text-rose-700">
+              ❌ {syncSubscriptionsMut.error?.response?.data?.error || syncSubscriptionsMut.error?.message}
+            </span>
+          ) : null}
           {runAllMut.data ? (
             <span className="text-xs bg-emerald-50 border border-emerald-200 rounded px-2 py-1 font-mono">
               ✅ تمت محاولة {runAllMut.data.attempted}: matched={runAllMut.data.matched} ambiguous={runAllMut.data.ambiguous} unmatched={runAllMut.data.unmatched}

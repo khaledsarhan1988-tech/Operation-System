@@ -138,7 +138,70 @@ function findCandidates(tx) {
       return cSuffix && cSuffix === fallbackSuffix;
     });
   }
-  return { method: matches.length > 0 ? 'phone' : null, candidates: matches };
+  if (matches.length > 0) {
+    return { method: 'phone', candidates: matches };
+  }
+
+  // ── TIER 2: Customer Subscription archive ──────────────────────────────
+  // No hit in active clients. Try the historical mirror that includes
+  // ended-group customers. When found, materialise the archive row into
+  // clients so the rest of the matcher (matched_client_id, lifecycle, etc.)
+  // works unchanged.
+  const subSuffixes = egPhones.length > 0
+    ? egPhones.map(p => p.slice(-9))
+    : [fallbackSuffix];
+  const subPhoneFilter = subSuffixes.map(() => `phone_raw LIKE ?`).join(' OR ');
+  const subPhoneParams = subSuffixes.map(s => `%${s}%`);
+  const subRows = db.prepare(`
+    SELECT id, name, phone, phone_raw, group_name, group_status, line, client_code
+      FROM subscription_clients
+     WHERE (${subPhoneFilter})${lineFilter ? ' AND line = ?' : ''}
+  `).all(...subPhoneParams, ...(lineFilter ? lineParams : []));
+
+  let subMatches;
+  if (egPhones.length > 0) {
+    subMatches = subRows.filter(c => {
+      const subPhones = extractAllPhones(c.phone_raw);
+      return subPhones.some(p => egPhones.includes(p));
+    });
+  } else {
+    subMatches = subRows.filter(c => {
+      const sSuffix = rawDigitSuffix(c.phone_raw);
+      return sSuffix && sSuffix === fallbackSuffix;
+    });
+  }
+
+  if (subMatches.length === 0) {
+    return { method: null, candidates: [] };
+  }
+
+  // Materialise into clients. We use INSERT-then-pick so the new row gets
+  // a real clients.id we can return as a candidate. Duplicates by (phone,
+  // line) are avoided by checking first.
+  const materialised = [];
+  const findClient = db.prepare(
+    `SELECT id, name, phone, group_name, line FROM clients WHERE phone = ? AND line = ? LIMIT 1`
+  );
+  const insertClient = db.prepare(
+    `INSERT INTO clients (name, phone, group_name, line) VALUES (?, ?, ?, ?)`
+  );
+  const txn = db.transaction(() => {
+    for (const s of subMatches) {
+      const existing = findClient.get(s.phone_raw || s.phone, s.line);
+      if (existing) { materialised.push(existing); continue; }
+      const r = insertClient.run(s.name, s.phone_raw || s.phone, s.group_name, s.line);
+      materialised.push({
+        id: r.lastInsertRowid,
+        name: s.name,
+        phone: s.phone_raw || s.phone,
+        group_name: s.group_name,
+        line: s.line,
+      });
+    }
+  });
+  txn();
+
+  return { method: 'phone', candidates: materialised };
 }
 
 // ─── PERSISTENCE ──────────────────────────────────────────────────────────────

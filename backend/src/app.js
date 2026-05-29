@@ -1784,6 +1784,53 @@ initDb().then(db => {
     console.error('finance matching migration error:', e.message);
   }
 
+  // ── FINANCE MATCHING (Tier 2): subscription archive ───────────────────────
+  // Customers whose academy group has already "إنتهت" don't show up in the
+  // Active Batches Trainees Excel, so the matcher's primary clients table
+  // misses them. We mirror the "Customer subscription to groups" Drive
+  // folders (per-line, per-level archives) into subscription_clients and
+  // fall back to them when a phone match in clients fails.
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS subscription_clients (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        name          TEXT,
+        phone         TEXT,
+        phone_raw     TEXT,
+        group_name    TEXT,
+        group_status  TEXT,
+        line          TEXT NOT NULL,
+        source_file   TEXT,
+        client_code   TEXT,
+        reg_date      TEXT,
+        synced_at     TEXT NOT NULL DEFAULT (datetime('now','+2 hours')),
+        UNIQUE(phone_raw, source_file, line)
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_subclients_phone ON subscription_clients(phone)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_subclients_name  ON subscription_clients(name COLLATE NOCASE)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_subclients_line  ON subscription_clients(line)`);
+
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS subscription_sync_state (
+        id              INTEGER PRIMARY KEY CHECK (id = 1),
+        last_started_at TEXT,
+        last_finished_at TEXT,
+        last_status     TEXT,
+        last_error      TEXT,
+        files_processed INTEGER NOT NULL DEFAULT 0,
+        rows_total      INTEGER NOT NULL DEFAULT 0,
+        triggered_by    TEXT
+      )
+    `);
+    db._raw.run(`INSERT OR IGNORE INTO subscription_sync_state (id) VALUES (1)`);
+
+    saveNow();
+    console.log('✅ Migration: subscription_clients + subscription_sync_state ready');
+  } catch (e) {
+    console.error('subscription_clients migration error:', e.message);
+  }
+
   // ── FINANCE INTEGRATION (Phase 3): client lifecycle events ───────────────
   // Per-client timeline derived from matched finance_transactions. A future
   // phase (Level Progression Engine) reads this ledger to decide when a client

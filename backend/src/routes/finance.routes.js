@@ -18,6 +18,7 @@ const { requireSuperAdmin } = require('../middleware/roles');
 const financeSync = require('../services/financeSync.service');
 const matcher = require('../services/financeMatcher.service');
 const lifecycle = require('../services/clientLifecycle.service');
+const subscriptionSync = require('../services/subscriptionSync.service');
 
 const router = express.Router();
 router.use(authenticate);
@@ -331,6 +332,30 @@ router.post('/match/transaction/:tx_id/manual', (req, res) => {
     const status = e.status || 500;
     res.status(status).json({ error: e.message });
   }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CUSTOMER SUBSCRIPTION ARCHIVE (Tier 2) — Ahmed Hassan-side only for now
+// ═══════════════════════════════════════════════════════════════════════════
+
+// POST /api/finance/subscriptions/sync — pull the 38 historical-roster
+// Excels from Drive into subscription_clients. Runs synchronously and
+// returns the totals; takes ~30s on first run, a few seconds on incremental.
+router.post('/subscriptions/sync', async (req, res) => {
+  try {
+    const triggeredBy = `manual:${req.user.id}`;
+    const r = await subscriptionSync.syncAll({ triggeredBy });
+    res.json(r);
+  } catch (e) {
+    console.error('POST /finance/subscriptions/sync error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/finance/subscriptions/status — quick health probe
+router.get('/subscriptions/status', (req, res) => {
+  try { res.json(subscriptionSync.getStatus()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // POST /api/finance/match/fix-lines — repair clients.line using batches as the
