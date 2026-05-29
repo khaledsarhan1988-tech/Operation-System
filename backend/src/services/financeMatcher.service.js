@@ -191,6 +191,15 @@ function matchTransaction(txId, { force = false, onMatched = null } = {}) {
   const tx = db.prepare(`SELECT * FROM finance_transactions WHERE id = ?`).get(txId);
   if (!tx) return { txId, status: 'not_found' };
 
+  // Manual matches are STICKY: an admin who manually paired a transaction
+  // with a specific client has expressed an explicit intent that no auto-
+  // matcher pass should erase — not even matchAll({scope:'all'}). To re-
+  // evaluate a manual match, the admin must explicitly clear it (POST
+  // /manual with client_id=null) first.
+  if (tx.match_method === 'manual' && tx.matched_client_id) {
+    return { txId, status: 'skipped_manual_protected', match_method: 'manual' };
+  }
+
   // Skip if previously attempted and the result was deterministic, unless force.
   if (!force && tx.match_attempted_at && tx.match_method && tx.match_method !== 'unmatched') {
     return { txId, status: 'skipped_already_attempted', match_method: tx.match_method };
