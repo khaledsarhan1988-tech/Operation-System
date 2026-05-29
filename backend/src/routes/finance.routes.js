@@ -672,7 +672,102 @@ router.get('/lifecycle/stats', (req, res) => {
   }
 });
 
-// GET /api/finance/lifecycle/client/:client_id — full timeline for one client
+// Build the set of phone-suffix variants used everywhere a client's phone
+// has to match a stored value that might or might not include a leading
+// zero / country code. Keeps the lifecycle endpoint, absence look-ups, and
+// archive joins on the same shape.
+function phoneVariants(rawPhone) {
+  const digits = String(rawPhone || '').replace(/\D+/g, '');
+  if (digits.length < 7) return [];
+  const out = new Set([digits]);
+  if (digits.startsWith('0')) out.add(digits.slice(1));
+  else out.add('0' + digits);
+  if (digits.length > 9) out.add(digits.slice(-9));
+  return [...out];
+}
+
+// Pull every (group_name, line) the customer has touched — both the
+// currently-enrolled clients rows and the historical archive — and decorate
+// each with main-lecture totals and that customer's absence count, so the
+// UI can show "حضر X من Y" per group.
+function collectClientGroups(client) {
+  const variants = phoneVariants(client.phone);
+  if (variants.length === 0) return [];
+
+  const phoneLikes = variants.map(v => `%${v}%`);
+  const clientLineFilter = phoneLikes.map(() => `phone LIKE ?`).join(' OR ');
+
+  const clientRows = db.prepare(
+    `SELECT group_name, line FROM clients
+       WHERE (${clientLineFilter})
+         AND group_name IS NOT NULL AND TRIM(group_name) != ''`
+  ).all(...phoneLikes);
+
+  const subLineFilter = phoneLikes.map(() => `phone_raw LIKE ? OR phone LIKE ?`).join(' OR ');
+  const subParams = phoneLikes.flatMap(p => [p, p]);
+  const subRows = db.prepare(
+    `SELECT group_name, group_status, line FROM subscription_clients
+       WHERE (${subLineFilter})
+         AND group_name IS NOT NULL AND TRIM(group_name) != ''`
+  ).all(...subParams);
+
+  const groupMap = new Map();
+  for (const r of clientRows) {
+    const key = `${r.group_name}|${r.line}`;
+    if (!groupMap.has(key)) {
+      groupMap.set(key, {
+        group_name: r.group_name, line: r.line,
+        in_active: true, in_archive: false, status: null,
+      });
+    } else {
+      groupMap.get(key).in_active = true;
+    }
+  }
+  for (const r of subRows) {
+    const key = `${r.group_name}|${r.line}`;
+    if (groupMap.has(key)) {
+      const g = groupMap.get(key);
+      g.in_archive = true;
+      g.status = g.status || r.group_status;
+    } else {
+      groupMap.set(key, {
+        group_name: r.group_name, line: r.line,
+        in_active: false, in_archive: true, status: r.group_status,
+      });
+    }
+  }
+
+  const lectureStmt = db.prepare(
+    `SELECT COUNT(*) AS n FROM lectures
+      WHERE group_name = ? AND session_type = 'main' AND status = 'مؤكدة'`
+  );
+  const absentFilter = phoneLikes.map(() => `phone LIKE ?`).join(' OR ');
+  const absentStmt = db.prepare(
+    `SELECT COUNT(*) AS n FROM absent_students
+      WHERE group_name = ? AND (${absentFilter})`
+  );
+
+  const out = [];
+  for (const g of groupMap.values()) {
+    const total = lectureStmt.get(g.group_name)?.n || 0;
+    const absences = absentStmt.get(g.group_name, ...phoneLikes)?.n || 0;
+    out.push({
+      ...g,
+      total_lectures: total,
+      absences,
+      attended: Math.max(0, total - absences),
+    });
+  }
+  // Active groups first, then archive — within each, by group name.
+  out.sort((a, b) => {
+    if (a.in_active && !b.in_active) return -1;
+    if (!a.in_active && b.in_active) return 1;
+    return String(a.group_name).localeCompare(String(b.group_name));
+  });
+  return out;
+}
+
+// GET /api/finance/lifecycle/client/:client_id — full timeline + groups
 router.get('/lifecycle/client/:client_id', (req, res) => {
   const cid = parseInt(req.params.client_id, 10);
   if (!Number.isFinite(cid)) return res.status(400).json({ error: 'invalid client_id' });
@@ -680,7 +775,8 @@ router.get('/lifecycle/client/:client_id', (req, res) => {
     const client = db.prepare(`SELECT id, name, phone, group_name, line FROM clients WHERE id = ?`).get(cid);
     if (!client) return res.status(404).json({ error: 'Client not found' });
     const events = lifecycle.getClientTimeline(cid, { limit: clampInt(req.query.limit, 1, 1000, 500) });
-    res.json({ client, events });
+    const groups = collectClientGroups(client);
+    res.json({ client, events, groups });
   } catch (e) {
     console.error('GET /finance/lifecycle/client error:', e.message);
     res.status(500).json({ error: e.message });

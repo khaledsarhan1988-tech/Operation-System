@@ -59,6 +59,81 @@ function StatTile({ label, value, icon: Icon, color = 'blue' }) {
 }
 
 // ─── TIMELINE ─────────────────────────────────────────────────────────────────
+// ─── GROUPS SECTION ──────────────────────────────────────────────────────────
+// One row per (group, line) pair the customer has touched (active or archive)
+// + main-lecture attendance derived from absent_students.
+function GroupsSection({ groups }) {
+  if (!groups || groups.length === 0) return null;
+  return (
+    <div className="mb-5">
+      <h4 className="text-sm font-black text-gray-700 mb-2 flex items-center gap-2">
+        <GraduationCap size={16} className="text-violet-600" />
+        كل المجموعات اللي العميل اشترك فيها ({groups.length})
+      </h4>
+      <ul className="space-y-2">
+        {groups.map((g, i) => {
+          const pct = g.total_lectures > 0
+            ? Math.round((g.attended / g.total_lectures) * 100)
+            : null;
+          const pctColor = pct == null
+            ? 'bg-gray-100 text-gray-500'
+            : pct >= 80 ? 'bg-emerald-100 text-emerald-700'
+            : pct >= 50 ? 'bg-amber-100 text-amber-700'
+            : 'bg-rose-100 text-rose-700';
+          return (
+            <li
+              key={i}
+              className={`border-2 rounded-xl p-3 ${
+                g.in_active ? 'border-emerald-200 bg-emerald-50/30' : 'border-gray-200 bg-gray-50/50'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div className="min-w-0 flex-1">
+                  <p className="font-bold text-gray-900 text-sm break-all" dir="ltr">
+                    {g.group_name}
+                  </p>
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
+                    <span className="text-[10px] font-bold text-gray-500">{g.line}</span>
+                    {g.in_active ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-emerald-100 text-emerald-700 border-emerald-300">
+                        نشطة
+                      </span>
+                    ) : null}
+                    {g.in_archive ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-violet-100 text-violet-700 border-violet-300">
+                        أرشيف
+                      </span>
+                    ) : null}
+                    {g.status && g.status !== 'نشطة' ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-gray-200 text-gray-600 border-gray-300">
+                        {g.status}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="text-left">
+                  <p className="text-xs font-bold text-gray-700 tabular-nums">
+                    حضر <span className="text-emerald-700">{g.attended}</span> من{' '}
+                    <span className="text-gray-900">{g.total_lectures}</span>
+                  </p>
+                  <p className="text-[10px] text-gray-500 mt-0.5">
+                    غاب <span className="text-rose-600 font-bold">{g.absences}</span>
+                  </p>
+                  {pct != null ? (
+                    <span className={`inline-block text-[10px] font-black px-2 py-0.5 rounded-full mt-1 ${pctColor}`}>
+                      {pct}%
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 function Timeline({ events }) {
   if (!events?.length) {
     return (
@@ -283,6 +358,10 @@ export default function FinanceLifecycle() {
                   <p className="mt-1"><Tag size={11} className="inline ml-0.5" /> {timelineQ.data.client.group_name}</p>
                 ) : null}
               </div>
+
+              {/* All groups (active + archive) with attendance per group */}
+              <GroupsSection groups={timelineQ.data?.groups || []} />
+
               <Timeline events={timelineQ.data?.events || []} />
             </>
           )}
