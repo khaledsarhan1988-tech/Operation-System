@@ -2204,6 +2204,26 @@ initDb().then(db => {
               `duration=${result.durationMs}ms`
             );
             if (result.error) console.error('   error:', result.error);
+
+            // Cascade: re-run the matcher on unmatched transactions so any
+            // newly-imported clients/batches feed into existing rows. Same
+            // pattern as the manual /sync endpoints in drive.routes.js.
+            try {
+              const matcher = require('./services/financeMatcher.service');
+              const lifecycle = require('./services/clientLifecycle.service');
+              const rm = matcher.matchAll({
+                scope: 'unmatched',
+                onMatched: (cid, txId) => {
+                  try { lifecycle.regenerateFromTransactionId(txId); }
+                  catch (e) { console.error('lifecycle hook error:', e.message); }
+                },
+              });
+              console.log(
+                `🎯 Drive cascade re-match: attempted=${rm.attempted} matched=${rm.matched}`
+              );
+            } catch (e) {
+              console.error('Drive cascade re-match error:', e.message);
+            }
           } catch (e) {
             console.error('Drive auto-sync cron error:', e.message);
           }

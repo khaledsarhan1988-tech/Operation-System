@@ -10,6 +10,30 @@ const db = require('../config/database');
 
 const router = express.Router();
 
+// Re-match cascade — Drive syncs land new clients/batches in the DB. Without
+// re-running the matcher, finance_transactions that were marked 'unmatched'
+// at last attempt stay unmatched even though the data they needed is now
+// present. We fire matchAll({scope:'unmatched'}) after every successful
+// sync so the admin doesn't have to remember to click "إعادة محاولة" on
+// the matching page. Manual matches are sticky (see financeMatcher.service)
+// so this can never erase an explicit pairing.
+function cascadeRematch() {
+  try {
+    const matcher = require('../services/financeMatcher.service');
+    const lifecycle = require('../services/clientLifecycle.service');
+    return matcher.matchAll({
+      scope: 'unmatched',
+      onMatched: (cid, txId) => {
+        try { lifecycle.regenerateFromTransactionId(txId); }
+        catch (e) { console.error('lifecycle hook error:', e.message); }
+      },
+    });
+  } catch (e) {
+    console.error('[drive] cascade rematch error:', e.message);
+    return { error: e.message };
+  }
+}
+
 // Super-Admin only: department managers (admin بـ management != 'All')
 // ما يقدروش يستخدموا الـ Drive sync. الرفع للمسؤول العام فقط.
 router.use(authenticate, (req, res, next) => {
@@ -156,7 +180,8 @@ router.post('/sync', authenticate, requireRole('leader'), express.json(), async 
       fileTypes,
       force: force === true,
     });
-    return res.json(result);
+    const rematch = cascadeRematch();
+    return res.json({ ...result, rematch });
   } catch (err) {
     return res.status(500).json({ error: 'Sync failed', details: err.message });
   }
@@ -183,7 +208,8 @@ router.post('/sync-today', authenticate, requireRole('leader'), express.json(), 
       userId: req.user.id,
       force: req.body?.force === true,
     });
-    return res.json(result);
+    const rematch = cascadeRematch();
+    return res.json({ ...result, rematch });
   } catch (err) {
     return res.status(500).json({ error: 'Sync failed', details: err.message });
   }
@@ -227,7 +253,8 @@ router.get('/sync-runs/:id', authenticate, requireRole('leader'), (req, res) => 
 router.post('/run-auto-now', authenticate, requireRole('admin'), express.json(), async (req, res) => {
   try {
     const result = await driveSync.runAutoSync('manual');
-    return res.json(result);
+    const rematch = cascadeRematch();
+    return res.json({ ...result, rematch });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
