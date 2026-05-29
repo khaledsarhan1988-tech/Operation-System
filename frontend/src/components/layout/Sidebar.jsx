@@ -37,6 +37,16 @@ const COLOR_MAP = {
 };
 
 // ─── LINKS ─────────────────────────────────────────────────────────────────
+
+// Department Deliveries (تسليمات الأقسام) — one page per department. Shown to
+// admin, leader and coordinator (agent); the backend scopes the data per role.
+const DELIVERIES_LINKS = [
+  { type: 'section', label: 'تسليمات الأقسام' },
+  { to: '/subscriptions/deliveries/General', label: 'جينرال',      icon: GraduationCap, color: 'cyan' },
+  { to: '/subscriptions/deliveries/Semi',    label: 'سيمي برايفت', icon: GraduationCap, color: 'emerald' },
+  { to: '/subscriptions/deliveries/Private', label: 'برايفت',      icon: GraduationCap, color: 'violet' },
+];
+
 const AGENT_LINKS = [
   { to: '/agent/profile',            label: 'صفحتي الشخصية',         icon: KeyRound,        color: 'slate' },
   { to: '/agent',                    label: 'nav.dashboard',        icon: LayoutDashboard, end: true, color: 'blue' },
@@ -51,6 +61,7 @@ const AGENT_LINKS = [
   { to: '/agent/todos',              label: 'مهامي',                icon: ListTodo,        color: 'pink' },
   { to: '/agent/my-progression',     label: 'nav.myProgression',    icon: TrendingUp,      color: 'violet' },
   { to: '/agent/targets',            label: 'nav.targets',          icon: Target,          color: 'green' },
+  ...DELIVERIES_LINKS,
 ];
 
 const ENROLLMENT_LINKS = [
@@ -79,6 +90,7 @@ const LEADER_LINKS = [
   { to: '/leader/reports/fix-report',           label: 'nav.fixReports',          icon: FileText, color: 'orange' },
   { to: '/leader/reports/attendance-absence',   label: 'nav.attendanceReports',   icon: Activity, color: 'teal' },
   { to: '/leader/targets',                      label: 'nav.targets',             icon: Target,   color: 'green' },
+  ...DELIVERIES_LINKS,
 ];
 
 const REPORT_LINKS = [
@@ -163,7 +175,7 @@ function getAdminLinks(user) {
   // data are all left intact — only the nav links were removed. Center App
   // section above is deliberately untouched.
 
-  return [...base, ...reports, ...monitoring, ...financeSection];
+  return [...base, ...reports, ...monitoring, ...financeSection, ...DELIVERIES_LINKS];
 }
 
 // Avatar visuals are owned by the shared UserAvatar component now.

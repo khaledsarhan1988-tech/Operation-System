@@ -2042,6 +2042,34 @@ initDb().then(db => {
     console.error('cs_* subscription tracker migration error:', e.message);
   }
 
+  // ── cs_client_delivery_status: manual per-client status for the ───────────
+  // "تسليمات الأقسام" (Department Deliveries) view. Set MANUALLY by a
+  // coordinator/leader/admin from the deliveries page. Additive table — no
+  // existing data touched. One row per client (keyed by normalized phone).
+  // CHECK is informational only (database.js sets ignore_check_constraints=1);
+  // the route validates status against the allowed set.
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS cs_client_delivery_status (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_phone_norm  TEXT NOT NULL,
+        status             TEXT NOT NULL DEFAULT 'active'
+                           CHECK(status IN ('active','churned','postponed','exit_level','refund')),
+        note               TEXT,
+        updated_by         INTEGER,
+        updated_by_name    TEXT,
+        updated_at         TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        UNIQUE(client_phone_norm)
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_delivery_phone  ON cs_client_delivery_status(client_phone_norm)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_delivery_status ON cs_client_delivery_status(status)`);
+    saveNow();
+    console.log('✅ Migration: cs_client_delivery_status table ready');
+  } catch (e) {
+    console.error('cs_client_delivery_status migration error:', e.message);
+  }
+
   // ── Auto-upsert admin user on every startup ───────────────────────────────
   // Ensures admin always exists even after DB reset (e.g. Railway redeploy).
   try {

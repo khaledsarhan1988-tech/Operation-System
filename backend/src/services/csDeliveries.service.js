@@ -1,0 +1,223 @@
+'use strict';
+
+/**
+ * Department Deliveries (تسليمات الأقسام).
+ *
+ * A per-department reporting view built ON TOP of the existing cs_* data —
+ * it does NOT ingest anything new. For each client (keyed by normalized
+ * phone) it combines:
+ *   - cs_subscriptions          → membership count + dept + paid months
+ *   - clients ∩ batches (نشطة)  → active groups + coordinator
+ *   - cs_completed_levels       → inactive (past) groups from the Drive level folders
+ *   - csClientPlan              → remaining levels (paid − completed)
+ *   - cs_client_delivery_status → the MANUAL status (churned/postponed/exit_level/refund/active)
+ *
+ * Department placement rule (agreed with user):
+ *   resolved_dept = active group's dept_type when the client has an active group,
+ *   otherwise the client's most-recent subscription dept. A client appears on
+ *   exactly ONE department page.
+ *
+ * No writes here except setDeliveryStatus (the manual status).
+ */
+
+const db = require('../config/database');
+const { saveNow } = require('../config/database');
+const { csPrimaryPhone } = require('../utils/csPhoneNormalize');
+
+const DEPTS = ['General', 'Private', 'Semi'];
+const STATUSES = ['active', 'churned', 'postponed', 'exit_level', 'refund'];
+
+const stripSpaces = (s) => String(s == null ? '' : s).replace(/\s/g, '');
+
+// phone_norm → [{ group_name, dept_type, coordinators }] for groups still active.
+function buildActiveGroupMap() {
+  const rows = db.prepare(`
+    SELECT c.phone AS phone, c.group_name AS group_name,
+           b.dept_type AS dept_type, b.coordinators AS coordinators
+      FROM clients c
+      JOIN batches b
+        ON b.group_name = c.group_name AND b.line = c.line
+     WHERE b.status = 'نشطة'
+  `).all();
+  const map = new Map();
+  for (const r of rows) {
+    const pn = csPrimaryPhone(r.phone);
+    if (!pn) continue;
+    if (!map.has(pn)) map.set(pn, []);
+    map.get(pn).push({ group_name: r.group_name, dept_type: r.dept_type, coordinators: r.coordinators });
+  }
+  return map;
+}
+
+// phone_norm → Set(group_name_raw) from completed-level Drive files.
+function buildInactiveGroupMap() {
+  const rows = db.prepare(`
+    SELECT client_phone_norm AS pn, group_name_raw AS g
+      FROM cs_completed_levels
+     WHERE group_name_raw IS NOT NULL AND TRIM(group_name_raw) != ''
+  `).all();
+  const map = new Map();
+  for (const r of rows) {
+    if (!r.pn) continue;
+    if (!map.has(r.pn)) map.set(r.pn, new Set());
+    map.get(r.pn).add(String(r.g).trim());
+  }
+  return map;
+}
+
+// phone_norm → current coordinator name (cs_client_coordinator fallback).
+function buildCoordFallbackMap() {
+  const rows = db.prepare(`
+    SELECT cc.client_phone_norm AS pn, tm.name AS name
+      FROM cs_client_coordinator cc
+      LEFT JOIN team_members tm ON tm.id = cc.coordinator_id
+     WHERE cc.unassigned_at IS NULL
+  `).all();
+  const map = new Map();
+  for (const r of rows) {
+    if (r.pn && r.name && !map.has(r.pn)) map.set(r.pn, r.name);
+  }
+  return map;
+}
+
+/**
+ * Build the deliveries table for one department.
+ *
+ *   dept:     'General' | 'Private' | 'Semi'
+ *   q:        free-text search on name/phone
+ *   status:   filter by manual status (or '' / 'all' for everyone)
+ *   page, pageSize: pagination
+ */
+function getDepartmentDeliveries({ dept, q, status, page, pageSize }) {
+  if (!DEPTS.includes(dept)) throw new Error('Invalid dept (use General | Private | Semi)');
+  page = Math.max(1, parseInt(page, 10) || 1);
+  pageSize = Math.min(200, Math.max(5, parseInt(pageSize, 10) || 25));
+  q = (q || '').trim();
+  status = (status || '').trim();
+
+  // Per-phone subscription aggregate (non-ignored rows only).
+  const subRows = db.prepare(`
+    SELECT client_phone_norm AS pn,
+           MAX(client_name_raw) AS name,
+           COUNT(*)             AS membership_count,
+           SUM(COALESCE(months, 0)) AS total_months
+      FROM cs_subscriptions
+     WHERE is_ignored = 0 AND client_phone_norm IS NOT NULL AND client_phone_norm != ''
+     GROUP BY client_phone_norm
+  `).all();
+
+  // Most-recent subscription dept per phone (fallback when no active group).
+  const deptRows = db.prepare(`
+    SELECT client_phone_norm AS pn, dept
+      FROM cs_subscriptions
+     WHERE is_ignored = 0 AND dept IS NOT NULL
+     ORDER BY COALESCE(subscription_date, '') ASC, id ASC
+  `).all();
+  const latestDept = new Map();
+  for (const r of deptRows) latestDept.set(r.pn, r.dept);   // last write wins = latest
+
+  const activeMap     = buildActiveGroupMap();
+  const coordFallback = buildCoordFallbackMap();
+
+  const statusRows = db.prepare(`SELECT client_phone_norm AS pn, status, note FROM cs_client_delivery_status`).all();
+  const statusMap = new Map(statusRows.map(r => [r.pn, { status: r.status, note: r.note }]));
+
+  const items = [];
+  for (const s of subRows) {
+    const pn = s.pn;
+    const active = activeMap.get(pn) || [];
+    const resolvedDept = active.length ? active[0].dept_type : (latestDept.get(pn) || null);
+    if (resolvedDept !== dept) continue;
+
+    const st = statusMap.get(pn)?.status || 'active';
+    if (status && status !== 'all' && st !== status) continue;
+
+    const name = s.name || null;
+    if (q) {
+      const ql = q.toLowerCase();
+      if (!(String(name || '').toLowerCase().includes(ql) || pn.includes(q))) continue;
+    }
+
+    const activeGroups = active.map(a => a.group_name);
+    const coordinator = (active.find(a => a.coordinators && String(a.coordinators).trim())?.coordinators)
+                        || coordFallback.get(pn) || null;
+
+    items.push({
+      phone: pn,
+      name,
+      membership_count: s.membership_count,
+      total_months: s.total_months,
+      status: st,
+      status_note: statusMap.get(pn)?.note || null,
+      active_groups: activeGroups,
+      coordinator,
+      _hasActive: active.length > 0,
+    });
+  }
+
+  // Active clients first, then alphabetical by name.
+  items.sort((a, b) =>
+    (Number(b._hasActive) - Number(a._hasActive)) ||
+    String(a.name || '').localeCompare(String(b.name || ''), 'ar'));
+
+  const total = items.length;
+  const start = (page - 1) * pageSize;
+  const pageItems = items.slice(start, start + pageSize);
+
+  // Heavy per-row work (inactive groups + remaining levels) only for the
+  // current page slice so the report stays responsive on sql.js.
+  const inactiveMap = buildInactiveGroupMap();
+  const csPlan = require('./csClientPlan.service');
+  for (const it of pageItems) {
+    const activeNorm = new Set(it.active_groups.map(stripSpaces));
+    const inactiveAll = [...(inactiveMap.get(it.phone) || [])];
+    it.inactive_groups = inactiveAll.filter(g => !activeNorm.has(stripSpaces(g)));
+    try {
+      const plan = csPlan.getClientPlan(it.phone);
+      it.remaining_levels = plan ? plan.summary.pending_count : null;
+      it.paid_months = plan ? plan.summary.paid_months : it.total_months;
+      it.completed_count = plan ? plan.summary.completed_count : null;
+    } catch (_) {
+      it.remaining_levels = null;
+    }
+    delete it._hasActive;
+  }
+
+  return {
+    dept,
+    page,
+    page_size: pageSize,
+    total,
+    total_pages: Math.ceil(total / pageSize) || 1,
+    items: pageItems,
+  };
+}
+
+/**
+ * Set (or clear) the manual delivery status for one client.
+ */
+function setDeliveryStatus({ phone, status, note, userId, userName }) {
+  const pn = csPrimaryPhone(phone);
+  if (!pn) throw new Error('Invalid phone');
+  if (!STATUSES.includes(status)) throw new Error('Invalid status');
+
+  const existing = db.prepare('SELECT id FROM cs_client_delivery_status WHERE client_phone_norm = ?').get(pn);
+  if (existing) {
+    db.prepare(`
+      UPDATE cs_client_delivery_status
+         SET status = ?, note = ?, updated_by = ?, updated_by_name = ?,
+             updated_at = datetime('now', '+2 hours')
+       WHERE client_phone_norm = ?
+    `).run(status, note || null, userId || null, userName || null, pn);
+  } else {
+    db.prepare(`
+      INSERT INTO cs_client_delivery_status
+        (client_phone_norm, status, note, updated_by, updated_by_name)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(pn, status, note || null, userId || null, userName || null);
+  }
+  saveNow();
+  return { phone: pn, status, note: note || null };
+}
+
+module.exports = { getDepartmentDeliveries, setDeliveryStatus, DEPTS, STATUSES };

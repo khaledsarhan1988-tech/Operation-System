@@ -65,6 +65,7 @@ import Clients from './pages/admin/Clients';
 import CsMyClients from './pages/subscriptions/CsMyClients';
 import CsClientProfile from './pages/subscriptions/CsClientProfile';
 import CsDashboard from './pages/subscriptions/CsDashboard';
+import DepartmentDeliveries from './pages/subscriptions/DepartmentDeliveries';
 
 import TeamProgression from './pages/leader/TeamProgression';
 import EvaluateGoals from './pages/leader/EvaluateGoals';
@@ -189,6 +190,7 @@ const router = createBrowserRouter([
       { path: 'my-clients',         element: <CsMyClients /> },
       { path: 'client/:phone',      element: <CsClientProfile /> },
       { path: 'dashboard',          element: <CsDashboard /> },
+      { path: 'deliveries/:dept',   element: <DepartmentDeliveries /> },
     ],
   },
 

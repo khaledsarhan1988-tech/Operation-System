@@ -797,4 +797,51 @@ router.get('/dashboard/at-risk', requireRole('admin', 'leader'), (req, res) => {
   }
 });
 
+// ─── DEPARTMENT DELIVERIES (تسليمات الأقسام) ──────────────────────────────────
+
+/**
+ * GET /api/cs/deliveries?dept=General|Private|Semi&q=&status=&page=&page_size=
+ * Per-department client deliveries table: membership count, manual status,
+ * active groups, inactive (past) groups, remaining levels, coordinator.
+ * Visible to admin / leader / coordinator (agent).
+ */
+router.get('/deliveries', requireRole('admin', 'leader', 'agent'), (req, res) => {
+  try {
+    const svc = require('../services/csDeliveries.service');
+    const result = svc.getDepartmentDeliveries({
+      dept:     (req.query.dept || '').trim(),
+      q:        (req.query.q || '').trim(),
+      status:   (req.query.status || '').trim(),
+      page:     req.query.page,
+      pageSize: req.query.page_size,
+    });
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    console.error('GET /cs/deliveries error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * PATCH /api/cs/deliveries/:phone/status
+ * Set the MANUAL delivery status for one client.
+ * Body: { status: 'active'|'churned'|'postponed'|'exit_level'|'refund', note? }
+ */
+router.patch('/deliveries/:phone/status', requireRole('admin', 'leader', 'agent'), (req, res) => {
+  try {
+    const svc = require('../services/csDeliveries.service');
+    const result = svc.setDeliveryStatus({
+      phone:    req.params.phone,
+      status:   req.body?.status,
+      note:     req.body?.note,
+      userId:   req.user?.id,
+      userName: req.user?.full_name || req.user?.name || null,
+    });
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    console.error('PATCH /cs/deliveries/:phone/status error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
 module.exports = router;
