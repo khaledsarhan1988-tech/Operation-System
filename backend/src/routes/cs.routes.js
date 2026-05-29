@@ -814,6 +814,7 @@ router.get('/deliveries', requireRole('admin', 'leader', 'agent'), (req, res) =>
       status:   (req.query.status || '').trim(),
       page:     req.query.page,
       pageSize: req.query.page_size,
+      user:     req.user,
     });
     res.json({ ok: true, ...result });
   } catch (e) {

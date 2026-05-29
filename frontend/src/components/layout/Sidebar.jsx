@@ -195,12 +195,26 @@ export default function Sidebar({ mobile, onClose }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const links = user?.role === 'admin'
+  const baseLinks = user?.role === 'admin'
     ? getAdminLinks(user)
     : user?.role === 'leader'            ? LEADER_LINKS
     : user?.role === 'enrollment_leader' ? ENROLLMENT_LEADER_LINKS
     : user?.role === 'enrollment'        ? ENROLLMENT_LINKS
     : AGENT_LINKS;
+
+  // Department-Deliveries scoping: a leader only sees their own department's
+  // delivery link (unless they're an 'All' leader/super-admin). Admin & agent
+  // see all dept links — the backend filters the actual rows per role.
+  const links = useMemo(() => {
+    if (user?.role !== 'leader') return baseLinks;
+    if (user?.department === 'All' || user?.management === 'All') return baseLinks;
+    return baseLinks.filter(l => {
+      if (typeof l.to === 'string' && l.to.startsWith('/subscriptions/deliveries/')) {
+        return l.to.split('/').pop() === user?.department;
+      }
+      return true;
+    });
+  }, [baseLinks, user]);
 
   // Group sub-items under their parent so we can collapse them by default.
   // A "parent" is any non-sub link that's followed by sub:true links until

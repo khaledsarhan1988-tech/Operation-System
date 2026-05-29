@@ -29,6 +29,18 @@ const STATUSES = ['active', 'churned', 'postponed', 'exit_level', 'refund'];
 
 const stripSpaces = (s) => String(s == null ? '' : s).replace(/\s/g, '');
 
+// Normalize a coordinator/user name for comparison: drop any "(...)" suffix,
+// trim, lowercase, collapse spaces. Used to match the logged-in coordinator
+// (users.full_name) against batches.coordinators / team_members.name.
+const normName = (s) =>
+  String(s == null ? '' : s).replace(/\(.*?\)/g, '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+// Does a (possibly comma-separated) coordinator string contain this person?
+function coordStrHasName(coordStr, targetNorm) {
+  if (!targetNorm) return false;
+  return String(coordStr || '').split(',').map(normName).some(c => c && c === targetNorm);
+}
+
 // phone_norm → [{ group_name, dept_type, coordinators }] for groups still active.
 function buildActiveGroupMap() {
   const rows = db.prepare(`
@@ -87,13 +99,33 @@ function buildCoordFallbackMap() {
  *   q:        free-text search on name/phone
  *   status:   filter by manual status (or '' / 'all' for everyone)
  *   page, pageSize: pagination
+ *   user:     the authenticated req.user — drives PER-ROLE scoping:
+ *               • admin / management='All'        → all clients
+ *               • leader                          → own department only
+ *               • agent (coordinator)             → only clients they coordinate
  */
-function getDepartmentDeliveries({ dept, q, status, page, pageSize }) {
+function getDepartmentDeliveries({ dept, q, status, page, pageSize, user }) {
   if (!DEPTS.includes(dept)) throw new Error('Invalid dept (use General | Private | Semi)');
   page = Math.max(1, parseInt(page, 10) || 1);
   pageSize = Math.min(200, Math.max(5, parseInt(pageSize, 10) || 25));
   q = (q || '').trim();
   status = (status || '').trim();
+
+  // ── PER-ROLE SCOPE ──────────────────────────────────────────────────────
+  const role = user?.role || null;
+  const seesEverything = role === 'admin' || user?.management === 'All';
+  const isLeader = role === 'leader' && !seesEverything;
+  const isAgent  = role === 'agent'  && !seesEverything;
+
+  // Leader sees ONLY their own department. Requesting another dept → empty.
+  if (isLeader) {
+    const leaderDept = user?.department;
+    if (leaderDept && leaderDept !== 'All' && leaderDept !== dept) {
+      return { dept, page: 1, page_size: pageSize, total: 0, total_pages: 1, items: [], scope: 'leader_other_dept' };
+    }
+  }
+  // Agent is scoped to the clients they coordinate.
+  const agentNorm = isAgent ? normName(user?.full_name) : null;
 
   // Per-phone subscription aggregate (non-ignored rows only).
   const subRows = db.prepare(`
@@ -141,6 +173,14 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize }) {
     const activeGroups = active.map(a => a.group_name);
     const coordinator = (active.find(a => a.coordinators && String(a.coordinators).trim())?.coordinators)
                         || coordFallback.get(pn) || null;
+
+    // Agent scoping: keep the row only if this coordinator owns it — either via
+    // an active group's coordinators field OR the cs_client_coordinator record.
+    if (isAgent) {
+      const ownsViaGroup = active.some(a => coordStrHasName(a.coordinators, agentNorm));
+      const ownsViaCs    = coordStrHasName(coordFallback.get(pn), agentNorm);
+      if (!ownsViaGroup && !ownsViaCs) continue;
+    }
 
     items.push({
       phone: pn,
