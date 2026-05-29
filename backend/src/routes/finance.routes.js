@@ -235,7 +235,16 @@ router.get('/match/transactions', (req, res) => {
              t.matched_client_id, t.match_method,
              t.match_confidence, t.match_attempted_at, t.matched_by,
              c.name AS matched_client_name, c.phone AS matched_client_phone,
-             c.group_name AS matched_client_group, c.line AS matched_client_line
+             c.group_name AS matched_client_group, c.line AS matched_client_line,
+             (CASE
+                WHEN COALESCE(TRIM(t.client_name), '') = '' THEN NULL
+                WHEN EXISTS(
+                  SELECT 1 FROM clients sc
+                  WHERE sc.name LIKE '%' || t.client_name || '%' COLLATE NOCASE
+                  LIMIT 1
+                ) THEN 1
+                ELSE 0
+              END) AS has_search_results
         FROM finance_transactions t
         LEFT JOIN clients c ON c.id = t.matched_client_id
         ${whereSql}

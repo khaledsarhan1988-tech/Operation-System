@@ -650,14 +650,15 @@ export default function FinanceMatching() {
                 <th className="p-2 text-right">Line (Classify)</th>
                 <th className="p-2 text-right">المطابقة</th>
                 <th className="p-2 text-right">العميل المطابَق</th>
+                <th className="p-2 text-right">نتائج البحث</th>
                 <th className="p-2 text-right">إجراء</th>
               </tr>
             </thead>
             <tbody>
               {listQ.isLoading ? (
-                <tr><td colSpan={10} className="text-center py-8 text-gray-400">جارى التحميل...</td></tr>
+                <tr><td colSpan={11} className="text-center py-8 text-gray-400">جارى التحميل...</td></tr>
               ) : transactions.length === 0 ? (
-                <tr><td colSpan={10} className="text-center py-8 text-gray-400">لا توجد معاملات</td></tr>
+                <tr><td colSpan={11} className="text-center py-8 text-gray-400">لا توجد معاملات</td></tr>
               ) : transactions.map(t => (
                 <tr key={t.id} className="border-t hover:bg-gray-50">
                   <td className="p-2 whitespace-nowrap font-mono text-xs">{t.date || '—'}</td>
@@ -689,6 +690,19 @@ export default function FinanceMatching() {
                         <p className="text-[10px] text-gray-500 font-mono">{t.matched_client_phone}</p>
                       </div>
                     ) : <span className="text-gray-400">—</span>}
+                  </td>
+                  <td className="p-2 whitespace-nowrap">
+                    {t.has_search_results === 1 ? (
+                      <span className="text-xs font-bold px-2 py-0.5 rounded-full border bg-emerald-100 text-emerald-700 border-emerald-300">
+                        🟢 يوجد
+                      </span>
+                    ) : t.has_search_results === 0 ? (
+                      <span className="text-xs font-bold px-2 py-0.5 rounded-full border bg-gray-100 text-gray-500 border-gray-300">
+                        ⚪ لا يوجد
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-400">—</span>
+                    )}
                   </td>
                   <td className="p-2 whitespace-nowrap">
                     <button
