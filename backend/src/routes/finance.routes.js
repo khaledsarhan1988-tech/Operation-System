@@ -697,22 +697,42 @@ router.post('/lifecycle/regenerate-all', (req, res) => {
   }
 });
 
-// GET /api/finance/lifecycle/search-clients — quick client lookup (alias to match search)
+// GET /api/finance/lifecycle/search-clients — quick client lookup
+// Builds a tolerant phone search that handles the common variations:
+// the stored value may be "1212207286" while the admin types
+// "01212207286" (or vice versa, or with a country code). We feed the
+// query through a set of normalised digit forms and OR them all into
+// the LIKE filter so the row matches regardless of which form was kept.
 router.get('/lifecycle/search-clients', (req, res) => {
   try {
     const q = String(req.query.q || '').trim();
     if (q.length < 2) return res.json({ clients: [] });
-    const like = `%${q}%`;
-    // Only return clients that have at least one lifecycle event — the UI
-    // browses people who've actually interacted with finance.
+
+    const params = [`%${q}%`];                       // name match (always)
+    const phoneClauses = [`c.phone LIKE ?`];
+    params.push(`%${q}%`);                            // raw phone match
+
+    const digits = q.replace(/\D+/g, '');
+    if (digits.length >= 7) {
+      const variants = new Set([digits]);
+      if (digits.startsWith('0')) variants.add(digits.slice(1));
+      else variants.add('0' + digits);
+      if (digits.length > 9) variants.add(digits.slice(-9));  // last 9 digits
+      for (const v of variants) {
+        phoneClauses.push(`c.phone LIKE ?`);
+        params.push(`%${v}%`);
+      }
+    }
+
+    const where = `(c.name LIKE ? COLLATE NOCASE OR ${phoneClauses.join(' OR ')})`;
     const rows = db.prepare(`
       SELECT DISTINCT c.id, c.name, c.phone, c.group_name, c.line,
              (SELECT COUNT(*) FROM client_lifecycle_events WHERE client_id = c.id) AS events
         FROM clients c
-       WHERE (c.name LIKE ? COLLATE NOCASE OR c.phone LIKE ?)
+       WHERE ${where}
        ORDER BY c.name ASC
        LIMIT 50
-    `).all(like, like);
+    `).all(...params);
     res.json({ clients: rows.filter(r => r.events > 0) });
   } catch (e) {
     console.error('GET /finance/lifecycle/search-clients error:', e.message);
