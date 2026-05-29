@@ -551,6 +551,22 @@ export default function FinanceMatching() {
     },
   });
 
+  // Unified "do everything" workflow: sync archive → fix lines → re-match all.
+  // Runs the three operations sequentially and surfaces the combined results
+  // so the admin doesn't have to remember which button does what.
+  const runEverythingMut = useMutation({
+    mutationFn: async () => {
+      const sync   = await api.post('/finance/subscriptions/sync').then(r => r.data).catch(e => ({ error: e?.response?.data?.error || e.message }));
+      const fix    = await api.post('/finance/match/fix-lines').then(r => r.data).catch(e => ({ error: e?.response?.data?.error || e.message }));
+      return { sync, fix };
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['finance', 'subscriptions-status'] });
+      qc.invalidateQueries({ queryKey: ['finance', 'match-stats'] });
+      qc.invalidateQueries({ queryKey: ['finance', 'match-transactions'] });
+    },
+  });
+
   const retryMut = useMutation({
     mutationFn: (txId) => api.post(`/finance/match/transaction/${encodeURIComponent(txId)}`, { force: true }).then(r => r.data),
     onSuccess: () => {
@@ -602,44 +618,27 @@ export default function FinanceMatching() {
         <StatTile label="غير مطابق"         value={stats.unmatched}     icon={UserX}        color="rose" />
       </div>
 
-      {/* Re-run controls */}
+      {/* Re-run controls — single unified button */}
       <SectionCard title="إعادة تشغيل التلقائى" icon={Play}>
         <div className="flex flex-wrap gap-2 items-center">
           <ModernButton
-            variant="secondary"
-            onClick={() => runAllMut.mutate('unmatched')}
-            disabled={runAllMut.isPending}
-          >
-            إعادة محاولة "غير مطابق" + "يحتاج مراجعة"
-          </ModernButton>
-          <ModernButton
-            variant="amber"
-            onClick={() => runAllMut.mutate('all')}
-            disabled={runAllMut.isPending}
-          >
-            إعادة محاولة الكل (قد تكون بطيئة)
-          </ModernButton>
-          <ModernButton
             variant="primary"
             onClick={() => {
-              if (window.confirm('هيتم تصحيح line العملاء بناءً على جدول batches، ثم إعادة المطابقة. تتابع؟')) {
-                fixLinesMut.mutate();
+              if (window.confirm(
+                'هيتم تنفيذ كل العمليات بالترتيب:\n\n' +
+                '1️⃣ مزامنة Customer Subscriptions (Archive) — ~30 ثانية\n' +
+                '2️⃣ تصحيح Lines بناءً على batches\n' +
+                '3️⃣ إعادة المطابقة الكاملة\n\n' +
+                'تتابع؟'
+              )) {
+                runEverythingMut.mutate();
               }
             }}
-            disabled={fixLinesMut.isPending}
+            disabled={runEverythingMut.isPending}
           >
-            {fixLinesMut.isPending ? 'جارٍ الإصلاح...' : '🔧 إصلاح Lines + إعادة مطابقة'}
-          </ModernButton>
-          <ModernButton
-            variant="secondary"
-            onClick={() => {
-              if (window.confirm('هيتم سحب 38 ملف Excel من Customer Subscription folders على Drive. قد ياخد ~30 ثانية. تتابع؟')) {
-                syncSubscriptionsMut.mutate();
-              }
-            }}
-            disabled={syncSubscriptionsMut.isPending}
-          >
-            {syncSubscriptionsMut.isPending ? 'جارٍ المزامنة...' : '📚 مزامنة Customer Subscriptions (Archive)'}
+            {runEverythingMut.isPending
+              ? '⏳ جارٍ التنفيذ... (قد تستغرق دقيقة)'
+              : '🚀 تنفيذ شامل (مزامنة + إصلاح + مطابقة)'}
           </ModernButton>
           {subscriptionStatusQ.data ? (
             <span className="text-xs bg-violet-50 border border-violet-200 rounded px-2 py-1 font-mono">
@@ -649,35 +648,37 @@ export default function FinanceMatching() {
               ) : ' · لم تتم بعد'}
             </span>
           ) : null}
-          {syncSubscriptionsMut.data ? (
+          {runEverythingMut.data ? (
             <span className="text-xs bg-emerald-50 border border-emerald-200 rounded px-2 py-1 font-mono">
-              ✅ تمت المزامنة: {syncSubscriptionsMut.data.files_processed} ملف، {syncSubscriptionsMut.data.rows_total} صف
+              ✅ تم —
+              {runEverythingMut.data.sync && !runEverythingMut.data.sync.error ? (
+                <> أرشيف: {runEverythingMut.data.sync.files_processed || 0} ملف، {runEverythingMut.data.sync.rows_total || 0} صف</>
+              ) : null}
+              {runEverythingMut.data.fix && !runEverythingMut.data.fix.error ? (
+                <> · line: {runEverythingMut.data.fix.clients_updated || 0} عميل ·
+                  مطابقة: matched={runEverythingMut.data.fix.rematch?.matched ?? 0}
+                  / unmatched={runEverythingMut.data.fix.rematch?.unmatched ?? 0}</>
+              ) : null}
             </span>
           ) : null}
-          {syncSubscriptionsMut.isError ? (
+          {runEverythingMut.data?.sync?.error ? (
             <span className="text-xs bg-rose-50 border border-rose-200 rounded px-2 py-1 text-rose-700">
-              ❌ {syncSubscriptionsMut.error?.response?.data?.error || syncSubscriptionsMut.error?.message}
+              ❌ مزامنة الأرشيف: {runEverythingMut.data.sync.error}
             </span>
           ) : null}
-          {runAllMut.data ? (
-            <span className="text-xs bg-emerald-50 border border-emerald-200 rounded px-2 py-1 font-mono">
-              ✅ تمت محاولة {runAllMut.data.attempted}: matched={runAllMut.data.matched} ambiguous={runAllMut.data.ambiguous} unmatched={runAllMut.data.unmatched}
-            </span>
-          ) : null}
-          {fixLinesMut.data ? (
-            <span className="text-xs bg-violet-50 border border-violet-200 rounded px-2 py-1 font-mono">
-              ✅ صُحّح line لـ {fixLinesMut.data.clients_updated} عميل (من {fixLinesMut.data.clients_examined}) ·
-              {' '}re-match: matched={fixLinesMut.data.rematch.matched} unmatched={fixLinesMut.data.rematch.unmatched}
-            </span>
-          ) : null}
-          {fixLinesMut.isError ? (
+          {runEverythingMut.data?.fix?.error ? (
             <span className="text-xs bg-rose-50 border border-rose-200 rounded px-2 py-1 text-rose-700">
-              ❌ {fixLinesMut.error?.response?.data?.error || fixLinesMut.error?.message}
+              ❌ إصلاح + مطابقة: {runEverythingMut.data.fix.error}
+            </span>
+          ) : null}
+          {runEverythingMut.isError ? (
+            <span className="text-xs bg-rose-50 border border-rose-200 rounded px-2 py-1 text-rose-700">
+              ❌ {runEverythingMut.error?.response?.data?.error || runEverythingMut.error?.message}
             </span>
           ) : null}
         </div>
         <p className="text-xs text-gray-500 mt-2">
-          المطابقة التلقائية بتشتغل لوحدها على كل معاملة جديدة. الأزرار دى للحالات الخاصة (لما تضاف عملاء جديدين مثلاً).
+          المطابقة التلقائية بتشتغل لوحدها على كل معاملة جديدة. الزرار ده للحالات الخاصة (لما تضاف عملاء جديدين، أو الـ archive يتحدث).
         </p>
       </SectionCard>
 
