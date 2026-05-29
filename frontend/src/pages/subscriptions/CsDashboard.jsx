@@ -46,34 +46,29 @@ export default function CsDashboard() {
     queryFn: () => api.get('/cs/dashboard/extra-courses').then(r => r.data),
   });
 
-  const ingestExcel = useMutation({
-    mutationFn: () => api.post('/cs/ingest/membership'),
-    onSuccess: () => {
+  // استيراد شامل: Finance API ← Membership Excel ← المستويات من Drive.
+  // بيشتغل بالترتيب؛ فشل أي خطوة بيتسجّل وما يوقفش الباقي → ملخّص واحد في الآخر.
+  const ingestAll = useMutation({
+    mutationFn: async () => {
+      const finance    = await api.post('/cs/ingest/finance').then(r => r.data?.result || {}).catch(e => ({ error: e.response?.data?.error || e.message }));
+      const membership = await api.post('/cs/ingest/membership').then(() => ({ ok: true })).catch(e => ({ error: e.response?.data?.error || e.message }));
+      const levels     = await api.post('/cs/ingest/levels').then(() => ({ ok: true })).catch(e => ({ error: e.response?.data?.error || e.message }));
+      return { finance, membership, levels };
+    },
+    onSuccess: (out) => {
       qc.invalidateQueries({ queryKey: ['cs-dashboard-overview'] });
       qc.invalidateQueries({ queryKey: ['cs-dashboard-at-risk'] });
-      alert('تم استيراد ملف Membership بنجاح');
+      const f = out.finance || {};
+      const step = (label, res) => res?.error ? `❌ ${label}: ${res.error}` : `✅ ${label}`;
+      alert(
+        'الاستيراد الشامل:\n' +
+        (f.error ? `❌ Finance API: ${f.error}`
+                 : `✅ Finance API: processed=${f.processed ?? 0} matched=${f.matched_to_client ?? 0}`) + '\n' +
+        step('Membership Excel', out.membership) + '\n' +
+        step('المستويات من Drive', out.levels)
+      );
     },
-    onError: (e) => alert('فشل الاستيراد: ' + (e.response?.data?.error || e.message)),
-  });
-
-  const ingestFinance = useMutation({
-    mutationFn: () => api.post('/cs/ingest/finance'),
-    onSuccess: (res) => {
-      qc.invalidateQueries({ queryKey: ['cs-dashboard-overview'] });
-      qc.invalidateQueries({ queryKey: ['cs-dashboard-at-risk'] });
-      const r = res.data?.result || {};
-      alert(`تم: processed=${r.processed} matched=${r.matched_to_client} superseded_excel=${r.excel_rows_superseded}`);
-    },
-    onError: (e) => alert('فشل الاستيراد: ' + (e.response?.data?.error || e.message)),
-  });
-
-  const ingestLevels = useMutation({
-    mutationFn: () => api.post('/cs/ingest/levels'),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['cs-dashboard-overview'] });
-      alert('تم استيراد ملفات المستويات من Drive بنجاح');
-    },
-    onError: (e) => alert('فشل الاستيراد: ' + (e.response?.data?.error || e.message)),
+    onError: (e) => alert('فشل الاستيراد الشامل: ' + (e.response?.data?.error || e.message)),
   });
 
   const runAlerts = useMutation({
@@ -116,14 +111,8 @@ export default function CsDashboard() {
       {user?.role === 'admin' && (
         <SectionCard title="إجراءات الاستيراد والصيانة" icon={RefreshCw} className="mt-4">
           <div className="p-3 flex flex-wrap gap-2">
-            <ModernButton onClick={() => ingestFinance.mutate()} disabled={ingestFinance.isLoading}>
-              {ingestFinance.isLoading ? '...جاري الاستيراد' : 'استيراد من Finance API (Center App)'}
-            </ModernButton>
-            <ModernButton onClick={() => ingestExcel.mutate()} disabled={ingestExcel.isLoading}>
-              {ingestExcel.isLoading ? '...جاري الاستيراد' : 'استيراد ملف Membership Excel'}
-            </ModernButton>
-            <ModernButton onClick={() => ingestLevels.mutate()} disabled={ingestLevels.isLoading}>
-              {ingestLevels.isLoading ? '...جاري الاستيراد' : 'استيراد ملفات المستويات من Drive'}
+            <ModernButton onClick={() => ingestAll.mutate()} disabled={ingestAll.isLoading}>
+              {ingestAll.isLoading ? '...جاري الاستيراد الشامل' : 'استيراد شامل (Finance + Membership + المستويات)'}
             </ModernButton>
             <ModernButton onClick={() => runAlerts.mutate()} disabled={runAlerts.isLoading}>
               {runAlerts.isLoading ? '...' : 'فحص التنبيهات الآن'}
