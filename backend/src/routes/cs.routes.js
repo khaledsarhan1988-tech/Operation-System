@@ -891,6 +891,20 @@ router.put('/enrollment/:id', requireRole('admin', 'leader', 'agent'), (req, res
   }
 });
 
+/**
+ * PATCH /api/cs/enrollment/:id/generate — set Generate (Start|Pending).
+ * "Start" needs >= 7 students. Only admin / leader / enrollment_leader.
+ */
+router.patch('/enrollment/:id/generate', requireRole('admin', 'leader', 'enrollment_leader'), (req, res) => {
+  try {
+    const svc = require('../services/csEnrollment.service');
+    res.json({ ok: true, row: svc.setGenerate(parseInt(req.params.id, 10), (req.body?.status || '').trim()) });
+  } catch (e) {
+    console.error('PATCH /cs/enrollment/:id/generate error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
 /** DELETE /api/cs/enrollment/:id — delete a row. */
 router.delete('/enrollment/:id', requireRole('admin', 'leader', 'agent'), (req, res) => {
   try {

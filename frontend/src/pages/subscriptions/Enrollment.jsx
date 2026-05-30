@@ -2,8 +2,16 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { GraduationCap, Plus, Save, X, Pencil, Trash2 } from 'lucide-react';
 import api from '../../api/axios';
+import { useAuth } from '../../auth/AuthContext';
 import PageHero from '../../components/ui/PageHero';
 import SectionCard from '../../components/ui/SectionCard';
+
+// Roles allowed to flip Generate → Start: مسؤول / مدير / enrollment_leader.
+const CAN_GENERATE_ROLES = ['admin', 'leader', 'enrollment_leader'];
+const GEN_CLS = {
+  Start:   'bg-emerald-100 text-emerald-700 border-emerald-200',
+  Pending: 'bg-amber-100 text-amber-700 border-amber-200',
+};
 
 /**
  * Enrollment — manual data-entry grid, one tab per department.
@@ -42,6 +50,8 @@ const COLS = [
 
 export default function Enrollment() {
   const qc = useQueryClient();
+  const { user } = useAuth();
+  const canGenerate = CAN_GENERATE_ROLES.includes(user?.role);
   const [activeDept, setActiveDept] = useState('General');
   const [editing, setEditing] = useState(null);   // row id | 'new' | null
   const [form, setForm] = useState(EMPTY);
@@ -70,6 +80,37 @@ export default function Enrollment() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['enroll-rows', activeDept] }),
     onError: (e) => alert('فشل الحذف: ' + (e.response?.data?.error || e.message)),
   });
+  const generateMut = useMutation({
+    mutationFn: ({ id, status }) => api.patch(`/cs/enrollment/${id}/generate`, { status }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['enroll-rows', activeDept] }),
+    onError: (e) => alert('فشل التحويل: ' + (e.response?.data?.error || e.message)),
+  });
+
+  // Generate cell — badge for everyone; a Start/Pending toggle for privileged
+  // roles when the group has >= 7 students.
+  const genBadge = (status, title) => (
+    <span title={title || ''} className={`inline-block text-xs rounded-full border px-2 py-0.5 ${GEN_CLS[status] || GEN_CLS.Pending}`}>
+      {status || 'Pending'}
+    </span>
+  );
+  const genCell = (row) => {
+    const status = row.generate_status || 'Pending';
+    const eligible = (Number(row.num_students) || 0) >= 7;
+    if (canGenerate && eligible && row.id) {
+      return (
+        <select
+          value={status}
+          disabled={generateMut.isPending}
+          onChange={(e) => generateMut.mutate({ id: row.id, status: e.target.value })}
+          className={`text-xs rounded-full border px-2 py-1 focus:outline-none ${GEN_CLS[status] || ''}`}
+        >
+          <option value="Pending">Pending</option>
+          <option value="Start">Start</option>
+        </select>
+      );
+    }
+    return genBadge(status, !eligible ? 'محتاج 7 طلاب أو أكثر' : '');
+  };
 
   const startEdit = (row) => { setEditing(row.id); setForm({ ...EMPTY, ...row }); };
   const startNew  = () => { setEditing('new'); setForm(EMPTY); };
@@ -146,6 +187,7 @@ export default function Enrollment() {
             <thead>
               <tr className="text-slate-500 bg-slate-50 border-b border-slate-200">
                 {COLS.map(c => <th key={c.k} className="px-2 py-2.5 font-medium whitespace-nowrap">{c.label}</th>)}
+                <th className="px-2 py-2.5 font-medium">Generate</th>
                 <th className="px-2 py-2.5 font-medium">إجراءات</th>
               </tr>
             </thead>
@@ -154,6 +196,7 @@ export default function Enrollment() {
                 editing === row.id ? (
                   <tr key={row.id} className="bg-violet-50/40 border-b border-slate-100">
                     {editCells()}
+                    <td className="px-2 py-1 whitespace-nowrap">{genBadge(form.generate_status || 'Pending')}</td>
                     <td className="px-2 py-1 whitespace-nowrap">
                       <button onClick={save} disabled={saveMut.isPending} className="text-emerald-600 hover:text-emerald-800 p-1" title="حفظ"><Save className="w-4 h-4" /></button>
                       <button onClick={cancel} className="text-slate-400 hover:text-slate-600 p-1" title="إلغاء"><X className="w-4 h-4" /></button>
@@ -166,6 +209,7 @@ export default function Enrollment() {
                         {row[c.k] != null && row[c.k] !== '' ? String(row[c.k]) : <span className="text-slate-300">—</span>}
                       </td>
                     ))}
+                    <td className="px-2 py-2 whitespace-nowrap">{genCell(row)}</td>
                     <td className="px-2 py-2 whitespace-nowrap">
                       <button onClick={() => startEdit(row)} disabled={editing !== null} className="text-violet-600 hover:text-violet-800 p-1 disabled:opacity-40" title="تعديل"><Pencil className="w-4 h-4" /></button>
                       <button onClick={() => { if (confirm('حذف الصف؟')) delMut.mutate(row.id); }} disabled={editing !== null} className="text-rose-500 hover:text-rose-700 p-1 disabled:opacity-40" title="حذف"><Trash2 className="w-4 h-4" /></button>
@@ -177,6 +221,7 @@ export default function Enrollment() {
               {editing === 'new' && (
                 <tr className="bg-violet-50/40 border-b border-slate-100">
                   {editCells()}
+                  <td className="px-2 py-1 whitespace-nowrap">{genBadge('Pending')}</td>
                   <td className="px-2 py-1 whitespace-nowrap">
                     <button onClick={save} disabled={saveMut.isPending} className="text-emerald-600 hover:text-emerald-800 p-1" title="حفظ"><Save className="w-4 h-4" /></button>
                     <button onClick={cancel} className="text-slate-400 hover:text-slate-600 p-1" title="إلغاء"><X className="w-4 h-4" /></button>
@@ -185,7 +230,7 @@ export default function Enrollment() {
               )}
 
               {!rowsQ.isLoading && rows.length === 0 && editing !== 'new' && (
-                <tr><td colSpan={COLS.length + 1} className="px-3 py-10 text-center text-slate-400">لا توجد صفوف بعد — اضغط «إضافة صف»</td></tr>
+                <tr><td colSpan={COLS.length + 2} className="px-3 py-10 text-center text-slate-400">لا توجد صفوف بعد — اضغط «إضافة صف»</td></tr>
               )}
             </tbody>
           </table>

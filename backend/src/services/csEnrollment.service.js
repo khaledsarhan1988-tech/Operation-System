@@ -61,9 +61,28 @@ function updateRow(id, data) {
   if (!row) throw new Error('Row not found');
   const sets = FIELDS.map(f => `${f} = ?`).join(', ');
   const vals = FIELDS.map(f => (data[f] === undefined || data[f] === '') ? null : data[f]);
+  // Business rule: a group that drops below 7 students cannot stay "Start".
+  const num = parseInt(data.num_students, 10);
+  const forcePending = Number.isFinite(num) && num < 7 ? `, generate_status = 'Pending'` : '';
   db.prepare(
-    `UPDATE enrollment_rows SET ${sets}, updated_at = datetime('now','+2 hours') WHERE id = ?`
+    `UPDATE enrollment_rows SET ${sets}${forcePending}, updated_at = datetime('now','+2 hours') WHERE id = ?`
   ).run(...vals, id);
+  saveNow();
+  return db.prepare('SELECT * FROM enrollment_rows WHERE id = ?').get(id);
+}
+
+// Set the Generate status. "Start" requires the group to have >= 7 students.
+// Role gating (admin / leader / enrollment_leader) is enforced in the route.
+function setGenerate(id, status) {
+  if (!['Start', 'Pending'].includes(status)) throw new Error('Invalid generate status');
+  const row = db.prepare('SELECT num_students FROM enrollment_rows WHERE id = ?').get(id);
+  if (!row) throw new Error('Row not found');
+  if (status === 'Start' && (Number(row.num_students) || 0) < 7) {
+    throw new Error('المجموعة محتاجة 7 طلاب أو أكثر علشان تتحول لـ Start');
+  }
+  db.prepare(
+    `UPDATE enrollment_rows SET generate_status = ?, updated_at = datetime('now','+2 hours') WHERE id = ?`
+  ).run(status, id);
   saveNow();
   return db.prepare('SELECT * FROM enrollment_rows WHERE id = ?').get(id);
 }
@@ -124,6 +143,6 @@ function getOptions(dept, level, line = 'Ahmed Hassan') {
 }
 
 module.exports = {
-  listRows, createRow, updateRow, deleteRow, getOptions,
+  listRows, createRow, updateRow, deleteRow, setGenerate, getOptions,
   DAYS, STATUSES, LEVELS, DEPTS,
 };

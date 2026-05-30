@@ -2090,6 +2090,7 @@ initDb().then(db => {
         status          TEXT,                          -- 'Exit Level'|'New'|'Postponed'
         admin           TEXT,                          -- coordinator name
         teacher         TEXT,                          -- trainer name
+        generate_status TEXT NOT NULL DEFAULT 'Pending',-- 'Start'|'Pending' (Start needs >=7 students + privileged role)
         line            TEXT NOT NULL DEFAULT 'Ahmed Hassan',
         created_by      INTEGER,
         created_by_name TEXT,
@@ -2099,6 +2100,11 @@ initDb().then(db => {
     `);
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_enrollment_dept ON enrollment_rows(dept)`);
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_enrollment_line ON enrollment_rows(line)`);
+    // generate_status added after the table first shipped → ALTER for existing DBs.
+    const enrCols = db._raw.exec(`PRAGMA table_info(enrollment_rows)`)[0]?.values.map(r => r[1]) || [];
+    if (!enrCols.includes('generate_status')) {
+      db._raw.run(`ALTER TABLE enrollment_rows ADD COLUMN generate_status TEXT NOT NULL DEFAULT 'Pending'`);
+    }
     saveNow();
     console.log('✅ Migration: enrollment_rows table ready');
   } catch (e) {
