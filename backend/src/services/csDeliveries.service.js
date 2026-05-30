@@ -105,6 +105,28 @@ function buildInactiveGroupMap() {
   return map;
 }
 
+// Set of phones whose subscriptions include an INTENSIVE course ("مكثفة").
+// Intensive levels run at a faster pace (2 weeks each) vs 1 month for regular.
+function buildIntensiveSet() {
+  const rows = db.prepare(`
+    SELECT DISTINCT client_phone_norm AS pn
+      FROM cs_subscriptions
+     WHERE is_ignored = 0 AND product_name_raw LIKE '%مكثف%'
+  `).all();
+  return new Set(rows.map(r => r.pn).filter(Boolean));
+}
+
+// Pace (days per level): intensive = 2 weeks, regular = 1 month.
+const PACE_INTENSIVE_DAYS = 14;
+const PACE_REGULAR_DAYS = 30;
+
+// Add `days` to a YYYY-MM-DD reference (or today when missing) → YYYY-MM-DD.
+function addDaysISO(refDateStr, days) {
+  const base = refDateStr ? new Date(refDateStr) : new Date();
+  if (isNaN(base.getTime())) return null;
+  return new Date(base.getTime() + days * 86400000).toISOString().slice(0, 10);
+}
+
 // phone_norm → current coordinator name (cs_client_coordinator fallback).
 function buildCoordFallbackMap() {
   const rows = db.prepare(`
@@ -232,21 +254,48 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user }) {
   const start = (page - 1) * pageSize;
   const pageItems = items.slice(start, start + pageSize);
 
-  // Heavy per-row work (inactive groups + remaining levels) only for the
-  // current page slice so the report stays responsive on sql.js.
+  // Heavy per-row work (inactive groups + remaining levels + expected time)
+  // only for the current page slice so the report stays responsive on sql.js.
   const inactiveMap = buildInactiveGroupMap();
+  const intensiveSet = buildIntensiveSet();
   const csPlan = require('./csClientPlan.service');
   for (const it of pageItems) {
     const activeNorm = new Set(it.active_groups.map(stripSpaces));
     const inactiveAll = [...(inactiveMap.get(it.phone) || [])];
     it.inactive_groups = inactiveAll.filter(g => !activeNorm.has(stripSpaces(g)));
+
+    let lastLevelDate = null, daysSinceLast = null;
     try {
       const plan = csPlan.getClientPlan(it.phone);
       it.remaining_levels = plan ? plan.summary.pending_count : null;
       it.paid_months = plan ? plan.summary.paid_months : it.total_months;
       it.completed_count = plan ? plan.summary.completed_count : null;
+      lastLevelDate = plan?.summary?.last_level_date || null;
+      daysSinceLast = plan?.summary?.days_since_last_level ?? null;
     } catch (_) {
       it.remaining_levels = null;
+    }
+
+    // ── Intensive-aware pacing (2 weeks / level) vs regular (1 month / level) ──
+    const isIntensive = intensiveSet.has(it.phone);
+    const pace = isIntensive ? PACE_INTENSIVE_DAYS : PACE_REGULAR_DAYS;
+    const rem = it.remaining_levels;
+    it.is_intensive = isIntensive;
+    it.pace_days = pace;
+    it.days_since_last_level = daysSinceLast;
+    if (rem != null && rem > 0) {
+      it.expected_remaining_days = rem * pace;
+      // Friendly label that reflects the pace: intensive → weeks, regular → months.
+      it.expected_remaining_label = isIntensive ? `${rem * 2} أسبوع` : `${rem} شهر`;
+      it.expected_finish_date = addDaysISO(lastLevelDate, rem * pace);
+      // Overdue = behind pace: more time has passed since the last completed
+      // level than a single level should take.
+      it.is_overdue = (daysSinceLast != null && daysSinceLast > pace);
+    } else {
+      it.expected_remaining_days = 0;
+      it.expected_remaining_label = (rem === 0) ? 'مكتمل' : null;
+      it.expected_finish_date = null;
+      it.is_overdue = false;
     }
     delete it._hasActive;
   }

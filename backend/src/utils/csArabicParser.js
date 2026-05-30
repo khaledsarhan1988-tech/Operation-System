@@ -111,6 +111,14 @@ function extractMonths(s, dept = null) {
     if (n >= 1 && n <= 24) return n;
   }
 
+  // "N مستويات / N مستوى" — intensive-course packages ("كورسات مكثفة 3 مستويات").
+  // 1 level = 1 month in this system, so the level count IS the duration.
+  const levelsAr = norm.match(/(\d+)\s*مستو/);
+  if (levelsAr) {
+    const n = parseInt(levelsAr[1], 10);
+    if (n >= 1 && n <= 24) return n;
+  }
+
   // Arabic WORD durations (no digit) — common in the Membership Excel:
   //   "شهرين" = 2,  standalone "شهر" = 1.
   // Check "شهرين" first (it contains the substring "شهر"). Note "شهور" has a

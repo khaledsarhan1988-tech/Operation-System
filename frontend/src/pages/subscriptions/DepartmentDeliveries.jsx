@@ -154,6 +154,8 @@ export default function DepartmentDeliveries() {
                 <th className="px-3 py-3 font-medium">المجموعات النشطة</th>
                 <th className="px-3 py-3 font-medium">المجموعات غير النشطة</th>
                 <th className="px-3 py-3 font-medium">المستويات المتبقية</th>
+                <th className="px-3 py-3 font-medium">الوقت المتبقي المتوقع</th>
+                <th className="px-3 py-3 font-medium">الخلوص المتوقع</th>
                 <th className="px-3 py-3 font-medium">المنسق</th>
               </tr>
             </thead>
@@ -207,11 +209,33 @@ export default function DepartmentDeliveries() {
                       {it.remaining_levels == null ? '—' : it.remaining_levels}
                     </span>
                   </td>
+                  <td className="px-3 py-3 text-center whitespace-nowrap">
+                    {it.expected_remaining_label ? (
+                      <div className="flex flex-col items-center gap-1">
+                        <span className="text-xs text-slate-700">{it.expected_remaining_label}</span>
+                        {it.is_intensive && (
+                          <span className="text-[10px] bg-fuchsia-50 text-fuchsia-700 rounded px-1.5 py-0.5">مكثف</span>
+                        )}
+                      </div>
+                    ) : <span className="text-slate-300">—</span>}
+                  </td>
+                  <td className="px-3 py-3 text-center whitespace-nowrap">
+                    {it.expected_finish_date ? (
+                      <div className="flex flex-col items-center gap-1">
+                        <span className="text-xs font-mono text-slate-700" dir="ltr">{it.expected_finish_date}</span>
+                        {it.is_overdue && (
+                          <span className="text-[10px] bg-rose-100 text-rose-700 rounded px-1.5 py-0.5 font-semibold">⚠ متأخر</span>
+                        )}
+                      </div>
+                    ) : it.is_overdue ? (
+                      <span className="text-[10px] bg-rose-100 text-rose-700 rounded px-1.5 py-0.5 font-semibold">⚠ متأخر</span>
+                    ) : <span className="text-slate-300">—</span>}
+                  </td>
                   <td className="px-3 py-3 text-slate-700">{it.coordinator || <span className="text-slate-300">—</span>}</td>
                 </tr>
               ))}
               {!listQ.isLoading && items.length === 0 && (
-                <tr><td colSpan={7} className="px-3 py-10 text-center text-slate-400">لا يوجد عملاء مطابقون</td></tr>
+                <tr><td colSpan={9} className="px-3 py-10 text-center text-slate-400">لا يوجد عملاء مطابقون</td></tr>
               )}
             </tbody>
           </table>
