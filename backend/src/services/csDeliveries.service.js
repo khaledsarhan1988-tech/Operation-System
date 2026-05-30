@@ -41,6 +41,19 @@ function cleanGroupCode(raw) {
   return s;
 }
 
+// Placeholder / non-real groups that must be EXCLUDED from the deliveries view
+// entirely — they are not real client groups (e.g. the "Free Slots(DONOT CLOSED)"
+// filler batch). Add more patterns here as needed.
+const IGNORED_GROUP_PATTERNS = [
+  /free\s*slots/i,
+  /do\s*-?\s*not\s*closed/i,
+  /donot\s*closed/i,
+];
+const isIgnoredGroup = (name) => {
+  const s = String(name == null ? '' : name);
+  return IGNORED_GROUP_PATTERNS.some(re => re.test(s));
+};
+
 // Normalize a coordinator/user name for comparison: drop any "(...)" suffix,
 // trim, lowercase, collapse spaces. Used to match the logged-in coordinator
 // (users.full_name) against batches.coordinators / team_members.name.
@@ -67,6 +80,7 @@ function buildActiveGroupMap() {
   for (const r of rows) {
     const pn = csPrimaryPhone(r.phone);
     if (!pn) continue;
+    if (isIgnoredGroup(r.group_name)) continue;   // skip placeholder groups (Free Slots, …)
     if (!map.has(pn)) map.set(pn, []);
     map.get(pn).push({ group_name: r.group_name, dept_type: r.dept_type, coordinators: r.coordinators });
   }
@@ -84,7 +98,7 @@ function buildInactiveGroupMap() {
   for (const r of rows) {
     if (!r.pn) continue;
     const code = cleanGroupCode(r.g);     // strip status suffix + dedupe same group across levels
-    if (!code) continue;
+    if (!code || isIgnoredGroup(code)) continue;   // skip empty + placeholder groups (Free Slots, …)
     if (!map.has(r.pn)) map.set(r.pn, new Set());
     map.get(r.pn).add(code);
   }
