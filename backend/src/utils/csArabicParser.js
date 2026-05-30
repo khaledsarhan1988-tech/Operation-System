@@ -39,7 +39,9 @@ const { lookupMembership } = require('./csMembershipCatalog');
 const DEPT_PATTERNS = [
   // Semi-Private — also called "Private 2 in 1" in marketing
   { dept: 'Semi',    patterns: [/سيمي/i, /سيمى/i, /semi/i, /2\s*in\s*1/i, /برايفت\s*2/i, /2\s*ف[يى]\s*1/i] },
-  { dept: 'Private', patterns: [/برايفت/i, /private/i] },
+  // "مكثف / مكثفة" (intensive) belongs to Private per the user. Checked after
+  // Semi so a hypothetical "مكثف سيمي" would still resolve to Semi first.
+  { dept: 'Private', patterns: [/برايفت/i, /private/i, /مكثف/] },
   // General. NOTE: General memberships are marketed as "جروب" (group) and
   // often carry NO "جينرال" keyword (e.g. "جولد جروب", "سوبر جولد جروب").
   // "جروب" → General is safe because Semi/Private are checked first above.
