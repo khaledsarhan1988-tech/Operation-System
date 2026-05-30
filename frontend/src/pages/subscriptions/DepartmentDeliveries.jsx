@@ -106,7 +106,7 @@ export default function DepartmentDeliveries() {
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto" dir="rtl">
       <PageHero
-        title="Enrollment — تسليمات الأقسام"
+        title="Customer Services Department — تسليمات الأقسام"
         subtitle="كل العملاء وعضوياتهم ومجموعاتهم النشطة والسابقة والمستويات المتبقية"
         icon={GraduationCap}
         color={meta.color}

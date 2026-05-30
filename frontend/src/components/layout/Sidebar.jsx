@@ -43,7 +43,7 @@ const COLOR_MAP = {
 // backend scopes the data and the page shows only the leader's own dept tab.
 const DELIVERIES_LINKS = [
   { type: 'section', label: 'تسليمات الأقسام' },
-  { to: '/subscriptions/enrollment', label: 'Enrollment', icon: GraduationCap, color: 'violet' },
+  { to: '/subscriptions/enrollment', label: 'Customer Services Department', icon: GraduationCap, color: 'violet' },
 ];
 
 const AGENT_LINKS = [
