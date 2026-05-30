@@ -80,6 +80,16 @@ function StudentDrawer({ row, onClose, onSaved }) {
   const [search, setSearch] = useState('');
   const [sel, setSel] = useState(null);   // key → { client_id, name, phone }
 
+  // Stable, unique key per client (id first, then phone, then name) so two
+  // different clients never collide — that's what made it act single-select.
+  const keyOf = (c) => {
+    const id = c?.id ?? c?.client_id;
+    if (id != null && id !== '') return 'id:' + id;
+    const ph = c?.phone ?? c?.client_phone;
+    if (ph) return 'ph:' + ph;
+    return 'nm:' + (c?.name ?? c?.client_name ?? '');
+  };
+
   const assignedQ = useQuery({
     queryKey: ['enr-students', row.id],
     queryFn: () => api.get(`/cs/enrollment/${row.id}/students`).then(r => r.data),
@@ -93,8 +103,7 @@ function StudentDrawer({ row, onClose, onSaved }) {
     if (assignedQ.data && sel === null) {
       const m = {};
       (assignedQ.data.students || []).forEach(s => {
-        const k = s.client_phone || s.client_name;
-        m[k] = { client_id: s.client_id, name: s.client_name, phone: s.client_phone };
+        m[keyOf(s)] = { client_id: s.client_id, name: s.client_name, phone: s.client_phone };
       });
       setSel(m);
     }
@@ -109,8 +118,8 @@ function StudentDrawer({ row, onClose, onSaved }) {
   const selMap = sel || {};
   const toggle = (c) => setSel(prev => {
     const m = { ...(prev || {}) };
-    const k = c.phone || c.name;
-    if (m[k]) delete m[k]; else m[k] = { client_id: c.id, name: c.name, phone: c.phone };
+    const k = keyOf(c);
+    if (m[k]) delete m[k]; else m[k] = { client_id: c.id ?? null, name: c.name, phone: c.phone };
     return m;
   });
   const clients = clientsQ.data?.clients || [];
@@ -142,9 +151,9 @@ function StudentDrawer({ row, onClose, onSaved }) {
           ) : clients.length === 0 ? (
             <div className="p-4 text-center text-slate-400 text-sm">لا نتائج</div>
           ) : clients.map(c => {
-            const checked = !!selMap[c.phone || c.name];
+            const checked = !!selMap[keyOf(c)];
             return (
-              <label key={(c.phone || '') + '|' + c.name} className="flex items-center gap-2 px-3 py-2 border-b border-slate-50 hover:bg-slate-50 cursor-pointer">
+              <label key={keyOf(c)} className="flex items-center gap-2 px-3 py-2 border-b border-slate-50 hover:bg-slate-50 cursor-pointer">
                 <input type="checkbox" checked={checked} onChange={() => toggle(c)} className="w-4 h-4 accent-violet-600" />
                 <div className="flex-1 min-w-0">
                   <div className="text-sm text-slate-800 truncate">{c.name}</div>
