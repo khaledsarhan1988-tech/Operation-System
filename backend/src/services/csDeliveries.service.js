@@ -48,6 +48,8 @@ const IGNORED_GROUP_PATTERNS = [
   /free\s*slots/i,
   /do\s*-?\s*not\s*closed/i,
   /donot\s*closed/i,
+  /grammer/i,                  // "Grammer_Con_G(...)" — grammar sessions, not a level group
+  /grammar/i,                  // correct spelling, just in case
 ];
 const isIgnoredGroup = (name) => {
   const s = String(name == null ? '' : name);
