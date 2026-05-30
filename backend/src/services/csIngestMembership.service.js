@@ -176,9 +176,22 @@ async function runIngestion({ startRow = START_ROW_1BASED, dryRun = false, lineF
   // 3) Slice to the in-scope window (startRow .. end)
   const inScope = parsed.rows.filter(r => r.rowNo >= startRow);
 
-  let inserted = 0, updated = 0, ignored = 0, unparsed = 0, matched = 0, unmatched = 0;
+  let inserted = 0, updated = 0, ignored = 0, unparsed = 0, matched = 0, unmatched = 0, supersededByFinance = 0;
   const stmt = _upsertSubStmt();
   const now = nowCairo();
+
+  // Dedup vs Center App: if a finance_api subscription already exists for the
+  // same (phone, dept, months), this Excel row is the SAME purchase migrated
+  // from the finance sheet → mark it superseded so it isn't double-counted.
+  // (The finance ingest's _markExcelSuperseded handles the opposite order;
+  // this handles "finance ingested first, then membership" — the استيراد شامل
+  // order — so dedup works regardless of which ran first.)
+  const financeMatch = db.prepare(`
+    SELECT 1 FROM cs_subscriptions
+     WHERE source = 'finance_api' AND is_ignored = 0
+       AND client_phone_norm = ? AND dept = ? AND months = ?
+     LIMIT 1
+  `);
 
   for (const r of inScope) {
     const phoneNorm = csPrimaryPhone(r.phoneRaw);
@@ -223,6 +236,12 @@ async function runIngestion({ startRow = START_ROW_1BASED, dryRun = false, lineF
     const clientId = phoneNorm ? matchClientByPhone(phoneNorm) : null;
     if (clientId) matched++; else unmatched++;
 
+    // Already covered by a Center App transaction? → superseded (not counted).
+    const superseded = phoneNorm
+      ? !!financeMatch.get(phoneNorm, parsedCourse.dept, parsedCourse.months)
+      : false;
+    if (superseded) supersededByFinance++;
+
     if (!dryRun) {
       stmt.run(
         clientId, r.phoneRaw || null, phoneNorm, r.name || null,
@@ -230,7 +249,7 @@ async function runIngestion({ startRow = START_ROW_1BASED, dryRun = false, lineF
         parsedCourse.dept, parsedCourse.months,
         parsedCourse.months, parsedCourse.isInstallment ? 1 : 0,
         null, null, null,
-        0, null, null,
+        superseded ? 1 : 0, superseded ? 'superseded_by_finance_api' : null, null,
         now, now,
       );
       inserted++; // INSERT or UPDATE — both count toward "processed"
@@ -246,6 +265,7 @@ async function runIngestion({ startRow = START_ROW_1BASED, dryRun = false, lineF
     rows_in_scope: inScope.length,
     start_row: startRow,
     processed: inserted,
+    superseded_by_finance: supersededByFinance,
     ignored,
     unparsed,
     matched_to_client: matched,
