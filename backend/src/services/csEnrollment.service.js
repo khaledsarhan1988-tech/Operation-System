@@ -132,37 +132,77 @@ function setStudents(rowId, students) {
   return { count, students: listStudents(rowId) };
 }
 
-// Search the clients table (name / phone), de-duplicated by name+phone.
-// Phone matching is tolerant: it compares the LAST 9 DIGITS, so a leading 0
-// or country code doesn't matter ("01017214421" / "1017214421" / "+20..."
-// all find the same client). Partial digit searches still match by substring.
+// Phone normalization for matching: strip spaces / dashes / + / parens.
 const NORM_PHONE = `REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(phone,''),' ',''),'-',''),'+',''),'(','')`;
+
+// Union of every known client across sources — academy trainees (clients),
+// plus Center App / Membership clients (cs_subscriptions, finance_transactions)
+// so a client who exists in Center App but isn't enrolled yet still shows up.
+// client_id is the clients.id when available, else NULL (roster stores name+phone).
+const CLIENTS_UNION = `
+  SELECT id, name, phone FROM (
+    SELECT MIN(id) AS id, name AS name, phone AS phone
+      FROM clients WHERE name IS NOT NULL AND TRIM(name) != '' GROUP BY name, phone
+    UNION
+    SELECT NULL AS id, client_name_raw AS name,
+           COALESCE(NULLIF(TRIM(client_phone_raw),''), client_phone_norm) AS phone
+      FROM cs_subscriptions WHERE client_name_raw IS NOT NULL AND TRIM(client_name_raw) != ''
+    UNION
+    SELECT NULL AS id, client_name AS name, client_phone AS phone
+      FROM finance_transactions WHERE client_name IS NOT NULL AND TRIM(client_name) != ''
+  )
+`;
+
+// Search clients by name / phone. Phone match is tolerant: it compares the
+// LAST 9 DIGITS, so a leading 0 or country code doesn't matter.
 function searchClients({ q, limit = 60 } = {}) {
   q = String(q || '').trim();
   limit = Math.min(200, Math.max(1, parseInt(limit, 10) || 60));
-  if (q) {
-    const like = `%${q}%`;
-    const digits = q.replace(/\D/g, '');
-    if (digits.length >= 4) {
-      const tail = digits.slice(-9);   // last 9 digits
-      return db.prepare(`
-        SELECT MIN(id) AS id, name, phone FROM clients
-         WHERE name IS NOT NULL AND TRIM(name) != ''
-           AND (${NORM_PHONE} LIKE ? OR ${NORM_PHONE} LIKE ? OR name LIKE ?)
-         GROUP BY name, phone ORDER BY name COLLATE NOCASE LIMIT ?
-      `).all('%' + tail, '%' + digits + '%', like, limit);
-    }
+
+  // Default (no query) browse stays on the academy trainees list (cleaner).
+  if (!q) {
     return db.prepare(`
       SELECT MIN(id) AS id, name, phone FROM clients
-       WHERE (name LIKE ? OR phone LIKE ?) AND name IS NOT NULL AND TRIM(name) != ''
+       WHERE name IS NOT NULL AND TRIM(name) != ''
        GROUP BY name, phone ORDER BY name COLLATE NOCASE LIMIT ?
-    `).all(like, like, limit);
+    `).all(limit);
   }
+
+  const like = `%${q}%`;
+  const digits = q.replace(/\D/g, '');
+  const run = (sql, params) => {
+    try { return db.prepare(sql).all(...params); }
+    catch (e) { console.error('searchClients union error (falling back to clients):', e.message); return null; }
+  };
+
+  if (digits.length >= 4) {
+    const tail = digits.slice(-9);
+    const rows = run(`
+      SELECT MIN(id) AS id, name, MIN(phone) AS phone FROM ( ${CLIENTS_UNION} )
+       WHERE (${NORM_PHONE} LIKE ? OR ${NORM_PHONE} LIKE ? OR name LIKE ?)
+       GROUP BY name, ${NORM_PHONE} ORDER BY name COLLATE NOCASE LIMIT ?
+    `, ['%' + tail, '%' + digits + '%', like, limit]);
+    if (rows) return rows;
+    // Fallback: clients table only.
+    return db.prepare(`
+      SELECT MIN(id) AS id, name, phone FROM clients
+       WHERE name IS NOT NULL AND TRIM(name) != ''
+         AND (${NORM_PHONE} LIKE ? OR name LIKE ?)
+       GROUP BY name, phone ORDER BY name COLLATE NOCASE LIMIT ?
+    `).all('%' + tail, like, limit);
+  }
+
+  const rows = run(`
+    SELECT MIN(id) AS id, name, MIN(phone) AS phone FROM ( ${CLIENTS_UNION} )
+     WHERE (name LIKE ? OR ${NORM_PHONE} LIKE ?)
+     GROUP BY name, ${NORM_PHONE} ORDER BY name COLLATE NOCASE LIMIT ?
+  `, [like, like, limit]);
+  if (rows) return rows;
   return db.prepare(`
     SELECT MIN(id) AS id, name, phone FROM clients
-     WHERE name IS NOT NULL AND TRIM(name) != ''
+     WHERE (name LIKE ? OR phone LIKE ?) AND name IS NOT NULL AND TRIM(name) != ''
      GROUP BY name, phone ORDER BY name COLLATE NOCASE LIMIT ?
-  `).all(limit);
+  `).all(like, like, limit);
 }
 
 // Parse a level label ("G 3", "Con 2", "Str 3") → { family, num }.
