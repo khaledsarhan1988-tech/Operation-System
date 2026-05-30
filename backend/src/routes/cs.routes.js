@@ -869,6 +869,39 @@ router.get('/enrollment/options', requireRole('admin', 'leader', 'agent'), (req,
   }
 });
 
+/** GET /api/cs/enrollment/clients-search?q= — clients (name+phone) for the roster picker. */
+router.get('/enrollment/clients-search', requireRole('admin', 'leader', 'agent'), (req, res) => {
+  try {
+    const svc = require('../services/csEnrollment.service');
+    res.json({ ok: true, clients: svc.searchClients({ q: req.query.q }) });
+  } catch (e) {
+    console.error('GET /cs/enrollment/clients-search error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+/** GET /api/cs/enrollment/:id/students — assigned roster for a row. */
+router.get('/enrollment/:id/students', requireRole('admin', 'leader', 'agent'), (req, res) => {
+  try {
+    const svc = require('../services/csEnrollment.service');
+    res.json({ ok: true, students: svc.listStudents(parseInt(req.params.id, 10)) });
+  } catch (e) {
+    console.error('GET /cs/enrollment/:id/students error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+/** PUT /api/cs/enrollment/:id/students — replace roster; syncs num_students. */
+router.put('/enrollment/:id/students', requireRole('admin', 'leader', 'agent'), (req, res) => {
+  try {
+    const svc = require('../services/csEnrollment.service');
+    res.json({ ok: true, ...svc.setStudents(parseInt(req.params.id, 10), req.body?.students || []) });
+  } catch (e) {
+    console.error('PUT /cs/enrollment/:id/students error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
 /** GET /api/cs/enrollment/teacher-suggestion?level=G%203 — previous-group teacher hint. */
 router.get('/enrollment/teacher-suggestion', requireRole('admin', 'leader', 'agent'), (req, res) => {
   try {

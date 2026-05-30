@@ -2111,6 +2111,27 @@ initDb().then(db => {
     console.error('enrollment_rows migration error:', e.message);
   }
 
+  // ── enrollment_students: roster of clients assigned to an enrollment row ───
+  // Drives enrollment_rows.num_students (= COUNT of this roster).
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS enrollment_students (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        enrollment_row_id INTEGER NOT NULL,
+        client_id         INTEGER,
+        client_name       TEXT,
+        client_phone      TEXT,
+        created_at        TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        UNIQUE(enrollment_row_id, client_phone)
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_enr_students_row ON enrollment_students(enrollment_row_id)`);
+    saveNow();
+    console.log('✅ Migration: enrollment_students table ready');
+  } catch (e) {
+    console.error('enrollment_students migration error:', e.message);
+  }
+
   // ── Auto-upsert admin user on every startup ───────────────────────────────
   // Ensures admin always exists even after DB reset (e.g. Railway redeploy).
   try {

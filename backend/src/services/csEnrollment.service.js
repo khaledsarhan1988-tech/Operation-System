@@ -88,9 +88,69 @@ function setGenerate(id, status) {
 }
 
 function deleteRow(id) {
+  db.prepare('DELETE FROM enrollment_students WHERE enrollment_row_id = ?').run(id);
   db.prepare('DELETE FROM enrollment_rows WHERE id = ?').run(id);
   saveNow();
   return { deleted: true, id };
+}
+
+// ─── Student roster (drives num_students) ─────────────────────────────────────
+function listStudents(rowId) {
+  return db.prepare(
+    `SELECT id, client_id, client_name, client_phone
+       FROM enrollment_students WHERE enrollment_row_id = ?
+      ORDER BY client_name COLLATE NOCASE`
+  ).all(rowId);
+}
+
+// Replace the whole roster for a row, then sync num_students (= count) and
+// enforce the Generate rule (a group under 7 students can't stay "Start").
+function setStudents(rowId, students) {
+  const row = db.prepare('SELECT id FROM enrollment_rows WHERE id = ?').get(rowId);
+  if (!row) throw new Error('Row not found');
+  const run = db.transaction(() => {
+    db.prepare('DELETE FROM enrollment_students WHERE enrollment_row_id = ?').run(rowId);
+    const ins = db.prepare(
+      `INSERT OR IGNORE INTO enrollment_students (enrollment_row_id, client_id, client_name, client_phone)
+       VALUES (?, ?, ?, ?)`
+    );
+    for (const s of (students || [])) {
+      const phone = String(s.phone ?? s.client_phone ?? '').trim();
+      const name  = String(s.name  ?? s.client_name  ?? '').trim();
+      if (!phone && !name) continue;
+      ins.run(rowId, s.client_id ?? s.id ?? null, name || null, phone || null);
+    }
+    const cnt = db.prepare('SELECT COUNT(*) AS n FROM enrollment_students WHERE enrollment_row_id = ?').get(rowId).n;
+    const forcePending = cnt < 7 ? `, generate_status = 'Pending'` : '';
+    db.prepare(
+      `UPDATE enrollment_rows SET num_students = ?${forcePending}, updated_at = datetime('now','+2 hours') WHERE id = ?`
+    ).run(cnt, rowId);
+  });
+  run();
+  saveNow();
+  const count = db.prepare('SELECT COUNT(*) AS n FROM enrollment_students WHERE enrollment_row_id = ?').get(rowId).n;
+  return { count, students: listStudents(rowId) };
+}
+
+// Search the clients table (name / phone), de-duplicated by name+phone.
+function searchClients({ q, limit = 60 } = {}) {
+  q = String(q || '').trim();
+  limit = Math.min(200, Math.max(1, parseInt(limit, 10) || 60));
+  if (q) {
+    const like = `%${q}%`;
+    return db.prepare(`
+      SELECT MIN(id) AS id, name, phone FROM clients
+       WHERE (name LIKE ? OR phone LIKE ?) AND name IS NOT NULL AND TRIM(name) != ''
+       GROUP BY name, phone
+       ORDER BY name COLLATE NOCASE
+       LIMIT ?
+    `).all(like, like, limit);
+  }
+  return db.prepare(`
+    SELECT MIN(id) AS id, name, phone FROM clients
+     WHERE name IS NOT NULL AND TRIM(name) != ''
+     GROUP BY name, phone ORDER BY name COLLATE NOCASE LIMIT ?
+  `).all(limit);
 }
 
 // Parse a level label ("G 3", "Con 2", "Str 3") → { family, num }.
@@ -203,5 +263,6 @@ function getOptions(dept, level, line = 'Ahmed Hassan') {
 
 module.exports = {
   listRows, createRow, updateRow, deleteRow, setGenerate, getOptions, suggestTeacher,
+  listStudents, setStudents, searchClients,
   DAYS, STATUSES, LEVELS, DEPTS,
 };
