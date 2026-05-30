@@ -38,7 +38,10 @@ const DEPT_PATTERNS = [
   // Semi-Private — also called "Private 2 in 1" in marketing
   { dept: 'Semi',    patterns: [/سيمي/i, /سيمى/i, /semi/i, /2\s*in\s*1/i, /برايفت\s*2/i, /2\s*ف[يى]\s*1/i] },
   { dept: 'Private', patterns: [/برايفت/i, /private/i] },
-  { dept: 'General', patterns: [/جينرال/i, /جنرال/i, /general/i] },
+  // General. NOTE: General memberships are marketed as "جروب" (group) and
+  // often carry NO "جينرال" keyword (e.g. "جولد جروب", "سوبر جولد جروب").
+  // "جروب" → General is safe because Semi/Private are checked first above.
+  { dept: 'General', patterns: [/جينرال/i, /جنرال/i, /general/i, /جروب/i, /\bgroup\b/i] },
 ];
 
 // Ignore list — products that should NOT generate subscription rows.
@@ -50,16 +53,28 @@ const IGNORE_PATTERNS = [
 ];
 
 /**
- * Extract the months count. Tries Arabic-Indic digits first ("٣ شهور"), then
- * Western digits ("3 شهور"). Matches both spaced and no-space variants.
+ * Extract the months count (= level count).
  *
- *   "3 شهور"        → 3
- *   "3شهور"         → 3
- *   "١ شهر"         → 1
- *   "6 شهور"        → 6
- *   "5 شهور"        → 5      (we saw "رحلة ممارسه انجليزي 5 شهور برايفت")
+ * Priority (authoritative business rule from the user, "المنطق الأساسي"):
+ *   1. "سوبر جولد" (super gold)  → 6 months
+ *   2. "جولد" (gold)             → 3 months
+ *   3. explicit "N شهور / N شهر / N months" → N
+ *   4. "سينجل / single" → depends on dept (Semi = 1, Private = 3)
+ *
+ * Gold keywords beat an explicit number on purpose: a "جولد" membership is
+ * always 3 months even if a stray digit appears. The 9-month products carry
+ * no gold word, so they fall through to the explicit-number rule.
+ *
+ *   "سوبر جولد جروب"            → 6
+ *   "جولد جروب"                 → 3
+ *   "9 شهور برايفت"             → 9
+ *   "3 شهور" / "3شهور" / "١ شهر" → 3 / 3 / 1
+ *   "سيمي برايفت سينجل" (Semi)  → 1
+ *   "برايفت مسائي سينجل" (Private) → 3
+ *
+ *   dept — optional; only needed to resolve "single" products.
  */
-function extractMonths(s) {
+function extractMonths(s, dept = null) {
   if (!s) return null;
   // Normalize Arabic-Indic digits to Western
   const norm = String(s)
@@ -68,7 +83,11 @@ function extractMonths(s) {
     .replace(/[٦۶]/g, '6').replace(/[٧۷]/g, '7').replace(/[٨۸]/g, '8')
     .replace(/[٩۹]/g, '9');
 
-  // "N شهور" or "N شهر" or "Nشهور" (no space)
+  // 1+2. Gold keyword. Check "سوبر جولد" BEFORE "جولد" (it contains it).
+  if (/سوبر\s*جولد|super\s*gold/i.test(norm)) return 6;
+  if (/جولد|gold/i.test(norm)) return 3;
+
+  // 3. Explicit "N شهور" / "N شهر" / "Nشهور" (no space)
   const monthsAr = norm.match(/(\d+)\s*شه(?:و)?ر/);
   if (monthsAr) {
     const n = parseInt(monthsAr[1], 10);
@@ -79,6 +98,12 @@ function extractMonths(s) {
   if (monthsEn) {
     const n = parseInt(monthsEn[1], 10);
     if (n >= 1 && n <= 24) return n;
+  }
+
+  // 4. "سينجل / single" — duration depends on department.
+  if (/سينجل|single/i.test(norm)) {
+    if (dept === 'Semi')    return 1;
+    if (dept === 'Private') return 3;
   }
   return null;
 }
@@ -141,7 +166,7 @@ function parseCourseString(raw) {
   }
 
   out.dept           = detectDept(raw);
-  out.months         = extractMonths(raw);
+  out.months         = extractMonths(raw, out.dept);
   out.isInstallment  = isInstallment(raw);
 
   if (!out.dept)   out.reason = 'unknown_dept';

@@ -29,6 +29,18 @@ const STATUSES = ['active', 'churned', 'postponed', 'exit_level', 'refund'];
 
 const stripSpaces = (s) => String(s == null ? '' : s).replace(/\s/g, '');
 
+// Group cells in the level Excel store the group code PLUS a trailing status
+// word (e.g. "May_16_..._Starter3(Esraa Hani)hanaa نشطة" or "...إنتهت"). Strip
+// the status (and take the first line) so the code matches the clean
+// batches.group_name for both dedup AND display.
+const STATUS_WORD_RE = /\s*(نشطة|نشطه|إنتهت|انتهت|منته\S*|ملغا\S*|active|ended|closed)\s*$/i;
+function cleanGroupCode(raw) {
+  let s = String(raw == null ? '' : raw).split(/[\r\n]+/)[0].trim();
+  s = s.replace(STATUS_WORD_RE, '').trim();   // strip a trailing status word…
+  s = s.replace(STATUS_WORD_RE, '').trim();   // …twice in case two are appended
+  return s;
+}
+
 // Normalize a coordinator/user name for comparison: drop any "(...)" suffix,
 // trim, lowercase, collapse spaces. Used to match the logged-in coordinator
 // (users.full_name) against batches.coordinators / team_members.name.
@@ -71,8 +83,10 @@ function buildInactiveGroupMap() {
   const map = new Map();
   for (const r of rows) {
     if (!r.pn) continue;
+    const code = cleanGroupCode(r.g);     // strip status suffix + dedupe same group across levels
+    if (!code) continue;
     if (!map.has(r.pn)) map.set(r.pn, new Set());
-    map.get(r.pn).add(String(r.g).trim());
+    map.get(r.pn).add(code);
   }
   return map;
 }
