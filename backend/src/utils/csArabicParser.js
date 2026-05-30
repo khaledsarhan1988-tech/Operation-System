@@ -47,11 +47,20 @@ const DEPT_PATTERNS = [
 ];
 
 // Ignore list — products that should NOT generate subscription rows.
+// These are services / fees / add-ons, NOT level memberships.
 const IGNORE_PATTERNS = [
   /your\s*american\s*day/i,
   /american\s*day/i,
   /bussines/i,        // typo for "Business" — common in source data
   /business\s*course/i,
+  // Non-membership items in "Membership From Finance Department" (per user):
+  /\bbook\b/i,                 // "Book"
+  /shipping/i,                 // "Shipping" / "shipping"
+  /session/i,                  // "Session Private" / "Session Groups" / "2 Session Groups"
+  /محادث/,                     // "رحلة محادثه" (conversation trip)
+  /conversation/i,             // "Conversation Course"
+  /\btopic\b/i,                // "Topic"
+  /back\s*extr/i,              // "Back Extral Amount" (adjustment)
 ];
 
 /**
@@ -101,6 +110,13 @@ function extractMonths(s, dept = null) {
     const n = parseInt(monthsEn[1], 10);
     if (n >= 1 && n <= 24) return n;
   }
+
+  // Arabic WORD durations (no digit) — common in the Membership Excel:
+  //   "شهرين" = 2,  standalone "شهر" = 1.
+  // Check "شهرين" first (it contains the substring "شهر"). Note "شهور" has a
+  // واو (ش‌ه‌و‌ر) so /شهر/ never matches it.
+  if (/شهرين/.test(norm)) return 2;
+  if (/شهر/.test(norm))   return 1;
 
   // 4. "سينجل / single" — always 1 month (user rule).
   if (/سينجل|single/i.test(norm)) return 1;
