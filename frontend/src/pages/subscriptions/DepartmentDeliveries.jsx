@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { GraduationCap, Search, Users } from 'lucide-react';
+import { GraduationCap, Search, Users, RefreshCw } from 'lucide-react';
 import api from '../../api/axios';
+import { useAuth } from '../../auth/AuthContext';
 import PageHero from '../../components/ui/PageHero';
 import SectionCard from '../../components/ui/SectionCard';
 
@@ -34,6 +35,7 @@ const STATUS_CLS = Object.fromEntries(STATUS_OPTIONS.map(s => [s.value, s.cls]))
 export default function DepartmentDeliveries() {
   const { dept } = useParams();
   const qc = useQueryClient();
+  const { user } = useAuth();
   const meta = DEPT_META[dept] || { label: dept, color: 'violet' };
 
   const [q, setQ] = useState('');
@@ -56,6 +58,31 @@ export default function DepartmentDeliveries() {
     onError: (e) => alert('فشل تحديث الحالة: ' + (e.response?.data?.error || e.message)),
   });
 
+  // Admin-only: refresh the underlying data (Finance API → Membership Excel →
+  // Drive levels), then reload the table. Runs the 3 imports sequentially; a
+  // failure in one step is captured and does not block the others.
+  const ingestAll = useMutation({
+    mutationFn: async () => {
+      const finance    = await api.post('/cs/ingest/finance').then(r => r.data?.result || {}).catch(e => ({ error: e.response?.data?.error || e.message }));
+      const membership = await api.post('/cs/ingest/membership').then(() => ({ ok: true })).catch(e => ({ error: e.response?.data?.error || e.message }));
+      const levels     = await api.post('/cs/ingest/levels').then(() => ({ ok: true })).catch(e => ({ error: e.response?.data?.error || e.message }));
+      return { finance, membership, levels };
+    },
+    onSuccess: (out) => {
+      qc.invalidateQueries({ queryKey: ['cs-deliveries'] });
+      const f = out.finance || {};
+      const step = (label, res) => res?.error ? `❌ ${label}: ${res.error}` : `✅ ${label}`;
+      alert(
+        'تحديث البيانات:\n' +
+        (f.error ? `❌ Finance API: ${f.error}`
+                 : `✅ Finance API: processed=${f.processed ?? 0} matched=${f.matched_to_client ?? 0}`) + '\n' +
+        step('Membership Excel', out.membership) + '\n' +
+        step('المستويات من Drive', out.levels)
+      );
+    },
+    onError: (e) => alert('فشل التحديث الشامل: ' + (e.response?.data?.error || e.message)),
+  });
+
   const data = listQ.data || {};
   const items = data.items || [];
   const totalPages = data.total_pages || 1;
@@ -70,6 +97,19 @@ export default function DepartmentDeliveries() {
         icon={GraduationCap}
         color={meta.color}
       />
+
+      {user?.role === 'admin' && (
+        <div className="mt-4 flex justify-end">
+          <button
+            onClick={() => ingestAll.mutate()}
+            disabled={ingestAll.isPending}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60"
+          >
+            <RefreshCw className={`w-4 h-4 ${ingestAll.isPending ? 'animate-spin' : ''}`} />
+            {ingestAll.isPending ? 'جاري تحديث البيانات...' : 'تحديث البيانات (استيراد شامل)'}
+          </button>
+        </div>
+      )}
 
       <SectionCard title="العملاء" icon={Users} className="mt-4">
         {/* Filters */}
