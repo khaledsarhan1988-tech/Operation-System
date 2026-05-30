@@ -270,10 +270,13 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user }) {
       it.remaining_levels = plan ? plan.summary.pending_count : null;
       it.paid_months = plan ? plan.summary.paid_months : it.total_months;
       it.completed_count = plan ? plan.summary.completed_count : null;
+      // Per-subscription months so the UI can show e.g. "6+3 = 9".
+      it.months_list = plan?.paid?.breakdown?.map(b => b.months).filter(m => m != null) || [];
       lastLevelDate = plan?.summary?.last_level_date || null;
       daysSinceLast = plan?.summary?.days_since_last_level ?? null;
     } catch (_) {
       it.remaining_levels = null;
+      it.months_list = [];
     }
 
     // ── Intensive-aware pacing (2 weeks / level) vs regular (1 month / level) ──

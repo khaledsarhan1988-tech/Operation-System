@@ -40,7 +40,7 @@ function clampInt(v, min, max, def) {
 router.post('/ingest/membership', requireRole('admin'), async (req, res) => {
   try {
     const csIngest = require('../services/csIngestMembership.service');
-    const startRow = clampInt(req.body?.start_row ?? req.query?.start_row, 1, 100000, 1058);
+    const startRow = clampInt(req.body?.start_row ?? req.query?.start_row, 1, 100000, 1);
     const dryRun   = (req.body?.dry_run ?? req.query?.dry_run) === '1'
                   || (req.body?.dry_run ?? req.query?.dry_run) === true;
     const result = await csIngest.runIngestion({ startRow, dryRun });
@@ -63,7 +63,7 @@ router.get('/ingest/membership/preview', requireRole('admin'), async (req, res) 
     const { csPrimaryPhone } = require('../utils/csPhoneNormalize');
     const { parseCourseString } = require('../utils/csArabicParser');
 
-    const startRow = clampInt(req.query.start_row, 1, 100000, 1058);
+    const startRow = clampInt(req.query.start_row, 1, 100000, 1);
     const limit    = clampInt(req.query.limit, 1, 500, 25);
 
     const { file } = await csIngest.findMembershipFile();

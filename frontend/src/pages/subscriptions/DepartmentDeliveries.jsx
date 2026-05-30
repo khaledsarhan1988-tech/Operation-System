@@ -171,7 +171,11 @@ export default function DepartmentDeliveries() {
                       {it.membership_count}
                     </span>
                     {it.paid_months != null && (
-                      <div className="text-[11px] text-slate-400 mt-1">{it.paid_months} شهر</div>
+                      <div className="text-[11px] text-slate-400 mt-1">
+                        {it.months_list && it.months_list.length > 1
+                          ? `${it.months_list.join('+')} = ${it.paid_months} شهر`
+                          : `${it.paid_months} شهر`}
+                      </div>
                     )}
                   </td>
                   <td className="px-3 py-3">

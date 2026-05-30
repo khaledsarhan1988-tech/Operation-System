@@ -11,9 +11,12 @@
  *   B: Mobile No
  *   C: Courses          ← Arabic product string
  *
- * Business rules (user-confirmed 2026-05-27):
- *   - Start from row 1058 (Lobna Maher — 1098934993). Earlier rows already
- *     exist in Center App / are out of scope.
+ * Business rules:
+ *   - Process ALL data rows (2026-05-29): the old "start from row 1058" cutoff
+ *     dropped ~1040 unique early-row subscriptions (e.g. a client's 6-month
+ *     General booked at row 1009). Center-App duplicates are de-duped by the
+ *     finance ingestion's _markExcelSuperseded (phone+dept+months), so there is
+ *     no need to skip early rows.
  *   - "9 Courses" / "Your American Day" / "Bussines Course" rows are IGNORED.
  *   - Each row → one cs_subscriptions row, source='excel_membership'.
  *
@@ -30,9 +33,9 @@ const { parseCourseString } = require('../utils/csArabicParser');
 const CUSTOMER_SUBSCRIPTION_FOLDER = 'Customer subscription to groups';
 const MEMBERSHIP_FILE_PREFIX       = 'Membership From Finance Department';
 
-// First row of "in-scope" data per the user — earlier rows already in Center App.
-// 1-indexed for human comprehension; converted to 0-indexed when slicing arrays.
-const START_ROW_1BASED  = 1058;
+// Process ALL data rows. (Was 1058 — that cutoff dropped ~1040 unique early
+// subscriptions. Center-App duplicates are handled by supersede, not by skipping.)
+const START_ROW_1BASED  = 1;
 const HEADER_ROW_1BASED = 1;
 
 // ─── Drive lookup ─────────────────────────────────────────────────────────────
