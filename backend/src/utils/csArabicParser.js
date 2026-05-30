@@ -32,6 +32,8 @@
  *   - "Your American Day" / "Bussines Course" / non-track items = ignored
  */
 
+const { lookupMembership } = require('./csMembershipCatalog');
+
 // Department keyword groups. Order matters: check Semi BEFORE Private because
 // "Private 2 in 1" contains the word "Private".
 const DEPT_PATTERNS = [
@@ -100,11 +102,8 @@ function extractMonths(s, dept = null) {
     if (n >= 1 && n <= 24) return n;
   }
 
-  // 4. "سينجل / single" — duration depends on department.
-  if (/سينجل|single/i.test(norm)) {
-    if (dept === 'Semi')    return 1;
-    if (dept === 'Private') return 3;
-  }
+  // 4. "سينجل / single" — always 3 months per the Center App catalog.
+  if (/سينجل|single/i.test(norm)) return 3;
   return null;
 }
 
@@ -165,9 +164,21 @@ function parseCourseString(raw) {
     return out;
   }
 
+  // Authoritative Center App catalog first — exact membership name → months+dept.
+  // Falls through to the keyword heuristic only for names not in the catalog.
+  const cat = lookupMembership(raw);
+  if (cat && cat.dept && cat.months) {
+    out.dept          = cat.dept;
+    out.months        = cat.months;
+    out.isInstallment = isInstallment(raw);
+    out.source        = 'catalog';
+    return out;
+  }
+
   out.dept           = detectDept(raw);
   out.months         = extractMonths(raw, out.dept);
   out.isInstallment  = isInstallment(raw);
+  out.source         = 'heuristic';
 
   if (!out.dept)   out.reason = 'unknown_dept';
   else if (!out.months) out.reason = 'unknown_months';
