@@ -133,17 +133,29 @@ function setStudents(rowId, students) {
 }
 
 // Search the clients table (name / phone), de-duplicated by name+phone.
+// Phone matching is tolerant: it compares the LAST 9 DIGITS, so a leading 0
+// or country code doesn't matter ("01017214421" / "1017214421" / "+20..."
+// all find the same client). Partial digit searches still match by substring.
+const NORM_PHONE = `REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(phone,''),' ',''),'-',''),'+',''),'(','')`;
 function searchClients({ q, limit = 60 } = {}) {
   q = String(q || '').trim();
   limit = Math.min(200, Math.max(1, parseInt(limit, 10) || 60));
   if (q) {
     const like = `%${q}%`;
+    const digits = q.replace(/\D/g, '');
+    if (digits.length >= 4) {
+      const tail = digits.slice(-9);   // last 9 digits
+      return db.prepare(`
+        SELECT MIN(id) AS id, name, phone FROM clients
+         WHERE name IS NOT NULL AND TRIM(name) != ''
+           AND (${NORM_PHONE} LIKE ? OR ${NORM_PHONE} LIKE ? OR name LIKE ?)
+         GROUP BY name, phone ORDER BY name COLLATE NOCASE LIMIT ?
+      `).all('%' + tail, '%' + digits + '%', like, limit);
+    }
     return db.prepare(`
       SELECT MIN(id) AS id, name, phone FROM clients
        WHERE (name LIKE ? OR phone LIKE ?) AND name IS NOT NULL AND TRIM(name) != ''
-       GROUP BY name, phone
-       ORDER BY name COLLATE NOCASE
-       LIMIT ?
+       GROUP BY name, phone ORDER BY name COLLATE NOCASE LIMIT ?
     `).all(like, like, limit);
   }
   return db.prepare(`
