@@ -2070,6 +2070,41 @@ initDb().then(db => {
     console.error('cs_client_delivery_status migration error:', e.message);
   }
 
+  // ── enrollment_rows: manual data-entry grid for the Enrollment page ───────
+  // Each row = one round/group an Enrollment employee enters by hand.
+  // Additive table; per-department (General/Private/Semi). No existing data
+  // touched. Persisted on the volume DB like everything else.
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS enrollment_rows (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        dept            TEXT NOT NULL,                 -- 'General'|'Private'|'Semi'
+        round_name      TEXT,
+        start_date      TEXT,
+        end_date        TEXT,
+        days            TEXT,                          -- 'Sat- Tue'|'Mon- Thu'|'Sun- Wed'
+        hours           TEXT,                          -- e.g. '9:00pm_10:30pm'
+        num_students    INTEGER,
+        group_code      TEXT,
+        level           TEXT,                          -- 'Str 3'|'G 3'|'Con 2' ...
+        status          TEXT,                          -- 'Exit Level'|'New'|'Postponed'
+        admin           TEXT,                          -- coordinator name
+        teacher         TEXT,                          -- trainer name
+        line            TEXT NOT NULL DEFAULT 'Ahmed Hassan',
+        created_by      INTEGER,
+        created_by_name TEXT,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        updated_at      TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_enrollment_dept ON enrollment_rows(dept)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_enrollment_line ON enrollment_rows(line)`);
+    saveNow();
+    console.log('✅ Migration: enrollment_rows table ready');
+  } catch (e) {
+    console.error('enrollment_rows migration error:', e.message);
+  }
+
   // ── Auto-upsert admin user on every startup ───────────────────────────────
   // Ensures admin always exists even after DB reset (e.g. Railway redeploy).
   try {

@@ -845,4 +845,61 @@ router.patch('/deliveries/:phone/status', requireRole('admin', 'leader', 'agent'
   }
 });
 
+// ─── ENROLLMENT (manual data-entry grid) ──────────────────────────────────────
+
+/** GET /api/cs/enrollment?dept=General — rows for the department grid. */
+router.get('/enrollment', requireRole('admin', 'leader', 'agent'), (req, res) => {
+  try {
+    const svc = require('../services/csEnrollment.service');
+    res.json({ ok: true, rows: svc.listRows((req.query.dept || 'General').trim()) });
+  } catch (e) {
+    console.error('GET /cs/enrollment error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+/** GET /api/cs/enrollment/options?dept=General&level=G%203 — dropdown lists. */
+router.get('/enrollment/options', requireRole('admin', 'leader', 'agent'), (req, res) => {
+  try {
+    const svc = require('../services/csEnrollment.service');
+    res.json({ ok: true, ...svc.getOptions((req.query.dept || 'General').trim(), (req.query.level || '').trim()) });
+  } catch (e) {
+    console.error('GET /cs/enrollment/options error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+/** POST /api/cs/enrollment — create a row. Body: { dept, ...fields }. */
+router.post('/enrollment', requireRole('admin', 'leader', 'agent'), (req, res) => {
+  try {
+    const svc = require('../services/csEnrollment.service');
+    res.json({ ok: true, row: svc.createRow((req.body?.dept || 'General').trim(), req.body || {}, req.user) });
+  } catch (e) {
+    console.error('POST /cs/enrollment error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+/** PUT /api/cs/enrollment/:id — update a row. */
+router.put('/enrollment/:id', requireRole('admin', 'leader', 'agent'), (req, res) => {
+  try {
+    const svc = require('../services/csEnrollment.service');
+    res.json({ ok: true, row: svc.updateRow(parseInt(req.params.id, 10), req.body || {}) });
+  } catch (e) {
+    console.error('PUT /cs/enrollment/:id error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+/** DELETE /api/cs/enrollment/:id — delete a row. */
+router.delete('/enrollment/:id', requireRole('admin', 'leader', 'agent'), (req, res) => {
+  try {
+    const svc = require('../services/csEnrollment.service');
+    res.json({ ok: true, ...svc.deleteRow(parseInt(req.params.id, 10)) });
+  } catch (e) {
+    console.error('DELETE /cs/enrollment/:id error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
 module.exports = router;
