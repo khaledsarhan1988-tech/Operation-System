@@ -143,7 +143,24 @@ function StudentDrawer({ row, onClose, onSaved }) {
           <button className="px-3 py-2 text-sm rounded-lg bg-violet-600 text-white hover:bg-violet-700">بحث</button>
         </form>
 
-        <div className="px-3 py-2 text-xs text-slate-500 bg-slate-50 border-b border-slate-100">مختار: {count} طالب</div>
+        <div className="px-3 py-2 bg-slate-50 border-b border-slate-100">
+          <div className="text-xs text-slate-500 mb-1">مختار: {count} طالب</div>
+          {count > 0 && (
+            <div className="flex flex-wrap gap-1 max-h-28 overflow-y-auto">
+              {Object.entries(selMap).map(([k, s]) => (
+                <span key={k} className="inline-flex items-center gap-1 text-[11px] bg-violet-100 text-violet-700 rounded-full px-2 py-0.5">
+                  <span className="truncate max-w-[140px]">{s.name || s.phone || '—'}</span>
+                  <button
+                    type="button"
+                    title="إزالة"
+                    onClick={() => setSel(prev => { const m = { ...(prev || {}) }; delete m[k]; return m; })}
+                    className="text-violet-500 hover:text-violet-800 font-bold leading-none"
+                  >×</button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
 
         <div className="flex-1 overflow-y-auto">
           {clientsQ.isLoading ? (
