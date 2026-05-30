@@ -8,14 +8,18 @@ import PageHero from '../../components/ui/PageHero';
 import SectionCard from '../../components/ui/SectionCard';
 
 /**
- * Department Deliveries (تسليمات الأقسام).
+ * Enrollment — Department Deliveries (تسليمات الأقسام) as ONE page with a tab
+ * per department (جينرال / سيمي برايفت / برايفت).
  *
- * URL: /subscriptions/deliveries/:dept   (dept = General | Private | Semi)
- * Roles: admin, leader, agent (coordinator) — backend scopes the data.
+ * URL: /subscriptions/enrollment   (also /subscriptions/deliveries/:dept → tab)
+ * Roles: admin & agent see all tabs; a leader sees only their own department.
+ * The backend scopes the rows per role regardless.
  *
- * One row per client showing: memberships count, manual status,
- * active groups, inactive (past) groups, remaining levels, coordinator.
+ * One row per client: memberships, manual status, active groups, inactive
+ * (past) groups, remaining levels, expected time, journey-end date, coordinator.
  */
+
+const ALL_DEPTS = ['General', 'Semi', 'Private'];
 
 const DEPT_META = {
   General: { label: 'جينرال',      color: 'cyan'    },
@@ -33,20 +37,29 @@ const STATUS_OPTIONS = [
 const STATUS_CLS = Object.fromEntries(STATUS_OPTIONS.map(s => [s.value, s.cls]));
 
 export default function DepartmentDeliveries() {
-  const { dept } = useParams();
+  const params = useParams();
   const qc = useQueryClient();
   const { user } = useAuth();
-  const meta = DEPT_META[dept] || { label: dept, color: 'violet' };
+
+  // A leader is locked to their own department; everyone else sees all tabs.
+  const isScopedLeader = user?.role === 'leader' && user?.department !== 'All' && user?.management !== 'All';
+  let allowedDepts = isScopedLeader ? ALL_DEPTS.filter(d => d === user?.department) : ALL_DEPTS;
+  if (!allowedDepts.length) allowedDepts = ALL_DEPTS;
+
+  const initialDept = (params.dept && allowedDepts.includes(params.dept)) ? params.dept : allowedDepts[0];
+  const [activeDept, setActiveDept] = useState(initialDept);
 
   const [q, setQ] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [page, setPage] = useState(1);
 
+  const meta = DEPT_META[activeDept] || { label: activeDept, color: 'violet' };
+
   const listQ = useQuery({
-    queryKey: ['cs-deliveries', dept, search, statusFilter, page],
+    queryKey: ['cs-deliveries', activeDept, search, statusFilter, page],
     queryFn: () => api.get('/cs/deliveries', {
-      params: { dept, q: search, status: statusFilter, page, page_size: 25 },
+      params: { dept: activeDept, q: search, status: statusFilter, page, page_size: 25 },
     }).then(r => r.data),
     keepPreviousData: true,
   });
@@ -54,7 +67,7 @@ export default function DepartmentDeliveries() {
   const setStatusMut = useMutation({
     mutationFn: ({ phone, status }) =>
       api.patch(`/cs/deliveries/${encodeURIComponent(phone)}/status`, { status }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['cs-deliveries', dept] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cs-deliveries'] }),
     onError: (e) => alert('فشل تحديث الحالة: ' + (e.response?.data?.error || e.message)),
   });
 
@@ -88,11 +101,12 @@ export default function DepartmentDeliveries() {
   const totalPages = data.total_pages || 1;
 
   const submitSearch = (e) => { e.preventDefault(); setPage(1); setSearch(q.trim()); };
+  const switchTab = (d) => { setActiveDept(d); setPage(1); setSearch(''); setQ(''); setStatusFilter(''); };
 
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto" dir="rtl">
       <PageHero
-        title={`تسليمات قسم ${meta.label}`}
+        title="Enrollment — تسليمات الأقسام"
         subtitle="كل العملاء وعضوياتهم ومجموعاتهم النشطة والسابقة والمستويات المتبقية"
         icon={GraduationCap}
         color={meta.color}
@@ -111,7 +125,24 @@ export default function DepartmentDeliveries() {
         </div>
       )}
 
-      <SectionCard title="العملاء" icon={Users} className="mt-4">
+      {/* Department tabs */}
+      <div className="mt-4 flex flex-wrap gap-1 border-b border-slate-200">
+        {allowedDepts.map(d => (
+          <button
+            key={d}
+            onClick={() => switchTab(d)}
+            className={`px-5 py-2.5 text-sm font-medium rounded-t-lg -mb-px border-b-2 transition-colors ${
+              activeDept === d
+                ? 'border-violet-600 text-violet-700 bg-violet-50'
+                : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            {DEPT_META[d]?.label || d}
+          </button>
+        ))}
+      </div>
+
+      <SectionCard title={`عملاء ${meta.label}`} icon={Users} className="mt-4">
         {/* Filters */}
         <div className="p-3 flex flex-wrap items-center gap-2 border-b border-slate-100">
           <form onSubmit={submitSearch} className="flex items-center gap-2">

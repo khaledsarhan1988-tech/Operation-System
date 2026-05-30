@@ -190,6 +190,7 @@ const router = createBrowserRouter([
       { path: 'my-clients',         element: <CsMyClients /> },
       { path: 'client/:phone',      element: <CsClientProfile /> },
       { path: 'dashboard',          element: <CsDashboard /> },
+      { path: 'enrollment',         element: <DepartmentDeliveries /> },
       { path: 'deliveries/:dept',   element: <DepartmentDeliveries /> },
     ],
   },

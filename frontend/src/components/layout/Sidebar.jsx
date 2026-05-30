@@ -38,13 +38,12 @@ const COLOR_MAP = {
 
 // ─── LINKS ─────────────────────────────────────────────────────────────────
 
-// Department Deliveries (تسليمات الأقسام) — one page per department. Shown to
-// admin, leader and coordinator (agent); the backend scopes the data per role.
+// Enrollment — Department Deliveries (تسليمات الأقسام) as a single page with a
+// tab per department. Shown to admin, leader and coordinator (agent); the
+// backend scopes the data and the page shows only the leader's own dept tab.
 const DELIVERIES_LINKS = [
   { type: 'section', label: 'تسليمات الأقسام' },
-  { to: '/subscriptions/deliveries/General', label: 'جينرال',      icon: GraduationCap, color: 'cyan' },
-  { to: '/subscriptions/deliveries/Semi',    label: 'سيمي برايفت', icon: GraduationCap, color: 'emerald' },
-  { to: '/subscriptions/deliveries/Private', label: 'برايفت',      icon: GraduationCap, color: 'violet' },
+  { to: '/subscriptions/enrollment', label: 'Enrollment', icon: GraduationCap, color: 'violet' },
 ];
 
 const AGENT_LINKS = [
