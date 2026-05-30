@@ -134,10 +134,11 @@ function setStudents(rowId, students) {
 
 // Phone normalization for matching: strip spaces / dashes / + / parens.
 const NORM_PHONE = `REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(phone,''),' ',''),'-',''),'+',''),'(','')`;
-// De-dup key: group by the normalized phone when present (so the same person
-// from different sources with slightly different name spelling/case collapses
-// into one), otherwise by lowercased name.
-const GROUP_KEY = `CASE WHEN ${NORM_PHONE} != '' THEN ${NORM_PHONE} ELSE 'n:' || LOWER(COALESCE(name,'')) END`;
+// De-dup key: group by the LAST 9 DIGITS of the normalized phone when present
+// (so the same person collapses into one regardless of leading 0 / country
+// code / name-spelling differences across sources), otherwise by lowercased
+// name. e.g. "1000749796" and "201000749796" → same key "000749796".
+const GROUP_KEY = `CASE WHEN ${NORM_PHONE} != '' THEN SUBSTR(${NORM_PHONE}, -9) ELSE 'n:' || LOWER(COALESCE(name,'')) END`;
 
 // Union of every known client across sources — academy trainees (clients),
 // plus Center App / Membership clients (cs_subscriptions, finance_transactions)
