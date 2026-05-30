@@ -134,6 +134,10 @@ function setStudents(rowId, students) {
 
 // Phone normalization for matching: strip spaces / dashes / + / parens.
 const NORM_PHONE = `REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(phone,''),' ',''),'-',''),'+',''),'(','')`;
+// De-dup key: group by the normalized phone when present (so the same person
+// from different sources with slightly different name spelling/case collapses
+// into one), otherwise by lowercased name.
+const GROUP_KEY = `CASE WHEN ${NORM_PHONE} != '' THEN ${NORM_PHONE} ELSE 'n:' || LOWER(COALESCE(name,'')) END`;
 
 // Union of every known client across sources — academy trainees (clients),
 // plus Center App / Membership clients (cs_subscriptions, finance_transactions)
@@ -178,9 +182,9 @@ function searchClients({ q, limit = 60 } = {}) {
   if (digits.length >= 4) {
     const tail = digits.slice(-9);
     const rows = run(`
-      SELECT MIN(id) AS id, name, MIN(phone) AS phone FROM ( ${CLIENTS_UNION} )
+      SELECT MIN(id) AS id, MIN(name) AS name, MIN(phone) AS phone FROM ( ${CLIENTS_UNION} )
        WHERE (${NORM_PHONE} LIKE ? OR ${NORM_PHONE} LIKE ? OR name LIKE ?)
-       GROUP BY name, ${NORM_PHONE} ORDER BY name COLLATE NOCASE LIMIT ?
+       GROUP BY ${GROUP_KEY} ORDER BY name COLLATE NOCASE LIMIT ?
     `, ['%' + tail, '%' + digits + '%', like, limit]);
     if (rows) return rows;
     // Fallback: clients table only.
@@ -193,9 +197,9 @@ function searchClients({ q, limit = 60 } = {}) {
   }
 
   const rows = run(`
-    SELECT MIN(id) AS id, name, MIN(phone) AS phone FROM ( ${CLIENTS_UNION} )
+    SELECT MIN(id) AS id, MIN(name) AS name, MIN(phone) AS phone FROM ( ${CLIENTS_UNION} )
      WHERE (name LIKE ? OR ${NORM_PHONE} LIKE ?)
-     GROUP BY name, ${NORM_PHONE} ORDER BY name COLLATE NOCASE LIMIT ?
+     GROUP BY ${GROUP_KEY} ORDER BY name COLLATE NOCASE LIMIT ?
   `, [like, like, limit]);
   if (rows) return rows;
   return db.prepare(`
