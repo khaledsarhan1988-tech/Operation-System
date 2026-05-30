@@ -224,6 +224,112 @@ function suggestTeacher({ level, line = 'Ahmed Hassan' }) {
   return { previous_level: `${prev.family} ${prev.num}`, suggestions: out };
 }
 
+// ─── Teacher available time slots (shift − rests − voice-notes) ───────────────
+// Mirror of reports.routes parseTeamShifts: returns the trainer's shifts as
+// { startMin, endMin, days:[...], rests:[{startMin,endMin}], voiceNotes:[...] }.
+function parseTeamShifts(t) {
+  if (!t) return [];
+  const hm  = (s) => { const m = String(s || '').match(/^(\d{1,2}):(\d{2})$/); return m ? +m[1] * 60 + +m[2] : null; };
+  const end = (s) => { const v = hm(s); return v === 0 ? 1440 : v; };
+  const rests = (raw) => {
+    let arr = raw;
+    if (typeof raw === 'string') { try { arr = JSON.parse(raw); } catch { return []; } }
+    if (!Array.isArray(arr)) return [];
+    return arr.map(r => ({ startMin: hm(r && r.start), endMin: hm(r && r.end) }))
+      .filter(r => r.startMin != null && r.endMin != null && r.endMin > r.startMin);
+  };
+  const norm = (s) => {
+    if (!s || !s.shift) return null;
+    const startMin = hm(s.start), endMin = end(s.end);
+    if (startMin == null || endMin == null) return null;
+    return {
+      startMin, endMin,
+      days: String(s.work_days || '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean),
+      rests: rests(s.rests), voiceNotes: rests(s.voice_notes),
+    };
+  };
+  let raw = null;
+  if (t.shifts_json) { try { raw = JSON.parse(t.shifts_json); } catch { raw = null; } }
+  if (!Array.isArray(raw) || raw.length === 0) {
+    raw = [];
+    if (t.shift)  raw.push({ shift: t.shift,  start: t.shift_start,  end: t.shift_end,  rests: t.shift_rests,  voice_notes: t.voice_notes,        work_days: t.work_days });
+    if (t.shift2) raw.push({ shift: t.shift2, start: t.shift2_start, end: t.shift2_end, rests: t.shift2_rests, voice_notes: t.shift2_voice_notes, work_days: t.shift2_work_days });
+  }
+  return raw.map(norm).filter(Boolean);
+}
+
+const DAY_KEYS_BY_LABEL = {
+  'Sat- Tue': ['saturday', 'tuesday'],
+  'Mon- Thu': ['monday', 'thursday'],
+  'Sun- Wed': ['sunday', 'wednesday'],
+};
+
+// Subtract rest + voice-note blocks from the shift window → free [start,end] intervals.
+function freeIntervals(sh) {
+  const blocks = [...sh.rests, ...sh.voiceNotes].map(b => [b.startMin, b.endMin]).sort((a, b) => a[0] - b[0]);
+  let free = [[sh.startMin, sh.endMin]];
+  for (const [bs, be] of blocks) {
+    const next = [];
+    for (const [fs, fe] of free) {
+      if (be <= fs || bs >= fe) { next.push([fs, fe]); continue; }
+      if (bs > fs) next.push([fs, Math.min(bs, fe)]);
+      if (be < fe) next.push([Math.max(be, fs), fe]);
+    }
+    free = next.filter(([s, e]) => e > s);
+  }
+  return free;
+}
+function slotsFromFree(free, len) {
+  const out = [];
+  for (const [s, e] of free) { let t = s; while (t + len <= e) { out.push([t, t + len]); t += len; } }
+  return out;
+}
+function fmt12(m) {
+  const mod = ((m % 1440) + 1440) % 1440;
+  let h = Math.floor(mod / 60); const mn = mod % 60;
+  const ap = h >= 12 ? 'pm' : 'am';
+  h = h % 12; if (h === 0) h = 12;
+  return `${h}:${String(mn).padStart(2, '0')}${ap}`;
+}
+
+/**
+ * Available time slots for a teacher on the group's days.
+ *   - slot length = 90 min (General) / 60 min (Private/Semi)
+ *   - shift window minus rests minus voice-notes
+ *   - intersection across all selected days (group meets on both)
+ */
+function teacherSlots({ teacher, days, dept = 'General' }) {
+  const tname = String(teacher || '').trim();
+  if (!tname) return { slots: [] };
+  let dayKeys = DAY_KEYS_BY_LABEL[days];
+  if (!dayKeys) dayKeys = String(days || '').toLowerCase().split(/[,\s]+/).filter(Boolean);
+  if (!dayKeys.length) return { slots: [] };
+
+  const norm = (s) => String(s || '').replace(/\([^)]*\)/g, '').trim().toLowerCase();
+  const trainers = db.prepare(`SELECT * FROM team_members WHERE department='education'`).all();
+  const tm = trainers.find(t => norm(t.name) === norm(tname));
+  if (!tm) return { slots: [], reason: 'trainer_not_found' };
+
+  const shifts = parseTeamShifts(tm);
+  const slotLen = dept === 'General' ? 90 : 60;
+
+  const perDay = dayKeys.map(day => {
+    const set = new Set();
+    for (const sh of shifts.filter(s => s.days.includes(day))) {
+      for (const [s, e] of slotsFromFree(freeIntervals(sh), slotLen)) set.add(s + '-' + e);
+    }
+    return set;
+  });
+  let inter = perDay[0] || new Set();
+  for (let i = 1; i < perDay.length; i++) inter = new Set([...inter].filter(x => perDay[i].has(x)));
+
+  const slots = [...inter]
+    .map(x => x.split('-').map(Number))
+    .sort((a, b) => a[0] - b[0])
+    .map(([s, e]) => `${fmt12(s)}_${fmt12(e)}`);
+  return { slots, slot_minutes: slotLen };
+}
+
 function getOptions(dept, level, line = 'Ahmed Hassan') {
   assertDept(dept);
 
@@ -263,6 +369,6 @@ function getOptions(dept, level, line = 'Ahmed Hassan') {
 
 module.exports = {
   listRows, createRow, updateRow, deleteRow, setGenerate, getOptions, suggestTeacher,
-  listStudents, setStudents, searchClients,
+  listStudents, setStudents, searchClients, teacherSlots,
   DAYS, STATUSES, LEVELS, DEPTS,
 };

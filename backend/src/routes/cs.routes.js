@@ -902,6 +902,21 @@ router.put('/enrollment/:id/students', requireRole('admin', 'leader', 'agent'), 
   }
 });
 
+/** GET /api/cs/enrollment/teacher-slots?teacher=&days=Sat- Tue&dept=General — available 1.5h slots. */
+router.get('/enrollment/teacher-slots', requireRole('admin', 'leader', 'agent'), (req, res) => {
+  try {
+    const svc = require('../services/csEnrollment.service');
+    res.json({ ok: true, ...svc.teacherSlots({
+      teacher: (req.query.teacher || '').trim(),
+      days:    (req.query.days || '').trim(),
+      dept:    (req.query.dept || 'General').trim(),
+    }) });
+  } catch (e) {
+    console.error('GET /cs/enrollment/teacher-slots error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
 /** GET /api/cs/enrollment/teacher-suggestion?level=G%203 — previous-group teacher hint. */
 router.get('/enrollment/teacher-suggestion', requireRole('admin', 'leader', 'agent'), (req, res) => {
   try {
