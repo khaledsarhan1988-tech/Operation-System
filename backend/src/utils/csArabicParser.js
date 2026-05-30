@@ -61,7 +61,7 @@ const IGNORE_PATTERNS = [
  *   1. "سوبر جولد" (super gold)  → 6 months
  *   2. "جولد" (gold)             → 3 months
  *   3. explicit "N شهور / N شهر / N months" → N
- *   4. "سينجل / single" → depends on dept (Semi = 1, Private = 3)
+ *   4. "سينجل / single" → 1 month (always)
  *
  * Gold keywords beat an explicit number on purpose: a "جولد" membership is
  * always 3 months even if a stray digit appears. The 9-month products carry
@@ -71,10 +71,10 @@ const IGNORE_PATTERNS = [
  *   "جولد جروب"                 → 3
  *   "9 شهور برايفت"             → 9
  *   "3 شهور" / "3شهور" / "١ شهر" → 3 / 3 / 1
- *   "سيمي برايفت سينجل" (Semi)  → 1
- *   "برايفت مسائي سينجل" (Private) → 3
+ *   "سيمي برايفت سينجل"          → 1
+ *   "برايفت مسائي سينجل"         → 1
  *
- *   dept — optional; only needed to resolve "single" products.
+ *   dept — optional (kept for signature compatibility).
  */
 function extractMonths(s, dept = null) {
   if (!s) return null;
@@ -102,8 +102,8 @@ function extractMonths(s, dept = null) {
     if (n >= 1 && n <= 24) return n;
   }
 
-  // 4. "سينجل / single" — always 3 months per the Center App catalog.
-  if (/سينجل|single/i.test(norm)) return 3;
+  // 4. "سينجل / single" — always 1 month (user rule).
+  if (/سينجل|single/i.test(norm)) return 1;
   return null;
 }
 
@@ -169,7 +169,9 @@ function parseCourseString(raw) {
   const cat = lookupMembership(raw);
   if (cat && cat.dept && cat.months) {
     out.dept          = cat.dept;
-    out.months        = cat.months;
+    // HARD RULE (user correction): any "سينجل / single" membership = 1 month,
+    // overriding the catalog value.
+    out.months        = /سينجل|single/i.test(raw) ? 1 : cat.months;
     out.isInstallment = isInstallment(raw);
     out.source        = 'catalog';
     return out;
