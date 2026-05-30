@@ -869,6 +869,17 @@ router.get('/enrollment/options', requireRole('admin', 'leader', 'agent'), (req,
   }
 });
 
+/** GET /api/cs/enrollment/teacher-suggestion?level=G%203 — previous-group teacher hint. */
+router.get('/enrollment/teacher-suggestion', requireRole('admin', 'leader', 'agent'), (req, res) => {
+  try {
+    const svc = require('../services/csEnrollment.service');
+    res.json({ ok: true, ...svc.suggestTeacher({ level: (req.query.level || '').trim() }) });
+  } catch (e) {
+    console.error('GET /cs/enrollment/teacher-suggestion error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
 /** POST /api/cs/enrollment — create a row. Body: { dept, ...fields }. */
 router.post('/enrollment', requireRole('admin', 'leader', 'agent'), (req, res) => {
   try {

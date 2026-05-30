@@ -105,6 +105,65 @@ function parseLevel(level) {
   return { family, num };
 }
 
+// ─── Phase 3: previous-group teacher suggestion ───────────────────────────────
+const stripParens = (s) => String(s || '').replace(/\([^)]*\)/g, '').trim();
+
+// Extract { family, num } from a group code ("...General3", "...Con2", "Str3").
+function parseGroupLevel(name) {
+  const s = String(name || '').toLowerCase();
+  let m;
+  if ((m = s.match(/con(?:versation)?[ _]*(\d+)/)))   return { family: 'conversation', num: +m[1] };
+  if ((m = s.match(/(?:starter|str)[ _]*(\d+)/)))       return { family: 'starter',      num: +m[1] };
+  if ((m = s.match(/(?:general|g)[ _]*(\d+)/)))         return { family: 'general',      num: +m[1] };
+  return null;
+}
+
+// The level immediately BEFORE the given one on the Starter→General→Conversation
+// ladder (Starter1..3 → General1..5 → Conversation1..5).
+function previousLevel(level) {
+  const p = parseLevel(level);
+  if (!p || !p.family || !p.num) return null;
+  const { family, num } = p;
+  if (family === 'starter')      return num > 1 ? { family: 'starter', num: num - 1 } : null;
+  if (family === 'general')      return num > 1 ? { family: 'general', num: num - 1 } : { family: 'starter', num: 3 };
+  if (family === 'conversation') return num > 1 ? { family: 'conversation', num: num - 1 } : { family: 'general', num: 5 };
+  return null;
+}
+
+/**
+ * Suggest the teacher(s) who recently taught a group at the PREVIOUS level —
+ * a heuristic to ease re-assigning the same teacher for continuing students.
+ * Matches by level (previous of the entered level); returns most-recent first.
+ */
+function suggestTeacher({ level, line = 'Ahmed Hassan' }) {
+  const prev = previousLevel(level);
+  if (!prev) return { previous_level: null, suggestions: [] };
+
+  const rows = db.prepare(`
+    SELECT l.group_name AS group_name, l.trainer AS trainer, MAX(l.date) AS last_date
+      FROM lectures l
+      JOIN batches b ON b.group_name = l.group_name AND b.line = l.line
+     WHERE l.line = ? AND l.session_type = 'main'
+       AND l.trainer IS NOT NULL AND TRIM(l.trainer) != ''
+     GROUP BY l.group_name, l.trainer
+  `).all(line);
+
+  const matches = rows
+    .filter(r => { const g = parseGroupLevel(r.group_name); return g && g.family === prev.family && g.num === prev.num; })
+    .sort((a, b) => String(b.last_date).localeCompare(String(a.last_date)));
+
+  const seen = new Set(), out = [];
+  for (const m of matches) {
+    const t = stripParens(m.trainer);
+    if (t && !seen.has(t.toLowerCase())) {
+      seen.add(t.toLowerCase());
+      out.push({ teacher: t, from_group: m.group_name, last_date: m.last_date });
+    }
+    if (out.length >= 3) break;
+  }
+  return { previous_level: `${prev.family} ${prev.num}`, suggestions: out };
+}
+
 function getOptions(dept, level, line = 'Ahmed Hassan') {
   assertDept(dept);
 
@@ -143,6 +202,6 @@ function getOptions(dept, level, line = 'Ahmed Hassan') {
 }
 
 module.exports = {
-  listRows, createRow, updateRow, deleteRow, setGenerate, getOptions,
+  listRows, createRow, updateRow, deleteRow, setGenerate, getOptions, suggestTeacher,
   DAYS, STATUSES, LEVELS, DEPTS,
 };

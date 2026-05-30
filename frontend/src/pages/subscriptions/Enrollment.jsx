@@ -48,6 +48,32 @@ const COLS = [
   { k: 'teacher',      label: 'المدرب',        type: 'select', opt: 'teachers' },
 ];
 
+// Map the enrollment fields → the find-available-trainer params (Phase 2).
+const DAYS_TO_KEYS = { 'Sat- Tue': 'saturday,tuesday', 'Mon- Thu': 'monday,thursday', 'Sun- Wed': 'sunday,wednesday' };
+function to24(t) {
+  const m = String(t).trim().match(/(\d{1,2}):(\d{2})\s*(am|pm)?/i);
+  if (!m) return null;
+  let h = +m[1]; const mn = +m[2]; const ap = (m[3] || '').toLowerCase();
+  if (ap === 'pm' && h < 12) h += 12;
+  if (ap === 'am' && h === 12) h = 0;
+  return `${String(h).padStart(2, '0')}:${String(mn).padStart(2, '0')}`;
+}
+function parseHours(hours) {
+  const parts = String(hours || '').split(/[_–-]/).map(s => s.trim()).filter(Boolean);
+  if (parts.length < 2) return null;
+  const from = to24(parts[0]), to = to24(parts[parts.length - 1]);
+  return (from && to) ? { from, to } : null;
+}
+function parseLevelFam(level) {
+  const s = String(level || '').toLowerCase();
+  const num = parseInt((s.match(/(\d+)/) || [])[1], 10) || null;
+  let fam = null;
+  if (/con/.test(s)) fam = 'conversation';
+  else if (/str/.test(s)) fam = 'starter';
+  else if (/g/.test(s)) fam = 'general';
+  return (fam && num) ? { family: fam, level: num } : null;
+}
+
 export default function Enrollment() {
   const qc = useQueryClient();
   const { user } = useAuth();
@@ -67,6 +93,36 @@ export default function Enrollment() {
   });
   const opts = optionsQ.data || {};
   const rows = rowsQ.data?.rows || [];
+
+  // Phase 2: available trainers for the slot being edited (day/time/level/date).
+  const hh = parseHours(form.hours);
+  const lvl = parseLevelFam(form.level);
+  const daysKeys = DAYS_TO_KEYS[form.days];
+  const availEnabled = !!(editing && hh && lvl && daysKeys && form.start_date);
+  const availQ = useQuery({
+    queryKey: ['avail-trainer', daysKeys, hh?.from, hh?.to, lvl?.family, lvl?.level, form.start_date],
+    enabled: availEnabled,
+    queryFn: () => api.get('/reports/find-available-trainer', {
+      params: { section: 'all', days: daysKeys, from_time: hh.from, to_time: hh.to,
+        course_family: lvl.family, course_level: lvl.level, start_date: form.start_date, weeks_count: 1 },
+    }).then(r => r.data),
+  });
+  // Phase 3: previous-group teacher suggestion (by the entered level).
+  const suggestQ = useQuery({
+    queryKey: ['teacher-suggestion', form.level],
+    enabled: !!(editing && form.level),
+    queryFn: () => api.get('/cs/enrollment/teacher-suggestion', { params: { level: form.level } }).then(r => r.data),
+  });
+
+  // Teacher options — available trainers when computable, else the plain list;
+  // always include the currently-selected teacher so the value stays visible.
+  const teacherOptions = () => {
+    const avail = availQ.data?.results?.filter(r => r.available_count > 0)
+      .map(r => ({ value: r.name, label: (r.fully_available ? '✓ ' : '~ ') + r.name }));
+    let base = avail || (opts.teachers || []).map(o => ({ value: o, label: o }));
+    if (form.teacher && !base.some(o => o.value === form.teacher)) base = [{ value: form.teacher, label: form.teacher }, ...base];
+    return base;
+  };
 
   const saveMut = useMutation({
     mutationFn: (payload) => payload.id
@@ -120,27 +176,61 @@ export default function Enrollment() {
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
   // Editable cells for the current `form` (rendered inline → keeps focus).
-  const editCells = () => COLS.map(c => (
-    <td key={c.k} className="px-2 py-1">
-      {c.type === 'select' ? (
-        <select
-          value={form[c.k] ?? ''}
-          onChange={(e) => setF(c.k, e.target.value)}
-          className="w-full min-w-24 px-1 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-violet-300"
-        >
-          <option value="">—</option>
-          {(opts[c.opt] || []).map(o => <option key={o} value={o}>{o}</option>)}
-        </select>
-      ) : (
-        <input
-          value={form[c.k] ?? ''}
-          onChange={(e) => setF(c.k, e.target.value)}
-          type={c.type}
-          className="w-full min-w-24 px-1.5 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-violet-300"
-        />
-      )}
-    </td>
-  ));
+  const editCells = () => COLS.map(c => {
+    // Teacher cell — availability-filtered list + previous-group suggestion.
+    if (c.k === 'teacher') {
+      const tOpts = teacherOptions();
+      const sugg = suggestQ.data?.suggestions || [];
+      const noneAvail = availEnabled && availQ.data && (availQ.data.results || []).filter(r => r.available_count > 0).length === 0;
+      return (
+        <td key={c.k} className="px-2 py-1 min-w-44 align-top">
+          <select
+            value={form.teacher ?? ''}
+            onChange={(e) => setF('teacher', e.target.value)}
+            className="w-full px-1 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-violet-300"
+          >
+            <option value="">—</option>
+            {tOpts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+          {availEnabled && availQ.isFetching && <div className="text-[10px] text-slate-400 mt-0.5">جاري فحص التوفّر...</div>}
+          {noneAvail && <div className="text-[10px] text-rose-500 mt-0.5">مفيش مدرب متاح في الوقت ده</div>}
+          {sugg.length > 0 && (
+            <div className="mt-1 flex flex-wrap gap-1 items-center">
+              <span className="text-[10px] text-slate-400">اقتراح:</span>
+              {sugg.map((s, i) => (
+                <button key={i} type="button" onClick={() => setF('teacher', s.teacher)}
+                  title={`من المجموعة السابقة: ${s.from_group}`}
+                  className="text-[10px] bg-cyan-50 text-cyan-700 border border-cyan-200 rounded px-1.5 py-0.5 hover:bg-cyan-100">
+                  {s.teacher}
+                </button>
+              ))}
+            </div>
+          )}
+        </td>
+      );
+    }
+    return (
+      <td key={c.k} className="px-2 py-1">
+        {c.type === 'select' ? (
+          <select
+            value={form[c.k] ?? ''}
+            onChange={(e) => setF(c.k, e.target.value)}
+            className="w-full min-w-24 px-1 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-violet-300"
+          >
+            <option value="">—</option>
+            {(opts[c.opt] || []).map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        ) : (
+          <input
+            value={form[c.k] ?? ''}
+            onChange={(e) => setF(c.k, e.target.value)}
+            type={c.type}
+            className="w-full min-w-24 px-1.5 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-violet-300"
+          />
+        )}
+      </td>
+    );
+  });
 
   return (
     <div className="p-4 md:p-6 max-w-[1400px] mx-auto" dir="rtl">
