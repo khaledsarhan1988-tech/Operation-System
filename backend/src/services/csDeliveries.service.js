@@ -269,7 +269,6 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user }) {
     let lastLevelDate = null, daysSinceLast = null;
     try {
       const plan = csPlan.getClientPlan(it.phone);
-      it.remaining_levels = plan ? plan.summary.pending_count : null;
       it.paid_months = plan ? plan.summary.paid_months : it.total_months;
       it.completed_count = plan ? plan.summary.completed_count : null;
       // Per-subscription months so the UI can show e.g. "6+3 = 9".
@@ -277,9 +276,18 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user }) {
       lastLevelDate = plan?.summary?.last_level_date || null;
       daysSinceLast = plan?.summary?.days_since_last_level ?? null;
     } catch (_) {
-      it.remaining_levels = null;
+      it.paid_months = it.total_months ?? null;
       it.months_list = [];
     }
+
+    // Remaining levels = total paid levels (إجمالي العضويات) MINUS the number of
+    // groups the client appears in (active + inactive) — each group = one level
+    // taken. Uses the FILTERED group lists (Free Slots / Grammer already removed).
+    const groupsTaken = (it.active_groups?.length || 0) + (it.inactive_groups?.length || 0);
+    it.groups_taken = groupsTaken;
+    it.remaining_levels = (it.paid_months != null)
+      ? Math.max(0, it.paid_months - groupsTaken)
+      : null;
 
     // ── Intensive-aware pacing (2 weeks / level) vs regular (1 month / level) ──
     const isIntensive = intensiveSet.has(it.phone);
