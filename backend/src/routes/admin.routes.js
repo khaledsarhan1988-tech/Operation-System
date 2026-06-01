@@ -1140,21 +1140,25 @@ router.get('/backup/download', (req, res) => {
     if (!fs.existsSync(DB_PATH)) {
       return res.status(404).json({ error: 'Database file not found' });
     }
-    const stat = fs.statSync(DB_PATH);
+    const zlib = require('zlib');
     const date = new Date().toISOString().slice(0, 10);
     res.setHeader('Content-Disposition', `attachment; filename="academy-backup-${date}.db"`);
     res.setHeader('Content-Type', 'application/octet-stream');
-    // Content-Length makes the response a known-size (non-chunked) body, which
-    // proxies (Railway edge) and browsers handle far more reliably for large
-    // downloads — fixes the "Network Error" mid-stream interruptions.
-    res.setHeader('Content-Length', stat.size);
+    // gzip ON THE WIRE: a 118MB SQLite file compresses ~3-5x, so far fewer bytes
+    // cross the Railway edge proxy → no more mid-stream "Network Error" on big
+    // DBs. The browser transparently decompresses (Content-Encoding), so the
+    // file the admin saves is still the raw, restore-ready .db. Streamed → low
+    // memory (no full-file buffering).
+    res.setHeader('Content-Encoding', 'gzip');
     const stream = fs.createReadStream(DB_PATH);
+    const gzip = zlib.createGzip();
     stream.on('error', (e) => {
-      console.error('[backup/download] stream error:', e.message);
+      console.error('[backup/download] read error:', e.message);
       if (!res.headersSent) res.status(500).json({ error: e.message });
       else res.destroy(e);
     });
-    stream.pipe(res);
+    gzip.on('error', (e) => { console.error('[backup/download] gzip error:', e.message); res.destroy(e); });
+    stream.pipe(gzip).pipe(res);
   } catch (err) {
     console.error('[backup/download]', err);
     if (!res.headersSent) return res.status(500).json({ error: err.message });
