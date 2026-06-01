@@ -2843,12 +2843,22 @@ router.get('/trainer-utilization', (req, res) => {
     const end = new Date(today); end.setDate(end.getDate() + 6);
     toDate = fmt(end);
   }
-  // Build inclusive list of dates between from and to
+  // Build inclusive list of dates between from and to. Official-holiday days
+  // are EXCLUDED — the academy is closed, so they count toward neither a
+  // trainer's available nor booked hours (utilization is unaffected by them).
+  const { getHolidayDateSet } = require('../utils/holidays');
+  const holidaySet = getHolidayDateSet();
   const dates = [];
+  const holiday_dates = [];
   {
     let d = new Date(fromDate + 'T12:00:00');
     const stop = new Date(toDate + 'T12:00:00');
-    while (d <= stop) { dates.push(fmt(d)); d.setDate(d.getDate() + 1); }
+    while (d <= stop) {
+      const iso = fmt(d);
+      if (holidaySet.has(iso)) holiday_dates.push(iso);
+      else dates.push(iso);
+      d.setDate(d.getDate() + 1);
+    }
   }
 
   // Local helpers (mirror those in computeCodeProblems)
@@ -3156,7 +3166,7 @@ router.get('/trainer-utilization', (req, res) => {
     .filter(t => (t.totals.available_min || 0) > 0 || (t.totals.booked_min || 0) > 0)
     .sort((a, b) => a.name.localeCompare(b.name, 'ar'));
 
-    return res.json({ dates, trainers: out });
+    return res.json({ dates, holiday_dates, trainers: out });
   } catch (err) {
     console.error('[reports] trainer-utilization error:', err);
     return res.status(500).json({ error: err.message });
@@ -3286,11 +3296,18 @@ router.get('/trainer-utilization-summary', (req, res) => {
   const prevEnd   = fmtISO(new Date(currStartMs - dayMs));
   const prevStart = fmtISO(new Date(currStartMs - totalDays * dayMs));
 
+  // Official-holiday days are excluded from utilization (academy closed). We
+  // keep currDates full so the weekly buckets stay calendar-aligned, and skip
+  // holidays INSIDE totalsForRange so they add nothing to available/booked.
+  const { getHolidayDateSet } = require('../utils/holidays');
+  const holidaySet = getHolidayDateSet();
+
   // Build complete list of dates in current period (for per-week aggregation)
   const currDates = [];
   for (let i = 0; i < totalDays; i++) {
     currDates.push(fmtISO(new Date(currStartMs + i * dayMs)));
   }
+  const holiday_dates = currDates.filter(d => holidaySet.has(d));
   // Build week buckets: week index = Math.floor(i / 7)
   // Week label = the Saturday of that week (compact)
   const SHORT_AR_MONTHS = ['ينا','فبر','مار','أبر','مايو','يون','يول','أغس','سبت','أكت','نوف','ديس'];
@@ -3347,6 +3364,7 @@ router.get('/trainer-utilization-summary', (req, res) => {
       let available = 0, booked = 0;
       const tKey = stripParens(trainer.name).toLowerCase();
       for (const date of dates) {
+        if (holidaySet.has(date)) continue;   // official holiday → excluded from the calc
         let avail = 0;
         for (const sh of shifts) avail += shiftMinsForDate(sh, date);
         if (avail === 0) continue;
@@ -3544,6 +3562,7 @@ router.get('/trainer-utilization-summary', (req, res) => {
       section_averages: sectionAverages,
       trainers: trainersOut,
       insights,
+      holiday_dates,   // official-holiday days excluded from this period's calc
     });
   } catch (err) {
     console.error('[reports] trainer-utilization-summary error:', err);
@@ -4073,6 +4092,11 @@ router.get('/trainer-work-history', (req, res) => {
       rows.push(...memberRows);
     }
 
+    // Official-holiday days inside the window — surfaced so the UI can mark
+    // them and never count them as absence / missing hours against a trainer.
+    const { getHolidayDateSet } = require('../utils/holidays');
+    const holiday_dates = [...getHolidayDateSet()].filter(d => d >= from && d <= to).sort();
+
     return res.json({
       rows,
       summary: {
@@ -4082,6 +4106,7 @@ router.get('/trainer-work-history', (req, res) => {
         total_unconfirmed_min: totalUnconfirmedMin,
       },
       window: { from, to },
+      holiday_dates,
     });
   } catch (err) {
     console.error('[reports] trainer-work-history error:', err);
