@@ -2163,6 +2163,12 @@ initDb().then(db => {
 
   const app = express();
 
+  // Railway runs the app behind a single reverse proxy that sets X-Forwarded-For.
+  // Trust exactly ONE proxy hop so express-rate-limit can identify clients by their
+  // real IP (not the proxy's). Using `1` (not `true`) avoids the insecure
+  // "trust all proxies" mode that express-rate-limit warns against.
+  app.set('trust proxy', 1);
+
   app.use(cors({
     origin: (origin, cb) => {
       if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
