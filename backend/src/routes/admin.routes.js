@@ -115,14 +115,29 @@ router.post('/users', (req, res) => {
 // PUT /api/admin/users/:id
 router.put('/users/:id', (req, res) => {
   const { id } = req.params;
-  const { full_name, role, department, extra_departments, extra_managements, language, password, is_active, management, line, start_date, end_date } = req.body;
+  const { username, full_name, role, department, extra_departments, extra_managements, language, password, is_active, management, line, start_date, end_date } = req.body;
 
   // Snapshot current state — needed for dept-change detection AND for the
   // employment end_date transition logic (old is_active / old end_date).
   const user = db.prepare(
-    'SELECT id, full_name, department, is_active, end_date FROM users WHERE id = ?'
+    'SELECT id, username, full_name, department, is_active, end_date FROM users WHERE id = ?'
   ).get(id);
   if (!user) return res.status(404).json({ error: 'User not found' });
+
+  // Username can be edited. Reject blanks and collisions with another user
+  // (UNIQUE is case-insensitive). No-op when unchanged.
+  let usernameToSet;
+  if (username !== undefined) {
+    const trimmed = String(username).trim();
+    if (!trimmed) return res.status(400).json({ error: 'Username cannot be empty' });
+    if (trimmed.toLowerCase() !== String(user.username).toLowerCase()) {
+      const clash = db.prepare(
+        'SELECT id FROM users WHERE username = ? COLLATE NOCASE AND id != ?'
+      ).get(trimmed, id);
+      if (clash) return res.status(409).json({ error: 'Username already exists' });
+      usernameToSet = trimmed;
+    }
+  }
 
   if (password) {
     db.prepare("UPDATE users SET password_hash = ?, updated_at = datetime('now', 'localtime') WHERE id = ?")
@@ -168,6 +183,7 @@ router.put('/users/:id', (req, res) => {
 
   const fields = [];
   const params = [];
+  if (usernameToSet !== undefined) { fields.push('username = ?'); params.push(usernameToSet); }
   if (full_name  !== undefined) { fields.push('full_name = ?');  params.push(full_name); }
   if (role       !== undefined) { fields.push('role = ?');       params.push(role); }
   if (department !== undefined) { fields.push('department = ?'); params.push(department); }

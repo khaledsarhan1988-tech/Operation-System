@@ -87,7 +87,7 @@ function UserModal({ open, onClose, user, onSaved }) {
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="label">{t('admin.username')}</label>
-            <input className="input" value={form.username} onChange={e => set('username', e.target.value)} disabled={!!user} />
+            <input className="input" value={form.username} onChange={e => set('username', e.target.value)} />
           </div>
           <div>
             <label className="label">{t('admin.fullName')}</label>
