@@ -1140,13 +1140,25 @@ router.get('/backup/download', (req, res) => {
     if (!fs.existsSync(DB_PATH)) {
       return res.status(404).json({ error: 'Database file not found' });
     }
+    const stat = fs.statSync(DB_PATH);
     const date = new Date().toISOString().slice(0, 10);
     res.setHeader('Content-Disposition', `attachment; filename="academy-backup-${date}.db"`);
     res.setHeader('Content-Type', 'application/octet-stream');
-    fs.createReadStream(DB_PATH).pipe(res);
+    // Content-Length makes the response a known-size (non-chunked) body, which
+    // proxies (Railway edge) and browsers handle far more reliably for large
+    // downloads — fixes the "Network Error" mid-stream interruptions.
+    res.setHeader('Content-Length', stat.size);
+    const stream = fs.createReadStream(DB_PATH);
+    stream.on('error', (e) => {
+      console.error('[backup/download] stream error:', e.message);
+      if (!res.headersSent) res.status(500).json({ error: e.message });
+      else res.destroy(e);
+    });
+    stream.pipe(res);
   } catch (err) {
     console.error('[backup/download]', err);
-    return res.status(500).json({ error: err.message });
+    if (!res.headersSent) return res.status(500).json({ error: err.message });
+    res.destroy(err);
   }
 });
 
