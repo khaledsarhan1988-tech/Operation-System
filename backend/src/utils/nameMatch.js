@@ -34,6 +34,21 @@ function nameInListInline(field, name) {
 }
 
 /**
+ * Whitespace-insensitive variant of nameInListInline. Strips ALL spaces and
+ * non-breaking spaces (CHAR 160) from BOTH the field tokens and the name before
+ * the comma-wrapped token match. Use when a coordinator name may be stored with
+ * hidden leading/trailing/internal whitespace differences between team_members
+ * and batches.coordinators (e.g. "RadwaGamal" vs "Radwa Gamal" / "RadwaGamal ").
+ * Still a whole-token match — "Ali" never matches "Ali Wael".
+ */
+function nameInListLoose(field, name) {
+  const safe = String(name).replace(/[\s ]+/g, '').replace(/'/g, "''").trim();
+  if (!safe) return '1=1';
+  const stripped = `REPLACE(REPLACE(${field}, ' ', ''), CHAR(160), '')`;
+  return `(',' || ${stripped} || ',') LIKE '%,${safe},%' COLLATE NOCASE`;
+}
+
+/**
  * Parameterized version. Returns { clause, param } — bind `param` as a
  * positional parameter. Use this when the surrounding query already uses
  * `?` binding for safety.
@@ -47,4 +62,4 @@ function nameInListParam(field) {
   });
 }
 
-module.exports = { nameInListInline, nameInListParam };
+module.exports = { nameInListInline, nameInListLoose, nameInListParam };

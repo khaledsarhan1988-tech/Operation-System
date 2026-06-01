@@ -3,7 +3,7 @@ const express = require('express');
 const db = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
-const { nameInListInline } = require('../utils/nameMatch');
+const { nameInListLoose } = require('../utils/nameMatch');
 
 const router = express.Router();
 router.use(authenticate, requireRole('leader'));
@@ -190,7 +190,7 @@ router.get('/customer-services', (req, res) => {
                FROM clients c
                INNER JOIN batches b ON c.group_name = b.group_name AND c.line = b.line
               WHERE b.status = 'نشطة'
-                AND ${nameInListInline('b.coordinators', m.name)}`
+                AND ${nameInListLoose('b.coordinators', m.name)}`
           ).get();
           customer_count = cRow?.cnt ?? 0;
 
@@ -199,7 +199,7 @@ router.get('/customer-services', (req, res) => {
             `SELECT COUNT(DISTINCT b.group_name || '|' || b.line) AS cnt
                FROM batches b
               WHERE b.status = 'نشطة'
-                AND ${nameInListInline('b.coordinators', m.name)}`
+                AND ${nameInListLoose('b.coordinators', m.name)}`
           ).get();
           group_count = gRow?.cnt ?? 0;
         }
@@ -291,7 +291,7 @@ function getMemberBatches(memberName) {
             ) AS customer_count
        FROM batches b
       WHERE b.status = 'نشطة'
-        AND ${nameInListInline('b.coordinators', memberName)}
+        AND ${nameInListLoose('b.coordinators', memberName)}
       ORDER BY customer_count DESC, b.group_name`
   ).all();
 }
@@ -303,7 +303,7 @@ function getMemberCustomerCount(memberName) {
        FROM clients c
        INNER JOIN batches b ON c.group_name = b.group_name AND c.line = b.line
       WHERE b.status = 'نشطة'
-        AND ${nameInListInline('b.coordinators', memberName)}`
+        AND ${nameInListLoose('b.coordinators', memberName)}`
   ).get();
   return row?.cnt ?? 0;
 }
