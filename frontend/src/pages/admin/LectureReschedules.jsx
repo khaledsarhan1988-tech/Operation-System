@@ -463,6 +463,33 @@ function DiagnosticModal({ initialFrom, initialTo, onClose, onBackfilled }) {
                 </div>
               )}
 
+              {/* Error feedback — without this the page stays silent when the
+                  Drive scan times out (60s) or the server errors, which looks
+                  like "nothing happened". Surface the real reason instead. */}
+              {(driveBackfillMut.isError || backfillMut.isError) && (() => {
+                const err = driveBackfillMut.error || backfillMut.error;
+                const isTimeout = err?.code === 'ECONNABORTED' || /timeout/i.test(err?.message || '');
+                const serverMsg = err?.response?.data?.error;
+                return (
+                  <div className="bg-rose-50 border-2 border-rose-300 rounded-xl p-4 text-sm">
+                    <p className="font-bold text-rose-900 mb-1 flex items-center gap-2">
+                      <ShieldAlert size={16} /> فشل الفحص
+                    </p>
+                    {isTimeout ? (
+                      <p className="text-rose-700 leading-relaxed">
+                        الطلب أخد وقت أطول من المسموح (60 ثانية) فاتلغى تلقائياً. الفترة كبيرة على
+                        الفحص المباشر اللى بيـ download كل الملفات بالتسلسل — جرّب فترة أصغر
+                        (يومين/تلاتة) أو اطلب رفع مهلة الفحص.
+                      </p>
+                    ) : (
+                      <p className="text-rose-700 leading-relaxed">
+                        {serverMsg || err?.message || 'حصل خطأ غير متوقع أثناء الفحص. راجع لوج السيرفر.'}
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
+
               {result && result.fromDrive && (
                 <div className="bg-emerald-50 border-2 border-emerald-300 rounded-xl p-4">
                   <p className="text-sm font-bold text-emerald-900 mb-2">
