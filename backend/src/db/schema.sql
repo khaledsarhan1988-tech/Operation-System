@@ -107,6 +107,13 @@ CREATE TABLE IF NOT EXISTS team_members (
   --   'multi_task' → منسق متعدد المهام (students + tasks, capacity 70..85)
   --   (NULL allowed only on records that aren't coordinators — leaders, etc.)
   coordinator_type TEXT NOT NULL DEFAULT 'standard',
+  -- Employment lifecycle dates (YYYY-MM-DD), used by the Customer Services team
+  -- view. Mirror of the users feature:
+  --   start_date → hire date (defaults to the creation date)
+  --   end_date   → last day of work. NULL = still on the job. When it passes,
+  --                the member is auto-set status='inactive' at startup.
+  start_date  TEXT,
+  end_date    TEXT,
   created_at  TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
 );
 CREATE INDEX IF NOT EXISTS idx_team_dept_section ON team_members(department, section);

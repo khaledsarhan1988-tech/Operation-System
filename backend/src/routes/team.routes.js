@@ -106,6 +106,45 @@ function buildTeachable(body) {
   return { starter, general, conversation };
 }
 
+// ── Employment dates (Customer Services only) ─────────────────────────────────
+// Hire date (start_date) + last-day-of-work (end_date). Mirrors the users
+// feature. Only applied to department='customer_services'; other departments
+// keep whatever they already had (or NULL for new rows).
+const _today = () => new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().slice(0, 10);
+const _clean = (v) => (v && String(v).trim() ? String(v).trim() : null);
+
+function buildEmploymentDatesForCreate(department, status, body) {
+  if (department !== 'customer_services') return { start_date: null, end_date: null };
+  const start = _clean(body.start_date) || _today();
+  const typedEnd = _clean(body.end_date);
+  // New member created inactive → stamp today as the end of work.
+  const end = status === 'inactive' ? (typedEnd || _today()) : typedEnd;
+  return { start_date: start, end_date: end };
+}
+
+function buildEmploymentDatesForUpdate(department, old, newStatus, body) {
+  // Non-CS rows are not managed here — preserve existing values untouched.
+  if (department !== 'customer_services') {
+    return { start_date: old.start_date || null, end_date: old.end_date || null };
+  }
+  const start = _clean(body.start_date) || old.start_date || _today();
+  const typedEnd = _clean(body.end_date);
+  const oldActive = old.status !== 'inactive';
+  const newActive = newStatus !== 'inactive';
+  let end;
+  if (oldActive && !newActive) {
+    // active → inactive: record the day work ended (typed value wins if given)
+    end = typedEnd || _today();
+  } else if (!oldActive && newActive) {
+    // inactive → active: employee is back, clear the end date
+    end = null;
+  } else {
+    // no status transition: honor whatever the admin typed (incl. future date)
+    end = typedEnd;
+  }
+  return { start_date: start, end_date: end };
+}
+
 // Validate shift dates: when a shift is set, start_date is required.
 // Returns { error: '...' } on failure or null when valid.
 function validateShiftDates(s1, s2) {
@@ -243,6 +282,11 @@ router.post('/', (req, res) => {
     return res.status(400).json({ error: 'name, department, section required' });
   const dateErr = validateShiftsArray(allShifts);
   if (dateErr) return res.status(400).json(dateErr);
+
+  // Employment dates — Customer Services only. start_date defaults to today
+  // (the creation date); end_date = last day of work (stamped today if the
+  // member is created inactive). Non-CS members keep both NULL.
+  const empDates = buildEmploymentDatesForCreate(department, status, req.body);
   try {
     const r = db.prepare(
       `INSERT INTO team_members (
@@ -251,15 +295,17 @@ router.post('/', (req, res) => {
          shift2, shift2_start, shift2_end, shift2_rests, shift2_voice_notes, shift2_employment_type, shift2_work_days, shift2_start_date, shift2_end_date,
          shifts_json,
          job_title, phone, user_id, status, notes,
-         teachable_starter, teachable_general, teachable_conversation
-       ) VALUES (?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, ?, ?, ?,  ?,  ?, ?, ?, ?, ?,  ?, ?, ?)`
+         teachable_starter, teachable_general, teachable_conversation,
+         start_date, end_date
+       ) VALUES (?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, ?, ?, ?,  ?,  ?, ?, ?, ?, ?,  ?, ?, ?,  ?, ?)`
     ).run(
       name, department, section, line,
       s1.shift, s1.start, s1.end, s1.rests, s1.voice_notes, s1.emp_type, s1.days, s1.start_date, s1.end_date,
       s2.shift, s2.start, s2.end, s2.rests, s2.voice_notes, s2.emp_type, s2.days, s2.start_date, s2.end_date,
       shiftsJson,
       job_title, phone, user_id, status, notes,
-      teachable.starter, teachable.general, teachable.conversation
+      teachable.starter, teachable.general, teachable.conversation,
+      empDates.start_date, empDates.end_date
     );
     const member = db.prepare('SELECT * FROM team_members WHERE id = ?').get(r.lastInsertRowid);
     return res.status(201).json(withShiftsArray(member));
@@ -284,6 +330,14 @@ router.put('/:id', (req, res) => {
   if (!name || !department || !section) return res.status(400).json({ error: 'name, department, section required' });
   const dateErr = validateShiftsArray(allShifts);
   if (dateErr) return res.status(400).json(dateErr);
+
+  // Snapshot old state for the employment end_date transition logic.
+  const old = db.prepare('SELECT status, start_date, end_date FROM team_members WHERE id = ?').get(id);
+  if (!old) return res.status(404).json({ error: 'Not found' });
+  const newStatus = status || 'active';
+  // Employment dates — Customer Services only; transition-aware so the editable
+  // field and the "end = deactivation date" rule don't fight each other.
+  const empDates = buildEmploymentDatesForUpdate(department, old, newStatus, req.body);
   try {
     db.prepare(
       `UPDATE team_members SET
@@ -292,15 +346,17 @@ router.put('/:id', (req, res) => {
          shift2=?, shift2_start=?, shift2_end=?, shift2_rests=?, shift2_voice_notes=?, shift2_employment_type=?, shift2_work_days=?, shift2_start_date=?, shift2_end_date=?,
          shifts_json=?,
          job_title=?, phone=?, user_id=?, status=?, notes=?,
-         teachable_starter=?, teachable_general=?, teachable_conversation=?
+         teachable_starter=?, teachable_general=?, teachable_conversation=?,
+         start_date=?, end_date=?
        WHERE id=?`
     ).run(
       name, department, section, line,
       s1.shift, s1.start, s1.end, s1.rests, s1.voice_notes, s1.emp_type, s1.days, s1.start_date, s1.end_date,
       s2.shift, s2.start, s2.end, s2.rests, s2.voice_notes, s2.emp_type, s2.days, s2.start_date, s2.end_date,
       shiftsJson,
-      job_title, phone, user_id, status || 'active', notes,
+      job_title, phone, user_id, newStatus, notes,
       teachable.starter, teachable.general, teachable.conversation,
+      empDates.start_date, empDates.end_date,
       id
     );
     const member = db.prepare('SELECT * FROM team_members WHERE id = ?').get(id);

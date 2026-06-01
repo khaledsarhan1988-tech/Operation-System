@@ -387,6 +387,71 @@ initDb().then(db => {
     console.error('team_members.coordinator_type migration error:', e.message);
   }
 
+  // ── team_members.start_date / end_date: employment lifecycle dates ────────
+  // Customer Services team view mirrors the users feature:
+  //   start_date → hire date (defaults to the creation date)
+  //   end_date   → last day of work. NULL = still on the job.
+  // Both nullable, no default → existing members stay "still employed" so the
+  // sweep below never deactivates anyone on first run.
+  try {
+    const info = db._raw.exec(`PRAGMA table_info(team_members)`);
+    const cols = info[0]?.values.map(r => r[1]) || [];
+    if (cols.length > 0 && !cols.includes('start_date')) {
+      db._raw.run(`ALTER TABLE team_members ADD COLUMN start_date TEXT`);
+      saveNow();
+      console.log('✅ Migration: added `start_date` column to team_members');
+    }
+    if (cols.length > 0 && !cols.includes('end_date')) {
+      db._raw.run(`ALTER TABLE team_members ADD COLUMN end_date TEXT`);
+      saveNow();
+      console.log('✅ Migration: added `end_date` column to team_members');
+    }
+  } catch (e) {
+    console.error('team_members.start_date/end_date migration error:', e.message);
+  }
+
+  // ── Backfill team_members.start_date = creation date when missing ─────────
+  // Idempotent — only fills NULL/empty rows so the admin doesn't have to enter
+  // a hire date for the whole existing roster.
+  try {
+    db._raw.run(`
+      UPDATE team_members
+      SET start_date = DATE(created_at)
+      WHERE (start_date IS NULL OR TRIM(start_date) = '')
+        AND created_at IS NOT NULL
+    `);
+    const nTmBackfill = db._raw.exec(`SELECT changes()`)[0]?.values[0][0] || 0;
+    if (nTmBackfill > 0) {
+      saveNow();
+      console.log(`✅ Migration: backfilled team_members.start_date for ${nTmBackfill} member(s)`);
+    }
+  } catch (e) {
+    console.error('team_members start_date backfill error:', e.message);
+  }
+
+  // ── Auto-deactivate team members whose employment end_date has passed ─────
+  // A member with a past end_date is no longer on the job → status='inactive'.
+  // NULL/empty end_date = still employed → never touched. Only members given a
+  // date via the Customer Services UI ever carry an end_date, so education
+  // members (whose end_date stays NULL) are unaffected.
+  try {
+    db._raw.run(`
+      UPDATE team_members
+      SET status = 'inactive'
+      WHERE end_date IS NOT NULL
+        AND TRIM(end_date) != ''
+        AND DATE(end_date) < DATE('now', '+2 hours')
+        AND status = 'active'
+    `);
+    const nTmDeact = db._raw.exec(`SELECT changes()`)[0]?.values[0][0] || 0;
+    if (nTmDeact > 0) {
+      saveNow();
+      console.log(`✅ Migration: set ${nTmDeact} team member(s) inactive (past employment end_date)`);
+    }
+  } catch (e) {
+    console.error('team_members end_date auto-deactivation error:', e.message);
+  }
+
   // ── team_member_extra_shifts: one-off extra-hour entries for trainers ────
   // who come back for a few hours AFTER their main shift end_date. Each row
   // is a single date's time block; counts toward trainer utilization on

@@ -86,6 +86,8 @@ const emptyForm = {
   shift2_start_date: '', shift2_end_date: '',
   shift2_employment_type: '', shift2_work_days: '',
   job_title: '', phone: '', status: 'active', notes: '',
+  // Employment dates (Customer Services only) — hire date + last day of work.
+  start_date: '', end_date: '',
   // Teachable courses — default = max level (all unlocked) so new trainers
   // can teach everything until explicitly limited.
   teachable_starter: 3, teachable_general: 5, teachable_conversation: 5,
@@ -120,6 +122,8 @@ function hydrateMember(member) {
     shift2_rests:       parseRests(member.shift2_rests),
     voice_notes:        parseRests(member.voice_notes),
     shift2_voice_notes: parseRests(member.shift2_voice_notes),
+    start_date:         (member.start_date || '').slice(0, 10),
+    end_date:           (member.end_date   || '').slice(0, 10),
   };
 }
 
@@ -825,13 +829,47 @@ export function MemberModal({ initial, onSave, onClose, loading }) {
             </div>
           </div>
 
+          {/* Employment dates — Customer Services only */}
+          {form.department === 'customer_services' && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={labelCls}>تاريخ التعيين</label>
+                <input type="date" className={inputCls} value={form.start_date}
+                  onChange={e => set('start_date', e.target.value)} />
+                <p className="text-[11px] text-gray-400 mt-1">إذا تُرك فارغاً يُسجَّل تاريخ الإضافة.</p>
+              </div>
+              <div>
+                <label className={labelCls}>تاريخ ترك العمل</label>
+                <input type="date" className={inputCls} value={form.end_date}
+                  onChange={e => set('end_date', e.target.value)} />
+                <p className="text-[11px] text-gray-400 mt-1">فارغ = ما زال على رأس عمله. بعده يصبح غير نشط تلقائياً.</p>
+              </div>
+            </div>
+          )}
+
           {/* Status */}
           <div>
             <label className={labelCls}>الحالة</label>
             <div className="flex gap-3">
               {[['active','نشط'],['inactive','غير نشط']].map(([k, v]) => (
                 <button key={k} type="button"
-                  onClick={() => set('status', k)}
+                  onClick={() => {
+                    // Customer Services: mirror the server's end_date rule —
+                    // deactivating stamps today (if empty), reactivating clears.
+                    if (form.department === 'customer_services') {
+                      if (k === 'inactive') {
+                        setForm(f => ({
+                          ...f,
+                          status: 'inactive',
+                          end_date: f.end_date || new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().slice(0, 10),
+                        }));
+                      } else {
+                        setForm(f => ({ ...f, status: 'active', end_date: '' }));
+                      }
+                    } else {
+                      set('status', k);
+                    }
+                  }}
                   className={`flex-1 py-2 rounded-xl text-sm font-semibold border transition-all ${
                     form.status === k
                       ? k === 'active' ? 'bg-green-500 text-white border-green-500' : 'bg-red-400 text-white border-red-400'
@@ -1041,6 +1079,14 @@ function MemberRow({ member: m, onEdit, onDelete }) {
             </span>
           )}
           {m.notes && <span className="text-xs text-gray-400 truncate max-w-[200px]">{m.notes}</span>}
+          {m.department === 'customer_services' && m.start_date && (
+            <span className="text-[11px] text-gray-400" dir="ltr">📅 {String(m.start_date).slice(0,10)}</span>
+          )}
+          {m.department === 'customer_services' && m.end_date && (
+            <span className="text-[11px] px-1.5 py-0.5 rounded bg-red-50 text-red-600 font-medium" dir="ltr">
+              ⏹ {String(m.end_date).slice(0,10)}
+            </span>
+          )}
         </div>
       </div>
 
