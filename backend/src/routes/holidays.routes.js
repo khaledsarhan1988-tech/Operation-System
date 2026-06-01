@@ -68,6 +68,35 @@ router.post('/', express.json(), requireSuperAdmin, (req, res) => {
   }
 });
 
+// PUT /api/holidays/:id — edit an existing holiday (super-admin only)
+router.put('/:id', express.json(), requireSuperAdmin, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'invalid id' });
+  const { name, start_date, end_date, notes } = req.body || {};
+  if (!name || !String(name).trim()) {
+    return res.status(400).json({ error: 'اسم الإجازة مطلوب' });
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(start_date || ''))) {
+    return res.status(400).json({ error: 'تاريخ بداية غير صالح' });
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(end_date || ''))) {
+    return res.status(400).json({ error: 'تاريخ نهاية غير صالح' });
+  }
+  if (end_date < start_date) {
+    return res.status(400).json({ error: 'تاريخ النهاية يجب أن يكون بعد تاريخ البداية' });
+  }
+  try {
+    const r = db.prepare(`
+      UPDATE official_holidays SET name = ?, start_date = ?, end_date = ?, notes = ? WHERE id = ?
+    `).run(String(name).trim(), start_date, end_date, notes || null, id);
+    if (r.changes === 0) return res.status(404).json({ error: 'not found' });
+    const row = db.prepare(`SELECT * FROM official_holidays WHERE id = ?`).get(id);
+    return res.json(row);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // DELETE /api/holidays/:id
 router.delete('/:id', requireSuperAdmin, (req, res) => {
   const id = parseInt(req.params.id, 10);

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  Sparkles, Plus, Trash2, Calendar, AlertCircle,
+  Sparkles, Plus, Trash2, Calendar, AlertCircle, Pencil,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -24,6 +24,7 @@ export default function HolidaysManagement() {
   const isSuperAdmin = user?.role === 'admin' && user?.management === 'All';
 
   const [showAdd, setShowAdd] = useState(false);
+  const [editing, setEditing] = useState(null);   // holiday being edited | null
 
   const { data: rows = [], isLoading } = useQuery({
     queryKey: ['holidays'],
@@ -100,6 +101,13 @@ export default function HolidaysManagement() {
                     <span className="text-[10px] text-gray-400">أضافها {h.created_by_name}</span>
                   )}
                   {isSuperAdmin && (
+                    <button onClick={() => setEditing(h)}
+                      className="opacity-0 group-hover:opacity-100 transition p-2 rounded-lg hover:bg-sky-50 text-sky-600"
+                      title="تعديل">
+                      <Pencil size={14} />
+                    </button>
+                  )}
+                  {isSuperAdmin && (
                     <button onClick={() => {
                       if (confirm(`حذف إجازة "${h.name}"؟ المحاضرات اللى اتـ rescheduled لسببها هتفضل مسجلة بس بدون ربط بالإجازة.`)) {
                         delMut.mutate(h.id);
@@ -127,27 +135,29 @@ export default function HolidaysManagement() {
         </div>
       )}
 
-      {showAdd && (
-        <AddHolidayModal
-          onClose={() => setShowAdd(false)}
-          onSaved={() => { qc.invalidateQueries({ queryKey: ['holidays'] }); setShowAdd(false); }}
+      {(showAdd || editing) && (
+        <HolidayModal
+          holiday={editing}
+          onClose={() => { setShowAdd(false); setEditing(null); }}
+          onSaved={() => { qc.invalidateQueries({ queryKey: ['holidays'] }); setShowAdd(false); setEditing(null); }}
         />
       )}
     </div>
   );
 }
 
-function AddHolidayModal({ onClose, onSaved }) {
-  const [name, setName]   = useState('');
-  const [start, setStart] = useState('');
-  const [end, setEnd]     = useState('');
-  const [notes, setNotes] = useState('');
+function HolidayModal({ holiday, onClose, onSaved }) {
+  const isEdit = !!holiday;
+  const [name, setName]   = useState(holiday?.name || '');
+  const [start, setStart] = useState(holiday?.start_date || '');
+  const [end, setEnd]     = useState(holiday?.end_date || '');
+  const [notes, setNotes] = useState(holiday?.notes || '');
   const [error, setError] = useState(null);
 
   const addMut = useMutation({
-    mutationFn: () => api.post('/holidays', {
-      name, start_date: start, end_date: end, notes,
-    }),
+    mutationFn: () => isEdit
+      ? api.put(`/holidays/${holiday.id}`, { name, start_date: start, end_date: end, notes })
+      : api.post('/holidays', { name, start_date: start, end_date: end, notes }),
     onSuccess: () => onSaved(),
     onError: (err) => setError(err.response?.data?.error || err.message),
   });
@@ -160,7 +170,7 @@ function AddHolidayModal({ onClose, onSaved }) {
            onClick={e => e.stopPropagation()}>
         <div className="px-5 py-4 bg-gradient-to-r from-sky-50 to-cyan-50 border-b">
           <h3 className="font-bold text-gray-900 text-base flex items-center gap-2">
-            <Sparkles size={18} className="text-sky-600" /> إضافة إجازة رسمية
+            <Sparkles size={18} className="text-sky-600" /> {isEdit ? 'تعديل إجازة رسمية' : 'إضافة إجازة رسمية'}
           </h3>
           <p className="text-xs text-gray-500 mt-1">
             كل المحاضرات اللى اتم ترحيلها من تواريخ داخل المدى دي هتتسجّل تلقائياً بسبب "إجازة رسمية"
