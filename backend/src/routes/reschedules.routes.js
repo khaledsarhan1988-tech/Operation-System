@@ -737,69 +737,69 @@ router.post('/backfill-from-drive', requireSuperAdmin, express.json(), async (re
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  // Detect reschedules between two parsed-rows arrays for ONE specific
-  // target date. We only compare slots whose date == targetDate (the day
-  // we're "looking at" in both snapshots). Returns array of pairs.
-  function diffForTargetDate(beforeRows, afterRows, targetDate) {
-    const beforeForDate = beforeRows.filter(r => r.date === targetDate);
-    const afterForDate  = afterRows;   // anything that could be the new date
-
+  // Full-schedule diff between two snapshots. Unlike the old per-day approach,
+  // this compares the COMPLETE schedule of every group (all dates), so a
+  // postponement of FUTURE lectures (what a holiday shift looks like) is seen.
+  // Any lecture that moved to a LATER date is a postponement. Returns {old,new}.
+  function diffFullSchedule(beforeRows, afterRows) {
     const beforeBySlot = new Map();
-    beforeForDate.forEach(r => beforeBySlot.set(slotKey(r), r));
-    const afterBySlot = new Set(afterRows.map(slotKey));
+    beforeRows.forEach(r => beforeBySlot.set(slotKey(r), r));
+    const afterSlots = new Set(afterRows.map(slotKey));
 
-    // Cancellations: slots that were on targetDate before but NOT in after.
+    // Cancellations: a slot present in `before` but gone in `after`.
     const cancelled = [];
     for (const [k, row] of beforeBySlot) {
-      if (!afterBySlot.has(k)) cancelled.push(row);
+      if (!afterSlots.has(k)) cancelled.push(row);
     }
     if (cancelled.length === 0) return [];
 
-    // Additions: any row in after whose stable key matches one of the
-    // cancelled rows AND whose date/time differs from before.
-    const beforeStableKeys = new Set(beforeForDate.map(stableKey));
-    const additions = afterRows.filter(r =>
-      beforeStableKeys.has(stableKey(r)) && !beforeBySlot.has(slotKey(r))
-    );
-
-    // Pair: greedy match by stable key, pick closest date.
+    // Additions: a slot in `after` (absent from before) whose group/trainer/
+    // session (stableKey) matches a cancelled one — i.e. the same lecture moved.
     const additionsByKey = new Map();
-    for (const r of additions) {
+    for (const r of afterRows) {
+      if (beforeBySlot.has(slotKey(r))) continue;
       const k = stableKey(r);
       if (!additionsByKey.has(k)) additionsByKey.set(k, []);
       additionsByKey.get(k).push(r);
     }
+
+    // Pair: greedy match by stable key, pick the closest later date.
     const pairs = [];
+    cancelled.sort((a, b) => String(a.date).localeCompare(String(b.date)));
     for (const oldRow of cancelled) {
       const candidates = additionsByKey.get(stableKey(oldRow)) || [];
-      if (candidates.length === 0) continue;
-      candidates.sort((a, b) => {
-        const da = Math.abs(new Date(a.date) - new Date(oldRow.date));
-        const db_ = Math.abs(new Date(b.date) - new Date(oldRow.date));
-        return da - db_;
-      });
-      const newRow = candidates.shift();
+      if (candidates.length === 0) continue;   // pure cancellation, not a move
+      candidates.sort((a, b) =>
+        Math.abs(new Date(a.date) - new Date(oldRow.date)) -
+        Math.abs(new Date(b.date) - new Date(oldRow.date))
+      );
+      const newRow = candidates.shift();        // consume — match once
       // Skip false-positive pairs: same date + tiny time drift = Excel jitter
       if (isMinorTimeDrift(oldRow, newRow)) continue;
-      // Skip "backward" pairs (new is BEFORE old) — these are compensation
-      // lectures or the student taking the lecture earlier than planned, not
-      // a disruptive reschedule.
+      // Skip "backward" pairs (new is BEFORE old) — compensation / early-take,
+      // not a postponement.
       if (newRow.date < oldRow.date) continue;
       pairs.push({ old: oldRow, new: newRow });
     }
     return pairs;
   }
 
-  // ── Main loop ────────────────────────────────────────────────────────────
+  // ── Main loop — boundary snapshot comparison ─────────────────────────────
+  // Per business rule, compare the FIRST file that has data in the range with
+  // the LAST file that has data (the empty "holiday" days in between are
+  // skipped automatically), then diff the full schedule. This recovers
+  // postponements that straddle a holiday gap — impossible to see day-by-day —
+  // and reads only the two boundary files, so it's fast and never times out.
   const dates = eachDate(from, to);
   const summary = {
     days_scanned: dates.length,
     days_with_data: 0,
-    days_with_pairs: 0,
     inserted: 0,
     skipped_existing: 0,
+    skipped_holiday: 0,        // postponements ignored because original date ∈ holiday
     by_line: {},
     by_session_type: { main: 0, side: 0 },
+    compared: [],              // which boundary files were diffed
   };
   const log = [];
 
@@ -808,72 +808,68 @@ router.post('/backfill-from-drive', requireSuperAdmin, express.json(), async (re
 
     for (const sessionType of ['lectures', 'side_sessions']) {
       const sessionLabel = sessionType === 'lectures' ? 'main' : 'side';
+      const cache = new Map();   // dateStr → rows|null, shared by both probes
+      const fetchDay = async (d) => {
+        if (!cache.has(d)) cache.set(d, await fetchAndParse(line, d, sessionType));
+        return cache.get(d);
+      };
 
-      // Parse the day-by-day snapshot. We cache so we don't re-fetch the
-      // same file twice (D's file used both as "after" for D-1 and "before"
-      // for D).
-      const snapshots = new Map();   // dateStr → parsed rows | null
+      // First file WITH data scanning forward from `from` …
+      let before = null;
       for (const d of dates) {
-        if (!snapshots.has(d)) {
-          snapshots.set(d, await fetchAndParse(line, d, sessionType));
-        }
+        const rows = await fetchDay(d);
+        if (rows && rows.length > 0) { before = { date: d, rows }; break; }
+      }
+      // … and last file WITH data scanning backward from `to`.
+      let after = null;
+      for (let i = dates.length - 1; i >= 0; i--) {
+        const rows = await fetchDay(dates[i]);
+        if (rows && rows.length > 0) { after = { date: dates[i], rows }; break; }
       }
 
-      // Pair-wise diff
-      for (let i = 0; i < dates.length - 1; i++) {
-        const d1 = dates[i];
-        const d2 = dates[i + 1];
-        const before = snapshots.get(d1);
-        const after  = snapshots.get(d2);
-        if (!before || !after) continue;
+      const distinct = new Set();
+      if (before) distinct.add(before.date);
+      if (after)  distinct.add(after.date);
+      summary.by_line[line].days_with_data += distinct.size;
+      if (sessionType === 'lectures') summary.days_with_data += distinct.size;
 
-        // For each "target date" present in `before`, see if it changed
-        // in `after`. The most meaningful target is d1 itself (lectures
-        // dated for d1, as of d1 — vs as of d2). Limit to that for now to
-        // avoid double-counting.
-        const pairs = diffForTargetDate(before, after, d1);
+      // Need two DISTINCT files with data to compare.
+      if (!before || !after || before.date === after.date) continue;
+      summary.compared.push({ line, session_type: sessionLabel, before: before.date, after: after.date });
 
-        for (const { old: o, new: n } of pairs) {
-          // Dedup against any existing row
-          if (checkDup.get(
-            o.group_name, line, sessionLabel,
-            o.date, o.time || null,
-            n.date, n.time || null,
-          )) {
-            summary.skipped_existing++;
-            continue;
-          }
-          const hol = holidayFor(o.date);
-          insertResched.run(
-            o.group_name, line, sessionLabel,
-            o.date, o.time, o.trainer, o.duration,
-            n.date, n.time, n.trainer, n.duration,
-            hol ? 'official_holiday' : null,
-            hol ? hol.id : null,
-            hol ? 'auto' : 'pending',
-            `Backfilled from Drive (${d1} → ${d2} snapshot diff)`,
-          );
-          summary.inserted++;
-          summary.by_line[line].inserted++;
-          summary.by_session_type[sessionLabel]++;
-          log.push({
-            line, session_type: sessionLabel,
-            from_file_date: d1, to_file_date: d2,
-            group: o.group_name,
-            old: `${o.date} ${o.time || ''}`,
-            new: `${n.date} ${n.time || ''}`,
-            trainer: o.trainer,
-            holiday: hol ? hol.name : null,
-          });
-        }
-      }
+      const pairs = diffFullSchedule(before.rows, after.rows);
+      for (const { old: o, new: n } of pairs) {
+        // ── HOLIDAY RULE ──────────────────────────────────────────────────
+        // If the lecture's ORIGINAL date falls inside a registered official
+        // holiday, the postponement is expected → IGNORE it entirely (do not
+        // insert). Otherwise it's an unexpected reschedule → record as pending.
+        if (holidayFor(o.date)) { summary.skipped_holiday++; continue; }
 
-      // Track days that actually had files
-      for (const [d, rows] of snapshots) {
-        if (rows && rows.length > 0) {
-          summary.by_line[line].days_with_data++;
-          if (sessionType === 'lectures') summary.days_with_data++;
-        }
+        if (checkDup.get(
+          o.group_name, line, sessionLabel,
+          o.date, o.time || null,
+          n.date, n.time || null,
+        )) { summary.skipped_existing++; continue; }
+
+        insertResched.run(
+          o.group_name, line, sessionLabel,
+          o.date, o.time, o.trainer, o.duration,
+          n.date, n.time, n.trainer, n.duration,
+          null, null, 'pending',
+          `Backfilled from Drive (${before.date} → ${after.date} full-schedule diff)`,
+        );
+        summary.inserted++;
+        summary.by_line[line].inserted++;
+        summary.by_session_type[sessionLabel]++;
+        log.push({
+          line, session_type: sessionLabel,
+          from_file_date: before.date, to_file_date: after.date,
+          group: o.group_name,
+          old: `${o.date} ${o.time || ''}`,
+          new: `${n.date} ${n.time || ''}`,
+          trainer: o.trainer,
+          holiday: null,
+        });
       }
     }
   }

@@ -276,7 +276,6 @@ function DiagnosticModal({ initialFrom, initialTo, onClose, onBackfilled }) {
   const [from, setFrom] = useState(initialFrom || '');
   const [to, setTo]     = useState(initialTo   || '');
   const [result, setResult] = useState(null);
-  const [driveProgress, setDriveProgress] = useState(null); // {done,total,label}
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['reschedules-diagnostic', from, to],
@@ -290,64 +289,14 @@ function DiagnosticModal({ initialFrom, initialTo, onClose, onBackfilled }) {
     onSuccess: (res) => { setResult(res); onBackfilled(); refetch(); },
   });
 
-  // TRUE Drive-based backfill: walks the historical Excel files day-by-day and
-  // diffs them. A single request over a wide range times out / drops the
-  // connection ("Network Error") because it downloads every file and holds all
-  // days in memory at once. So we split the range into 5-CONSECUTIVE-DAY
-  // windows that OVERLAP by 1 day (so the diff at each window boundary, day D
-  // vs D+1, is never skipped) and scan them one after another, accumulating the
-  // results. Each window is small → fast, low-memory, never drops the socket.
+  // TRUE Drive-based backfill: compares the first file that has data in the
+  // range with the last (the empty holiday days between are skipped) and diffs
+  // the full schedule. It reads only the two boundary files, so the whole range
+  // goes in ONE fast request — no chunking, no timeout, no Network Error.
   const driveBackfillMut = useMutation({
-    mutationFn: async () => {
-      const nowMs   = Date.now() + 2 * 60 * 60 * 1000;
-      const today   = new Date(nowMs).toISOString().slice(0, 10);
-      const startStr = from || new Date(nowMs - 30 * 86400000).toISOString().slice(0, 10);
-      const endStr   = to   || today;
-
-      const WINDOW_DAYS = 5;                 // compare 5 consecutive days per window
-      const toDate = s => new Date(s + 'T12:00:00Z');
-      const fmt    = d => d.toISOString().slice(0, 10);
-      const endD   = toDate(endStr);
-
-      const windows = [];
-      let cur = toDate(startStr);
-      while (cur <= endD) {
-        const wEnd = new Date(cur);
-        wEnd.setUTCDate(wEnd.getUTCDate() + (WINDOW_DAYS - 1)); // 5 days inclusive
-        const clamped = wEnd > endD ? endD : wEnd;
-        windows.push([fmt(cur), fmt(clamped)]);
-        if (clamped >= endD) break;
-        cur = new Date(clamped);             // next window starts on this one's LAST day (1-day overlap)
-      }
-
-      const agg = {
-        fromDrive: true,
-        summary: { days_scanned: 0, days_with_data: 0, inserted: 0, skipped_existing: 0 },
-        sample_log: [],
-        windows_total: windows.length,
-        windows_failed: 0,
-      };
-      for (let i = 0; i < windows.length; i++) {
-        const [wf, wt] = windows[i];
-        setDriveProgress({ done: i, total: windows.length, label: `${wf} → ${wt}` });
-        try {
-          const r = await api
-            .post('/reschedules/backfill-from-drive', { from: wf, to: wt }, { timeout: 120000 })
-            .then(x => x.data);
-          agg.summary.days_with_data   += r.summary?.days_with_data   || 0;
-          agg.summary.inserted         += r.summary?.inserted         || 0;
-          agg.summary.skipped_existing += r.summary?.skipped_existing || 0;
-          if (r.sample_log?.length) agg.sample_log.push(...r.sample_log);
-        } catch (e) {
-          agg.windows_failed += 1;
-        }
-      }
-      agg.sample_log = agg.sample_log.slice(0, 50);
-      // Real scanned-days count (windows overlap, so derive it from the range).
-      agg.summary.days_scanned = Math.round((endD - toDate(startStr)) / 86400000) + 1;
-      setDriveProgress({ done: windows.length, total: windows.length, label: 'تم' });
-      return agg;
-    },
+    mutationFn: () => api
+      .post('/reschedules/backfill-from-drive', { from, to }, { timeout: 180000 })
+      .then(r => ({ ...r.data, fromDrive: true })),
     onSuccess: (res) => { setResult(res); onBackfilled(); refetch(); },
   });
 
@@ -480,21 +429,17 @@ function DiagnosticModal({ initialFrom, initialTo, onClose, onBackfilled }) {
                           🎯 الفحص الحقيقي من ملفات Drive (موصى به)
                         </p>
                         <p className="text-xs text-indigo-700 mb-3 leading-relaxed">
-                          السيستم هيقرا كل ملف Excel من تاريخ لتاريخ، ويقارن محاضرات يوم 16
-                          في ملف 16 مع محاضرات يوم 16 في ملف 17، وكذا. كل اختلاف = reschedule
-                          <b> حقيقي</b> بتاريخ أصلي وتاريخ جديد فعلي.
+                          السيستم بيقارن <b>أول ملف فيه بيانات</b> في الفترة بـ <b>آخر ملف فيه بيانات</b>
+                          (بيتخطّى أيام الإجازة الفاضية اللى بينهم)، ويقارن جدول كل مجموعة بالكامل. أي
+                          محاضرة اتأجّلت لتاريخ بعدين = reschedule <b>حقيقي</b>.
                           <br />
-                          <span className="text-amber-700 font-semibold">⏱ بياخد دقيقة أو اتنين لأنه بيـ download كل الملفات.</span>
+                          <span className="text-emerald-700 font-semibold">✓ المحاضرات اللى تاريخها الأصلي جوه إجازة رسمية بتتجاهل تلقائياً.</span>
                         </p>
-                        <button onClick={() => { setDriveProgress(null); driveBackfillMut.mutate(); }}
+                        <button onClick={() => driveBackfillMut.mutate()}
                           disabled={driveBackfillMut.isPending}
                           className="px-4 py-2 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 text-white text-sm font-bold inline-flex items-center gap-2 disabled:opacity-50">
                           <Sparkles size={14} />
-                          {driveBackfillMut.isPending
-                            ? (driveProgress
-                                ? `جاري الفحص... (${driveProgress.done}/${driveProgress.total}) ${driveProgress.label}`
-                                : 'جاري قراءة الملفات من Drive...')
-                            : '🔍 ابدأ الفحص الحقيقي من Drive'}
+                          {driveBackfillMut.isPending ? 'جاري قراءة الملفات من Drive...' : '🔍 ابدأ الفحص الحقيقي من Drive'}
                         </button>
                       </div>
                     </div>
@@ -535,9 +480,7 @@ function DiagnosticModal({ initialFrom, initialTo, onClose, onBackfilled }) {
                     </p>
                     {isTimeout ? (
                       <p className="text-rose-700 leading-relaxed">
-                        الطلب أخد وقت أطول من المسموح (60 ثانية) فاتلغى تلقائياً. الفترة كبيرة على
-                        الفحص المباشر اللى بيـ download كل الملفات بالتسلسل — جرّب فترة أصغر
-                        (يومين/تلاتة) أو اطلب رفع مهلة الفحص.
+                        الطلب أخد وقت أطول من المسموح فاتلغى. جرّب فترة أصغر أو حاول تاني.
                       </p>
                     ) : (
                       <p className="text-rose-700 leading-relaxed">
@@ -571,10 +514,19 @@ function DiagnosticModal({ initialFrom, initialTo, onClose, onBackfilled }) {
                       <p className="text-lg font-black text-gray-800">{result.summary?.skipped_existing || 0}</p>
                     </div>
                   </div>
-                  {result.windows_failed > 0 && (
-                    <p className="text-xs text-rose-700 mt-2">
-                      ⚠ {result.windows_failed} من {result.windows_total} شرائح فشلت أثناء الفحص — اضغط الزرار تاني لإعادة محاولتها.
+                  {result.summary?.skipped_holiday > 0 && (
+                    <p className="text-xs text-sky-700 bg-sky-50 border border-sky-200 rounded px-2 py-1 mt-2">
+                      🗓 اتجاهل {result.summary.skipped_holiday} محاضرة تاريخها الأصلي جوه إجازة رسمية (تأجيل متوقّع).
                     </p>
+                  )}
+                  {result.summary?.compared?.length > 0 && (
+                    <div className="text-[11px] text-gray-500 mt-2">
+                      اتقارن: {result.summary.compared.map((c, i) => (
+                        <span key={i} className="inline-block mx-1">
+                          {c.line}/{c.session_type === 'main' ? 'محاضرات' : 'زوم'} ({c.before} → {c.after})
+                        </span>
+                      ))}
+                    </div>
                   )}
                   {result.sample_log?.length > 0 && (
                     <details className="mt-3 text-xs">
