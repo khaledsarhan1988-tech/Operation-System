@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Plus, Eye, EyeOff, Pencil, Trash2, ToggleLeft, ToggleRight, UserCog, Paperclip, History } from 'lucide-react';
@@ -317,6 +317,37 @@ export default function UserManagement() {
     queryFn: () => api.get('/admin/users').then(r => r.data),
   });
 
+  // ── Filters (client-side) ──────────────────────────────────────────────
+  const [fName, setFName]           = useState('');
+  const [fStatus, setFStatus]       = useState('all');   // all | active | inactive
+  const [fHireFrom, setFHireFrom]   = useState('');
+  const [fHireTo, setFHireTo]       = useState('');
+  const [fLeaveFrom, setFLeaveFrom] = useState('');
+  const [fLeaveTo, setFLeaveTo]     = useState('');
+  const resetFilters = () => {
+    setFName(''); setFStatus('all');
+    setFHireFrom(''); setFHireTo(''); setFLeaveFrom(''); setFLeaveTo('');
+  };
+
+  const filteredUsers = useMemo(() => {
+    let list = users || [];
+    const q = fName.trim().toLowerCase();
+    if (q) list = list.filter(u =>
+      (u.full_name || '').toLowerCase().includes(q) || (u.username || '').toLowerCase().includes(q));
+    if (fStatus === 'active')   list = list.filter(u => u.is_active);
+    if (fStatus === 'inactive') list = list.filter(u => !u.is_active);
+    const inRange = (val, from, to) => {
+      if (!val) return false;                 // no date → excluded once a range is set
+      const d = String(val).slice(0, 10);
+      if (from && d < from) return false;
+      if (to && d > to) return false;
+      return true;
+    };
+    if (fHireFrom || fHireTo)   list = list.filter(u => inRange(u.start_date, fHireFrom, fHireTo));
+    if (fLeaveFrom || fLeaveTo) list = list.filter(u => inRange(u.end_date, fLeaveFrom, fLeaveTo));
+    return list;
+  }, [users, fName, fStatus, fHireFrom, fHireTo, fLeaveFrom, fLeaveTo]);
+
   const handleDelete = async (row) => {
     if (!window.confirm(`هل أنت متأكد من حذف المستخدم "${row.full_name}" نهائياً؟`)) return;
     setDeletingId(row.id);
@@ -441,13 +472,65 @@ export default function UserManagement() {
         }
       />
 
-      <SectionCard title="قائمة المستخدمين" subtitle={`${users?.length || 0} مستخدم`} icon={UserCog} accent="indigo" noBodyPad>
+      {/* ── Filters ── */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-wrap items-end gap-3">
+        <div className="flex flex-col">
+          <label className="text-xs text-slate-500 mb-1">بحث بالاسم</label>
+          <input
+            value={fName}
+            onChange={e => setFName(e.target.value)}
+            placeholder="اسم المستخدم أو الاسم الكامل..."
+            className="w-56 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+        </div>
+        <div className="flex flex-col">
+          <label className="text-xs text-slate-500 mb-1">الحالة</label>
+          <select
+            value={fStatus}
+            onChange={e => setFStatus(e.target.value)}
+            className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30"
+          >
+            <option value="all">الكل</option>
+            <option value="active">نشط</option>
+            <option value="inactive">غير نشط</option>
+          </select>
+        </div>
+        <div className="flex flex-col">
+          <label className="text-xs text-slate-500 mb-1">تاريخ التعيين (من)</label>
+          <input type="date" value={fHireFrom} onChange={e => setFHireFrom(e.target.value)}
+            className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30" />
+        </div>
+        <div className="flex flex-col">
+          <label className="text-xs text-slate-500 mb-1">تاريخ التعيين (إلى)</label>
+          <input type="date" value={fHireTo} onChange={e => setFHireTo(e.target.value)}
+            className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30" />
+        </div>
+        <div className="flex flex-col">
+          <label className="text-xs text-slate-500 mb-1">تاريخ ترك العمل (من)</label>
+          <input type="date" value={fLeaveFrom} onChange={e => setFLeaveFrom(e.target.value)}
+            className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30" />
+        </div>
+        <div className="flex flex-col">
+          <label className="text-xs text-slate-500 mb-1">تاريخ ترك العمل (إلى)</label>
+          <input type="date" value={fLeaveTo} onChange={e => setFLeaveTo(e.target.value)}
+            className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30" />
+        </div>
+        <button onClick={resetFilters}
+          className="px-3 py-2 text-sm rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">
+          إعادة تعيين
+        </button>
+        <span className="text-xs text-slate-500 mr-auto self-center">
+          {filteredUsers.length} من {users?.length || 0} مستخدم
+        </span>
+      </div>
+
+      <SectionCard title="قائمة المستخدمين" subtitle={`${filteredUsers.length} مستخدم`} icon={UserCog} accent="indigo" noBodyPad>
         <DataTable
           columns={columns}
-          data={users}
-          total={users?.length || 0}
+          data={filteredUsers}
+          total={filteredUsers.length}
           page={1}
-          limit={100}
+          limit={1000}
           onPageChange={() => {}}
           loading={isLoading}
         />
