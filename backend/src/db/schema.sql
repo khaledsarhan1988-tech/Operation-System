@@ -26,6 +26,13 @@ CREATE TABLE IF NOT EXISTS users (
   line          TEXT NOT NULL DEFAULT 'Ahmed Hassan',
   language      TEXT NOT NULL DEFAULT 'ar' CHECK(language IN ('ar','en')),
   avatar_url    TEXT,
+  -- Employment lifecycle dates (YYYY-MM-DD). NULL = unknown / not set.
+  --   start_date → hire date (تاريخ التعيين)
+  --   end_date   → termination date (تاريخ ترك العمل). NULL = still employed.
+  -- When end_date passes, the account is auto-deactivated (is_active=0) at
+  -- startup and at login. An empty end_date means the user is still on the job.
+  start_date    TEXT,
+  end_date      TEXT,
   is_active     INTEGER NOT NULL DEFAULT 1,
   created_at    TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
   updated_at    TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))

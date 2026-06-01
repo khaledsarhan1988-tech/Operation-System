@@ -51,6 +51,26 @@ router.post('/login', loginLimiter, (req, res) => {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
+  // ── Employment end_date guard ───────────────────────────────────────────
+  // The user passed the is_active=1 filter, but if their employment end_date
+  // has passed they're no longer on the job. Flip is_active=0 (so the table
+  // reflects reality) and reject the login. NULL/empty end_date = still
+  // employed → never blocked. This backstops the startup sweep for servers
+  // that stay up for days without a restart.
+  if (user.end_date && String(user.end_date).trim()) {
+    const today = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    if (String(user.end_date).trim().slice(0, 10) < today) {
+      try {
+        db.prepare(
+          "UPDATE users SET is_active = 0, updated_at = datetime('now', '+2 hours') WHERE id = ?"
+        ).run(user.id);
+      } catch (e) {
+        console.error('[auth/login] end_date deactivation failed:', e.message);
+      }
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+  }
+
   const payload = {
     id: user.id,
     username: user.username,

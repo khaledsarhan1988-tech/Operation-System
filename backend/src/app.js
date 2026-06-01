@@ -132,8 +132,46 @@ initDb().then(db => {
       saveNow();
       console.log('✅ Migration: added `extra_managements` column to users');
     }
+    // start_date / end_date: employment lifecycle dates (YYYY-MM-DD).
+    //   start_date → hire date (تاريخ التعيين)
+    //   end_date   → termination date (تاريخ ترك العمل). NULL = still employed.
+    // Both nullable, no default → every existing user stays "still employed"
+    // (NULL end_date) so NOBODY is auto-deactivated by this migration.
+    if (!cols.includes('start_date')) {
+      db._raw.run(`ALTER TABLE users ADD COLUMN start_date TEXT`);
+      saveNow();
+      console.log('✅ Migration: added `start_date` column to users');
+    }
+    if (!cols.includes('end_date')) {
+      db._raw.run(`ALTER TABLE users ADD COLUMN end_date TEXT`);
+      saveNow();
+      console.log('✅ Migration: added `end_date` column to users');
+    }
   } catch (e) {
     console.error('users.line migration error:', e.message);
+  }
+
+  // ── Auto-deactivate users whose employment end_date has passed ────────────
+  // A user with a non-NULL end_date earlier than today is no longer employed,
+  // so their account must not allow login. We flip is_active=0 here at startup
+  // (login also re-checks, in case the server runs for days without restart).
+  // NULL/empty end_date = still on the job → never touched.
+  try {
+    db._raw.run(`
+      UPDATE users
+      SET is_active = 0, updated_at = datetime('now', '+2 hours')
+      WHERE end_date IS NOT NULL
+        AND TRIM(end_date) != ''
+        AND DATE(end_date) < DATE('now', '+2 hours')
+        AND is_active = 1
+    `);
+    const nDeact = db._raw.exec(`SELECT changes()`)[0]?.values[0][0] || 0;
+    if (nDeact > 0) {
+      saveNow();
+      console.log(`✅ Migration: auto-deactivated ${nDeact} user(s) past their employment end_date`);
+    }
+  } catch (e) {
+    console.error('users end_date auto-deactivation error:', e.message);
   }
 
   // 4. MULTI-LINE: Add `line` column to all data tables

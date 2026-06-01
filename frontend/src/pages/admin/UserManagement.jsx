@@ -18,6 +18,7 @@ const EMPTY_FORM = {
   role: 'agent', department: 'All', extra_departments: [],
   management: 'Customer Services', extra_managements: [],
   line: 'Ahmed Hassan', language: 'ar', is_active: 1,
+  start_date: '', end_date: '',
 };
 
 // Sections a LEADER can manage. Matches users.department values used by the
@@ -51,6 +52,8 @@ function UserModal({ open, onClose, user, onSaved }) {
       .split(',').map(s => s.trim()).filter(Boolean),
     line: user.line || 'Ahmed Hassan', language: user.language,
     is_active: user.is_active,
+    start_date: (user.start_date || '').slice(0, 10),
+    end_date: (user.end_date || '').slice(0, 10),
   } : { ...EMPTY_FORM });
   const [showPw, setShowPw] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -228,6 +231,22 @@ function UserModal({ open, onClose, user, onSaved }) {
               <option value="en">English</option>
             </select>
           </div>
+          {/* Employment dates — start = hire date, end = termination date.
+              An empty end date means the user is still on the job. When the
+              end date passes the account is auto-deactivated (cannot log in). */}
+          <div>
+            <label className="label">تاريخ التعيين</label>
+            <input type="date" className="input" value={form.start_date}
+              onChange={e => set('start_date', e.target.value)} />
+          </div>
+          <div>
+            <label className="label">تاريخ ترك العمل</label>
+            <input type="date" className="input" value={form.end_date}
+              onChange={e => set('end_date', e.target.value)} />
+            <p className="text-xs text-gray-500 mt-1">
+              اتركه فارغاً إذا كان الموظف ما زال على رأس عمله. بعد هذا التاريخ يتوقف الحساب تلقائياً.
+            </p>
+          </div>
         </div>
         {user && (
           <div className="flex items-center gap-3 p-3 rounded-lg bg-surface border border-border">
@@ -338,6 +357,11 @@ export default function UserManagement() {
           {togglingId === row.id ? '...' : v ? 'نشط' : 'غير نشط'}
         </button>
       )
+    },
+    { key: 'start_date', label: 'تاريخ التعيين', render: v => v ? v.slice(0,10) : '—' },
+    { key: 'end_date', label: 'تاريخ ترك العمل', render: v => v
+        ? <span className="badge bg-danger/10 text-danger">{v.slice(0,10)}</span>
+        : <span className="text-gray-400">على رأس العمل</span>
     },
     { key: 'created_at', label: 'تاريخ الإنشاء', render: v => v?.slice(0,10) },
     {

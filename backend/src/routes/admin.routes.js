@@ -40,7 +40,7 @@ function effectiveLine(req) {
 // GET /api/admin/users
 router.get('/users', (req, res) => {
   const requesterLine = req.user.line || 'All';
-  let sql = 'SELECT id, username, full_name, role, department, extra_departments, management, extra_managements, line, language, avatar_url, is_active, created_at FROM users';
+  let sql = 'SELECT id, username, full_name, role, department, extra_departments, management, extra_managements, line, language, avatar_url, is_active, start_date, end_date, created_at FROM users';
   const params = [];
   if (requesterLine !== 'All') {
     sql += ' WHERE line = ?';
@@ -57,7 +57,11 @@ router.post('/users', (req, res) => {
     username, password, full_name, role, department,
     extra_departments, extra_managements,
     language = 'ar', management = 'Customer Services', line = 'Ahmed Hassan',
+    start_date, end_date,
   } = req.body;
+  // Employment dates: empty string → NULL (NULL end_date = still employed).
+  const startDateVal = start_date && String(start_date).trim() ? String(start_date).trim() : null;
+  const endDateVal   = end_date   && String(end_date).trim()   ? String(end_date).trim()   : null;
   if (!username || !password || !full_name || !role) {
     return res.status(400).json({ error: 'username, password, full_name, role are required' });
   }
@@ -96,11 +100,11 @@ router.post('/users', (req, res) => {
 
   const hash = bcrypt.hashSync(password, 12);
   const result = db.prepare(`
-    INSERT INTO users (username, password_hash, full_name, role, department, extra_departments, language, management, extra_managements, line)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(username, hash, full_name, role, department || 'General', extrasField, language, management, extraMgmtsField, line);
+    INSERT INTO users (username, password_hash, full_name, role, department, extra_departments, language, management, extra_managements, line, start_date, end_date)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(username, hash, full_name, role, department || 'General', extrasField, language, management, extraMgmtsField, line, startDateVal, endDateVal);
 
-  const user = db.prepare('SELECT id, username, full_name, role, department, extra_departments, management, extra_managements, line, language, is_active FROM users WHERE id = ?')
+  const user = db.prepare('SELECT id, username, full_name, role, department, extra_departments, management, extra_managements, line, language, is_active, start_date, end_date FROM users WHERE id = ?')
     .get(result.lastInsertRowid);
   return res.status(201).json(user);
 });
@@ -108,7 +112,7 @@ router.post('/users', (req, res) => {
 // PUT /api/admin/users/:id
 router.put('/users/:id', (req, res) => {
   const { id } = req.params;
-  const { full_name, role, department, extra_departments, extra_managements, language, password, is_active, management, line } = req.body;
+  const { full_name, role, department, extra_departments, extra_managements, language, password, is_active, management, line, start_date, end_date } = req.body;
 
   // Snapshot current state — needed for dept-change detection
   const user = db.prepare(
@@ -169,10 +173,37 @@ router.put('/users/:id', (req, res) => {
   if (management !== undefined) { fields.push('management = ?'); params.push(management); }
   if (extra_managements !== undefined) { fields.push('extra_managements = ?'); params.push(normalizedExtraMgmts); }
   if (line       !== undefined) { fields.push('line = ?');       params.push(line); }
+  // Employment dates: empty string → NULL (NULL end_date = still employed).
+  if (start_date !== undefined) {
+    fields.push('start_date = ?');
+    params.push(start_date && String(start_date).trim() ? String(start_date).trim() : null);
+  }
+  if (end_date !== undefined) {
+    fields.push('end_date = ?');
+    params.push(end_date && String(end_date).trim() ? String(end_date).trim() : null);
+  }
 
   if (fields.length) {
     fields.push("updated_at = datetime('now', 'localtime')");
     db.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).run(...params, id);
+  }
+
+  // ── Enforce end_date on save: a past end_date must deactivate the account ──
+  // Runs after the UPDATE so it wins even if is_active=1 was sent in the same
+  // request (you can't be "active" past your employment end). NULL/empty
+  // end_date = still employed → never forces deactivation here.
+  try {
+    db.prepare(`
+      UPDATE users
+      SET is_active = 0, updated_at = datetime('now', 'localtime')
+      WHERE id = ?
+        AND end_date IS NOT NULL
+        AND TRIM(end_date) != ''
+        AND DATE(end_date) < DATE('now', '+2 hours')
+        AND is_active = 1
+    `).run(id);
+  } catch (e) {
+    console.error('user end_date enforce-on-save error:', e.message);
   }
 
   // ── Track department changes in user_department_history ─────────────────
@@ -197,7 +228,7 @@ router.put('/users/:id', (req, res) => {
     }
   }
 
-  const updated = db.prepare('SELECT id, username, full_name, role, department, management, line, language, avatar_url, is_active FROM users WHERE id = ?').get(id);
+  const updated = db.prepare('SELECT id, username, full_name, role, department, management, line, language, avatar_url, is_active, start_date, end_date FROM users WHERE id = ?').get(id);
   return res.json(updated);
 });
 
