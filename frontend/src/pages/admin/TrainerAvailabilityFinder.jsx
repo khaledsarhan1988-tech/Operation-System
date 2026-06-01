@@ -9,6 +9,7 @@ import {
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import EmptyState from '../../components/ui/EmptyState';
+import HolidayBanner from '../../components/ui/HolidayBanner';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const SECTIONS = {
@@ -247,6 +248,8 @@ export default function TrainerAvailabilityFinder() {
         icon={Search}
         gradient="navy"
       />
+
+      <HolidayBanner dates={data?.excluded_holidays?.map(h => h.date)} />
 
       {/* ── FILTER CARD ── */}
       <div className="bg-white rounded-2xl border border-gray-100 p-5 space-y-4">

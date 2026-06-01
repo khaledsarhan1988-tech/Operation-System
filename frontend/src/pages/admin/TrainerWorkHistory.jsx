@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
+import HolidayBanner from '../../components/ui/HolidayBanner';
 import { MemberModal } from './TeamPage';
 
 // ─── CONSTANTS ─────────────────────────────────────────────────────────────────
@@ -323,6 +324,8 @@ export default function TrainerWorkHistory() {
           { label: 'ساعات غير مؤكدة (دقيقة)', value: summary.total_unconfirmed_min, icon: AlertCircle },
         ]}
       />
+
+      <HolidayBanner dates={data?.holiday_dates} />
 
       <div className="bg-white rounded-3xl border border-gray-100 overflow-hidden shadow-sm">
         {/* ── FILTERS ── */}

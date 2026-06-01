@@ -15,6 +15,7 @@ import html2canvas from 'html2canvas';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import EmptyState from '../../components/ui/EmptyState';
+import HolidayBanner from '../../components/ui/HolidayBanner';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const SECTIONS = {
@@ -197,6 +198,8 @@ export default function TrainerUtilizationDashboard() {
           </div>
         }
       />
+
+      <HolidayBanner dates={data?.holiday_dates} />
 
       {/* ── Filters ── */}
       <div className="bg-white rounded-2xl border border-gray-100 p-4 flex flex-wrap items-center gap-3">

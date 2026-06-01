@@ -10,6 +10,7 @@ import {
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import EmptyState from '../../components/ui/EmptyState';
+import HolidayBanner from '../../components/ui/HolidayBanner';
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 const SECTIONS = {
@@ -346,6 +347,8 @@ export default function TrainerUtilization() {
         icon={Activity}
         gradient="navy"
       />
+
+      <HolidayBanner dates={data?.holiday_dates} />
 
       {/* ── Filters ── */}
       <div className="bg-white rounded-2xl border border-gray-100 p-4 flex flex-wrap items-center gap-3">
