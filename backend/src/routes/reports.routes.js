@@ -2204,12 +2204,12 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
       const dow = getDow(lec.date);
       const dayKey = DOW_KEYS[dow] || '';
 
-      // Grace period: lecture may run up to N minutes past shift end OR overlap
-      // a rest period by up to N minutes without being flagged. Avoids false
-      // positives when a 60-min lecture starts a couple minutes late and
-      // bleeds slightly into the next rest break (or past midnight).
-      const SHIFT_END_TOLERANCE_MIN = 5;
-      const REST_OVERLAP_TOLERANCE_MIN = 5;
+      // Grace period (business rule): a lecture may run up to 10 minutes past
+      // the shift end OR overlap a rest/voice-note block by up to 10 minutes
+      // without being flagged. Fixes false positives like a 60-min lecture that
+      // starts 23:08 and ends 00:08 (8 min past a 00:00 shift end).
+      const SHIFT_END_TOLERANCE_MIN = 10;
+      const REST_OVERLAP_TOLERANCE_MIN = 10;
 
       // Per-shift pattern check (day + time + no rest/voice-note conflict).
       // Does NOT consider date range. Returns null if the pattern matches.
@@ -3780,12 +3780,12 @@ router.get('/find-available-trainer', (req, res) => {
         for (const sh of shifts) {
           if (!shiftActiveOn(sh, slot.date)) continue;
           if (!sh.days.includes(dayKey)) continue;
-          // shift end gets the same 5-min tolerance used in code-problems
-          if (fromMin < sh.startMin || toMin > sh.endMin + 5) {
+          // shift end gets the same 10-min tolerance used in code-problems
+          if (fromMin < sh.startMin || toMin > sh.endMin + 10) {
             fallbackReason = `الوقت خارج الشيفت ⁦(${sh.startStr} → ${sh.endStr})⁩`;
             continue;
           }
-          // Rest periods AND voice-note blocks get the same 5-min overlap
+          // Rest periods AND voice-note blocks get the same 10-min overlap
           // tolerance as shift end. Voice notes are work time but block
           // teaching slots — they can't host a new lecture.
           const blocks = [
@@ -3794,7 +3794,7 @@ router.get('/find-available-trainer', (req, res) => {
           ];
           const offending = blocks.find(b => {
             const overlap = Math.min(toMin, b.e) - Math.max(fromMin, b.s);
-            return overlap > 5;
+            return overlap > 10;
           });
           if (offending) {
             const label = offending.type === 'voice_note' ? 'Voice Note' : 'راحة';
