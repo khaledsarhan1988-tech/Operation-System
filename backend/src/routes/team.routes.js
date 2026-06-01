@@ -113,8 +113,9 @@ function buildTeachable(body) {
 const _today = () => new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().slice(0, 10);
 const _clean = (v) => (v && String(v).trim() ? String(v).trim() : null);
 
-function buildEmploymentDatesForCreate(department, status, body) {
-  if (department !== 'customer_services') return { start_date: null, end_date: null };
+function buildEmploymentDatesForCreate(department, status, body, isAdmin) {
+  // Only Admin/Manager may set employment dates, and only for Customer Services.
+  if (!isAdmin || department !== 'customer_services') return { start_date: null, end_date: null };
   const start = _clean(body.start_date) || _today();
   const typedEnd = _clean(body.end_date);
   // New member created inactive → stamp today as the end of work.
@@ -122,9 +123,10 @@ function buildEmploymentDatesForCreate(department, status, body) {
   return { start_date: start, end_date: end };
 }
 
-function buildEmploymentDatesForUpdate(department, old, newStatus, body) {
-  // Non-CS rows are not managed here — preserve existing values untouched.
-  if (department !== 'customer_services') {
+function buildEmploymentDatesForUpdate(department, old, newStatus, body, isAdmin) {
+  // Only Admin/Manager may change employment dates, and only for Customer
+  // Services. Anyone else (or any other department) keeps the existing values.
+  if (!isAdmin || department !== 'customer_services') {
     return { start_date: old.start_date || null, end_date: old.end_date || null };
   }
   const start = _clean(body.start_date) || old.start_date || _today();
@@ -286,7 +288,7 @@ router.post('/', (req, res) => {
   // Employment dates — Customer Services only. start_date defaults to today
   // (the creation date); end_date = last day of work (stamped today if the
   // member is created inactive). Non-CS members keep both NULL.
-  const empDates = buildEmploymentDatesForCreate(department, status, req.body);
+  const empDates = buildEmploymentDatesForCreate(department, status, req.body, req.user.role === 'admin');
   try {
     const r = db.prepare(
       `INSERT INTO team_members (
@@ -337,7 +339,7 @@ router.put('/:id', (req, res) => {
   const newStatus = status || 'active';
   // Employment dates — Customer Services only; transition-aware so the editable
   // field and the "end = deactivation date" rule don't fight each other.
-  const empDates = buildEmploymentDatesForUpdate(department, old, newStatus, req.body);
+  const empDates = buildEmploymentDatesForUpdate(department, old, newStatus, req.body, req.user.role === 'admin');
   try {
     db.prepare(
       `UPDATE team_members SET

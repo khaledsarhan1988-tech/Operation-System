@@ -41,6 +41,10 @@ const MANAGEMENT_OPTIONS = [
 
 function UserModal({ open, onClose, user, onSaved }) {
   const { t } = useTranslation();
+  const { user: currentUser } = useAuth();
+  // Only Admin/Manager (role='admin') may edit the employment dates. Leaders
+  // who reach /leader/users see them read-only.
+  const canEditDates = currentUser?.role === 'admin';
   const [form, setForm] = useState(user ? {
     username: user.username, password: '',
     full_name: user.full_name, role: user.role,
@@ -236,18 +240,20 @@ function UserModal({ open, onClose, user, onSaved }) {
               end date passes the account is auto-deactivated (cannot log in). */}
           <div>
             <label className="label">تاريخ التعيين</label>
-            <input type="date" className="input" value={form.start_date}
-              onChange={e => set('start_date', e.target.value)} />
+            <input type="date" className="input disabled:bg-gray-100 disabled:text-gray-400" value={form.start_date}
+              onChange={e => set('start_date', e.target.value)} disabled={!canEditDates} />
             <p className="text-xs text-gray-500 mt-1">
-              إذا تُرك فارغاً يُسجَّل تاريخ إنشاء الحساب تلقائياً.
+              {canEditDates ? 'إذا تُرك فارغاً يُسجَّل تاريخ إنشاء الحساب تلقائياً.' : 'يُعدَّل بواسطة Admin / Manager فقط.'}
             </p>
           </div>
           <div>
             <label className="label">تاريخ ترك العمل</label>
-            <input type="date" className="input" value={form.end_date}
-              onChange={e => set('end_date', e.target.value)} />
+            <input type="date" className="input disabled:bg-gray-100 disabled:text-gray-400" value={form.end_date}
+              onChange={e => set('end_date', e.target.value)} disabled={!canEditDates} />
             <p className="text-xs text-gray-500 mt-1">
-              اتركه فارغاً إذا كان الموظف ما زال على رأس عمله. بعد هذا التاريخ يتوقف الحساب تلقائياً.
+              {canEditDates
+                ? 'اتركه فارغاً إذا كان الموظف ما زال على رأس عمله. بعد هذا التاريخ يتوقف الحساب تلقائياً.'
+                : 'يُعدَّل بواسطة Admin / Manager فقط.'}
             </p>
           </div>
         </div>
