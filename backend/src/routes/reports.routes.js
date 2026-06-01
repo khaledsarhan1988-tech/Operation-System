@@ -3646,14 +3646,20 @@ router.get('/find-available-trainer', (req, res) => {
   const weekAnchor = new Date(anchorDate);
   weekAnchor.setDate(weekAnchor.getDate() - backToSat);
 
-  // Build the list of slots: (date, week, day)
+  // Build the list of slots: (date, week, day). Official-holiday days are the
+  // academy's days off → excluded entirely (neither available nor unavailable).
+  const { getHolidayDateSet } = require('../utils/holidays');
+  const holidaySet = getHolidayDateSet();
   const slots = [];
+  const excluded_holidays = [];
   for (let w = 0; w < nWeeks; w++) {
     for (const day of selectedDays) {
       const offset = DOW_TO_OFFSET[day];
       const d = new Date(weekAnchor);
       d.setDate(d.getDate() + w * 7 + offset);
-      slots.push({ date: fmtISO(d), week: w + 1, day });
+      const iso = fmtISO(d);
+      if (holidaySet.has(iso)) { excluded_holidays.push({ date: iso, week: w + 1, day }); continue; }
+      slots.push({ date: iso, week: w + 1, day });
     }
   }
 
@@ -3839,6 +3845,7 @@ router.get('/find-available-trainer', (req, res) => {
     return res.json({
       results,
       slots,
+      excluded_holidays,   // slots dropped because they fall on an official holiday
       request: {
         section,
         days: selectedDays,
@@ -3852,6 +3859,7 @@ router.get('/find-available-trainer', (req, res) => {
         fully_available:      results.filter(r => r.fully_available).length,
         partially_available:  results.filter(r => r.partially_available).length,
         not_available:        results.filter(r => r.available_count === 0).length,
+        excluded_holiday_days: excluded_holidays.length,
       },
     });
   } catch (err) {
