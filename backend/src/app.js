@@ -151,6 +151,28 @@ initDb().then(db => {
     console.error('users.line migration error:', e.message);
   }
 
+  // ── Backfill start_date = creation date for users without one ─────────────
+  // Business rule: hire date defaults to the account's creation date so the
+  // admin doesn't have to enter it for the whole existing roster one by one.
+  // New users will get their real hire date entered manually; if left blank
+  // they too fall back to the creation date here on the next startup.
+  // Idempotent — only fills rows whose start_date is still NULL/empty.
+  try {
+    db._raw.run(`
+      UPDATE users
+      SET start_date = DATE(created_at)
+      WHERE (start_date IS NULL OR TRIM(start_date) = '')
+        AND created_at IS NOT NULL
+    `);
+    const nBackfill = db._raw.exec(`SELECT changes()`)[0]?.values[0][0] || 0;
+    if (nBackfill > 0) {
+      saveNow();
+      console.log(`✅ Migration: backfilled start_date = creation date for ${nBackfill} user(s)`);
+    }
+  } catch (e) {
+    console.error('users start_date backfill error:', e.message);
+  }
+
   // ── Auto-deactivate users whose employment end_date has passed ────────────
   // A user with a non-NULL end_date earlier than today is no longer employed,
   // so their account must not allow login. We flip is_active=0 here at startup

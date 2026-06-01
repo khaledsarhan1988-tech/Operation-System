@@ -238,6 +238,9 @@ function UserModal({ open, onClose, user, onSaved }) {
             <label className="label">تاريخ التعيين</label>
             <input type="date" className="input" value={form.start_date}
               onChange={e => set('start_date', e.target.value)} />
+            <p className="text-xs text-gray-500 mt-1">
+              إذا تُرك فارغاً يُسجَّل تاريخ إنشاء الحساب تلقائياً.
+            </p>
           </div>
           <div>
             <label className="label">تاريخ ترك العمل</label>
@@ -253,7 +256,20 @@ function UserModal({ open, onClose, user, onSaved }) {
             <label className="label mb-0 flex-1">الحالة</label>
             <button
               type="button"
-              onClick={() => set('is_active', form.is_active ? 0 : 1)}
+              onClick={() => {
+                const next = form.is_active ? 0 : 1;
+                // Mirror the server's end_date rule in the form: deactivating
+                // stamps today (if empty), reactivating clears it.
+                if (next === 0) {
+                  setForm(f => ({
+                    ...f,
+                    is_active: 0,
+                    end_date: f.end_date || new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().slice(0, 10),
+                  }));
+                } else {
+                  setForm(f => ({ ...f, is_active: 1, end_date: '' }));
+                }
+              }}
               className={`flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
                 form.is_active
                   ? 'bg-success/15 text-success hover:bg-success/25'

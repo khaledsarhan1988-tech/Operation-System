@@ -59,8 +59,11 @@ router.post('/users', (req, res) => {
     language = 'ar', management = 'Customer Services', line = 'Ahmed Hassan',
     start_date, end_date,
   } = req.body;
-  // Employment dates: empty string → NULL (NULL end_date = still employed).
-  const startDateVal = start_date && String(start_date).trim() ? String(start_date).trim() : null;
+  // Employment dates. end_date empty → NULL (NULL = still employed).
+  // start_date defaults to today (the creation date) when the admin leaves it
+  // blank, so a hire date is always recorded.
+  const todayCairo = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const startDateVal = start_date && String(start_date).trim() ? String(start_date).trim() : todayCairo;
   const endDateVal   = end_date   && String(end_date).trim()   ? String(end_date).trim()   : null;
   if (!username || !password || !full_name || !role) {
     return res.status(400).json({ error: 'username, password, full_name, role are required' });
@@ -114,9 +117,10 @@ router.put('/users/:id', (req, res) => {
   const { id } = req.params;
   const { full_name, role, department, extra_departments, extra_managements, language, password, is_active, management, line, start_date, end_date } = req.body;
 
-  // Snapshot current state — needed for dept-change detection
+  // Snapshot current state — needed for dept-change detection AND for the
+  // employment end_date transition logic (old is_active / old end_date).
   const user = db.prepare(
-    'SELECT id, full_name, department FROM users WHERE id = ?'
+    'SELECT id, full_name, department, is_active, end_date FROM users WHERE id = ?'
   ).get(id);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
@@ -173,14 +177,37 @@ router.put('/users/:id', (req, res) => {
   if (management !== undefined) { fields.push('management = ?'); params.push(management); }
   if (extra_managements !== undefined) { fields.push('extra_managements = ?'); params.push(normalizedExtraMgmts); }
   if (line       !== undefined) { fields.push('line = ?');       params.push(line); }
-  // Employment dates: empty string → NULL (NULL end_date = still employed).
+  // Employment start_date: empty string → NULL.
   if (start_date !== undefined) {
     fields.push('start_date = ?');
     params.push(start_date && String(start_date).trim() ? String(start_date).trim() : null);
   }
-  if (end_date !== undefined) {
+
+  // Employment end_date — transition-aware so the "end = deactivation date"
+  // rule and the editable field don't fight each other:
+  //   • became inactive (active→inactive): stamp today if no end_date is given
+  //   • became active   (inactive→active): clear end_date (back on the job)
+  //   • no status change: just honor whatever the admin typed (empty → NULL),
+  //     including a future date that the sweep will act on once it passes.
+  const todayCairo = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const oldActive = user.is_active ? 1 : 0;
+  const newActive = (is_active !== undefined) ? (is_active ? 1 : 0) : oldActive;
+  const endProvided = end_date !== undefined;
+  const endTyped = endProvided && end_date && String(end_date).trim()
+    ? String(end_date).trim() : null;
+
+  if (oldActive === 1 && newActive === 0) {
+    // active → inactive: record the day work ended (typed value wins if given)
     fields.push('end_date = ?');
-    params.push(end_date && String(end_date).trim() ? String(end_date).trim() : null);
+    params.push(endTyped || todayCairo);
+  } else if (oldActive === 0 && newActive === 1) {
+    // inactive → active: employee is back, clear the end date
+    fields.push('end_date = ?');
+    params.push(null);
+  } else if (endProvided) {
+    // no status transition: honor the admin's manual edit
+    fields.push('end_date = ?');
+    params.push(endTyped);
   }
 
   if (fields.length) {
@@ -323,10 +350,29 @@ router.delete('/dept-history/:rid', (req, res) => {
 router.patch('/users/:id/status', (req, res) => {
   const { id } = req.params;
   if (parseInt(id) === req.user.id) return res.status(400).json({ error: 'Cannot change your own status' });
-  const user = db.prepare('SELECT id, is_active FROM users WHERE id = ?').get(id);
+  const user = db.prepare('SELECT id, is_active, end_date FROM users WHERE id = ?').get(id);
   if (!user) return res.status(404).json({ error: 'User not found' });
   const newStatus = user.is_active ? 0 : 1;
-  db.prepare("UPDATE users SET is_active = ?, updated_at = datetime('now', 'localtime') WHERE id = ?").run(newStatus, id);
+  // Keep end_date in sync with the status transition:
+  //   • deactivating → record today as the end of work (unless already set)
+  //   • reactivating → clear end_date (employee is back on the job)
+  if (newStatus === 0) {
+    db.prepare(`
+      UPDATE users
+      SET is_active = 0,
+          end_date = COALESCE(NULLIF(TRIM(end_date), ''), DATE('now', '+2 hours')),
+          updated_at = datetime('now', 'localtime')
+      WHERE id = ?
+    `).run(id);
+  } else {
+    db.prepare(`
+      UPDATE users
+      SET is_active = 1,
+          end_date = NULL,
+          updated_at = datetime('now', 'localtime')
+      WHERE id = ?
+    `).run(id);
+  }
   return res.json({ is_active: newStatus });
 });
 
