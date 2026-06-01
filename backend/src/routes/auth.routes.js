@@ -57,7 +57,8 @@ router.post('/login', loginLimiter, (req, res) => {
   // reflects reality) and reject the login. NULL/empty end_date = still
   // employed → never blocked. This backstops the startup sweep for servers
   // that stay up for days without a restart.
-  if (user.end_date && String(user.end_date).trim()) {
+  // admin/manager accounts (role='admin') are EXEMPT — never auto-deactivated.
+  if (user.role !== 'admin' && user.end_date && String(user.end_date).trim()) {
     const today = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().slice(0, 10);
     if (String(user.end_date).trim().slice(0, 10) < today) {
       try {

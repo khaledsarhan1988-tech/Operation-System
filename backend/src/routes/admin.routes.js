@@ -192,6 +192,7 @@ router.put('/users/:id', (req, res) => {
   // Runs after the UPDATE so it wins even if is_active=1 was sent in the same
   // request (you can't be "active" past your employment end). NULL/empty
   // end_date = still employed → never forces deactivation here.
+  // admin/manager accounts (role='admin') are EXEMPT from auto-deactivation.
   try {
     db.prepare(`
       UPDATE users
@@ -201,6 +202,7 @@ router.put('/users/:id', (req, res) => {
         AND TRIM(end_date) != ''
         AND DATE(end_date) < DATE('now', '+2 hours')
         AND is_active = 1
+        AND role != 'admin'
     `).run(id);
   } catch (e) {
     console.error('user end_date enforce-on-save error:', e.message);

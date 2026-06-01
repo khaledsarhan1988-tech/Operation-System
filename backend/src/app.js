@@ -156,6 +156,8 @@ initDb().then(db => {
   // so their account must not allow login. We flip is_active=0 here at startup
   // (login also re-checks, in case the server runs for days without restart).
   // NULL/empty end_date = still on the job → never touched.
+  // admin/manager accounts (role='admin') are EXEMPT — they are never
+  // auto-deactivated, to avoid locking out a manager by a stale end_date.
   try {
     db._raw.run(`
       UPDATE users
@@ -164,6 +166,7 @@ initDb().then(db => {
         AND TRIM(end_date) != ''
         AND DATE(end_date) < DATE('now', '+2 hours')
         AND is_active = 1
+        AND role != 'admin'
     `);
     const nDeact = db._raw.exec(`SELECT changes()`)[0]?.values[0][0] || 0;
     if (nDeact > 0) {
