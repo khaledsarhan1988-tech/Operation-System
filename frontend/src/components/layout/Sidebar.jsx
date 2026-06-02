@@ -119,19 +119,19 @@ function getAdminLinks(user) {
   const isSuperAdmin = user?.management === 'All';
   const base = [
     { to: '/admin/profile',      label: 'صفحتي الشخصية',      icon: KeyRound,        color: 'slate' },
-    { to: '/admin',              label: 'nav.dashboard',     icon: LayoutDashboard, end: true, color: 'blue' },
+    // { to: '/admin', label: 'nav.dashboard', icon: LayoutDashboard, end: true, color: 'blue' }, // hidden per user request — route /admin still works
     { to: '/admin/users',        label: 'nav.users',         icon: UserCog,         color: 'indigo' },
     // Excel upload + Drive sync — Super Admin (management='All') only.
     // Department managers don't see these in the sidebar AND backend rejects them.
     ...(isSuperAdmin ? [
-      { to: '/admin/upload',       label: 'nav.excelUpload',   icon: Upload,          color: 'orange' },
+      // { to: '/admin/upload', label: 'nav.excelUpload', icon: Upload, color: 'orange' }, // hidden per user request — route /admin/upload still works
       { to: '/admin/drive-sync',   label: 'مزامنة Drive',      icon: Cloud,           color: 'sky' },
       { to: '/admin/drive-sync/history', label: 'تاريخ المزامنات', icon: History,    color: 'cyan',  sub: true },
     ] : []),
     { to: '/admin/team',         label: 'nav.team',          icon: Users,           color: 'purple' },
     { to: '/admin/org-chart',    label: 'الهيكل التنظيمي',    icon: Network,         color: 'indigo' },
-    { to: '/admin/group-receiving', label: 'استلام المجموعات', icon: ClipboardCheck, color: 'cyan' },
-    { to: '/admin/control',      label: 'nav.controlPanel',       icon: LayoutDashboard, color: 'pink' },
+    // { to: '/admin/group-receiving', label: 'استلام المجموعات', icon: ClipboardCheck, color: 'cyan' }, // hidden per user request — route still works
+    // { to: '/admin/control', label: 'nav.controlPanel', icon: LayoutDashboard, color: 'pink' }, // hidden per user request — route /admin/control still works
     { to: '/admin/distribution', label: 'nav.clientDistribution', icon: Shuffle,         color: 'cyan' },
     { to: '/admin/pipeline',     label: 'nav.clientPipeline',     icon: Kanban,          color: 'emerald' },
     { to: '/admin/employee-progression', label: 'nav.employeeProgression', icon: TrendingUp, color: 'violet' },
