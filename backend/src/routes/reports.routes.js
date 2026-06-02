@@ -352,7 +352,16 @@ function parseTeamShifts(t) {
     if (typeof raw === 'string') { try { arr = JSON.parse(raw); } catch { return []; } }
     if (!Array.isArray(arr)) return [];
     return arr
-      .map(r => ({ startMin: parseHM(r && r.start), endMin: parseHM(r && r.end) }))
+      // Expose BOTH key styles: `startMin/endMin` (used by the code-problems
+      // schedule check) AND `s/e` (used by shiftMinsForDate / voiceNoteMinsForDate
+      // in the trainer-utilization + find-available-trainer endpoints). Before
+      // this alias, those endpoints read r.s/r.e which were undefined → NaN →
+      // every shift WITH a rest counted as 0 hours (trainer dropped) and voice
+      // notes nulled out the utilization. Keep both so all consumers work.
+      .map(r => {
+        const startMin = parseHM(r && r.start), endMin = parseHM(r && r.end);
+        return { startMin, endMin, s: startMin, e: endMin };
+      })
       .filter(r => r.startMin != null && r.endMin != null && r.endMin > r.startMin);
   };
   const normalize = (s) => {
