@@ -119,6 +119,8 @@ function getAdminLinks(user) {
   const isSuperAdmin = user?.management === 'All';
   const base = [
     { to: '/admin/profile',      label: 'صفحتي الشخصية',      icon: KeyRound,        color: 'slate' },
+    // 'حالة قاعدة البيانات' pinned as the 2nd item, right after the profile (super-admin only).
+    ...(isSuperAdmin ? [{ to: '/admin/db-status', label: 'nav.dbStatus', icon: Database, color: 'blue' }] : []),
     // { to: '/admin', label: 'nav.dashboard', icon: LayoutDashboard, end: true, color: 'blue' }, // hidden per user request — route /admin still works
     { to: '/admin/users',        label: 'nav.users',         icon: UserCog,         color: 'indigo' },
     // Excel upload + Drive sync — Super Admin (management='All') only.
@@ -147,10 +149,8 @@ function getAdminLinks(user) {
     ] : []),
     // System-wide config — super-admin (management='All') only.
     // Department-scoped admins (Customer Services / Quality / Education) don't see these.
-    ...(isSuperAdmin ? [
-      // 'إعدادات النظام' moved into the 'تطوير الأداء والمهام' group above.
-      { to: '/admin/db-status',         label: 'nav.dbStatus',       icon: Database,  color: 'blue'  },
-    ] : []),
+    // 'إعدادات النظام' moved into the 'تطوير الأداء والمهام' group; 'حالة قاعدة
+    // البيانات' moved up to the 2nd position (both above).
     { type: 'section', label: 'nav.reportsSection' },
   ];
   // A user's effective managements = primary + any extras assigned via
