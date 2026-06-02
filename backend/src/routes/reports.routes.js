@@ -3275,13 +3275,17 @@ router.get('/trainer-utilization-summary', (req, res) => {
   const today = new Date(); today.setHours(12, 0, 0, 0);
   const dayMs = 24 * 60 * 60 * 1000;
   const isValidISODate = s => /^\d{4}-\d{2}-\d{2}$/.test(s);
+  // Accept a custom range whenever BOTH dates are valid — regardless of order.
+  // If the user enters them inverted (from > to), swap so the earlier date is
+  // the start. Previously an inverted range failed the `customFrom <= customTo`
+  // check and silently fell back to the weeks preset, showing a period the
+  // user never asked for.
   const useCustomRange =
-    customFrom && customTo && isValidISODate(customFrom) && isValidISODate(customTo)
-    && customFrom <= customTo;
+    customFrom && customTo && isValidISODate(customFrom) && isValidISODate(customTo);
   let currStart, currEnd, totalDays, nWeeks;
   if (useCustomRange) {
-    currStart = customFrom;
-    currEnd   = customTo;
+    currStart = customFrom <= customTo ? customFrom : customTo;
+    currEnd   = customFrom <= customTo ? customTo   : customFrom;
     const startMs = new Date(currStart + 'T12:00:00').getTime();
     const endMs   = new Date(currEnd   + 'T12:00:00').getTime();
     totalDays = Math.round((endMs - startMs) / dayMs) + 1;
@@ -3495,6 +3499,10 @@ router.get('/trainer-utilization-summary', (req, res) => {
         section: sec,
         label: SECTION_AR[sec],
         avg_utilization: secAvail > 0 ? Math.round((secBooked / secAvail) * 100) : 0,
+        // Raw operational vs. recorded-lecture hours per department so the UI
+        // can show نسبة الإشغال = المحجوز ÷ المتاح transparently at dept level.
+        available_hours: Math.round(secAvail / 60),
+        booked_hours:    Math.round(secBooked / 60),
         trainer_count: inSec.length,
         wasted_hours: Math.max(0, Math.round((secAvail - secBooked) / 60)),
       };

@@ -70,7 +70,10 @@ export default function TrainerUtilizationDashboard() {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate]     = useState('');
   const exportRef               = useRef(null);
-  const usingCustomRange = !!(fromDate && toDate && fromDate <= toDate);
+  // Both dates filled = custom range, in EITHER order. The backend normalizes
+  // an inverted (from > to) range by swapping, so we don't block it here —
+  // previously an inverted range silently fell back to the weeks preset.
+  const usingCustomRange = !!(fromDate && toDate);
 
   // Reset trainer selection when section changes — the dropdown options shift.
   const handleSectionChange = (next) => {
@@ -301,11 +304,11 @@ export default function TrainerUtilizationDashboard() {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               <KpiCard
                 title="متوسط الإشغال"
-                value={`${summary.avg_utilization}%`}
+                value={`${summary?.avg_utilization ?? 0}%`}
                 icon={Activity}
                 tone="blue"
-                trend={summary.trend_pct}
-                trendLabel={`الفترة السابقة ${summary.prev_avg_utilization}%`}
+                trend={summary?.trend_pct ?? 0}
+                trendLabel={`الفترة السابقة ${summary?.prev_avg_utilization ?? 0}%`}
               />
               <KpiCard
                 title="ساعات مهدورة"
@@ -358,7 +361,7 @@ export default function TrainerUtilizationDashboard() {
                         contentStyle={{ borderRadius: 12, border: '1px solid #E2E8F0', fontSize: 12 }}
                         formatter={(value) => [`${value}%`, 'متوسط الإشغال']}
                       />
-                      <ReferenceLine y={summary.avg_utilization} stroke="#94A3B8" strokeDasharray="4 4" label={{ value: `الإجمالي ${summary.avg_utilization}%`, fill: '#64748B', fontSize: 10, position: 'insideTopLeft' }} />
+                      <ReferenceLine y={summary?.avg_utilization ?? 0} stroke="#94A3B8" strokeDasharray="4 4" label={{ value: `الإجمالي ${summary?.avg_utilization ?? 0}%`, fill: '#64748B', fontSize: 10, position: 'insideTopLeft' }} />
                       <Line
                         type="monotone"
                         dataKey="avg_utilization"
@@ -397,6 +400,32 @@ export default function TrainerUtilizationDashboard() {
                       </Bar>
                     </BarChart>
                   </ResponsiveContainer>
+                )}
+                {/* Per-department raw hours: operational (متاح) vs recorded lectures
+                    (محجوز) so نسبة الإشغال = محجوز ÷ متاح is transparent at dept level. */}
+                {sectionAverages.length > 0 && (
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="min-w-full text-[11px]">
+                      <thead>
+                        <tr className="text-gray-500">
+                          <th className="text-right py-1 font-semibold">القسم</th>
+                          <th className="text-center py-1 font-semibold">المتاح</th>
+                          <th className="text-center py-1 font-semibold">المحجوز</th>
+                          <th className="text-center py-1 font-semibold">الإشغال</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sectionAverages.map((s) => (
+                          <tr key={s.section} className="border-t border-gray-50">
+                            <td className="text-right py-1.5 font-semibold text-gray-700">{s.label}</td>
+                            <td className="text-center py-1.5 text-gray-800 font-bold">{s.available_hours}س</td>
+                            <td className="text-center py-1.5 text-gray-600">{s.booked_hours}س</td>
+                            <td className="text-center py-1.5 font-bold text-gray-900">{s.avg_utilization}%</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </div>
             </div>
@@ -445,6 +474,7 @@ export default function TrainerUtilizationDashboard() {
                         <th className="text-right px-3 py-2 font-bold text-gray-600">القسم</th>
                         <th className="text-right px-3 py-2 font-bold text-gray-600">الشيفت</th>
                         <th className="text-center px-3 py-2 font-bold text-gray-600">الإشغال</th>
+                        <th className="text-center px-3 py-2 font-bold text-gray-600">المتاح</th>
                         <th className="text-center px-3 py-2 font-bold text-gray-600">المحجوز</th>
                         <th className="text-center px-3 py-2 font-bold text-gray-600">الفاضي</th>
                         <th className="text-center px-3 py-2 font-bold text-gray-600">الحالة</th>
@@ -497,6 +527,7 @@ export default function TrainerUtilizationDashboard() {
                               </div>
                             ) : <span className="text-gray-300">—</span>}
                           </td>
+                          <td className="text-center px-3 py-2.5 text-gray-800 font-bold">{t.available_hours}س</td>
                           <td className="text-center px-3 py-2.5 text-gray-600 font-semibold">{t.booked_hours}س</td>
                           <td className="text-center px-3 py-2.5 text-gray-600 font-semibold">{t.free_hours}س</td>
                           <td className="text-center px-3 py-2.5">
