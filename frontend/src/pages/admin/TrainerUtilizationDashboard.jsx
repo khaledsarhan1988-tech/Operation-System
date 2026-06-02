@@ -149,30 +149,111 @@ export default function TrainerUtilizationDashboard() {
   };
 
   // ── PDF Export ──────────────────────────────────────────────────────────────
+  // Builds a clean, paginated A4 report (header + KPI summary + grouped trainer
+  // table) in an off-screen DOM, then captures each page div as a full-page
+  // image. This avoids the old "one tall screenshot sliced blindly" approach
+  // that cut cards/rows across pages.
   const exportPdf = async () => {
-    if (!exportRef.current) return;
-    const canvas = await html2canvas(exportRef.current, {
-      scale: 2,
-      backgroundColor: '#FFFFFF',
-      useCORS: true,
+    if (!trainers.length) return;
+    const A4W = 794, A4H = 1123, PAD = 36;
+    const esc = s => String(s ?? '').replace(/[&<>]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m]));
+    const pct = v => (v == null ? '—' : v + '%');
+    const today = new Date().toISOString().slice(0, 10);
+    const periodStr = period ? `${period.from} → ${period.to}` : '';
+
+    // Flatten trainers grouped by section (section header rows + trainer rows)
+    const order = ['general', 'private', 'semi', 'phone_call'];
+    const groups = {};
+    trainers.forEach(t => { (groups[t.section] = groups[t.section] || []).push(t); });
+    const items = [];
+    order.forEach(sec => {
+      const arr = groups[sec];
+      if (!arr || !arr.length) return;
+      arr.sort((a, b) => (b.utilization_pct || 0) - (a.utilization_pct || 0));
+      items.push({ type: 'section', label: SECTIONS[sec] || sec, count: arr.length });
+      arr.forEach(t => items.push({ type: 'row', t }));
     });
-    const imgData = canvas.toDataURL('image/png');
-    const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
-    const pdfW = pdf.internal.pageSize.getWidth();
-    const pdfH = pdf.internal.pageSize.getHeight();
-    const imgW = pdfW - 10;
-    const imgH = (canvas.height * imgW) / canvas.width;
-    let heightLeft = imgH;
-    let position = 5;
-    pdf.addImage(imgData, 'PNG', 5, position, imgW, imgH);
-    heightLeft -= pdfH - 10;
-    while (heightLeft > 0) {
-      position = heightLeft - imgH + 5;
-      pdf.addPage();
-      pdf.addImage(imgData, 'PNG', 5, position, imgW, imgH);
-      heightLeft -= pdfH - 10;
+    // Chunk into pages — fewer rows on page 1 (header + KPIs take space)
+    const FIRST = 12, REST = 24;
+    const pages = [];
+    let idx = 0, first = true;
+    while (idx < items.length) {
+      const take = first ? FIRST : REST;
+      pages.push(items.slice(idx, idx + take));
+      idx += take; first = false;
     }
-    pdf.save(`trainer-utilization-${period?.from || 'export'}.pdf`);
+    if (!pages.length) pages.push([]);
+    const total = pages.length;
+
+    const rowHtml = (t) => {
+      const color = utilCellColor(t.utilization_pct);
+      const inactive = t.member_status === 'inactive'
+        ? ' <span style="font-size:10px;color:#94a3b8">(غير نشط)</span>' : '';
+      return `<tr style="border-bottom:1px solid #eef2f7">
+        <td style="padding:7px 10px;font-weight:700;color:#0f172a">${esc(t.name)}${inactive}</td>
+        <td style="padding:7px 10px;text-align:center;color:#475569">${esc(SECTIONS[t.section] || t.section)}</td>
+        <td style="padding:7px 10px;text-align:center;color:#0f172a;font-weight:700">${t.available_hours}س</td>
+        <td style="padding:7px 10px;text-align:center;color:#475569">${t.booked_hours}س</td>
+        <td style="padding:7px 10px;text-align:center"><span style="display:inline-block;min-width:46px;padding:3px 8px;border-radius:999px;color:#fff;font-weight:800;background:${color}">${pct(t.utilization_pct)}</span></td>
+        <td style="padding:7px 10px;text-align:center;color:#475569">${esc(STATUS_BADGE[t.status]?.label || '')}</td>
+      </tr>`;
+    };
+    const sectionRowHtml = (s) =>
+      `<tr style="background:#eef2ff"><td colspan="6" style="padding:6px 10px;font-weight:800;color:#1e3a8a">قسم: ${esc(s.label)} (${s.count})</td></tr>`;
+    const tableHead = `<thead><tr style="background:#1f3864;color:#fff;font-size:12px">
+        <th style="padding:8px 10px;text-align:right">المدرب</th>
+        <th style="padding:8px 10px">القسم</th>
+        <th style="padding:8px 10px">المتاح</th>
+        <th style="padding:8px 10px">المحجوز</th>
+        <th style="padding:8px 10px">الإشغال</th>
+        <th style="padding:8px 10px">الحالة</th></tr></thead>`;
+    const headerBlock = `
+      <div style="background:linear-gradient(135deg,#1e3a8a,#1f3864);color:#fff;border-radius:14px;padding:18px 22px;margin-bottom:16px">
+        <div style="font-size:22px;font-weight:800">تقرير إشغال المدربين — الإدارة التعليمية</div>
+        <div style="font-size:13px;opacity:.9;margin-top:6px">أكاديمية أحمد حسن · الفترة: ${esc(periodStr)} · تاريخ الإصدار: ${today}</div>
+      </div>`;
+    const kpi = (lbl, val, c) =>
+      `<div style="flex:1;border:1px solid #e5e7eb;border-radius:12px;padding:12px 14px">
+        <div style="font-size:12px;color:#64748b">${lbl}</div>
+        <div style="font-size:22px;font-weight:800;color:${c}">${val}</div></div>`;
+    const kpiBlock = summary ? `
+      <div style="display:flex;gap:12px;margin-bottom:16px">
+        ${kpi('متوسط الإشغال', pct(summary.avg_utilization), '#1d4ed8')}
+        ${kpi('ساعات مهدورة', (summary.wasted_hours ?? '—') + ' س', '#d97706')}
+        ${kpi('مدربين مكتملين', (summary.high_count ?? 0) + ' / ' + (summary.trainers_total ?? 0), '#ea580c')}
+        ${kpi('إشغال منخفض', (summary.low_count ?? 0) + ' / ' + (summary.trainers_total ?? 0), '#e11d48')}
+      </div>` : '';
+
+    const container = document.createElement('div');
+    container.style.cssText = 'position:fixed;left:-10000px;top:0;';
+    container.dir = 'rtl';
+    pages.forEach((chunk, pi) => {
+      const page = document.createElement('div');
+      page.className = 'pdf-page';
+      page.style.cssText = `position:relative;width:${A4W}px;min-height:${A4H}px;background:#fff;padding:${PAD}px;box-sizing:border-box;font-family:'Cairo','Tajawal','Segoe UI',Arial,sans-serif;`;
+      let inner = '';
+      if (pi === 0) inner += headerBlock + kpiBlock;
+      inner += `<table style="width:100%;border-collapse:collapse;font-size:13px">${tableHead}<tbody>`;
+      chunk.forEach(it => { inner += it.type === 'section' ? sectionRowHtml(it) : rowHtml(it.t); });
+      inner += `</tbody></table>`;
+      inner += `<div style="position:absolute;bottom:14px;left:0;right:0;text-align:center;font-size:11px;color:#94a3b8">صفحة ${pi + 1} من ${total} · أكاديمية أحمد حسن</div>`;
+      page.innerHTML = inner;
+      container.appendChild(page);
+    });
+    document.body.appendChild(container);
+
+    try {
+      const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
+      const pageEls = container.querySelectorAll('.pdf-page');
+      for (let i = 0; i < pageEls.length; i++) {
+        const canvas = await html2canvas(pageEls[i], { scale: 2, backgroundColor: '#FFFFFF', useCORS: true });
+        if (i > 0) pdf.addPage();
+        pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, 210, 297);
+      }
+      pdf.save(`trainer-utilization-${period?.from || 'export'}.pdf`);
+    } finally {
+      document.body.removeChild(container);
+    }
   };
 
   return (
@@ -307,8 +388,10 @@ export default function TrainerUtilizationDashboard() {
                 value={`${summary?.avg_utilization ?? 0}%`}
                 icon={Activity}
                 tone="blue"
-                trend={summary?.trend_pct ?? 0}
-                trendLabel={`الفترة السابقة ${summary?.prev_avg_utilization ?? 0}%`}
+                trend={summary?.trend_pct ?? null}
+                trendLabel={summary?.prev_avg_utilization != null
+                  ? `الفترة السابقة ${summary.prev_avg_utilization}%`
+                  : 'لا توجد فترة سابقة قابلة للمقارنة'}
               />
               <KpiCard
                 title="ساعات مهدورة"

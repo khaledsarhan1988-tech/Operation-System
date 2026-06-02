@@ -3479,8 +3479,18 @@ router.get('/trainer-utilization-summary', (req, res) => {
       prevTotalAvail += prev.available_min;
       prevTotalBooked += prev.booked_min;
     }
-    const prevAvgUtil = prevTotalAvail > 0 ? Math.round((prevTotalBooked / prevTotalAvail) * 100) : 0;
-    const trendPct = avgUtil - prevAvgUtil;
+    // The previous period is only comparable when it had real shift coverage.
+    // When shifts didn't exist yet back then (e.g. all shifts start this month),
+    // prevAvail≈0 while booked>0 makes utilization explode into the thousands —
+    // a meaningless "-2652%" trend. Suppress the comparison in that case
+    // (prev_avg_utilization / trend_pct become null).
+    const prevComparable =
+      prevTotalAvail > 0 &&
+      prevTotalAvail >= totalAvail * 0.2 &&
+      (prevTotalBooked / prevTotalAvail) <= 1.5;
+    const prevAvgUtil = prevComparable
+      ? Math.round((prevTotalBooked / prevTotalAvail) * 100) : null;
+    const trendPct = prevAvgUtil != null ? avgUtil - prevAvgUtil : null;
 
     const summary = {
       avg_utilization: avgUtil,
@@ -3570,7 +3580,7 @@ router.get('/trainer-utilization-summary', (req, res) => {
         });
       });
     // Trend insight
-    if (Math.abs(trendPct) >= 3) {
+    if (trendPct != null && Math.abs(trendPct) >= 3) {
       insights.push({
         type: trendPct > 0 ? 'trend_up' : 'trend_down',
         severity: trendPct > 0 ? 'good' : 'warning',
