@@ -3036,14 +3036,13 @@ router.get('/trainer-utilization', (req, res) => {
     // Lectures in the date window — main + zoom regular. Dedup zoom by (date,time,trainer)
     // because zoom side rows are per-student (multiple rows per slot).
     const lecRaw = db.prepare(
+      // Count EVERY actual session: all groups (incl. ended/removed from
+      // batches), all session types & side categories, all per-student zoom
+      // rows. Line scoping via lectures.line (no batches join).
       `SELECT DISTINCT l.group_name, l.date, l.time, l.duration, l.trainer, l.session_type
          FROM lectures l
-         INNER JOIN batches b ON l.group_name=b.group_name${line ? ' AND b.line=l.line' : ''}
-         WHERE b.status='نشطة'
-           AND l.date BETWEEN '${fromDate}' AND '${toDate}'
-           AND (l.session_type='main'
-             OR (l.session_type='side' AND LOWER(COALESCE(l.side_session_category,'regular'))='regular'))
-         ${lineL}${lineB}
+         WHERE l.date BETWEEN '${fromDate}' AND '${toDate}'
+         ${lineL}
          ORDER BY l.date, l.time`
     ).all();
 
@@ -3056,7 +3055,7 @@ router.get('/trainer-utilization', (req, res) => {
       const bucketKey = `${k}|${l.date}`;
       const arr = byTrainerDay[bucketKey] = byTrainerDay[bucketKey] || [];
       // dedupe by (time,duration) for zoom multi-student rows
-      if (!arr.some(x => x.time === l.time && x.duration === l.duration && x.session_type === l.session_type)) {
+      if (!arr.some(x => x.group_name === l.group_name && x.time === l.time && x.duration === l.duration && x.session_type === l.session_type)) {
         arr.push({
           group_name: l.group_name, time: l.time, duration: l.duration,
           session_type: l.session_type,
@@ -3349,14 +3348,15 @@ router.get('/trainer-utilization-summary', (req, res) => {
 
     // ── Fetch all lectures in [prevStart, currEnd] once
     const lecRaw = db.prepare(
+      // Count EVERY actual session the trainer ran: all groups (active OR
+      // ended/removed from batches), all session types (main + every side
+      // category — regular, onboarding, offboarding, compensatory), and all
+      // per-student zoom rows. No batches join (ended groups vanish from it);
+      // line scoping is applied directly on lectures.line.
       `SELECT DISTINCT l.group_name, l.date, l.time, l.duration, l.trainer, l.session_type
          FROM lectures l
-         INNER JOIN batches b ON l.group_name=b.group_name${line ? ' AND b.line=l.line' : ''}
-         WHERE b.status='نشطة'
-           AND l.date BETWEEN '${prevStart}' AND '${currEnd}'
-           AND (l.session_type='main'
-             OR (l.session_type='side' AND LOWER(COALESCE(l.side_session_category,'regular'))='regular'))
-         ${lineL}${lineB}`
+         WHERE l.date BETWEEN '${prevStart}' AND '${currEnd}'
+         ${lineL}`
     ).all();
 
     // Index by (trainerLower|date) → list (dedup by time+duration+session_type)
@@ -3366,7 +3366,7 @@ router.get('/trainer-utilization-summary', (req, res) => {
       if (!k) continue;
       const key = `${k}|${l.date}`;
       const arr = lectureMap[key] = lectureMap[key] || [];
-      if (!arr.some(x => x.time === l.time && x.duration === l.duration && x.session_type === l.session_type)) {
+      if (!arr.some(x => x.group_name === l.group_name && x.time === l.time && x.duration === l.duration && x.session_type === l.session_type)) {
         arr.push(l);
       }
     }
@@ -3380,12 +3380,16 @@ router.get('/trainer-utilization-summary', (req, res) => {
         if (holidaySet.has(date)) continue;   // official holiday → excluded from the calc
         let avail = 0;
         for (const sh of shifts) avail += shiftMinsForDate(sh, date);
-        if (avail === 0) continue;
+        // Booked = ALL actual session minutes that day + voice notes, with NO
+        // cap and NO requirement that the day be inside the trainer's shift.
+        // A trainer who worked beyond their schedule (utilization can exceed
+        // 100%) or on an off day is reflected fully. Available still counts
+        // shift time only.
         const lectures = lectureMap[`${tKey}|${date}`] || [];
         const lectureMin = lectures.reduce((s, l) => s + parseDur(l.duration), 0);
         const vnMin = voiceNoteMinsForDate(shifts, date);
         available += avail;
-        booked   += Math.min(lectureMin + vnMin, avail);
+        booked   += lectureMin + vnMin;
       }
       return { available_min: available, booked_min: booked };
     }
