@@ -128,8 +128,10 @@ function getAdminLinks(user) {
       { to: '/admin/drive-sync',   label: 'مزامنة Drive',      icon: Cloud,           color: 'sky' },
       { to: '/admin/drive-sync/history', label: 'تاريخ المزامنات', icon: History,    color: 'cyan',  sub: true },
     ] : []),
-    { to: '/admin/team',         label: 'nav.team',          icon: Users,           color: 'purple' },
-    { to: '/admin/org-chart',    label: 'الهيكل التنظيمي',    icon: Network,         color: 'indigo' },
+    // ── Collapsible group: الفريق والهيكل التنظيمي (toggle-only header) ──
+    { group: true, key: 'team-org', label: 'الفريق والهيكل التنظيمي', icon: Users, color: 'purple' },
+    { to: '/admin/team',         label: 'nav.team',          icon: Users,           color: 'purple', sub: true },
+    { to: '/admin/org-chart',    label: 'الهيكل التنظيمي',    icon: Network,         color: 'indigo', sub: true },
     // { to: '/admin/group-receiving', label: 'استلام المجموعات', icon: ClipboardCheck, color: 'cyan' }, // hidden per user request — route still works
     // { to: '/admin/control', label: 'nav.controlPanel', icon: LayoutDashboard, color: 'pink' }, // hidden per user request — route /admin/control still works
     { to: '/admin/distribution', label: 'nav.clientDistribution', icon: Shuffle,         color: 'cyan' },
