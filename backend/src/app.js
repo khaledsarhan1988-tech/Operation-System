@@ -2348,6 +2348,8 @@ initDb().then(db => {
   app.use('/api/finance',            require('./routes/finance.routes'));
   app.use('/api/clients-finance',    require('./routes/clients-finance.routes'));
   app.use('/api/cs',                 require('./routes/cs.routes'));
+  // Read-only data export (API-key gated; disabled unless DATA_EXPORT_API_KEY set)
+  app.use('/api/data-export',        require('./routes/data-export.routes'));
 
   // 404
   app.use((req, res) => res.status(404).json({ error: 'Not found' }));
