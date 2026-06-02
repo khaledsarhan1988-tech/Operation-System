@@ -3371,6 +3371,22 @@ router.get('/trainer-utilization-summary', (req, res) => {
       }
     }
 
+    // One-off extra shifts (trainers who came back for extra hours) add to the
+    // trainer's AVAILABLE capacity on that specific day — same as the heatmap
+    // endpoint. Lectures taught during those hours are already in booked (no
+    // shift-day restriction), so this only tops up available.
+    const extraByMemberDay = {};
+    try {
+      db.prepare(
+        `SELECT team_member_id, date, SUM(duration_min) AS mins
+           FROM team_member_extra_shifts
+          WHERE date BETWEEN ? AND ?
+          GROUP BY team_member_id, date`
+      ).all(prevStart, currEnd).forEach(r => {
+        extraByMemberDay[`${r.team_member_id}|${r.date}`] = r.mins || 0;
+      });
+    } catch (_) { /* table may not exist on older DBs */ }
+
     // Helper: compute trainer's totals over a date range.
     // Voice notes count as BOOKED (productive work hours).
     function totalsForRange(trainer, shifts, dates) {
@@ -3380,6 +3396,7 @@ router.get('/trainer-utilization-summary', (req, res) => {
         if (holidaySet.has(date)) continue;   // official holiday → excluded from the calc
         let avail = 0;
         for (const sh of shifts) avail += shiftMinsForDate(sh, date);
+        avail += extraByMemberDay[`${trainer.id}|${date}`] || 0;   // one-off extra hours add to capacity
         // Booked = ALL actual session minutes that day + voice notes, with NO
         // cap and NO requirement that the day be inside the trainer's shift.
         // A trainer who worked beyond their schedule (utilization can exceed
