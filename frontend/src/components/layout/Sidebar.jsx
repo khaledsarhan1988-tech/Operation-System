@@ -134,13 +134,19 @@ function getAdminLinks(user) {
     // { to: '/admin/control', label: 'nav.controlPanel', icon: LayoutDashboard, color: 'pink' }, // hidden per user request — route /admin/control still works
     { to: '/admin/distribution', label: 'nav.clientDistribution', icon: Shuffle,         color: 'cyan' },
     { to: '/admin/pipeline',     label: 'nav.clientPipeline',     icon: Kanban,          color: 'emerald' },
-    { to: '/admin/employee-progression', label: 'nav.employeeProgression', icon: TrendingUp, color: 'violet' },
-    { to: '/admin/todos',        label: 'إدارة المهام',            icon: ListTodo,        color: 'pink' },
-    { to: '/admin/targets',      label: 'nav.targets',            icon: Target,          color: 'green' },
+    // ── Collapsible group: تطوير الأداء والمهام (toggle-only header, no own page).
+    //    The 4 pages below were moved here from their standalone positions.
+    { group: true, key: 'perf-tasks', label: 'تطوير الأداء والمهام', icon: TrendingUp, color: 'violet' },
+    { to: '/admin/employee-progression', label: 'nav.employeeProgression', icon: TrendingUp, color: 'violet', sub: true },
+    { to: '/admin/todos',                label: 'إدارة المهام',            icon: ListTodo,   color: 'pink',   sub: true },
+    { to: '/admin/targets',              label: 'nav.targets',             icon: Target,     color: 'green',  sub: true },
+    ...(isSuperAdmin ? [
+      { to: '/admin/settings',           label: 'nav.systemSettings',      icon: Settings,   color: 'slate',  sub: true },
+    ] : []),
     // System-wide config — super-admin (management='All') only.
     // Department-scoped admins (Customer Services / Quality / Education) don't see these.
     ...(isSuperAdmin ? [
-      { to: '/admin/settings',          label: 'nav.systemSettings', icon: Settings,  color: 'slate' },
+      // 'إعدادات النظام' moved into the 'تطوير الأداء والمهام' group above.
       { to: '/admin/db-status',         label: 'nav.dbStatus',       icon: Database,  color: 'blue'  },
     ] : []),
     { type: 'section', label: 'nav.reportsSection' },
@@ -243,11 +249,12 @@ export default function Sidebar({ mobile, onClose }) {
   const [overrides, setOverrides] = useState(() => new Map());
 
   const isParentOpen = (node) => {
-    const o = overrides.get(node.to);
+    const k = node.to || node.key;
+    const o = overrides.get(k);
     if (o === 'closed') return false;
     if (o === 'open')   return true;
     // No user override — use route-based default
-    if (location.pathname === node.to) return true;
+    if (node.to && location.pathname === node.to) return true;
     if (node.children?.some(c => c.to && (location.pathname === c.to || location.pathname.startsWith(c.to + '/')))) return true;
     return false;
   };
@@ -356,38 +363,55 @@ export default function Sidebar({ mobile, onClose }) {
           const { to, label, icon: Icon, end, color, children = [] } = item;
           const hasChildren = children.length > 0;
           const isOpen = hasChildren && isParentOpen(item);
+          const pk = to || item.key;   // parent key (group headers have no own `to`)
 
           return (
-            <div key={to}>
-              {/* Parent row — clicking the main area navigates AND auto-expands.
-                  A small chevron at the end lets the user toggle without navigating. */}
+            <div key={pk}>
+              {/* Parent row — a real page navigates (and auto-expands); a group
+                  header (item.group, no `to`) only toggles its children. */}
               <div className="relative">
-                <NavLink
-                  to={to}
-                  end={end}
-                  onClick={() => {
-                    // Clicking the parent's main row navigates + ensures it's open
-                    // (so the user sees their context). Use the chevron to collapse.
-                    if (hasChildren && !isOpen) toggleExpand(to, false);
-                    if (mobile) onClose?.();
-                  }}
-                  style={colorVars(color)}
-                  className={({ isActive }) =>
-                    `sidebar-link-v2 ${isActive ? 'active' : ''} ${hasChildren ? 'pe-10' : ''}`
-                  }
-                >
-                  <span className="si-icon-v2">
-                    <Icon size={18} strokeWidth={2.4} />
-                  </span>
-                  <span className="flex-1 text-sm truncate font-bold">
-                    {t(label, label)}
-                  </span>
-                </NavLink>
+                {item.group ? (
+                  <button
+                    type="button"
+                    onClick={() => toggleExpand(pk, isOpen)}
+                    style={colorVars(color)}
+                    className={`sidebar-link-v2 w-full ${isOpen ? 'active' : ''} ${hasChildren ? 'pe-10' : ''}`}
+                  >
+                    <span className="si-icon-v2">
+                      <Icon size={18} strokeWidth={2.4} />
+                    </span>
+                    <span className="flex-1 text-sm truncate font-bold text-right">
+                      {t(label, label)}
+                    </span>
+                  </button>
+                ) : (
+                  <NavLink
+                    to={to}
+                    end={end}
+                    onClick={() => {
+                      // Clicking the parent's main row navigates + ensures it's open
+                      // (so the user sees their context). Use the chevron to collapse.
+                      if (hasChildren && !isOpen) toggleExpand(pk, false);
+                      if (mobile) onClose?.();
+                    }}
+                    style={colorVars(color)}
+                    className={({ isActive }) =>
+                      `sidebar-link-v2 ${isActive ? 'active' : ''} ${hasChildren ? 'pe-10' : ''}`
+                    }
+                  >
+                    <span className="si-icon-v2">
+                      <Icon size={18} strokeWidth={2.4} />
+                    </span>
+                    <span className="flex-1 text-sm truncate font-bold">
+                      {t(label, label)}
+                    </span>
+                  </NavLink>
+                )}
                 {hasChildren && (
                   <button
                     type="button"
                     aria-label={isOpen ? 'طي' : 'فتح'}
-                    onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggleExpand(to, isOpen); }}
+                    onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggleExpand(pk, isOpen); }}
                     className="absolute left-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-all"
                   >
                     <ChevronDown
