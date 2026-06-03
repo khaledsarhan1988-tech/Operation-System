@@ -1710,6 +1710,38 @@ initDb().then(db => {
     console.error('team_member_dept_history bootstrap error:', e.message);
   }
 
+  // ── Sync CS team_members.start_date FROM users.start_date ─────────────────
+  // Users (login accounts) are the source of truth for تاريخ التعيين (hire
+  // date). Mirror it onto Customer-Services team members, matched by
+  // users.username ↔ team_members.name. Idempotent — only rows whose date
+  // actually differs are touched (so re-runs are no-ops). Ongoing changes are
+  // propagated live by POST/PUT /api/admin/users.
+  try {
+    db._raw.run(`
+      UPDATE team_members
+         SET start_date = (
+           SELECT substr(u.start_date, 1, 10) FROM users u
+            WHERE LOWER(TRIM(u.username)) = LOWER(TRIM(team_members.name))
+              AND u.start_date IS NOT NULL AND TRIM(u.start_date) != ''
+            LIMIT 1
+         )
+       WHERE department = 'customer_services'
+         AND EXISTS (
+           SELECT 1 FROM users u
+            WHERE LOWER(TRIM(u.username)) = LOWER(TRIM(team_members.name))
+              AND u.start_date IS NOT NULL AND TRIM(u.start_date) != ''
+              AND substr(u.start_date, 1, 10) != COALESCE(substr(team_members.start_date, 1, 10), '')
+         )
+    `);
+    const nHire = db._raw.exec(`SELECT changes()`)[0]?.values[0][0] || 0;
+    if (nHire > 0) {
+      saveNow();
+      console.log(`✅ Migration: synced ${nHire} CS team_members.start_date from users (hire-date source of truth)`);
+    }
+  } catch (e) {
+    console.error('team start_date sync migration error:', e.message);
+  }
+
   // ── group_count_approvals bootstrap ──────────────────────────────────────
   // "Receive a group" feature: stores the approved baseline client count per
   // group. Keyed by (group_name, line) so it survives the Excel sync that

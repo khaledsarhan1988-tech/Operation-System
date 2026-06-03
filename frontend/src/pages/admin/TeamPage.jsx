@@ -836,9 +836,9 @@ export function MemberModal({ initial, onSave, onClose, loading }) {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className={labelCls}>تاريخ التعيين</label>
-                <input type="date" className={inputCls} value={form.start_date}
-                  onChange={e => set('start_date', e.target.value)} />
-                <p className="text-[11px] text-gray-400 mt-1">إذا تُرك فارغاً يُسجَّل تاريخ الإضافة.</p>
+                <input type="date" className={inputCls + ' bg-gray-100 text-gray-500 cursor-not-allowed'}
+                  value={form.start_date} disabled readOnly />
+                <p className="text-[11px] text-gray-400 mt-1">🔒 مصدره <b>إدارة المستخدمين</b> (تاريخ تعيين المستخدم) — يُعدَّل من هناك.</p>
               </div>
               <div>
                 <label className={labelCls}>تاريخ ترك العمل</label>

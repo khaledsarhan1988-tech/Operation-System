@@ -112,6 +112,24 @@ router.post('/users', (req, res) => {
 
   const user = db.prepare('SELECT id, username, full_name, role, department, extra_departments, management, extra_managements, line, language, is_active, start_date, end_date FROM users WHERE id = ?')
     .get(result.lastInsertRowid);
+
+  // Mirror the hire date onto a matching Customer-Services team member, if any
+  // (users is the source of truth for تاريخ التعيين). Keyed by username ↔ name.
+  if (isAdminActor && user.username) {
+    try {
+      db.prepare(`
+        UPDATE team_members
+           SET start_date = ?
+         WHERE department = 'customer_services'
+           AND LOWER(TRIM(name)) = LOWER(TRIM(?))
+      `).run(
+        user.start_date && String(user.start_date).trim() ? String(user.start_date).slice(0, 10) : null,
+        user.username
+      );
+    } catch (e) {
+      console.error('team_members hire-date sync (create) error:', e.message);
+    }
+  }
   return res.status(201).json(user);
 });
 
@@ -262,6 +280,31 @@ router.put('/users/:id', (req, res) => {
 
   // Dept transition history is now managed solely from the فريق العمل page
   // (team_member_dept_history). No user-level dept history is tracked here.
+
+  // ── Propagate تاريخ التعيين (hire date) to فريق العمل ─────────────────────
+  // Users (login accounts) are the source of truth for the hire date. Mirror
+  // the user's current start_date onto the matching Customer-Services team
+  // member, keyed by username ↔ team_members.name. Only admins can change
+  // employment dates, so only sync on admin edits. Matches on the (possibly
+  // just-changed) username so a rename re-points to the right team member.
+  if (req.user.role === 'admin') {
+    try {
+      const cur = db.prepare('SELECT username, start_date FROM users WHERE id = ?').get(id);
+      if (cur && cur.username && String(cur.username).trim()) {
+        db.prepare(`
+          UPDATE team_members
+             SET start_date = ?
+           WHERE department = 'customer_services'
+             AND LOWER(TRIM(name)) = LOWER(TRIM(?))
+        `).run(
+          cur.start_date && String(cur.start_date).trim() ? String(cur.start_date).slice(0, 10) : null,
+          cur.username
+        );
+      }
+    } catch (e) {
+      console.error('team_members hire-date sync error:', e.message);
+    }
+  }
 
   const updated = db.prepare('SELECT id, username, full_name, role, department, management, line, language, avatar_url, is_active, start_date, end_date FROM users WHERE id = ?').get(id);
   return res.json(updated);
