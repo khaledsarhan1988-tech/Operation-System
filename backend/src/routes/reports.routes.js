@@ -179,10 +179,11 @@ function coordFilterAtDatePrepared(groupExpr, lineExpr, dateExpr) {
  *
  * Returns events where, at the event's date, the coordinator-of-record was
  * registered in `activeDept`. The coordinator-of-record comes from
- * `coordinator_history`; their department on that date comes from
- * `user_department_history`. Falls back to `batches.dept_type` only when NO
- * coordinator in coordinator_history at that date has any dept history record
- * covering the date (graceful for users without history).
+ * `coordinator_history`; their section on that date comes from
+ * `team_member_dept_history` (managed from the فريق العمل page). Falls back to
+ * `batches.dept_type` only when NO coordinator in coordinator_history at that
+ * date has a team-history record covering the date (graceful for coordinators
+ * without team history).
  *
  * Use this in place of `buildDeptFilter` when the query has a date column,
  * so that historical absences are attributed to the coordinator's
@@ -205,15 +206,13 @@ function coordDeptAtDateFilter(batchAlias, dateExpr, activeDept) {
     .map(d => String(d).toLowerCase().trim().replace(/'/g, "''"));
   if (cleaned.length === 0) return '';
   const inList = cleaned.map(d => `'${d}'`).join(',');
-  // ── Team-history PRECEDENCE ───────────────────────────────────────────────
+  // ── Team-history attribution ──────────────────────────────────────────────
   // For each coordinator-of-record at the event date, the effective department
-  // is resolved team-first:
-  //   1. team_member_dept_history.section (if a record covers the date)  ← wins
-  //   2. else user_department_history.department (if a record covers the date)
-  //   3. else fall back to batches.dept_type (only when NO coordinator has ANY
-  //      history — team or user — covering the date).
-  // Section values (general/private/semi) and users department values
-  // (General/Private/Semi) both lower-case to the same target list.
+  // (section) comes from team_member_dept_history. Falls back to
+  // batches.dept_type only when NO coordinator has a team-history record
+  // covering the date. (User dept-history is no longer consulted — the team
+  // history is the single source of truth, see فريق العمل page.)
+  // Section values (general/private/semi) lower-case to the same target list.
   return ` AND (
     EXISTS (
       SELECT 1
@@ -222,29 +221,12 @@ function coordDeptAtDateFilter(batchAlias, dateExpr, activeDept) {
          AND ch_c.line       = ${batchAlias}.line
          AND DATE(ch_c.effective_from) <= ${dateExpr}
          AND (ch_c.effective_to IS NULL OR DATE(ch_c.effective_to) > ${dateExpr})
-         AND (
-           EXISTS (
-             SELECT 1 FROM team_member_dept_history tmh
-              WHERE LOWER(TRIM(tmh.member_name)) = LOWER(TRIM(ch_c.coordinator))
-                AND DATE(tmh.effective_from) <= ${dateExpr}
-                AND (tmh.effective_to IS NULL OR DATE(tmh.effective_to) > ${dateExpr})
-                AND LOWER(TRIM(tmh.section)) IN (${inList})
-           )
-           OR (
-             NOT EXISTS (
-               SELECT 1 FROM team_member_dept_history tmh2
-                WHERE LOWER(TRIM(tmh2.member_name)) = LOWER(TRIM(ch_c.coordinator))
-                  AND DATE(tmh2.effective_from) <= ${dateExpr}
-                  AND (tmh2.effective_to IS NULL OR DATE(tmh2.effective_to) > ${dateExpr})
-             )
-             AND EXISTS (
-               SELECT 1 FROM user_department_history udh
-                WHERE LOWER(TRIM(udh.user_name)) = LOWER(TRIM(ch_c.coordinator))
-                  AND DATE(udh.effective_from) <= ${dateExpr}
-                  AND (udh.effective_to IS NULL OR DATE(udh.effective_to) > ${dateExpr})
-                  AND LOWER(TRIM(udh.department)) IN (${inList})
-             )
-           )
+         AND EXISTS (
+           SELECT 1 FROM team_member_dept_history tmh
+            WHERE LOWER(TRIM(tmh.member_name)) = LOWER(TRIM(ch_c.coordinator))
+              AND DATE(tmh.effective_from) <= ${dateExpr}
+              AND (tmh.effective_to IS NULL OR DATE(tmh.effective_to) > ${dateExpr})
+              AND LOWER(TRIM(tmh.section)) IN (${inList})
          )
     )
     OR (
@@ -256,19 +238,11 @@ function coordDeptAtDateFilter(batchAlias, dateExpr, activeDept) {
            AND ch_c2.line       = ${batchAlias}.line
            AND DATE(ch_c2.effective_from) <= ${dateExpr}
            AND (ch_c2.effective_to IS NULL OR DATE(ch_c2.effective_to) > ${dateExpr})
-           AND (
-             EXISTS (
-               SELECT 1 FROM team_member_dept_history tmh3
-                WHERE LOWER(TRIM(tmh3.member_name)) = LOWER(TRIM(ch_c2.coordinator))
-                  AND DATE(tmh3.effective_from) <= ${dateExpr}
-                  AND (tmh3.effective_to IS NULL OR DATE(tmh3.effective_to) > ${dateExpr})
-             )
-             OR EXISTS (
-               SELECT 1 FROM user_department_history udh2
-                WHERE LOWER(TRIM(udh2.user_name)) = LOWER(TRIM(ch_c2.coordinator))
-                  AND DATE(udh2.effective_from) <= ${dateExpr}
-                  AND (udh2.effective_to IS NULL OR DATE(udh2.effective_to) > ${dateExpr})
-             )
+           AND EXISTS (
+             SELECT 1 FROM team_member_dept_history tmh3
+              WHERE LOWER(TRIM(tmh3.member_name)) = LOWER(TRIM(ch_c2.coordinator))
+                AND DATE(tmh3.effective_from) <= ${dateExpr}
+                AND (tmh3.effective_to IS NULL OR DATE(tmh3.effective_to) > ${dateExpr})
            )
       )
     )
@@ -1414,7 +1388,7 @@ router.get('/absent-list', (req, res) => {
   const activeTo    = modal_to    || to_date;
 
   // Time-aware dept filter — attribute each absence to the coordinator's
-  // department-at-event-date (via coordinator_history + user_department_history),
+  // section-at-event-date (via coordinator_history + team_member_dept_history),
   // not the current batches.dept_type. Mirrors /attendance-absence so modal
   // counts match the main table.
   // Part1 absence date = COALESCE(a.date, inferred-from-lecture_no). The dept
@@ -4943,12 +4917,12 @@ router.get('/attendance-absence', (req, res) => {
   const lineA = buildLineFilter('a', line);
 
   // Role-based dept filter. For /attendance-absence the dept is matched
-  // against the COORDINATOR's department AT THE TIME OF THE EVENT, looked
-  // up via user_department_history. This means: filter=Private → include
-  // any absence where the coordinator-at-the-time was in Private dept at
+  // against the COORDINATOR's section AT THE TIME OF THE EVENT, looked
+  // up via team_member_dept_history. This means: filter=Private → include
+  // any absence where the coordinator-at-the-time was in Private section at
   // that moment, regardless of the group's current dept_type or the
-  // coordinator's current dept. Falls back to b.dept_type when no history
-  // record covers the event date (graceful degradation for users without
+  // coordinator's current section. Falls back to b.dept_type when no team
+  // record covers the event date (graceful degradation for coordinators without
   // dept history yet).
   let coordFilterB = buildCoordFilter('b', coordinator);
   let coordFilterB2 = buildCoordFilter('b2', coordinator);
