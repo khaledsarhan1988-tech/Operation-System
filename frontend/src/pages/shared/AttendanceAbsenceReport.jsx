@@ -132,11 +132,6 @@ export default function AttendanceAbsenceReport() {
     staleTime: 60 * 1000,
   });
 
-  const { data: deptData } = useQuery({
-    queryKey: ['attendance-absence-by-department', queryParams],
-    queryFn: () => api.get('/reports/attendance-absence-by-department', { params: queryParams }).then(r => r.data),
-    staleTime: 60 * 1000,
-  });
 
   // Split multi-name coordinator fields (e.g. "Mostafa, fouad") per row.
   // current_department arrives as a comma-separated string matching the
@@ -154,11 +149,18 @@ export default function AttendanceAbsenceReport() {
           map.set(c, {
             coordinator: c,
             current_department: depts[i] || '',
+            section: r.section || null,
+            status: r.status || null,
             main_expected: 0, main_absent: 0,
             zoom_expected: 0, zoom_absent: 0,
           });
-        } else if (depts[i] && !map.get(c).current_department) {
-          map.get(c).current_department = depts[i];
+        } else {
+          const ex = map.get(c);
+          if (depts[i] && !ex.current_department) ex.current_department = depts[i];
+          // section/status come from the coordinator's own (single-name) row;
+          // multi-name concat rows carry null, so prefer any non-null value.
+          if (r.section && !ex.section) ex.section = r.section;
+          if (r.status && !ex.status)   ex.status  = r.status;
         }
         const row = map.get(c);
         row.main_expected += r.main_expected || 0;
@@ -176,6 +178,32 @@ export default function AttendanceAbsenceReport() {
       .filter(r => coordQuery ? r.coordinator.toLowerCase().includes(coordQuery.toLowerCase()) : true)
       .sort((a, b) => (b.main_absent + b.zoom_absent) - (a.main_absent + a.zoom_absent));
   }, [raw, coordQuery]);
+
+  /* ─── Per-department aggregation (derived from the SAME per-coordinator data
+        so the cards always equal the table — grouped by each coordinator's
+        فريق العمل section). ─────────────────────────────────────────────── */
+  const SECTION_TO_DEPT = { general: 'General', private: 'Private', semi: 'Semi' };
+  const deptAgg = useMemo(() => {
+    const acc = {};
+    data.forEach(r => {
+      const dep = SECTION_TO_DEPT[String(r.section || '').toLowerCase()];
+      if (!dep) return; // skip 'all'/unknown sections
+      if (!acc[dep]) acc[dep] = { department: dep, coordinators: 0, main_expected: 0, main_absent: 0, zoom_expected: 0, zoom_absent: 0 };
+      acc[dep].coordinators += 1;
+      acc[dep].main_expected += r.main_expected;
+      acc[dep].main_absent   += r.main_absent;
+      acc[dep].zoom_expected += r.zoom_expected;
+      acc[dep].zoom_absent   += r.zoom_absent;
+    });
+    return ['General', 'Private', 'Semi'].filter(d => acc[d]).map(d => {
+      const a = acc[d];
+      return {
+        ...a,
+        main_absence_rate: a.main_expected > 0 ? Math.round((a.main_absent / a.main_expected) * 100) : 0,
+        zoom_absence_rate: a.zoom_expected > 0 ? Math.round((a.zoom_absent / a.zoom_expected) * 100) : 0,
+      };
+    });
+  }, [data]);
 
   /* ─── Totals ──────────────────────────────────────────────────── */
   const totals = useMemo(() => {
@@ -376,11 +404,11 @@ export default function AttendanceAbsenceReport() {
           </div>
         </div>
         <div className="p-4">
-          {!deptData || deptData.length === 0 ? (
+          {!deptAgg || deptAgg.length === 0 ? (
             <p className="text-center py-6 text-gray-400 text-xs font-bold">لا توجد بيانات</p>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {deptData.map(d => {
+              {deptAgg.map(d => {
                 const deptCls = {
                   General: { bg: 'bg-blue-50',    bd: 'border-blue-200',    fg: 'text-blue-700'    },
                   Private: { bg: 'bg-violet-50',  bd: 'border-violet-200',  fg: 'text-violet-700'  },

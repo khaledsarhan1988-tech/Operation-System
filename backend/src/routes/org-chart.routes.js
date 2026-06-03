@@ -127,7 +127,7 @@ router.get('/customer-services', (req, res) => {
     // in commas on both sides so a search for 'General' never matches
     // 'GeneralSomething'. Case-insensitive, whitespace-tolerant.
     const leaderStmt = db.prepare(
-      `SELECT id, full_name AS name FROM users
+      `SELECT id, full_name, username FROM users
         WHERE role='leader' AND is_active=1
           AND (
             department = ? COLLATE NOCASE
@@ -144,6 +144,17 @@ router.get('/customer-services', (req, res) => {
     // `line='All'` rows are line-agnostic (typically education trainers) —
     // they must appear in every line's view, so we match either the requested
     // line OR 'All'.
+    // Resolve a leader's DISPLAY name from فريق العمل (team_members) so the org
+    // chart shows the same coordinator name the rest of the system matches on.
+    // Match by username first (the coordinator key ↔ team_members.name), then
+    // full_name; fall back to users.full_name when the leader isn't in the
+    // directory. Same lookup also makes the leader/member dedup reliable.
+    const leaderTeamName = db.prepare(
+      `SELECT name FROM team_members
+        WHERE LOWER(TRIM(name)) IN (LOWER(TRIM(?)), LOWER(TRIM(?)))
+        ORDER BY CASE WHEN LOWER(TRIM(name)) = LOWER(TRIM(?)) THEN 0 ELSE 1 END
+        LIMIT 1`
+    );
     const membersWithSectionAndLine = db.prepare(
       `SELECT id, name, job_title, coordinator_type FROM team_members
         WHERE status='active' AND department = ? AND section = ?
@@ -164,7 +175,15 @@ router.get('/customer-services', (req, res) => {
     const result = visibleSections.map((s) => {
       // Pass dept 3 times: primary match, extra_departments token match,
       // and ORDER BY tiebreaker (prefers primary over extra).
-      const leader = leaderStmt.get(s.dept_users, s.dept_users, s.dept_users) || null;
+      const leaderRow = leaderStmt.get(s.dept_users, s.dept_users, s.dept_users) || null;
+      // Display name from فريق العمل (username↔name, then full_name); else full_name.
+      const leader = leaderRow
+        ? {
+            id: leaderRow.id,
+            name: (leaderTeamName.get(leaderRow.username, leaderRow.full_name, leaderRow.username)?.name)
+              || leaderRow.full_name,
+          }
+        : null;
       const rawMembers = s.tm_section
         ? (s.tm_line
             ? membersWithSectionAndLine.all(s.tm_dept, s.tm_section, s.tm_line)
