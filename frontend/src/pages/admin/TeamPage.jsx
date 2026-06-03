@@ -5,7 +5,7 @@ import { useSearchParams } from 'react-router-dom';
 import {
   Users, Plus, Pencil, Trash2, X, Search, Sun, Moon,
   Phone, Briefcase, CheckCircle, XCircle, ChevronDown, UserX,
-  Clock, Calendar as CalendarIcon, History,
+  Clock, Calendar as CalendarIcon, History, Scale,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -1131,6 +1131,7 @@ export default function TeamPage() {
   const [editMember,   setEditMember]   = useState(null);   // member obj or true (new)
   const [deleteMember, setDeleteMember] = useState(null);   // member obj
   const [historyMember, setHistoryMember] = useState(null); // member obj → dept/section history modal
+  const [showDiff, setShowDiff] = useState(false);          // users ↔ team comparison modal
   // Employment date-range filters (mirror UserManagement). Only meaningful for
   // the Customer Services tab where start_date/end_date are populated.
   const [fHireFrom, setFHireFrom]   = useState('');
@@ -1266,6 +1267,15 @@ export default function TeamPage() {
           {showInactive ? <XCircle size={15} /> : <CheckCircle size={15} />}
           {showInactive ? 'إخفاء غير النشطين' : 'عرض غير النشطين'}
         </button>
+        {activeDept === 'customer_services' && (
+          <button
+            onClick={() => setShowDiff(true)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-medium transition-all bg-white border-amber-200 text-amber-700 hover:bg-amber-50"
+            title="مقارنة بيانات فريق العمل مع إدارة المستخدمين (بالاسم/username)"
+          >
+            <Scale size={15} /> مقارنة مع إدارة المستخدمين
+          </button>
+        )}
         <span className="text-xs text-gray-400 font-medium">{totalVisible} موظف</span>
       </div>
 
@@ -1356,6 +1366,9 @@ export default function TeamPage() {
           member={historyMember}
           onClose={() => setHistoryMember(null)}
         />
+      )}
+      {showDiff && (
+        <UserDiffModal onClose={() => setShowDiff(false)} />
       )}
     </div>
   );
@@ -1584,6 +1597,135 @@ function TeamDeptHistoryModal({ member, onClose }) {
                   className="w-full py-2.5 rounded-xl border-2 border-dashed border-gray-300 text-xs font-bold text-gray-500 hover:bg-gray-50 hover:border-violet-400 hover:text-violet-600 transition-all">
                   + إضافة سجل تنقل جديد
                 </button>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="px-5 py-3 bg-gray-50 border-t border-gray-100">
+          <button onClick={onClose} className="w-full py-2 rounded-xl bg-gray-200 hover:bg-gray-300 text-sm font-semibold text-gray-700">إغلاق</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── USER ↔ TEAM COMPARISON MODAL ────────────────────────────────────────────
+// Compares the Customer-Services فريق العمل roster against the users (login)
+// accounts, keyed by username ↔ team name (the coordinator name). Read-only.
+function DiffSection({ title, tone, children }) {
+  const tones = {
+    rose:  'border-rose-200 bg-rose-50/30',
+    amber: 'border-amber-200 bg-amber-50/30',
+    sky:   'border-sky-200 bg-sky-50/30',
+  };
+  return (
+    <div className={`rounded-xl border ${tones[tone] || 'border-gray-200'}`}>
+      <div className="px-3 py-2 text-xs font-bold text-gray-700 border-b border-black/5">{title}</div>
+      <div>{children}</div>
+    </div>
+  );
+}
+
+function UserDiffModal({ onClose }) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['cs-user-diff'],
+    queryFn: () => api.get('/team/cs-user-diff').then(r => r.data),
+  });
+  const s = data?.summary;
+  const sec = v => SECTIONS[String(v || '').toLowerCase()] || v;
+  const FIELD_LABEL = { dept: 'القسم', status: 'الحالة', start_date: 'تاريخ التعيين', end_date: 'تاريخ ترك العمل', line: 'الـ Line' };
+  const statusLbl = v => (v === 'active' ? 'نشط' : v === 'inactive' ? 'موقوف' : v);
+  const fmtVal = (k, v) => {
+    if (v === '' || v == null) return '—';
+    if (k === 'dept') return sec(v);
+    if (k === 'status') return statusLbl(v);
+    return v;
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" dir="rtl">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[92vh]">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-amber-50/50">
+          <div className="flex items-center gap-3">
+            <div className="bg-amber-500 w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm"><Scale size={18} /></div>
+            <div>
+              <div className="text-sm font-bold text-gray-900">مقارنة فريق العمل ↔ إدارة المستخدمين</div>
+              <div className="text-[11px] text-gray-500 mt-0.5">المطابقة بالاسم: <span className="font-mono">username</span> ↔ اسم فريق العمل</div>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-white/60 rounded-lg"><X size={18} /></button>
+        </div>
+
+        <div className="p-4 overflow-y-auto flex-1 space-y-4">
+          {isLoading ? (
+            <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-14 bg-gray-100 animate-pulse rounded-xl" />)}</div>
+          ) : isError ? (
+            <div className="text-center py-8 text-sm text-rose-600">تعذّر تحميل المقارنة</div>
+          ) : (
+            <>
+              <div className="flex flex-wrap gap-2 text-xs">
+                <span className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-700 font-bold">المستخدمون: {s.users}</span>
+                <span className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-700 font-bold">فريق العمل: {s.team}</span>
+                <span className="px-3 py-1.5 rounded-lg bg-rose-50 text-rose-700 font-bold">username بلا مقابل: {s.usersOnly}</span>
+                <span className="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-700 font-bold">فريق العمل بلا مقابل: {s.teamOnly}</span>
+                <span className="px-3 py-1.5 rounded-lg bg-sky-50 text-sky-700 font-bold">اختلافات حقول: {s.fieldDiffs}</span>
+              </div>
+              {s.usersOnly === 0 && s.teamOnly === 0 && s.fieldDiffs === 0 && (
+                <div className="px-4 py-6 text-center text-sm text-emerald-700 bg-emerald-50/60 rounded-xl">✅ كل البيانات متطابقة — مفيش أي اختلاف</div>
+              )}
+
+              {data.usersOnly.length > 0 && (
+                <DiffSection title="في إدارة المستخدمين فقط (username مالوش عضو في فريق العمل)" tone="rose">
+                  {data.usersOnly.map(u => (
+                    <div key={u.id} className="flex items-center gap-3 flex-wrap py-2 px-3 border-b border-rose-50 last:border-0">
+                      <span className="font-mono text-sm font-bold text-gray-900">{u.username}</span>
+                      <span className="text-[11px] text-gray-500">({u.full_name})</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{u.department}</span>
+                      {u.suggestion
+                        ? <span className="ms-auto text-[11px] text-emerald-700">أقرب اسم في فريق العمل: <b>{u.suggestion.name}</b></span>
+                        : <span className="ms-auto text-[11px] text-gray-400">مفيش اسم قريب</span>}
+                    </div>
+                  ))}
+                </DiffSection>
+              )}
+
+              {data.teamOnly.length > 0 && (
+                <DiffSection title="في فريق العمل فقط (الاسم مالوش username في إدارة المستخدمين)" tone="amber">
+                  {data.teamOnly.map(t => (
+                    <div key={t.id} className="flex items-center gap-3 flex-wrap py-2 px-3 border-b border-amber-50 last:border-0">
+                      <span className="text-sm font-bold text-gray-900">{t.name}</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-50 text-violet-700">{sec(t.section)}</span>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full ${t.status === 'active' ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>{statusLbl(t.status)}</span>
+                      {t.suggestion
+                        ? <span className="ms-auto text-[11px] text-emerald-700">أقرب username: <b>{t.suggestion.name}</b></span>
+                        : <span className="ms-auto text-[11px] text-gray-400">مفيش اسم قريب</span>}
+                    </div>
+                  ))}
+                </DiffSection>
+              )}
+
+              {data.fieldDiffs.length > 0 && (
+                <DiffSection title="اختلافات في الحقول (لنفس الاسم)" tone="sky">
+                  {data.fieldDiffs.map((f, i) => (
+                    <div key={i} className="py-2.5 px-3 border-b border-sky-50 last:border-0">
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <span className="text-sm font-bold text-gray-900">{f.name}</span>
+                        {f.full_name && f.full_name !== f.name && <span className="text-[11px] text-gray-400">({f.full_name})</span>}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {Object.entries(f.diffs).map(([k, v]) => (
+                          <span key={k} className="text-[11px] px-2 py-1 rounded-lg bg-sky-50 border border-sky-100">
+                            <b className="text-sky-800">{FIELD_LABEL[k] || k}:</b>{' '}
+                            <span className="text-gray-500">مستخدمين</span>=<b>{fmtVal(k, v.user)}</b>{' '}
+                            <span className="text-gray-400">≠</span>{' '}
+                            <span className="text-gray-500">فريق</span>=<b>{fmtVal(k, v.team)}</b>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </DiffSection>
               )}
             </>
           )}

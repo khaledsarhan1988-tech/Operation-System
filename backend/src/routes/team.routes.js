@@ -25,6 +25,105 @@ router.get('/', (req, res) => {
   }
 });
 
+// ─── GET /api/team/cs-user-diff ───────────────────────────────────────────────
+// Compares the Customer-Services فريق العمل roster against the users (login)
+// accounts, keyed by users.username ↔ team_members.name — the coordinator name
+// the system matches on. Surfaces three buckets:
+//   • teamOnly   — team members whose name has no matching username
+//   • usersOnly  — usernames with no matching team member (+ nearest suggestion)
+//   • fieldDiffs — matched pairs whose dept/section, status, dates or line differ
+// Read-only; leader+ (parent router guard).
+router.get('/cs-user-diff', (req, res) => {
+  const norm = s => String(s || '').trim().toLowerCase();
+  const squash = s => norm(s).replace(/\s+/g, '');
+  // Levenshtein distance (on space/case-normalized strings) for suggestions.
+  function lev(a, b) {
+    a = squash(a); b = squash(b);
+    const m = a.length, n = b.length;
+    if (!m) return n; if (!n) return m;
+    let prev = Array.from({ length: n + 1 }, (_, j) => j);
+    for (let i = 1; i <= m; i++) {
+      const cur = [i];
+      for (let j = 1; j <= n; j++) {
+        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+      }
+      prev = cur;
+    }
+    return prev[n];
+  }
+  function nearest(name, candidates) {
+    let best = null, bestD = Infinity;
+    for (const c of candidates) {
+      const dd = lev(name, c);
+      if (dd < bestD) { bestD = dd; best = c; }
+    }
+    if (best === null) return null;
+    const maxLen = Math.max(squash(name).length, squash(best).length) || 1;
+    if (bestD <= 3 || bestD <= maxLen * 0.4) return { name: best, distance: bestD };
+    return null;
+  }
+  try {
+    const users = db.prepare(
+      `SELECT id, username, full_name, role, department, line, is_active, start_date, end_date
+         FROM users WHERE role IN ('agent','leader')`
+    ).all();
+    const team = db.prepare(
+      `SELECT id, name, section, status, line, start_date, end_date
+         FROM team_members WHERE department='customer_services'`
+    ).all();
+    const userByName = new Map(users.map(u => [norm(u.username), u]));
+    const teamByName = new Map(team.map(t => [norm(t.name), t]));
+    const userNames = users.map(u => u.username);
+    const teamNames = team.map(t => t.name);
+
+    const teamOnly = team
+      .filter(t => !userByName.has(norm(t.name)))
+      .map(t => ({
+        id: t.id, name: t.name, section: t.section, status: t.status, line: t.line,
+        suggestion: nearest(t.name, userNames),
+      }));
+    const usersOnly = users
+      .filter(u => !teamByName.has(norm(u.username)))
+      .map(u => ({
+        id: u.id, username: u.username, full_name: u.full_name, role: u.role,
+        department: u.department, is_active: u.is_active,
+        suggestion: nearest(u.username, teamNames),
+      }));
+
+    const d10 = v => (v ? String(v).slice(0, 10) : '');
+    const fieldDiffs = [];
+    for (const u of users) {
+      const t = teamByName.get(norm(u.username));
+      if (!t) continue;
+      const diffs = {};
+      const ud = norm(u.department), ts = norm(t.section);
+      // department is General/Private/Semi/All; section is general/private/semi/all.
+      // Compare only when both are concrete sections.
+      if (ud !== 'all' && ['general', 'private', 'semi'].includes(ts) && ud !== ts) {
+        diffs.dept = { user: u.department, team: t.section };
+      }
+      const ustat = u.is_active ? 'active' : 'inactive';
+      if (ustat !== t.status) diffs.status = { user: ustat, team: t.status };
+      if (d10(u.start_date) !== d10(t.start_date)) diffs.start_date = { user: d10(u.start_date), team: d10(t.start_date) };
+      if (d10(u.end_date) !== d10(t.end_date)) diffs.end_date = { user: d10(u.end_date), team: d10(t.end_date) };
+      if (norm(u.line) !== norm(t.line)) diffs.line = { user: u.line, team: t.line };
+      if (Object.keys(diffs).length) {
+        fieldDiffs.push({ name: t.name, username: u.username, full_name: u.full_name, diffs });
+      }
+    }
+    return res.json({
+      summary: {
+        users: users.length, team: team.length,
+        teamOnly: teamOnly.length, usersOnly: usersOnly.length, fieldDiffs: fieldDiffs.length,
+      },
+      teamOnly, usersOnly, fieldDiffs,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // Sanitize and normalize the work_days field — only allow valid day codes,
 // dedupe, preserve canonical order. Returns null for empty input.
 const VALID_DAYS = ['saturday','sunday','monday','tuesday','wednesday','thursday'];
