@@ -146,11 +146,20 @@ function normalizeRests(raw) {
   if (!Array.isArray(arr)) return null;
   const cleaned = arr
     .filter(x => x && typeof x === 'object')
-    .map(x => ({
-      start: typeof x.start === 'string' && HHMM_RE.test(x.start) ? x.start : null,
-      end:   typeof x.end   === 'string' && HHMM_RE.test(x.end)   ? x.end   : null,
-    }))
-    .filter(x => x.start && x.end);
+    .map(x => {
+      // Optional per-day scoping: which work-days this break/voice block applies
+      // to. Empty = applies to ALL the shift's days (backward-compatible).
+      const days = Array.isArray(x.days)
+        ? x.days.map(d => String(d).trim().toLowerCase()).filter(d => VALID_DAYS.includes(d))
+        : [];
+      return {
+        start: typeof x.start === 'string' && HHMM_RE.test(x.start) ? x.start : null,
+        end:   typeof x.end   === 'string' && HHMM_RE.test(x.end)   ? x.end   : null,
+        days,
+      };
+    })
+    .filter(x => x.start && x.end)
+    .map(x => (x.days.length ? { start: x.start, end: x.end, days: x.days } : { start: x.start, end: x.end }));
   return cleaned.length ? JSON.stringify(cleaned) : null;
 }
 
@@ -158,15 +167,20 @@ function normalizeRests(raw) {
 // Shift fields are only meaningful when the shift itself is set.
 // start_date is required when shift is set; end_date is optional (NULL = still active).
 // voice_notes use the same [{start,end}, ...] shape as rests, normalized via normalizeRests.
-function buildShiftBundle(rawShift, rawStart, rawEnd, rawRests, rawEmpType, rawDays, rawStartDate, rawEndDate, rawVoiceNotes) {
+const VALID_SECTIONS = ['general', 'private', 'semi', 'phone_call', 'all'];
+function buildShiftBundle(rawShift, rawStart, rawEnd, rawRests, rawEmpType, rawDays, rawStartDate, rawEndDate, rawVoiceNotes, rawSection) {
   const shift = rawShift || null;
   if (!shift) {
-    return { shift: null, start: null, end: null, rests: null, voice_notes: null, emp_type: null, days: null, start_date: null, end_date: null };
+    return { shift: null, start: null, end: null, rests: null, voice_notes: null, emp_type: null, days: null, start_date: null, end_date: null, section: null };
   }
   const emp_type = rawEmpType || null;
   const days = emp_type === 'full_time'
     ? VALID_DAYS.join(',')
     : (emp_type === 'part_time' ? normalizeWorkDays(rawDays) : null);
+  // Per-shift section: a trainer who changed section mid-period sets the right
+  // section on each shift. 'all'/empty → null = use the trainer's main section.
+  const secLc = rawSection ? String(rawSection).trim().toLowerCase() : null;
+  const section = (secLc && secLc !== 'all' && VALID_SECTIONS.includes(secLc)) ? secLc : null;
   return {
     shift,
     start: rawStart || null,
@@ -177,6 +191,7 @@ function buildShiftBundle(rawShift, rawStart, rawEnd, rawRests, rawEmpType, rawD
     days,
     start_date: rawStartDate || null,
     end_date: rawEndDate || null,
+    section,
   };
 }
 
@@ -280,7 +295,7 @@ function readShiftsArray(rawShifts) {
       ? buildShiftBundle(
           s.shift, s.start, s.end, s.rests,
           s.employment_type, s.work_days,
-          s.start_date, s.end_date, s.voice_notes,
+          s.start_date, s.end_date, s.voice_notes, s.section,
         )
       : null)
     .filter(b => b && b.shift);
@@ -309,6 +324,7 @@ function bundleToJsonShape(b) {
     rests: b.rests, voice_notes: b.voice_notes,
     employment_type: b.emp_type, work_days: b.days,
     start_date: b.start_date, end_date: b.end_date,
+    section: b.section || null,
   };
 }
 

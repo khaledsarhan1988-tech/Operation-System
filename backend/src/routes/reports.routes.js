@@ -397,7 +397,13 @@ function parseTeamShifts(t) {
       // notes nulled out the utilization. Keep both so all consumers work.
       .map(r => {
         const startMin = parseHM(r && r.start), endMin = parseHM(r && r.end);
-        return { startMin, endMin, s: startMin, e: endMin };
+        // Optional per-day scoping: a break/voice block can apply to specific
+        // work-days only (e.g. break 2–3 on Sun+Wed, 1–2 on Mon+Thu inside ONE
+        // shift). Empty `days` = applies to EVERY work-day of the shift.
+        const days = Array.isArray(r && r.days)
+          ? r.days.map(x => String(x).trim().toLowerCase()).filter(Boolean)
+          : String((r && r.days) || '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
+        return { startMin, endMin, s: startMin, e: endMin, days };
       })
       .filter(r => r.startMin != null && r.endMin != null && r.endMin > r.startMin);
   };
@@ -410,6 +416,7 @@ function parseTeamShifts(t) {
       .split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
     return {
       startMin, endMin, days,
+      section:   s.section ? String(s.section).trim().toLowerCase() : null,  // per-shift section (null = trainer's main section)
       startDate: s.start_date || null,
       endDate:   s.end_date   || null,
       rests:      parseRests(s.rests),
@@ -3008,17 +3015,25 @@ router.get('/trainer-utilization', (req, res) => {
   // work hours; they just block lectures from being scheduled there.
   function shiftMinsForDate(sh, dateStr) {
     if (!shiftCoversDay(sh, dateStr)) return 0;
+    const dayKey = DOW_KEYS[getDow(dateStr)] || '';
     let mins = sh.endMin - sh.startMin;
-    for (const r of sh.rests) mins -= (r.e - r.s);
+    for (const r of sh.rests) {
+      if (r.days && r.days.length && !r.days.includes(dayKey)) continue;   // break applies only to its days
+      mins -= (r.e - r.s);
+    }
     return mins > 0 ? mins : 0;
   }
   // Total voice-note minutes for the trainer across all active shifts on a date.
   // Counted as BOOKED time (productive work) in the utilization calc.
   function voiceNoteMinsForDate(shifts, dateStr) {
+    const dayKey = DOW_KEYS[getDow(dateStr)] || '';
     let total = 0;
     for (const sh of shifts) {
       if (!shiftCoversDay(sh, dateStr)) continue;
-      for (const v of (sh.voiceNotes || [])) total += (v.e - v.s);
+      for (const v of (sh.voiceNotes || [])) {
+        if (v.days && v.days.length && !v.days.includes(dayKey)) continue;
+        total += (v.e - v.s);
+      }
     }
     return total;
   }
@@ -3330,18 +3345,29 @@ router.get('/trainer-utilization-summary', (req, res) => {
   }
   function shiftMinsForDate(sh, dateStr) {
     if (!shiftCoversDay(sh, dateStr)) return 0;
+    const dayKey = DOW_KEYS[getDow(dateStr)] || '';
     let mins = sh.endMin - sh.startMin;
-    for (const r of sh.rests) mins -= (r.e - r.s);
+    for (const r of sh.rests) {
+      if (r.days && r.days.length && !r.days.includes(dayKey)) continue;   // break applies only to its days
+      mins -= (r.e - r.s);
+    }
     return mins > 0 ? mins : 0;
   }
   function voiceNoteMinsForDate(shifts, dateStr) {
+    const dayKey = DOW_KEYS[getDow(dateStr)] || '';
     let total = 0;
     for (const sh of shifts) {
       if (!shiftCoversDay(sh, dateStr)) continue;
-      for (const v of (sh.voiceNotes || [])) total += (v.e - v.s);
+      for (const v of (sh.voiceNotes || [])) {
+        if (v.days && v.days.length && !v.days.includes(dayKey)) continue;
+        total += (v.e - v.s);
+      }
     }
     return total;
   }
+  // Section a shift belongs to (per-shift; falls back to the trainer's main section).
+  const shiftSection = (sh, trainer) =>
+    (sh && sh.section) || (trainer && trainer.section) || 'all';
 
   // Date math: by default, current period = last N weeks ending today.
   // If `from` + `to` are provided and valid, they override the weeks preset.
@@ -3400,17 +3426,18 @@ router.get('/trainer-utilization-summary', (req, res) => {
     // /trainer-utilization). Deactivated trainers stay visible while they
     // had any activity in the window; they're filtered out at the totals
     // stage if they contributed nothing.
+    // Do NOT filter by section in SQL — a trainer can span multiple sections
+    // across the period (per-shift section). Fetch all education trainers and
+    // split/filter by section at the totals stage below.
     let trainerWhere = `WHERE department='education'`;
-    if (section && section !== 'all') {
-      const s = String(section).replace(/'/g, "''");
-      trainerWhere += ` AND section='${s}'`;
-    }
     if (search) {
       const s = escapeLike(search);
       trainerWhere += ` AND name LIKE '%${s}%' ESCAPE '\\'`;
     }
     const trainersRaw = db.prepare(`SELECT * FROM team_members ${trainerWhere}`).all();
-    const trainers = trainersRaw.filter(t => t.shift || t.shift2);
+    // "Has any shift" must read the canonical shifts_json (not just the legacy
+    // shift/shift2 columns) so trainers configured purely via shifts_json count.
+    const trainers = trainersRaw.filter(t => parseTeamShifts(t).length > 0);
 
     // ── Fetch all lectures in [prevStart, currEnd] once
     const lecRaw = db.prepare(
@@ -3479,6 +3506,54 @@ router.get('/trainer-utilization-summary', (req, res) => {
       return { available_min: available, booked_min: booked };
     }
 
+    // Per-SECTION totals: split a trainer's available/booked by the section each
+    // shift belongs to (per-shift `section`, date-aware). Available for a day
+    // goes to each covering shift's section; booked (lectures+voice) goes to
+    // that day's section (the one the trainer worked that day), falling back to
+    // the trainer's main section when they worked outside any shift.
+    function totalsBySectionForRange(trainer, shifts, dates) {
+      const map = {};
+      const tKey = stripParens(trainer.name).toLowerCase();
+      const clampStart = trainerCountStart(trainer, shifts);
+      const add = (sec, a, b) => {
+        if (!map[sec]) map[sec] = { available_min: 0, booked_min: 0 };
+        map[sec].available_min += a; map[sec].booked_min += b;
+      };
+      for (const date of dates) {
+        if (holidaySet.has(date)) continue;
+        if (clampStart && date < clampStart) continue;
+        let daySection = null;
+        for (const sh of shifts) {
+          const m = shiftMinsForDate(sh, date);
+          if (m > 0) { const sec = shiftSection(sh, trainer); add(sec, m, 0); if (!daySection) daySection = sec; }
+        }
+        const extra = extraByMemberDay[`${trainer.id}|${date}`] || 0;
+        if (extra > 0) { const sec = daySection || (trainer.section || 'all'); add(sec, extra, 0); if (!daySection) daySection = sec; }
+        const lectures = lectureMap[`${tKey}|${date}`] || [];
+        const lectureMin = lectures.reduce((s, l) => s + parseDur(l.duration), 0);
+        const vnMin = voiceNoteMinsForDate(shifts, date);
+        const bookedDay = lectureMin + vnMin;
+        if (bookedDay > 0) { const sec = daySection || (trainer.section || 'all'); add(sec, 0, bookedDay); }
+      }
+      return map;
+    }
+
+    // Active section filter ('all' → null = every section).
+    const activeSection = (section && section !== 'all') ? String(section).toLowerCase() : null;
+    // Aggregate available/booked across ALL trainers for the active section(s)
+    // over the given dates — used for the KPIs, trend, and weekly timeline.
+    function periodTotals(dates) {
+      let A = 0, B = 0;
+      for (const t of trainers) {
+        const bySec = totalsBySectionForRange(t, parseTeamShifts(t), dates);
+        for (const sec of Object.keys(bySec)) {
+          if (activeSection && sec !== activeSection) continue;
+          A += bySec[sec].available_min; B += bySec[sec].booked_min;
+        }
+      }
+      return { available_min: A, booked_min: B };
+    }
+
     // Build previous-period dates for trend comparison
     const prevDates = [];
     for (let i = 0; i < totalDays; i++) {
@@ -3487,66 +3562,64 @@ router.get('/trainer-utilization-summary', (req, res) => {
 
     // ── Per-trainer totals over current period
     const SECTION_AR = { general:'عام', private:'خاص', semi:'شبه خاص', phone_call:'فون كول', all:'الكل' };
-    const trainersOut = trainers.map(t => {
-      const shifts = parseTeamShifts(t);
-      const curr = totalsForRange(t, shifts, currDates);
-      const prev = totalsForRange(t, shifts, prevDates);
-      const utilization = curr.available_min > 0
-        ? Math.round((curr.booked_min / curr.available_min) * 100)
-        : null;
-      const status = utilization == null ? 'inactive'
-                   : utilization < 50  ? 'low'
-                   : utilization >= 90 ? 'high'
-                   : 'normal';
-      const freeHours = Math.max(0, Math.round((curr.available_min - curr.booked_min) / 60));
-      const SHIFT_AR = { morning: 'صباحي', evening: 'مسائي' };
-      const fmt12 = m => {
-        if (m == null) return '';
-        const mod = ((m % 1440) + 1440) % 1440;
-        const h24 = Math.floor(mod / 60), mm = mod % 60;
-        const ampm = h24 >= 12 ? 'PM' : 'AM';
-        let h12 = h24 % 12; if (h12 === 0) h12 = 12;
-        return `${String(h12).padStart(2,'0')}:${String(mm).padStart(2,'0')} ${ampm}`;
-      };
-      const shiftSummary = shifts
-        .map(sh => `${SHIFT_AR[sh.label] || sh.label} ${fmt12(sh.startMin)}-${fmt12(sh.endMin)}`)
-        .join(' + ');
-      return {
-        id: t.id,
-        name: stripParens(t.name) || t.name,
-        section: t.section,
-        // Expose current employee-status flag so the UI can badge a row as
-        // "غير نشط حالياً" when an inactive trainer surfaced because of
-        // historical activity inside the filter range.
-        member_status: t.status,
-        shift_summary: shiftSummary,
-        utilization_pct: utilization,
-        prev_utilization_pct: prev.available_min > 0 ? Math.round((prev.booked_min / prev.available_min) * 100) : null,
-        available_hours: Math.round(curr.available_min / 60),
-        booked_hours: Math.round(curr.booked_min / 60),
-        free_hours: freeHours,
-        status,
-      };
-    })
-    // Drop trainers with NO activity in the current period — without this,
-    // deactivated trainers whose shift ended before the filter range would
-    // show as empty 0-hour rows. We keep trainers with either available
-    // capacity OR booked work (covers both scenarios).
-    .filter(t => (t.available_hours || 0) > 0 || (t.booked_hours || 0) > 0);
-
-    // ── Summary KPIs
-    const totalAvail  = trainersOut.reduce((s, t) => s + (t.available_hours * 60), 0);
-    const totalBooked = trainersOut.reduce((s, t) => s + (t.booked_hours * 60), 0);
-    const totalWasted = Math.max(0, totalAvail - totalBooked);
-    const avgUtil = totalAvail > 0 ? Math.round((totalBooked / totalAvail) * 100) : 0;
-    // Previous period avg
-    let prevTotalAvail = 0, prevTotalBooked = 0;
+    const SHIFT_AR = { morning: 'صباحي', evening: 'مسائي' };
+    const fmt12 = m => {
+      if (m == null) return '';
+      const mod = ((m % 1440) + 1440) % 1440;
+      const h24 = Math.floor(mod / 60), mm = mod % 60;
+      const ampm = h24 >= 12 ? 'PM' : 'AM';
+      let h12 = h24 % 12; if (h12 === 0) h12 = 12;
+      return `${String(h12).padStart(2,'0')}:${String(mm).padStart(2,'0')} ${ampm}`;
+    };
+    // One row PER (trainer × section) — a trainer who worked in two sections
+    // during the period (e.g. شبه خاص في مايو ثم خاص في يونيو) gets two rows,
+    // each with that section's available/booked. Section filter applied here.
+    const trainersOut = [];
     for (const t of trainers) {
       const shifts = parseTeamShifts(t);
-      const prev = totalsForRange(t, shifts, prevDates);
-      prevTotalAvail += prev.available_min;
-      prevTotalBooked += prev.booked_min;
+      const currBySec = totalsBySectionForRange(t, shifts, currDates);
+      const prevBySec = totalsBySectionForRange(t, shifts, prevDates);
+      const shiftSummary = shifts
+        .map(sh => `${SHIFT_AR[sh.label] || sh.label} ${fmt12(sh.startMin)}-${fmt12(sh.endMin)}${sh.section ? ' [' + (SECTION_AR[sh.section] || sh.section) + ']' : ''}`)
+        .join(' + ');
+      for (const sec of Object.keys(currBySec)) {
+        const tot = currBySec[sec];
+        if ((tot.available_min || 0) <= 0 && (tot.booked_min || 0) <= 0) continue;   // no activity in this section
+        if (activeSection && sec !== activeSection) continue;                        // section filter
+        const utilization = tot.available_min > 0
+          ? Math.round((tot.booked_min / tot.available_min) * 100) : null;
+        const status = utilization == null ? 'inactive'
+                     : utilization < 50  ? 'low'
+                     : utilization >= 90 ? 'high'
+                     : 'normal';
+        const pv = prevBySec[sec] || { available_min: 0, booked_min: 0 };
+        trainersOut.push({
+          id: t.id,
+          row_key: `${t.id}-${sec}`,   // unique per trainer×section (React key — a trainer can repeat)
+          name: stripParens(t.name) || t.name,
+          section: sec,
+          member_status: t.status,
+          shift_summary: shiftSummary,
+          utilization_pct: utilization,
+          prev_utilization_pct: pv.available_min > 0 ? Math.round((pv.booked_min / pv.available_min) * 100) : null,
+          available_hours: Math.round(tot.available_min / 60),
+          booked_hours: Math.round(tot.booked_min / 60),
+          free_hours: Math.max(0, Math.round((tot.available_min - tot.booked_min) / 60)),
+          status,
+          _avail_min: tot.available_min,
+          _booked_min: tot.booked_min,
+        });
+      }
     }
+
+    // ── Summary KPIs (exact minutes from the per-section rows)
+    const totalAvail  = trainersOut.reduce((s, t) => s + (t._avail_min || 0), 0);
+    const totalBooked = trainersOut.reduce((s, t) => s + (t._booked_min || 0), 0);
+    const totalWasted = Math.max(0, totalAvail - totalBooked);
+    const avgUtil = totalAvail > 0 ? Math.round((totalBooked / totalAvail) * 100) : 0;
+    // Previous period avg — same section scope as the current rows.
+    const prevPeriod = periodTotals(prevDates);
+    const prevTotalAvail = prevPeriod.available_min, prevTotalBooked = prevPeriod.booked_min;
     // The previous period is only comparable when it had real shift coverage.
     // When shifts didn't exist yet back then (e.g. all shifts start this month),
     // prevAvail≈0 while booked>0 makes utilization explode into the thousands —
@@ -3580,13 +3653,8 @@ router.get('/trainer-utilization-summary', (req, res) => {
     for (let w = 0; w < weekChunks; w++) {
       const wkDates = currDates.slice(w * 7, Math.min(w * 7 + 7, totalDays));
       if (wkDates.length === 0) continue;
-      let wkAvail = 0, wkBooked = 0;
-      for (const t of trainers) {
-        const shifts = parseTeamShifts(t);
-        const tot = totalsForRange(t, shifts, wkDates);
-        wkAvail  += tot.available_min;
-        wkBooked += tot.booked_min;
-      }
+      const wk = periodTotals(wkDates);
+      const wkAvail = wk.available_min, wkBooked = wk.booked_min;
       weeklyTimeline.push({
         week_start: wkDates[0],
         label: weekLabel(wkDates[0]),

@@ -565,7 +565,7 @@ export default function TrainerUtilizationDashboard() {
                     </thead>
                     <tbody>
                       {trainers.map(t => (
-                        <tr key={t.id} className="border-t border-gray-50 hover:bg-slate-50/40 transition-colors">
+                        <tr key={t.row_key || t.id} className="border-t border-gray-50 hover:bg-slate-50/40 transition-colors">
                           <td className="px-5 py-2.5">
                             <div className="flex items-center gap-1.5">
                               <span className={`font-bold ${t.member_status === 'inactive' ? 'text-gray-500 line-through decoration-gray-300' : 'text-gray-900'}`}>
@@ -755,7 +755,7 @@ function KpiDetailModal({ type, trainers, onClose, singleMode, period }) {
             <div className="space-y-2">
               {trainers.map(t => (
                 <div
-                  key={t.id}
+                  key={t.row_key || t.id}
                   className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50/60 border border-slate-100 hover:bg-slate-50 transition-colors"
                 >
                   <div className={`${cfg.iconBg} w-9 h-9 rounded-xl flex items-center justify-center text-white font-bold text-sm shrink-0`}>

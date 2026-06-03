@@ -144,6 +144,7 @@ function initialShifts(member) {
       work_days:        s.work_days       || '',
       shift_start_date: s.start_date      || '',
       shift_end_date:   s.end_date        || '',
+      section:          s.section         || '',
     }));
   }
   const out = [];
@@ -165,15 +166,15 @@ function initialShifts(member) {
 // Empty shift slot used when adding a new shift via the "+ إضافة شيفت" button.
 const EMPTY_SHIFT = {
   shift: '', shift_start: '', shift_end: '', shift_rests: [], voice_notes: [],
-  employment_type: '', work_days: '', shift_start_date: '', shift_end_date: '',
+  employment_type: '', work_days: '', shift_start_date: '', shift_end_date: '', section: '',
 };
 
 // ─── SHIFT SECTION (reusable for shift 1 and shift 2) ─────────────────────────
 function ShiftSection({
   title, shiftValue, startValue, endValue, restsValue, voiceNotesValue, employmentValue, daysValue,
-  startDateValue, endDateValue,
+  startDateValue, endDateValue, sectionValue,
   onShiftChange, onStartChange, onEndChange, onRestsChange, onVoiceNotesChange, onEmploymentChange, onDaysChange,
-  onStartDateChange, onEndDateChange,
+  onStartDateChange, onEndDateChange, onSectionChange,
   onRemove, inputCls, labelCls,
 }) {
   const rests = Array.isArray(restsValue) ? restsValue : [];
@@ -181,8 +182,20 @@ function ShiftSection({
     const next = rests.map((r, i) => (i === index ? { ...r, [key]: value } : r));
     onRestsChange(next);
   };
-  const addRest    = () => onRestsChange([...rests, { start: '', end: '' }]);
+  const addRest    = () => onRestsChange([...rests, { start: '', end: '', days: [] }]);
   const removeRest = (index) => onRestsChange(rests.filter((_, i) => i !== index));
+  // Per-day break scoping — which of the shift's work-days this break applies
+  // to. None selected = applies to ALL the shift's days.
+  const DAY_AR = { saturday:'سبت', sunday:'أحد', monday:'اثنين', tuesday:'ثلاثاء', wednesday:'أربعاء', thursday:'خميس', friday:'جمعة' };
+  const shiftDays = String(daysValue || '').split(',').map(d => d.trim().toLowerCase()).filter(Boolean);
+  const toggleRestDay = (index, day) => {
+    const next = rests.map((r, i) => {
+      if (i !== index) return r;
+      const cur = Array.isArray(r.days) ? r.days : [];
+      return { ...r, days: cur.includes(day) ? cur.filter(d => d !== day) : [...cur, day] };
+    });
+    onRestsChange(next);
+  };
 
   // Voice-note blocks: same shape as rests, but a separate list with distinct
   // visual treatment (purple) so the user can tell them apart at a glance.
@@ -261,6 +274,22 @@ function ShiftSection({
       </div>
 
       {shiftValue && (
+        <div>
+          <label className={labelCls}>
+            قسم هذا الشيفت
+            <span className="text-[10px] text-gray-400 mr-2">(فاضي = نفس قسم المدرب)</span>
+          </label>
+          <select className={inputCls} value={sectionValue || ''} onChange={e => onSectionChange(e.target.value)}>
+            <option value="">نفس قسم المدرب</option>
+            <option value="general">عام</option>
+            <option value="private">خاص</option>
+            <option value="semi">شبه خاص</option>
+            <option value="phone_call">فون كول</option>
+          </select>
+        </div>
+      )}
+
+      {shiftValue && (
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className={labelCls}>الساعة من</label>
@@ -302,22 +331,42 @@ function ShiftSection({
           <label className={labelCls}>وقت الراحة</label>
           <div className="space-y-2">
             {rests.map((rest, i) => (
-              <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
-                <div>
-                  <div className="text-[10px] text-gray-400 mb-0.5">من</div>
-                  <input type="time" className={inputCls} value={rest.start || ''}
-                         onChange={e => updateRest(i, 'start', e.target.value)} dir="ltr" />
+              <div key={i} className="space-y-1">
+                <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
+                  <div>
+                    <div className="text-[10px] text-gray-400 mb-0.5">من</div>
+                    <input type="time" className={inputCls} value={rest.start || ''}
+                           onChange={e => updateRest(i, 'start', e.target.value)} dir="ltr" />
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-gray-400 mb-0.5">إلى</div>
+                    <input type="time" className={inputCls} value={rest.end || ''}
+                           onChange={e => updateRest(i, 'end', e.target.value)} dir="ltr" />
+                  </div>
+                  <button type="button" onClick={() => removeRest(i)}
+                          title="حذف وقت الراحة"
+                          className="h-[42px] w-[42px] flex items-center justify-center rounded-xl border border-red-200 text-red-500 hover:bg-red-50 transition-all">
+                    <X size={14} />
+                  </button>
                 </div>
-                <div>
-                  <div className="text-[10px] text-gray-400 mb-0.5">إلى</div>
-                  <input type="time" className={inputCls} value={rest.end || ''}
-                         onChange={e => updateRest(i, 'end', e.target.value)} dir="ltr" />
-                </div>
-                <button type="button" onClick={() => removeRest(i)}
-                        title="حذف وقت الراحة"
-                        className="h-[42px] w-[42px] flex items-center justify-center rounded-xl border border-red-200 text-red-500 hover:bg-red-50 transition-all">
-                  <X size={14} />
-                </button>
+                {/* Per-day scoping: choose which of the shift's days this break is on. */}
+                {shiftDays.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1 ps-0.5">
+                    <span className="text-[9px] text-gray-400">أيام البريك:</span>
+                    {shiftDays.map(d => {
+                      const active = Array.isArray(rest.days) && rest.days.includes(d);
+                      return (
+                        <button key={d} type="button" onClick={() => toggleRestDay(i, d)}
+                          className={`text-[10px] px-1.5 py-0.5 rounded-md border transition-all ${active ? 'bg-amber-500 text-white border-amber-500' : 'bg-white text-gray-500 border-gray-300 hover:bg-gray-50'}`}>
+                          {DAY_AR[d] || d}
+                        </button>
+                      );
+                    })}
+                    {(!Array.isArray(rest.days) || rest.days.length === 0) && (
+                      <span className="text-[9px] text-gray-400">(كل أيام الشيفت)</span>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
             <button type="button" onClick={addRest}
@@ -723,6 +772,7 @@ export function MemberModal({ initial, onSave, onClose, loading }) {
         work_days:       sh.work_days,
         start_date:      sh.shift_start_date,
         end_date:        sh.shift_end_date,
+        section:         sh.section || '',
       }));
     onSave({ ...form, shifts: shiftsPayload });
   };
@@ -800,6 +850,7 @@ export function MemberModal({ initial, onSave, onClose, loading }) {
                 daysValue={sh.work_days}
                 startDateValue={sh.shift_start_date}
                 endDateValue={sh.shift_end_date}
+                sectionValue={sh.section}
                 onShiftChange={(v) => updateShift(idx, 'shift', v)}
                 onStartChange={(v) => updateShift(idx, 'shift_start', v)}
                 onEndChange={(v) => updateShift(idx, 'shift_end', v)}
@@ -809,6 +860,7 @@ export function MemberModal({ initial, onSave, onClose, loading }) {
                 onDaysChange={(v) => updateShift(idx, 'work_days', v)}
                 onStartDateChange={(v) => updateShift(idx, 'shift_start_date', v)}
                 onEndDateChange={(v) => updateShift(idx, 'shift_end_date', v)}
+                onSectionChange={(v) => updateShift(idx, 'section', v)}
                 onRemove={() => removeShift(idx)}
                 inputCls={inputCls} labelCls={labelCls}
               />
