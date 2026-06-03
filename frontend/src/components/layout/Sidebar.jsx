@@ -98,10 +98,16 @@ const REPORT_LINKS = [
   { to: '/admin/reports/fix-report',            label: 'nav.fixReports',         icon: FileText,      color: 'orange',  management: 'Customer Services', sub: true },
   { to: '/admin/reports/attendance-absence',    label: 'nav.attendanceReports',  icon: Activity,      color: 'teal',    management: 'Customer Services', sub: true },
   { to: '/admin/reports/education',             label: 'nav.educationReports',   icon: GraduationCap, color: 'violet',  management: 'Education' },
-  { to: '/admin/reports/trainer-utilization',   label: 'nav.trainerUtilization', icon: Activity,      color: 'teal',    management: 'Education', sub: true },
-  { to: '/admin/reports/find-available-trainer', label: 'nav.findAvailableTrainer', icon: Sparkles,    color: 'cyan',    management: 'Education', sub: true },
-  { to: '/admin/reports/trainer-dashboard',      label: 'nav.trainerDashboard',     icon: BarChart3,   color: 'indigo',  management: 'Education', sub: true },
-  { to: '/admin/reports/trainer-work-history',   label: 'سجل عمل المدربين',          icon: History,     color: 'violet',  management: 'Education', sub: true },
+  // Nested sub-group "الإشغال والمدربين" (collapsible) inside Education Reports —
+  // holds the 4 trainer report pages.
+  { group: true, key: 'occupancy-trainers', label: 'الإشغال والمدربين', icon: Activity, color: 'teal', sub: true, management: 'Education',
+    children: [
+      { to: '/admin/reports/trainer-utilization',    label: 'nav.trainerUtilization',   icon: Activity,  color: 'teal'   },
+      { to: '/admin/reports/find-available-trainer', label: 'nav.findAvailableTrainer', icon: Sparkles,  color: 'cyan'   },
+      { to: '/admin/reports/trainer-dashboard',      label: 'nav.trainerDashboard',     icon: BarChart3, color: 'indigo' },
+      { to: '/admin/reports/trainer-work-history',   label: 'سجل عمل المدربين',          icon: History,   color: 'violet' },
+    ],
+  },
   { to: '/admin/reports/quality',               label: 'nav.qualityReports',     icon: ShieldCheck,   color: 'green',   management: 'Quality' },
   { to: '/admin/reports/quality-snapshots',     label: 'nav.qualitySnapshots',   icon: Snowflake,     color: 'cyan',    management: 'Quality', sub: true },
   { to: '/admin/reschedules',                    label: 'إعادة جدولة المحاضرات',     icon: CalendarClock, color: 'indigo',  management: 'Quality', sub: true },
@@ -250,14 +256,21 @@ export default function Sidebar({ mobile, onClose }) {
   // should be able to MANUALLY COLLAPSE a parent whose route they're on.
   const [overrides, setOverrides] = useState(() => new Map());
 
+  // Recursively check whether the current route lands on any (deep) descendant.
+  const anyDescendantActive = (node) =>
+    !!node.children?.some(c =>
+      (c.to && (location.pathname === c.to || location.pathname.startsWith(c.to + '/'))) ||
+      anyDescendantActive(c)
+    );
+
   const isParentOpen = (node) => {
     const k = node.to || node.key;
     const o = overrides.get(k);
     if (o === 'closed') return false;
     if (o === 'open')   return true;
-    // No user override — use route-based default
+    // No user override — use route-based default (open if any deep descendant is active)
     if (node.to && location.pathname === node.to) return true;
-    if (node.children?.some(c => c.to && (location.pathname === c.to || location.pathname.startsWith(c.to + '/')))) return true;
+    if (anyDescendantActive(node)) return true;
     return false;
   };
 
@@ -425,28 +438,85 @@ export default function Sidebar({ mobile, onClose }) {
                 )}
               </div>
 
-              {/* Children — only when expanded */}
+              {/* Children — only when expanded. A child can itself be a
+                  collapsible sub-group (child.group + its own children). */}
               {hasChildren && isOpen && (
                 <div className="mt-1 space-y-1 animate-fadeIn">
-                  {children.map((child) => (
-                    <NavLink
-                      key={child.to}
-                      to={child.to}
-                      end={child.end}
-                      onClick={mobile ? onClose : undefined}
-                      style={colorVars(child.color)}
-                      className={({ isActive }) =>
-                        `sidebar-link-v2 ms-4 ${isActive ? 'active' : ''}`
-                      }
-                    >
-                      <span className="si-icon-v2">
-                        <child.icon size={15} strokeWidth={2.4} />
-                      </span>
-                      <span className="flex-1 text-xs truncate font-bold">
-                        {t(child.label, child.label)}
-                      </span>
-                    </NavLink>
-                  ))}
+                  {children.map((child) => {
+                    const subKids = child.children || [];
+                    if (child.group && subKids.length > 0) {
+                      const ck = child.to || child.key;
+                      const cOpen = isParentOpen(child);
+                      const CIcon = child.icon;
+                      return (
+                        <div key={ck}>
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() => toggleExpand(ck, cOpen)}
+                              style={colorVars(child.color)}
+                              className={`sidebar-link-v2 ms-4 w-full pe-10 ${cOpen ? 'active' : ''}`}
+                            >
+                              <span className="si-icon-v2">
+                                <CIcon size={15} strokeWidth={2.4} />
+                              </span>
+                              <span className="flex-1 text-xs truncate font-bold text-right">
+                                {t(child.label, child.label)}
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={cOpen ? 'طي' : 'فتح'}
+                              onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggleExpand(ck, cOpen); }}
+                              className="absolute left-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-all"
+                            >
+                              <ChevronDown size={13} strokeWidth={2.6} className={`transition-transform duration-200 ${cOpen ? 'rotate-180' : ''}`} />
+                            </button>
+                          </div>
+                          {cOpen && (
+                            <div className="mt-1 space-y-1 animate-fadeIn">
+                              {subKids.map((gc) => (
+                                <NavLink
+                                  key={gc.to}
+                                  to={gc.to}
+                                  end={gc.end}
+                                  onClick={mobile ? onClose : undefined}
+                                  style={colorVars(gc.color)}
+                                  className={({ isActive }) => `sidebar-link-v2 ms-8 ${isActive ? 'active' : ''}`}
+                                >
+                                  <span className="si-icon-v2">
+                                    <gc.icon size={14} strokeWidth={2.4} />
+                                  </span>
+                                  <span className="flex-1 text-xs truncate font-bold">
+                                    {t(gc.label, gc.label)}
+                                  </span>
+                                </NavLink>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }
+                    return (
+                      <NavLink
+                        key={child.to}
+                        to={child.to}
+                        end={child.end}
+                        onClick={mobile ? onClose : undefined}
+                        style={colorVars(child.color)}
+                        className={({ isActive }) =>
+                          `sidebar-link-v2 ms-4 ${isActive ? 'active' : ''}`
+                        }
+                      >
+                        <span className="si-icon-v2">
+                          <child.icon size={15} strokeWidth={2.4} />
+                        </span>
+                        <span className="flex-1 text-xs truncate font-bold">
+                          {t(child.label, child.label)}
+                        </span>
+                      </NavLink>
+                    );
+                  })}
                 </div>
               )}
             </div>
