@@ -419,6 +419,25 @@ function parseTeamShifts(t) {
   return raw.map(normalize).filter(Boolean);
 }
 
+// ─── trainerCountStart ───────────────────────────────────────────────────────
+// Utilization is only meaningful from when a trainer is BOTH employed AND has a
+// registered shift — the LATER of (hire date = team_members.start_date, earliest
+// shift start_date). Before that there's no capacity baseline, so pre-period
+// lectures would push utilization way past 100% (e.g. lectures exist in April
+// but shifts start in May). Returns 'YYYY-MM-DD' or null (= no clamp).
+function trainerCountStart(trainer, shifts) {
+  let earliest = null, anyOpen = false;
+  for (const sh of (shifts || [])) {
+    if (!sh.startDate) anyOpen = true;                       // open-start shift = capacity from any date
+    else if (!earliest || sh.startDate < earliest) earliest = sh.startDate;
+  }
+  const shiftClamp = anyOpen ? null : earliest;
+  const hire = trainer && trainer.start_date ? String(trainer.start_date).slice(0, 10) : null;
+  const cands = [hire, shiftClamp].filter(Boolean);
+  if (!cands.length) return null;
+  return cands.sort().pop();                                  // max (later) of the two dates
+}
+
 // ─── computeOverallEmployment ────────────────────────────────────────────────
 // "Asmaa Saber" pattern: a trainer with multiple shifts whose work_days
 // happen to cover all 6 work days when combined is effectively Full Time —
@@ -3113,7 +3132,9 @@ router.get('/trainer-utilization', (req, res) => {
 
       const days = {};
       let totalAvailable = 0, totalBooked = 0, workDayCount = 0;
+      const clampStart = trainerCountStart(t, shifts);   // count only from hire+shift start
       for (const date of dates) {
+        if (clampStart && date < clampStart) continue;   // before the trainer was hired / had a shift
         // Sum capacity from BOTH shifts on this date
         let availMin = 0;
         for (const sh of shifts) availMin += shiftMinsForDate(sh, date);
@@ -3404,8 +3425,10 @@ router.get('/trainer-utilization-summary', (req, res) => {
     function totalsForRange(trainer, shifts, dates) {
       let available = 0, booked = 0;
       const tKey = stripParens(trainer.name).toLowerCase();
+      const clampStart = trainerCountStart(trainer, shifts);   // count only from hire+shift start
       for (const date of dates) {
         if (holidaySet.has(date)) continue;   // official holiday → excluded from the calc
+        if (clampStart && date < clampStart) continue;   // before the trainer was hired / had a shift
         let avail = 0;
         for (const sh of shifts) avail += shiftMinsForDate(sh, date);
         avail += extraByMemberDay[`${trainer.id}|${date}`] || 0;   // one-off extra hours add to capacity
@@ -4955,19 +4978,27 @@ router.get('/attendance-absence', (req, res) => {
     : to_date   ? ` AND resolved_date <= '${to_date}'` : '';
 
   try {
-    // Date-aware coordinator expression — looks up coordinator_history for the
-    // event's date and falls back to current b.coordinators if no record covers it.
-    // This ensures historical coordinators (e.g. Hanaa who moved depts) still
-    // attribute their absences correctly even after the batch is reassigned.
-    const dateAwareCoord = (batchAlias, dateExpr) => `COALESCE(
-      (SELECT GROUP_CONCAT(ch.coordinator, ', ')
-         FROM coordinator_history ch
-        WHERE ch.group_name = ${batchAlias}.group_name
-          AND ch.line       = ${batchAlias}.line
-          AND DATE(ch.effective_from) <= ${dateExpr}
-          AND (ch.effective_to IS NULL OR DATE(ch.effective_to) > ${dateExpr})),
-      ${batchAlias}.coordinators,
-      '--'
+    // Date-aware coordinator expression — resolves the coordinator(s) of record
+    // from coordinator_history for the event's date, RESTRICTED to فريق العمل
+    // members (team_members CS) who were EMPLOYED on that date (start_date ≤ date
+    // ≤ end_date). This enforces the agreed rules in one place:
+    //   • only roster coordinators are attributed (drops the '--' / unregistered
+    //     bucket — those events become NULL and are skipped on merge),
+    //   • events before a coordinator's hire date or after their leave date are
+    //     not credited to them (the date falls outside their window → NULL).
+    // Returns NULL when no employed roster coordinator covers the date.
+    const dateAwareCoord = (batchAlias, dateExpr) => `(
+      SELECT GROUP_CONCAT(ch.coordinator, ', ')
+        FROM coordinator_history ch
+        JOIN team_members tm
+          ON LOWER(TRIM(tm.name)) = LOWER(TRIM(ch.coordinator))
+         AND tm.department = 'customer_services'
+       WHERE ch.group_name = ${batchAlias}.group_name
+         AND ch.line       = ${batchAlias}.line
+         AND DATE(ch.effective_from) <= ${dateExpr}
+         AND (ch.effective_to IS NULL OR DATE(ch.effective_to) > ${dateExpr})
+         AND (tm.start_date IS NULL OR TRIM(tm.start_date) = '' OR DATE(tm.start_date) <= ${dateExpr})
+         AND (tm.end_date   IS NULL OR TRIM(tm.end_date)   = '' OR DATE(tm.end_date)   >= ${dateExpr})
     )`;
 
     // ─── MAIN EXPECTED per coordinator ─────────────────────────────────────
@@ -5095,8 +5126,12 @@ router.get('/attendance-absence', (req, res) => {
 
     // Merge per coordinator
     const map = new Map();
+    // Unattributed events (NULL coordinator = no employed roster coordinator at
+    // the event date) and any '--' placeholder are skipped — they don't belong
+    // to any roster coordinator and must not appear as a row.
     const ensure = (raw) => {
-      const key = raw || '--';
+      const key = (raw == null) ? '' : String(raw).trim();
+      if (!key || key === '--') return null;
       if (!map.has(key)) {
         map.set(key, {
           coordinator: key,
@@ -5107,33 +5142,58 @@ router.get('/attendance-absence', (req, res) => {
       return map.get(key);
     };
 
-    mainExpectedRows.forEach(r => {
-      ensure(r.coordinator).main_expected += r.cnt || 0;
-    });
-    mainAbsentPart1.forEach(r => {
-      ensure(r.coordinator).main_absent += r.cnt || 0;
-    });
-    mainAbsentPart2.forEach(r => {
-      ensure(r.coordinator).main_absent += r.cnt || 0;
-    });
-    zoomExpectedRows.forEach(r => {
-      ensure(r.coordinator).zoom_expected += r.cnt || 0;
-    });
-    zoomAbsentRows.forEach(r => {
-      ensure(r.coordinator).zoom_absent += r.cnt || 0;
-    });
+    // Seed the روستر so every relevant coordinator appears even with 0 sessions
+    // in the window (active AND inactive). Scope mirrors the dept filter:
+    //   • admin → all CS members (or only the chosen department's section),
+    //   • leader → only their overseen section(s),
+    //   • agent → none (they only ever see their own row via coordFilter).
+    const statusByName = {};
+    const sectionByName = {};
+    try {
+      const allRoster = db.prepare(
+        `SELECT name, section, status FROM team_members WHERE department='customer_services'`
+      ).all();
+      allRoster.forEach(tm => {
+        statusByName[String(tm.name).trim().toLowerCase()] = tm.status;
+        sectionByName[String(tm.name).trim().toLowerCase()] = tm.section;
+      });
+
+      if (req.user?.role !== 'agent') {
+        let seedSecs = null;
+        if (req.user?.role === 'leader') seedSecs = leaderScopedDepts(req);
+        else if (activeDept) seedSecs = Array.isArray(activeDept) ? activeDept : [activeDept];
+        const secSet = (seedSecs || [])
+          .map(d => String(d).toLowerCase().trim())
+          .filter(d => d && d !== 'all');
+        allRoster.forEach(tm => {
+          if (secSet.length && !secSet.includes(String(tm.section).toLowerCase().trim())) return;
+          ensure(tm.name);
+        });
+      }
+    } catch (_) { /* roster seed is best-effort */ }
+
+    mainExpectedRows.forEach(r => { const e = ensure(r.coordinator); if (e) e.main_expected += r.cnt || 0; });
+    mainAbsentPart1.forEach(r => { const e = ensure(r.coordinator); if (e) e.main_absent += r.cnt || 0; });
+    mainAbsentPart2.forEach(r => { const e = ensure(r.coordinator); if (e) e.main_absent += r.cnt || 0; });
+    zoomExpectedRows.forEach(r => { const e = ensure(r.coordinator); if (e) e.zoom_expected += r.cnt || 0; });
+    zoomAbsentRows.forEach(r => { const e = ensure(r.coordinator); if (e) e.zoom_absent += r.cnt || 0; });
 
     const result = Array.from(map.values())
-      .filter(r => r.main_expected + r.zoom_expected > 0)
-      .map(r => ({
-        ...r,
-        main_absence_rate: r.main_expected > 0
-          ? Math.round((r.main_absent / r.main_expected) * 100)
-          : 0,
-        zoom_absence_rate: r.zoom_expected > 0
-          ? Math.round((r.zoom_absent / r.zoom_expected) * 100)
-          : 0,
-      }))
+      .map(r => {
+        const st = statusByName[r.coordinator.toLowerCase()];
+        return {
+          ...r,
+          status: st || null,
+          is_active: st ? (st === 'active') : null,
+          section: sectionByName[r.coordinator.toLowerCase()] || null,
+          main_absence_rate: r.main_expected > 0
+            ? Math.round((r.main_absent / r.main_expected) * 100)
+            : 0,
+          zoom_absence_rate: r.zoom_expected > 0
+            ? Math.round((r.zoom_absent / r.zoom_expected) * 100)
+            : 0,
+        };
+      })
       .sort((a, b) =>
         (b.main_absent + b.zoom_absent) - (a.main_absent + a.zoom_absent)
       );
