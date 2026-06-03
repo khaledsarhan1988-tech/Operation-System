@@ -1706,7 +1706,10 @@ router.get('/absent-side-list', (req, res) => {
       )
       AND EXISTS (
         SELECT 1 FROM lectures l
-         WHERE REPLACE(l.group_name,' ','') = REPLACE(a.group_name,' ','')
+         WHERE REPLACE(l.group_name,' ','') IN (
+                 REPLACE(a.group_name,' ',''),
+                 REPLACE(${currentGroupNameExpr('a.group_name', 'a.line')},' ','')
+               )
            AND l.date       = a.date
            AND l.session_type = 'side'
            AND (l.side_session_category = 'regular'
@@ -1729,7 +1732,12 @@ router.get('/absent-side-list', (req, res) => {
            a.date,
            a.time,
            a.lecture_no,
-           MAX(b.dept_type)    AS dept_type,
+           COALESCE(
+             MAX(b.dept_type),
+             -- ENDED/renamed groups: b.* is NULL → section "—". Recover it from
+             -- the coordinator-of-record (coordinator_history) registered dept.
+             (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(${coordAtDateSingleExpr('a.group_name', 'a.line', 'a.date')})) AND u.department != 'All' LIMIT 1)
+           ) AS dept_type,
            COALESCE(
              ${coordinatorAtDateExpr('a.group_name', 'a.line', 'a.date')},
              MAX(b.coordinators)
