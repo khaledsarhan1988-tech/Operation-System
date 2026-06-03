@@ -1,9 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, Fragment } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   UserX, Users, Video, CalendarDays, TrendingDown, XCircle,
   AlertTriangle, CheckCircle2, Activity, Search, Layers, Building2,
-  X, Phone, Hash,
+  X, Phone, Hash, ChevronDown, ChevronLeft,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -103,6 +103,69 @@ function AbsenceRateCell({ rate, absent, expected }) {
   );
 }
 
+/* ─── Per-coordinator MOVEMENT breakdown (section-periods) ──────────────────── */
+const SEC_LABEL = { all: 'الكل', general: 'عام', private: 'خاص', semi: 'شبه خاص', phone_call: 'فون كول' };
+const SEC_CLS = {
+  general: 'bg-sky-50 text-sky-700 border-sky-200',
+  private: 'bg-violet-50 text-violet-700 border-violet-200',
+  semi:    'bg-amber-50 text-amber-700 border-amber-200',
+  phone_call: 'bg-pink-50 text-pink-700 border-pink-200',
+  all:     'bg-gray-50 text-gray-600 border-gray-200',
+};
+function CoordinatorSegments({ coordinator, from, to }) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['coord-segments', coordinator, from, to],
+    queryFn: () => api.get('/reports/attendance-absence/segments', {
+      params: { coordinator, from_date: from || undefined, to_date: to || undefined },
+    }).then(r => r.data),
+    staleTime: 30 * 1000,
+  });
+  const segs = data?.segments || [];
+  const noteFor = (g) => {
+    const toTxt = g.to || '—';
+    if (g.ended_by === 'transition') return `هذه الأرقام حتى ${toTxt} — انتقل إلى قسم ${SEC_LABEL[g.next_section] || g.next_section || '—'}`;
+    if (g.ended_by === 'left_work')  return `حتى ${toTxt} — ترك العمل`;
+    return `حتى ${toTxt}`;
+  };
+  const noteCls = (e) => e === 'transition' ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                       : e === 'left_work'  ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                       :                      'bg-emerald-50 text-emerald-700 border border-emerald-200';
+  if (isLoading) return <div className="px-6 py-4 text-xs text-gray-400">جارٍ تحميل تفصيل الحركات…</div>;
+  if (isError)   return <div className="px-6 py-4 text-xs text-rose-500">تعذّر تحميل التفصيل</div>;
+  if (!segs.length) return <div className="px-6 py-4 text-xs text-gray-400">لا توجد فترات بأرقام في هذه المدة.</div>;
+  return (
+    <div className="px-6 py-3">
+      <div className="text-[11px] font-bold text-slate-600 mb-2 flex items-center gap-1.5">
+        <Layers size={12} /> تفصيل الحركات — {coordinator}
+        {data?.employment && (data.employment.start_date || data.employment.end_date) && (
+          <span className="text-[10px] font-normal text-gray-400" dir="ltr">
+            ({data.employment.start_date || '—'} → {data.employment.end_date || 'حتى الآن'})
+          </span>
+        )}
+      </div>
+      <div className="space-y-1.5">
+        {segs.map((g, idx) => (
+          <div key={idx} className="flex flex-wrap items-center gap-x-4 gap-y-1.5 bg-white rounded-lg border border-slate-200 px-3 py-2">
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${SEC_CLS[String(g.section || '').toLowerCase()] || 'bg-gray-50 text-gray-600 border-gray-200'}`}>
+              {SEC_LABEL[String(g.section || '').toLowerCase()] || g.section || '—'}
+            </span>
+            <span className="text-[11px] text-gray-600 font-mono" dir="ltr">{g.from || '?'} → {g.to || '?'}</span>
+            <span className="text-[11px] text-gray-700">
+              <b className="text-sky-700">أساسي</b> {g.main_absent}/{g.main_expected} <span className="text-gray-400">({g.main_absence_rate}%)</span>
+            </span>
+            <span className="text-[11px] text-gray-700">
+              <b className="text-indigo-700">زوم</b> {g.zoom_absent}/{g.zoom_expected} <span className="text-gray-400">({g.zoom_absence_rate}%)</span>
+            </span>
+            <span className={`ms-auto text-[10px] px-2 py-0.5 rounded-full font-bold ${noteCls(g.ended_by)}`}>
+              {noteFor(g)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* ─── Main Page ───────────────────────────────────────────────────────────── */
 export default function AttendanceAbsenceReport() {
   const [period, setPeriod] = useState('all');
@@ -112,6 +175,8 @@ export default function AttendanceAbsenceReport() {
   const [department, setDepartment] = useState('');  // '' = all
   // Detail modal — opened by clicking an absent number cell
   const [detail, setDetail] = useState(null); // { coordinator, type: 'main' | 'zoom', count, rateRow }
+  // Expanded coordinator — shows their per-movement (section-period) breakdown.
+  const [expanded, setExpanded] = useState(null); // coordinator name | null
 
   const hasDateRange = dateFrom || dateTo;
   const effective = useMemo(() => {
@@ -550,11 +615,21 @@ export default function AttendanceAbsenceReport() {
               ) : data.map((r, i) => {
                 const mainC = rateColor(r.main_absence_rate);
                 const zoomC = rateColor(r.zoom_absence_rate);
+                const isExp = expanded === r.coordinator;
                 return (
-                  <tr key={i} className="hover:bg-gray-50/60 transition-colors">
-                    {/* Coordinator cell — avatar + name + "moved" badge */}
+                  <Fragment key={i}>
+                  <tr className={`hover:bg-gray-50/60 transition-colors ${isExp ? 'bg-slate-50/70' : ''}`}>
+                    {/* Coordinator cell — expand toggle + avatar + name + "moved" badge */}
                     <td className="px-5 py-3.5 sticky right-0 bg-white hover:bg-gray-50/60 z-10">
                       <div className="flex items-center gap-2.5">
+                        <button
+                          type="button"
+                          onClick={() => setExpanded(isExp ? null : r.coordinator)}
+                          title="عرض تفصيل الحركات (فترات الأقسام)"
+                          className="p-1 rounded-md hover:bg-gray-200 text-gray-400 hover:text-gray-700 transition-colors flex-shrink-0"
+                        >
+                          {isExp ? <ChevronDown size={15} /> : <ChevronLeft size={15} />}
+                        </button>
                         <div className={`w-9 h-9 rounded-full ${colorFromName(r.coordinator)} text-white font-bold text-xs flex items-center justify-center flex-shrink-0 shadow-sm`}>
                           {initialsOf(r.coordinator)}
                         </div>
@@ -631,6 +706,18 @@ export default function AttendanceAbsenceReport() {
                       <AbsenceRateCell rate={r.zoom_absence_rate} absent={r.zoom_absent} expected={r.zoom_expected} />
                     </td>
                   </tr>
+                  {isExp && (
+                    <tr>
+                      <td colSpan={7} className="p-0 bg-slate-50/50 border-b border-slate-200">
+                        <CoordinatorSegments
+                          coordinator={r.coordinator}
+                          from={effective.from}
+                          to={effective.to}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -697,6 +784,9 @@ function AbsenceDetailModal({ scope = 'coord', coordinator, deptOverride, type, 
         from_date: from || undefined,
         to_date:   to   || undefined,
         department: effectiveDept || undefined,
+        // Match the per-coordinator table / cards: only count events within the
+        // coordinator's employment window, attributed to فريق العمل members.
+        roster_window: 1,
         page: 1,
         limit: 1000,
       },

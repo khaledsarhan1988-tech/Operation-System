@@ -250,6 +250,31 @@ function coordDeptAtDateFilter(batchAlias, dateExpr, activeDept) {
 }
 
 /**
+ * Employment-window filter (opt-in). Keeps an event only when, on its date, the
+ * group's coordinator-of-record (coordinator_history) is a فريق العمل member
+ * (team_members, customer_services) who was EMPLOYED then
+ * (start_date ≤ date ≤ end_date). Used by the attendance-absence drill-down
+ * lists so their counts match the per-coordinator table / cards (which apply
+ * the same roster + employment-window rule). NOT applied unless the caller
+ * passes ?roster_window=1, so other consumers (SystemReports, dashboard) are
+ * unaffected.
+ */
+function employmentWindowFilter(batchAlias, dateExpr) {
+  return ` AND EXISTS (
+    SELECT 1 FROM coordinator_history ch_ew
+      JOIN team_members tm_ew
+        ON LOWER(TRIM(tm_ew.name)) = LOWER(TRIM(ch_ew.coordinator))
+       AND tm_ew.department = 'customer_services'
+     WHERE ch_ew.group_name = ${batchAlias}.group_name
+       AND ch_ew.line       = ${batchAlias}.line
+       AND DATE(ch_ew.effective_from) <= ${dateExpr}
+       AND (ch_ew.effective_to IS NULL OR DATE(ch_ew.effective_to) > ${dateExpr})
+       AND (tm_ew.start_date IS NULL OR TRIM(tm_ew.start_date) = '' OR DATE(tm_ew.start_date) <= ${dateExpr})
+       AND (tm_ew.end_date   IS NULL OR TRIM(tm_ew.end_date)   = '' OR DATE(tm_ew.end_date)   >= ${dateExpr})
+  )`;
+}
+
+/**
  * Display expression: returns the coordinator(s) responsible at the event's
  * date (comma-separated if more than one). NULL if no history record covers
  * that date — caller can COALESCE with the current batches.coordinators.
@@ -1430,6 +1455,10 @@ router.get('/absent-list', (req, res) => {
   const empFilter2   = coordFilterAtDate('l.group_name', 'l.line', 'l.date', employee);
   const coordFilter2 = coordFilterAtDate('l.group_name', 'l.line', 'l.date', coordinator);
   const searchFilter2= search      ? ` AND l.group_name LIKE '%${escapeLike(search)}%' ESCAPE '\\'` : '';
+  // Opt-in employment-window filter (attendance-absence drill-down only).
+  const rosterWin    = req.query.roster_window === '1' || req.query.roster_window === 'true';
+  const ewFilterP1   = rosterWin ? employmentWindowFilter('b',  `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`) : '';
+  const ewFilterP2   = rosterWin ? employmentWindowFilter('b2', 'l.date') : '';
 
   // Part1: absent_students — with name lookup + date inference from lecture_no when date is missing
   const part1 = `
@@ -1469,7 +1498,7 @@ router.get('/absent-list', (req, res) => {
         (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
         OR (a.phone IS NOT NULL AND TRIM(a.phone)!='')
       )
-      ${deptFilter}${empFilter}${coordFilter}${searchFilter}${lineA}
+      ${deptFilter}${empFilter}${coordFilter}${searchFilter}${ewFilterP1}${lineA}
     ) p1_inner
     WHERE 1=1${dateFilterP1}`;
 
@@ -1498,7 +1527,7 @@ router.get('/absent-list', (req, res) => {
         SELECT 1 FROM absent_students a2
         WHERE a2.group_name = l.group_name AND a2.date = l.date${line ? ' AND a2.line = l.line' : ''}
       )
-    ${dateFilter2}${deptFilter2}${empFilter2}${coordFilter2}${searchFilter2}${lineL}`;
+    ${dateFilter2}${deptFilter2}${empFilter2}${coordFilter2}${searchFilter2}${ewFilterP2}${lineL}`;
 
   const unionQ = `SELECT * FROM (${part1} UNION ALL ${part2}) t`;
 
@@ -1545,6 +1574,9 @@ router.get('/absent-side-list', (req, res) => {
     ? ` AND l.date BETWEEN '${activeFrom}' AND '${activeTo}'`
     : activeFrom ? ` AND l.date >= '${activeFrom}'`
     : activeTo   ? ` AND l.date <= '${activeTo}'` : '';
+  // Opt-in employment-window filter (attendance-absence drill-down only).
+  const rosterWinS    = req.query.roster_window === '1' || req.query.roster_window === 'true';
+  const ewFilterSideB = rosterWinS ? employmentWindowFilter('b', 'l.date') : '';
 
   // ── Prefer absent_zoom_students when uploaded (student-level rows) ────────
   // When a group-name search is active, check specifically for that group's data
@@ -1571,6 +1603,7 @@ router.get('/absent-side-list', (req, res) => {
     // Time-aware dept filter — coordinator's dept on a.date (via history),
     // not the current batches.dept_type. Mirrors /attendance-absence.
     const azDeptFilter   = coordDeptAtDateFilter('b', 'a.date', activeDept);
+    const azEwFilter     = rosterWinS ? employmentWindowFilter('b', 'a.date') : '';
 
     // Restrict zoom-absent rows to absences against REGULAR (≤15-min) zoom
     // sessions only. Onboarding/Offboarding/Compensatory rows live in the
@@ -1595,7 +1628,7 @@ router.get('/absent-side-list', (req, res) => {
                     AND CAST(SUBSTR(l.duration,1,2) AS INTEGER)*60
                         + CAST(SUBSTR(l.duration,4,2) AS INTEGER) < 20))${line ? ' AND l.line = a.line' : ''}
       )
-      ${azDateFilter}${azDeptFilter}${azEmpFilter}${azCoordFilter}${azSearchFilter}${lineA}`;
+      ${azDateFilter}${azDeptFilter}${azEmpFilter}${azCoordFilter}${azSearchFilter}${azEwFilter}${lineA}`;
 
     try {
       // COUNT(DISTINCT a.id) + GROUP BY a.id prevent row duplication when
@@ -1639,7 +1672,7 @@ router.get('/absent-side-list', (req, res) => {
     WHERE l.session_type = 'side'
       AND l.status = 'مؤكدة'
       AND (l.duration IS NULL OR l.duration <= '00:30') AND l.side_session_category = 'regular'
-    ${dateFilter}${deptFilter}${empFilter}${trainerFilter}${coordFilter}${searchFilter}`;
+    ${dateFilter}${deptFilter}${empFilter}${trainerFilter}${coordFilter}${searchFilter}${ewFilterSideB}`;
 
   // NOTE: Side sessions are per-student 15-min slots — each row in `lectures`
   // represents one student's scheduled session on that date, NOT the whole group.
@@ -4987,8 +5020,13 @@ router.get('/attendance-absence', (req, res) => {
     //   • events before a coordinator's hire date or after their leave date are
     //     not credited to them (the date falls outside their window → NULL).
     // Returns NULL when no employed roster coordinator covers the date.
+    // GROUP_CONCAT(DISTINCT …) dedups overlapping coordinator_history rows so a
+    // group co-credited to the same person twice (e.g. "Name, Name" from an
+    // overlap) collapses to one — the frontend splits on ',' and trims, so the
+    // default comma separator is fine. This keeps each coordinator's total equal
+    // to the sum of their movement-segments (segment-first source of truth).
     const dateAwareCoord = (batchAlias, dateExpr) => `(
-      SELECT GROUP_CONCAT(ch.coordinator, ', ')
+      SELECT GROUP_CONCAT(DISTINCT ch.coordinator)
         FROM coordinator_history ch
         JOIN team_members tm
           ON LOWER(TRIM(tm.name)) = LOWER(TRIM(ch.coordinator))
@@ -5238,6 +5276,168 @@ router.get('/attendance-absence', (req, res) => {
     return res.json(result);
   } catch (err) {
     console.error('[reports] attendance-absence error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GET /api/reports/attendance-absence/segments ─────────────────────────────
+// Per-MOVEMENT breakdown for ONE coordinator: splits their attendance numbers by
+// the SECTION-periods they held (team_member_dept_history), within [from,to] and
+// capped by their employment dates. Each segment carries its period + a note
+// (transition / left work / ongoing). Segment numbers SUM to the coordinator's
+// row in /attendance-absence (segment-first source of truth). Same per-event
+// formulas as the main endpoint, just coordinator-scoped and grouped by section.
+router.get('/attendance-absence/segments', (req, res) => {
+  const { from_date, to_date, coordinator } = req.query;
+  if (!coordinator || !String(coordinator).trim()) return res.json({ coordinator: coordinator || null, segments: [] });
+  const line  = lineFilter(req);
+  const lineL = buildLineFilter('l', line);
+  const lineA = buildLineFilter('a', line);
+  const safe  = String(coordinator).replace(/'/g, "''").trim();
+  const d10   = v => (v ? String(v).slice(0, 10) : null);
+
+  // Coordinator employment dates (for the [hire, leave] cap).
+  const tmRow = db.prepare(
+    `SELECT start_date, end_date FROM team_members WHERE department='customer_services' AND LOWER(TRIM(name))=LOWER(TRIM(?)) LIMIT 1`
+  ).get(coordinator) || {};
+  const empStart = d10(tmRow.start_date);
+  const empEnd   = d10(tmRow.end_date);
+
+  // Coordinator-scoped membership test that MIRRORS dateAwareCoord in
+  // /attendance-absence EXACTLY (raw batches group_name, TRIM match, the same
+  // team_members employment JOIN) — so the segment numbers SUM to the
+  // coordinator's row there. `batchAlias` is the batches alias in scope (b/b2).
+  const cf = (batchAlias, dateExpr) => ` AND EXISTS (
+    SELECT 1 FROM coordinator_history ch_s
+      JOIN team_members tm_s
+        ON LOWER(TRIM(tm_s.name)) = LOWER(TRIM(ch_s.coordinator))
+       AND tm_s.department = 'customer_services'
+     WHERE ch_s.group_name = ${batchAlias}.group_name
+       AND ch_s.line       = ${batchAlias}.line
+       AND DATE(ch_s.effective_from) <= ${dateExpr}
+       AND (ch_s.effective_to IS NULL OR DATE(ch_s.effective_to) > ${dateExpr})
+       AND (tm_s.start_date IS NULL OR TRIM(tm_s.start_date) = '' OR DATE(tm_s.start_date) <= ${dateExpr})
+       AND (tm_s.end_date   IS NULL OR TRIM(tm_s.end_date)   = '' OR DATE(tm_s.end_date)   >= ${dateExpr})
+       AND LOWER(TRIM(ch_s.coordinator)) = LOWER(TRIM('${safe}'))
+  )`;
+
+  // Bucket key = the section-history record applicable on the event date
+  // (prefers a covering record; falls back to the nearest by start date so a
+  // gap never drops an event — keeps segment sums == the coordinator total).
+  const segId = (d) => `(
+    SELECT tmh.id FROM team_member_dept_history tmh
+     WHERE LOWER(TRIM(tmh.member_name)) = LOWER('${safe}')
+     ORDER BY
+       CASE WHEN DATE(tmh.effective_from) <= ${d}
+             AND (tmh.effective_to IS NULL OR DATE(tmh.effective_to) > ${d}) THEN 0 ELSE 1 END,
+       ABS(julianday(${d}) - julianday(tmh.effective_from))
+     LIMIT 1
+  )`;
+  const dateFilterL = buildDateFilter('l.date', from_date, to_date);
+  const dateFilterResolved = from_date && to_date
+    ? ` AND resolved_date BETWEEN '${from_date}' AND '${to_date}'`
+    : from_date ? ` AND resolved_date >= '${from_date}'`
+    : to_date   ? ` AND resolved_date <= '${to_date}'` : '';
+
+  try {
+    const me = db.prepare(`
+      SELECT ${segId('l.date')} AS seg, COALESCE(SUM(b.trainee_count),0) AS cnt
+      FROM lectures l INNER JOIN batches b ON l.group_name=b.group_name${line ? ' AND b.line=l.line' : ''}
+      WHERE l.session_type='main' AND l.status!='غير مؤكدة'
+      ${dateFilterL}${cf('b','l.date')}${lineL}
+      GROUP BY seg`).all();
+
+    const RES_DATE = `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`;
+    const ma1 = db.prepare(`
+      SELECT seg, COUNT(*) AS cnt FROM (
+        SELECT ${segId(RES_DATE)} AS seg, ${RES_DATE} AS resolved_date
+        FROM absent_students a
+        LEFT JOIN batches b ON a.group_name=b.group_name${line ? ' AND b.line=a.line' : ''}
+        LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
+          AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND (c_lu.phone=a.phone OR c_lu.phone='0'||a.phone OR a.phone='0'||c_lu.phone)
+        LEFT JOIN (SELECT group_name,date,line,ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num FROM lectures WHERE session_type='main' AND status!='غير مؤكدة'${line ? ` AND line='${line.replace(/'/g,"''")}'` : ''}) lec_inf
+          ON (a.date IS NULL OR TRIM(a.date)='') AND lec_inf.group_name=a.group_name AND a.lecture_no IS NOT NULL AND lec_inf.lec_num=a.lecture_no${line ? ' AND lec_inf.line=a.line' : ''}
+        WHERE ((a.student_name IS NOT NULL AND TRIM(a.student_name)!='') OR (a.phone IS NOT NULL AND TRIM(a.phone)!=''))
+        ${cf('b',RES_DATE)}${lineA}
+      ) p WHERE 1=1${dateFilterResolved} GROUP BY seg`).all();
+
+    const ma2 = db.prepare(`
+      SELECT ${segId('l.date')} AS seg, COUNT(*) AS cnt
+      FROM lectures l
+      INNER JOIN batches b2 ON l.group_name=b2.group_name${line ? ' AND b2.line=l.line' : ''}
+      INNER JOIN clients c ON c.group_name=l.group_name${line ? ' AND c.line=l.line' : ''}
+      WHERE l.session_type='main' AND l.status='مؤكدة' AND (l.attendance IS NULL OR TRIM(l.attendance)='')
+        AND c.name IS NOT NULL AND TRIM(c.name)!='' AND c.phone IS NOT NULL AND TRIM(c.phone)!=''
+        AND NOT EXISTS (SELECT 1 FROM absent_students a2 WHERE a2.group_name=l.group_name AND a2.date=l.date${line ? ' AND a2.line=l.line' : ''})
+      ${dateFilterL}${cf('b2','l.date')}${lineL}
+      GROUP BY seg`).all();
+
+    const zoomBatchSubQ = `(SELECT b.group_name, COALESCE(lc.canonical_line, MIN(b.line)) AS line, MAX(b.coordinators) AS coordinators, MAX(b.dept_type) AS dept_type
+       FROM batches b LEFT JOIN (SELECT group_name, MIN(line) AS canonical_line FROM lectures WHERE session_type='side' GROUP BY group_name) lc ON lc.group_name=b.group_name
+       ${line ? `WHERE b.line='${line.replace(/'/g,"''")}'` : ''} GROUP BY b.group_name)`;
+
+    const ze = db.prepare(`
+      SELECT seg, COALESCE(SUM(expected_slots),0) AS cnt FROM (
+        SELECT ${segId('l.date')} AS seg, COUNT(*) AS expected_slots
+        FROM lectures l INNER JOIN ${zoomBatchSubQ} b ON l.group_name=b.group_name AND l.line=b.line
+        WHERE l.session_type='side' AND l.status='مؤكدة' AND (l.duration IS NULL OR l.duration<='00:30') AND l.side_session_category='regular'
+        ${dateFilterL}${cf('b','l.date')}
+        GROUP BY seg, l.group_name, l.date
+      ) sub GROUP BY seg`).all();
+
+    const za = db.prepare(`
+      SELECT seg, COALESCE(SUM(absent_count),0) AS cnt FROM (
+        SELECT ${segId('l.date')} AS seg,
+          COUNT(*) - SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance!='' AND CAST(l.attendance AS INTEGER)>0 THEN 1 ELSE 0 END) AS absent_count
+        FROM lectures l INNER JOIN ${zoomBatchSubQ} b ON l.group_name=b.group_name AND l.line=b.line
+        WHERE l.session_type='side' AND l.status='مؤكدة' AND (l.duration IS NULL OR l.duration<='00:30') AND l.side_session_category='regular'
+        ${dateFilterL}${cf('b','l.date')}
+        GROUP BY seg, l.group_name, l.date
+        HAVING absent_count>0
+      ) sub GROUP BY seg`).all();
+
+    const segMap = new Map();
+    const bump = (rows, field) => rows.forEach(r => {
+      if (r.seg == null) return;
+      if (!segMap.has(r.seg)) segMap.set(r.seg, { main_expected: 0, main_absent: 0, zoom_expected: 0, zoom_absent: 0 });
+      segMap.get(r.seg)[field] += r.cnt || 0;
+    });
+    bump(me, 'main_expected'); bump(ma1, 'main_absent'); bump(ma2, 'main_absent');
+    bump(ze, 'zoom_expected'); bump(za, 'zoom_absent');
+
+    const hist = db.prepare(
+      `SELECT id, section, effective_from, effective_to FROM team_member_dept_history WHERE LOWER(TRIM(member_name))=LOWER(TRIM(?)) ORDER BY DATE(effective_from)`
+    ).all(coordinator);
+    const histById = new Map(hist.map(h => [h.id, h]));
+    const maxStr = (a, b) => (!a ? b : (!b ? a : (a > b ? a : b)));
+    const minStr = (a, b) => (!a ? b : (!b ? a : (a < b ? a : b)));
+
+    const segments = [...segMap.entries()].map(([id, n]) => {
+      const h = histById.get(id) || {};
+      const hFrom = d10(h.effective_from), hTo = d10(h.effective_to);
+      // period = section window ∩ filter ∩ employment
+      let from = maxStr(maxStr(hFrom, from_date || null), empStart);
+      let to   = minStr(minStr(hTo, to_date || null), empEnd);
+      let ended_by = 'ongoing', next_section = null;
+      if (hTo) {
+        ended_by = 'transition';
+        const nx = hist.find(x => d10(x.effective_from) === hTo);
+        next_section = nx ? nx.section : null;
+      } else if (empEnd) {
+        ended_by = 'left_work';
+      }
+      return {
+        section: h.section || null,
+        from, to, ended_by, next_section,
+        ...n,
+        main_absence_rate: n.main_expected > 0 ? Math.round((n.main_absent / n.main_expected) * 100) : 0,
+        zoom_absence_rate: n.zoom_expected > 0 ? Math.round((n.zoom_absent / n.zoom_expected) * 100) : 0,
+      };
+    }).sort((a, b) => String(a.from || '').localeCompare(String(b.from || '')));
+
+    return res.json({ coordinator, employment: { start_date: empStart, end_date: empEnd }, segments });
+  } catch (err) {
+    console.error('[reports] attendance-absence/segments error:', err);
     return res.status(500).json({ error: err.message });
   }
 });
