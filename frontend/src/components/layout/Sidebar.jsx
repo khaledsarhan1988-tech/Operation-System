@@ -44,7 +44,7 @@ const COLOR_MAP = {
 const DELIVERIES_LINKS = [
   { type: 'section', label: 'تسليمات الأقسام' },
   { to: '/subscriptions/cs-department', label: 'Customer Services Department', icon: GraduationCap, color: 'violet' },
-  { to: '/subscriptions/enrollment',    label: 'Enrollment',                  icon: GraduationCap, color: 'cyan', sub: true },
+  { to: '/subscriptions/enrollment',    label: 'Enrollment',                  icon: GraduationCap, color: 'cyan' },
 ];
 
 const AGENT_LINKS = [
