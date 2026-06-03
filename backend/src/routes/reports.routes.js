@@ -416,6 +416,7 @@ function parseTeamShifts(t) {
       .split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
     return {
       startMin, endMin, days,
+      label:     s.shift ? String(s.shift).trim().toLowerCase() : null,       // 'morning'/'evening' → SHIFT_AR; was missing → UI showed "undefined"
       section:   s.section ? String(s.section).trim().toLowerCase() : null,  // per-shift section (null = trainer's main section)
       startDate: s.start_date || null,
       endDate:   s.end_date   || null,
