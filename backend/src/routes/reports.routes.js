@@ -341,6 +341,23 @@ function coordAtDateSingleExpr(groupExpr, lineExpr, dateExpr) {
 }
 
 /**
+ * Forward rename resolution: given a group name that may be the OLD (pre-rename)
+ * name, return the CURRENT name it was renamed TO (latest hop). When a group is
+ * renamed, its `lectures` rows are relabeled to the new name but `absent_students`
+ * rows keep the old name — so matching an absence (old name) to its lecture (new
+ * name) by `=` fails. COALESCE this so callers can match BOTH names.
+ */
+function currentGroupNameExpr(groupExpr, lineExpr) {
+  return `COALESCE(
+    (SELECT gr_f.new_group_name FROM group_renames gr_f
+      WHERE gr_f.old_group_name = ${groupExpr}
+        AND gr_f.line           = ${lineExpr}
+      ORDER BY DATE(gr_f.renamed_on) DESC LIMIT 1),
+    ${groupExpr}
+  )`;
+}
+
+/**
  * Remarks counterpart — assigned_to history keyed by remark external_id.
  * Use when filtering remark-counting queries by assignee name with a date.
  * `dateExpr` is the date column on the event row (usually the remark itself).
@@ -657,7 +674,7 @@ function buildRemarksNotesMainInnerQ({ from_date, to_date, department, employee,
     )
     AND EXISTS (
       SELECT 1 FROM lectures l_chk
-       WHERE l_chk.group_name = a.group_name
+       WHERE l_chk.group_name IN (a.group_name, ${currentGroupNameExpr('a.group_name', 'a.line')})
          AND l_chk.session_type = 'main'
          AND l_chk.status != 'غير مؤكدة'
          AND l_chk.date = COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)${line ? ' AND l_chk.line = a.line' : ''}
