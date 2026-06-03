@@ -808,7 +808,14 @@ function syncLectures(buffer, line) {
     // `/api/reschedules/backfill-from-drive` endpoint, which compares
     // Excel files dated D vs D+1 directly. Do NOT re-enable live detection
     // here without revisiting that policy.
-    db.prepare("DELETE FROM lectures WHERE session_type = 'main' AND line = ?").run(line);
+    // HISTORY-PRESERVING REPLACE: delete only the main lectures of the groups
+    // PRESENT in this file, leaving ended groups (not in the file) untouched so
+    // their historical attendance is never wiped. (Old behavior deleted ALL
+    // main lectures for the line → ended-group history was lost every sync.)
+    if (uniqueGroups.length) {
+      const ph = uniqueGroups.map(() => '?').join(',');
+      db.prepare(`DELETE FROM lectures WHERE session_type = 'main' AND line = ? AND group_name IN (${ph})`).run(line, ...uniqueGroups);
+    }
     // Claim exclusive ownership of these groups' main lectures
     evictFromOtherLines('lectures', line, uniqueGroups, " AND session_type = 'main'");
     const insert = db.prepare(`
@@ -850,7 +857,12 @@ function syncSideSessions(buffer, line) {
   const uniqueGroups = [...new Set(rows.map(r => r.group_name))];
   const run = db.transaction(() => {
     // ── RESCHEDULE DETECTION INTENTIONALLY DISABLED — see syncLectures ──
-    db.prepare("DELETE FROM lectures WHERE session_type = 'side' AND line = ?").run(line);
+    // HISTORY-PRESERVING REPLACE — delete only the groups present in this file
+    // (ended groups not in the file keep their historical side sessions).
+    if (uniqueGroups.length) {
+      const ph = uniqueGroups.map(() => '?').join(',');
+      db.prepare(`DELETE FROM lectures WHERE session_type = 'side' AND line = ? AND group_name IN (${ph})`).run(line, ...uniqueGroups);
+    }
     // Claim exclusive ownership of these groups' side sessions
     evictFromOtherLines('lectures', line, uniqueGroups, " AND session_type = 'side'");
     const insert = db.prepare(`
@@ -900,7 +912,12 @@ function syncAbsent(buffer, line) {
 
   const uniqueAbsentGroups = [...new Set(rows.map(r => r.group_name).filter(Boolean))];
   const run = db.transaction(() => {
-    db.prepare('DELETE FROM absent_students WHERE line = ?').run(line);
+    // HISTORY-PRESERVING REPLACE — delete only the absent rows of groups PRESENT
+    // in this file; ended groups (not in the file) keep their historical absences.
+    if (uniqueAbsentGroups.length) {
+      const ph = uniqueAbsentGroups.map(() => '?').join(',');
+      db.prepare(`DELETE FROM absent_students WHERE line = ? AND group_name IN (${ph})`).run(line, ...uniqueAbsentGroups);
+    }
     // Claim exclusive ownership of these groups' absent records
     evictFromOtherLines('absent_students', line, uniqueAbsentGroups);
     const insert = db.prepare(`
@@ -968,7 +985,12 @@ function syncAbsentZoom(buffer, line) {
 
   const uniqueAbsentGroups = [...new Set(rows.map(r => canonicalGroupName(r.group_name)).filter(Boolean))];
   const run = db.transaction(() => {
-    db.prepare('DELETE FROM absent_zoom_students WHERE line = ?').run(line);
+    // HISTORY-PRESERVING REPLACE — delete only the groups present in this file;
+    // ended groups (not in the file) keep their historical zoom absences.
+    if (uniqueAbsentGroups.length) {
+      const ph = uniqueAbsentGroups.map(() => '?').join(',');
+      db.prepare(`DELETE FROM absent_zoom_students WHERE line = ? AND group_name IN (${ph})`).run(line, ...uniqueAbsentGroups);
+    }
     // Claim exclusive ownership of these groups' zoom-absent records
     evictFromOtherLines('absent_zoom_students', line, uniqueAbsentGroups);
     const insert = db.prepare(`
