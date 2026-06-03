@@ -1543,8 +1543,11 @@ router.get('/absent-list', (req, res) => {
         COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS date,
         a.time, a.lecture_no,
         COALESCE(
-          (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) LIMIT 1),
-          b.dept_type
+          (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) AND u.department != 'All' LIMIT 1),
+          b.dept_type,
+          -- ENDED groups leave the batches table (b.* NULL -> section shows
+          -- dash); recover the section from coordinator_history's coordinator.
+          (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(${coordAtDateSingleExpr('a.group_name', 'a.line', `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`)})) AND u.department != 'All' LIMIT 1)
         ) AS dept_type,
         COALESCE(
           ${coordinatorAtDateExpr('a.group_name', 'a.line', `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`)},
