@@ -4980,29 +4980,51 @@ router.get('/attendance-absence', (req, res) => {
   // coordinator's current section. Falls back to b.dept_type when no team
   // record covers the event date (graceful degradation for coordinators without
   // dept history yet).
-  let coordFilterB = buildCoordFilter('b', coordinator);
-  let coordFilterB2 = buildCoordFilter('b2', coordinator);
+  const coordName = req.user?.role === 'agent' ? req.user.full_name : (coordinator || '');
   let activeDept = '';
   if (req.user?.role === 'leader') {
-    // Multi-dept aware: pass the full overseen list (primary + extras).
-    // coordDeptAtDateFilter now accepts arrays.
     activeDept = leaderScopedDepts(req) || '';
   } else if (req.user?.role === 'admin') {
     activeDept = req.query.department || '';
-  } else if (req.user?.role === 'agent') {
-    coordFilterB  = buildCoordFilter('b',  req.user.full_name);
-    coordFilterB2 = buildCoordFilter('b2', req.user.full_name);
   }
   if (activeDept === 'All') activeDept = '';
 
-  // Time-aware dept filter — uses module-level helper (shared with
-  // /absent-list and /absent-side-list so modal counts always match).
-  // Build the SQL fragment used at each event-level filter location.
-  const deptFilterB   = ''; // applied per-query below via coordDeptAtDateFilter
-  const deptFilterB2  = '';
-  const deptFilterMainL_b   = coordDeptAtDateFilter('b',  'l.date', activeDept);
-  const deptFilterMainL_b2  = coordDeptAtDateFilter('b2', 'l.date', activeDept);
-  const deptFilterAbsentP1  = coordDeptAtDateFilter('b',  `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`, activeDept);
+  // ── ENDED-GROUP RESILIENT FILTERS ─────────────────────────────────────────
+  // Groups that have ended are REMOVED from `batches`, but their lectures stay
+  // in `lectures` and their attribution stays in `coordinator_history`. So we
+  // resolve coordinator + section from the EVENT's OWN group (l/a) via
+  // coordinator_history + team_member_dept_history — NEVER via a batches join
+  // (which would silently drop every ended group → inactive coordinators = 0).
+  const RES_DATE_P1 = `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`;
+  // Department filter by the coordinator's SECTION-at-date (team history), keyed
+  // on the event's group. Team-section only (no batches.dept_type fallback) —
+  // every counted coordinator is a roster member, so a section always exists.
+  const sectionDeptFilter = (groupExpr, lineExpr, dateExpr) => {
+    if (!activeDept) return '';
+    const depts = (Array.isArray(activeDept) ? activeDept : [activeDept])
+      .filter(Boolean).filter(d => d !== 'All')
+      .map(d => String(d).toLowerCase().trim().replace(/'/g, "''"));
+    if (!depts.length) return '';
+    const inList = depts.map(d => `'${d}'`).join(',');
+    return ` AND EXISTS (
+      SELECT 1 FROM coordinator_history ch_d
+        JOIN team_member_dept_history tmh_d
+          ON LOWER(TRIM(tmh_d.member_name)) = LOWER(TRIM(ch_d.coordinator))
+         AND DATE(tmh_d.effective_from) <= ${dateExpr}
+         AND (tmh_d.effective_to IS NULL OR DATE(tmh_d.effective_to) > ${dateExpr})
+         AND LOWER(TRIM(tmh_d.section)) IN (${inList})
+       WHERE ch_d.group_name = ${groupExpr} AND ch_d.line = ${lineExpr}
+         AND DATE(ch_d.effective_from) <= ${dateExpr}
+         AND (ch_d.effective_to IS NULL OR DATE(ch_d.effective_to) > ${dateExpr})
+    )`;
+  };
+  const deptFilterMainL    = sectionDeptFilter('l.group_name', 'l.line', 'l.date');
+  const deptFilterAbsentP1 = sectionDeptFilter('a.group_name', 'a.line', RES_DATE_P1);
+  const coordFilterMainL   = coordFilterAtDate('l.group_name', 'l.line', 'l.date', coordName);
+  const coordFilterP1      = coordFilterAtDate('a.group_name', 'a.line', RES_DATE_P1, coordName);
+  // trainee_count fallback for ENDED groups (not in batches): count the group's
+  // clients. Per-lecture group size → SUM gives student-slots (denominator).
+  const traineeCountExpr = `COALESCE(b.trainee_count, (SELECT COUNT(*) FROM clients cc WHERE cc.group_name = l.group_name${line ? ' AND cc.line = l.line' : ''}))`;
 
   const dateFilterL = buildDateFilter('l.date', from_date, to_date);
   const dateFilterResolved = from_date && to_date
@@ -5043,12 +5065,12 @@ router.get('/attendance-absence', (req, res) => {
     // Student-slot count: SUM(trainee_count) across main lectures in window.
     // This is the correct denominator for student-level absences (Part1+Part2).
     const mainExpectedRows = db.prepare(`
-      SELECT ${dateAwareCoord('b', 'l.date')} AS coordinator,
-        COALESCE(SUM(b.trainee_count), 0) AS cnt
+      SELECT ${dateAwareCoord('l', 'l.date')} AS coordinator,
+        COALESCE(SUM(${traineeCountExpr}), 0) AS cnt
       FROM lectures l
-      INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
+      LEFT JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
       WHERE l.session_type = 'main' AND l.status != 'غير مؤكدة'
-      ${dateFilterL}${deptFilterMainL_b}${coordFilterB}${lineL}
+      ${dateFilterL}${deptFilterMainL}${coordFilterMainL}${lineL}
       GROUP BY coordinator
     `).all();
 
@@ -5056,7 +5078,7 @@ router.get('/attendance-absence', (req, res) => {
     // Part1: absent_students records with resolved name & date.
     const mainAbsentPart1 = db.prepare(`
       SELECT coordinator, COUNT(*) AS cnt FROM (
-        SELECT ${dateAwareCoord('b', `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`)} AS coordinator,
+        SELECT ${dateAwareCoord('a', `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`)} AS coordinator,
           COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS resolved_date
         FROM absent_students a
         LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
@@ -5074,7 +5096,7 @@ router.get('/attendance-absence', (req, res) => {
           (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
           OR (a.phone IS NOT NULL AND TRIM(a.phone)!='')
         )
-        ${deptFilterAbsentP1}${coordFilterB}${lineA}
+        ${deptFilterAbsentP1}${coordFilterP1}${lineA}
       ) p1
       WHERE 1=1${dateFilterResolved}
       GROUP BY coordinator
@@ -5082,9 +5104,8 @@ router.get('/attendance-absence', (req, res) => {
 
     // Part2: main lectures with empty attendance + client exists + no absent record.
     const mainAbsentPart2 = db.prepare(`
-      SELECT ${dateAwareCoord('b2', 'l.date')} AS coordinator, COUNT(*) AS cnt
+      SELECT ${dateAwareCoord('l', 'l.date')} AS coordinator, COUNT(*) AS cnt
       FROM lectures l
-      INNER JOIN batches b2 ON l.group_name = b2.group_name${line ? ' AND b2.line = l.line' : ''}
       INNER JOIN clients c ON c.group_name = l.group_name${line ? ' AND c.line = l.line' : ''}
       WHERE l.session_type = 'main'
         AND l.status = 'مؤكدة'
@@ -5095,47 +5116,24 @@ router.get('/attendance-absence', (req, res) => {
           SELECT 1 FROM absent_students a2
           WHERE a2.group_name = l.group_name AND a2.date = l.date${line ? ' AND a2.line = l.line' : ''}
         )
-      ${dateFilterL}${deptFilterMainL_b2}${coordFilterB2}${lineL}
+      ${dateFilterL}${deptFilterMainL}${coordFilterMainL}${lineL}
       GROUP BY coordinator
     `).all();
 
     // ─── ZOOM EXPECTED per coordinator ─────────────────────────────────────
     // Side sessions are per-student 15-min slots — each lecture row is ONE
-    // student's scheduled slot. So expected slots per (group,date) = COUNT(*)
-    // of lecture rows, NOT batch.trainee_count (which is the whole group size
-    // spanning many dates). Must match /absent-side-list and dashboard KPI.
-    //
-    // ⚠ Doubling fix — smart canonical line approach:
-    // Batches can have the same group_name in BOTH lines. Lectures may only exist for
-    // one line. Resolve the ACTUAL lecture line per group so AND l.line = b.line
-    // counts each lecture row exactly once.
-    // • admin "الكل" (no line) : canonical = actual lecture line → no doubling ✓
-    // • admin "Dardasha"       : canonical = 'Ahmed Hassan' (lectures stored there) → finds data ✓
-    const zoomBatchSubQ = line
-      ? `(SELECT b.group_name,
-           COALESCE(lc.canonical_line, MIN(b.line)) AS line,
-           MAX(b.coordinators) AS coordinators, MAX(b.dept_type) AS dept_type
-         FROM batches b
-         LEFT JOIN (SELECT group_name, MIN(line) AS canonical_line FROM lectures WHERE session_type = 'side' GROUP BY group_name) lc ON lc.group_name = b.group_name
-         WHERE b.line = '${line.replace(/'/g, "''")}'
-         GROUP BY b.group_name)`
-      : `(SELECT b.group_name,
-           COALESCE(lc.canonical_line, MIN(b.line)) AS line,
-           MAX(b.coordinators) AS coordinators, MAX(b.dept_type) AS dept_type
-         FROM batches b
-         LEFT JOIN (SELECT group_name, MIN(line) AS canonical_line FROM lectures WHERE session_type = 'side' GROUP BY group_name) lc ON lc.group_name = b.group_name
-         GROUP BY b.group_name)`;
-
+    // student's scheduled slot, so expected slots per (group,date) = COUNT(*)
+    // of side lecture rows. Resolved straight off `lectures` (no batches join),
+    // so ENDED groups (removed from batches) are still counted.
     const zoomExpectedRows = db.prepare(`
       SELECT coordinator, COALESCE(SUM(expected_slots), 0) AS cnt FROM (
-        SELECT ${dateAwareCoord('b', 'l.date')} AS coordinator,
+        SELECT ${dateAwareCoord('l', 'l.date')} AS coordinator,
           COUNT(*) AS expected_slots
         FROM lectures l
-        INNER JOIN ${zoomBatchSubQ} b ON l.group_name = b.group_name AND l.line = b.line
         WHERE l.session_type = 'side'
           AND l.status = 'مؤكدة'
           AND (l.duration IS NULL OR l.duration <= '00:30') AND l.side_session_category = 'regular'
-        ${dateFilterL}${coordDeptAtDateFilter('b', 'l.date', activeDept)}${coordFilterB}
+        ${dateFilterL}${deptFilterMainL}${coordFilterMainL}${lineL}
         GROUP BY coordinator, l.group_name, l.date
       ) sub
       GROUP BY coordinator
@@ -5145,17 +5143,16 @@ router.get('/attendance-absence', (req, res) => {
     // absent = COUNT(*) - present(attendance>0). See comment above.
     const zoomAbsentRows = db.prepare(`
       SELECT coordinator, COALESCE(SUM(absent_count), 0) AS cnt FROM (
-        SELECT ${dateAwareCoord('b', 'l.date')} AS coordinator,
+        SELECT ${dateAwareCoord('l', 'l.date')} AS coordinator,
           COUNT(*) -
             SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != ''
                      AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END)
             AS absent_count
         FROM lectures l
-        INNER JOIN ${zoomBatchSubQ} b ON l.group_name = b.group_name AND l.line = b.line
         WHERE l.session_type = 'side'
           AND l.status = 'مؤكدة'
           AND (l.duration IS NULL OR l.duration <= '00:30') AND l.side_session_category = 'regular'
-        ${dateFilterL}${coordDeptAtDateFilter('b', 'l.date', activeDept)}${coordFilterB}
+        ${dateFilterL}${deptFilterMainL}${coordFilterMainL}${lineL}
         GROUP BY coordinator, l.group_name, l.date
         HAVING absent_count > 0
       ) sub
@@ -5304,16 +5301,17 @@ router.get('/attendance-absence/segments', (req, res) => {
   const empEnd   = d10(tmRow.end_date);
 
   // Coordinator-scoped membership test that MIRRORS dateAwareCoord in
-  // /attendance-absence EXACTLY (raw batches group_name, TRIM match, the same
-  // team_members employment JOIN) — so the segment numbers SUM to the
-  // coordinator's row there. `batchAlias` is the batches alias in scope (b/b2).
-  const cf = (batchAlias, dateExpr) => ` AND EXISTS (
+  // /attendance-absence EXACTLY (same TRIM match + team_members employment JOIN)
+  // so the segment numbers SUM to the coordinator's row. `aliasGroup` is the
+  // alias whose group_name/line to use — the EVENT's own (l / a), NOT batches,
+  // so ENDED groups (removed from batches) are still counted.
+  const cf = (aliasGroup, dateExpr) => ` AND EXISTS (
     SELECT 1 FROM coordinator_history ch_s
       JOIN team_members tm_s
         ON LOWER(TRIM(tm_s.name)) = LOWER(TRIM(ch_s.coordinator))
        AND tm_s.department = 'customer_services'
-     WHERE ch_s.group_name = ${batchAlias}.group_name
-       AND ch_s.line       = ${batchAlias}.line
+     WHERE ch_s.group_name = ${aliasGroup}.group_name
+       AND ch_s.line       = ${aliasGroup}.line
        AND DATE(ch_s.effective_from) <= ${dateExpr}
        AND (ch_s.effective_to IS NULL OR DATE(ch_s.effective_to) > ${dateExpr})
        AND (tm_s.start_date IS NULL OR TRIM(tm_s.start_date) = '' OR DATE(tm_s.start_date) <= ${dateExpr})
@@ -5340,11 +5338,12 @@ router.get('/attendance-absence/segments', (req, res) => {
     : to_date   ? ` AND resolved_date <= '${to_date}'` : '';
 
   try {
+    const traineeCountExpr = `COALESCE(b.trainee_count, (SELECT COUNT(*) FROM clients cc WHERE cc.group_name = l.group_name${line ? ' AND cc.line = l.line' : ''}))`;
     const me = db.prepare(`
-      SELECT ${segId('l.date')} AS seg, COALESCE(SUM(b.trainee_count),0) AS cnt
-      FROM lectures l INNER JOIN batches b ON l.group_name=b.group_name${line ? ' AND b.line=l.line' : ''}
+      SELECT ${segId('l.date')} AS seg, COALESCE(SUM(${traineeCountExpr}),0) AS cnt
+      FROM lectures l LEFT JOIN batches b ON l.group_name=b.group_name${line ? ' AND b.line=l.line' : ''}
       WHERE l.session_type='main' AND l.status!='غير مؤكدة'
-      ${dateFilterL}${cf('b','l.date')}${lineL}
+      ${dateFilterL}${cf('l','l.date')}${lineL}
       GROUP BY seg`).all();
 
     const RES_DATE = `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`;
@@ -5358,30 +5357,25 @@ router.get('/attendance-absence/segments', (req, res) => {
         LEFT JOIN (SELECT group_name,date,line,ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num FROM lectures WHERE session_type='main' AND status!='غير مؤكدة'${line ? ` AND line='${line.replace(/'/g,"''")}'` : ''}) lec_inf
           ON (a.date IS NULL OR TRIM(a.date)='') AND lec_inf.group_name=a.group_name AND a.lecture_no IS NOT NULL AND lec_inf.lec_num=a.lecture_no${line ? ' AND lec_inf.line=a.line' : ''}
         WHERE ((a.student_name IS NOT NULL AND TRIM(a.student_name)!='') OR (a.phone IS NOT NULL AND TRIM(a.phone)!=''))
-        ${cf('b',RES_DATE)}${lineA}
+        ${cf('a',RES_DATE)}${lineA}
       ) p WHERE 1=1${dateFilterResolved} GROUP BY seg`).all();
 
     const ma2 = db.prepare(`
       SELECT ${segId('l.date')} AS seg, COUNT(*) AS cnt
       FROM lectures l
-      INNER JOIN batches b2 ON l.group_name=b2.group_name${line ? ' AND b2.line=l.line' : ''}
       INNER JOIN clients c ON c.group_name=l.group_name${line ? ' AND c.line=l.line' : ''}
       WHERE l.session_type='main' AND l.status='مؤكدة' AND (l.attendance IS NULL OR TRIM(l.attendance)='')
         AND c.name IS NOT NULL AND TRIM(c.name)!='' AND c.phone IS NOT NULL AND TRIM(c.phone)!=''
         AND NOT EXISTS (SELECT 1 FROM absent_students a2 WHERE a2.group_name=l.group_name AND a2.date=l.date${line ? ' AND a2.line=l.line' : ''})
-      ${dateFilterL}${cf('b2','l.date')}${lineL}
+      ${dateFilterL}${cf('l','l.date')}${lineL}
       GROUP BY seg`).all();
-
-    const zoomBatchSubQ = `(SELECT b.group_name, COALESCE(lc.canonical_line, MIN(b.line)) AS line, MAX(b.coordinators) AS coordinators, MAX(b.dept_type) AS dept_type
-       FROM batches b LEFT JOIN (SELECT group_name, MIN(line) AS canonical_line FROM lectures WHERE session_type='side' GROUP BY group_name) lc ON lc.group_name=b.group_name
-       ${line ? `WHERE b.line='${line.replace(/'/g,"''")}'` : ''} GROUP BY b.group_name)`;
 
     const ze = db.prepare(`
       SELECT seg, COALESCE(SUM(expected_slots),0) AS cnt FROM (
         SELECT ${segId('l.date')} AS seg, COUNT(*) AS expected_slots
-        FROM lectures l INNER JOIN ${zoomBatchSubQ} b ON l.group_name=b.group_name AND l.line=b.line
+        FROM lectures l
         WHERE l.session_type='side' AND l.status='مؤكدة' AND (l.duration IS NULL OR l.duration<='00:30') AND l.side_session_category='regular'
-        ${dateFilterL}${cf('b','l.date')}
+        ${dateFilterL}${cf('l','l.date')}${lineL}
         GROUP BY seg, l.group_name, l.date
       ) sub GROUP BY seg`).all();
 
@@ -5389,9 +5383,9 @@ router.get('/attendance-absence/segments', (req, res) => {
       SELECT seg, COALESCE(SUM(absent_count),0) AS cnt FROM (
         SELECT ${segId('l.date')} AS seg,
           COUNT(*) - SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance!='' AND CAST(l.attendance AS INTEGER)>0 THEN 1 ELSE 0 END) AS absent_count
-        FROM lectures l INNER JOIN ${zoomBatchSubQ} b ON l.group_name=b.group_name AND l.line=b.line
+        FROM lectures l
         WHERE l.session_type='side' AND l.status='مؤكدة' AND (l.duration IS NULL OR l.duration<='00:30') AND l.side_session_category='regular'
-        ${dateFilterL}${cf('b','l.date')}
+        ${dateFilterL}${cf('l','l.date')}${lineL}
         GROUP BY seg, l.group_name, l.date
         HAVING absent_count>0
       ) sub GROUP BY seg`).all();
