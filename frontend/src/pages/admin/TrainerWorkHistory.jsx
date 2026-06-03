@@ -36,45 +36,6 @@ const EMPLOYMENT_LABEL = {
   part_time: 'Part Time',
 };
 
-// Overall (aggregated) employment — combines all shifts' work_days. When a
-// trainer has multiple Part-Time shifts whose days union to a full week,
-// they're shown as "Full Time موزّع" (split).
-function OverallEmpBadge({ type, split, daysCovered, uniformTimes }) {
-  if (type === 'full_time' && split) {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold border bg-violet-100 text-violet-800 border-violet-200"
-        title="شيفتات متعددة بنفس المواعيد تغطّي أسبوع العمل بالكامل">
-        Full Time <span className="text-[10px] font-normal opacity-80">موزّع</span>
-      </span>
-    );
-  }
-  if (type === 'full_time') {
-    return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold border bg-blue-100 text-blue-800 border-blue-200">Full Time</span>;
-  }
-  if (type === 'part_time') {
-    // Edge case: 6/6 days but DIFFERENT shift times per day group → still
-    // Part Time but worth flagging so the reader knows why it's not "موزّع".
-    const variedFullWeek = daysCovered === 6 && uniformTimes === false;
-    return (
-      <span
-        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold border ${
-          variedFullWeek
-            ? 'bg-amber-50 text-amber-800 border-amber-200'
-            : 'bg-gray-100 text-gray-700 border-gray-200'
-        }`}
-        title={variedFullWeek
-          ? 'يعمل كل أيام الأسبوع لكن بمواعيد مختلفة بين الأيام'
-          : ''}
-      >
-        Part Time
-        <span className="text-[10px] font-normal opacity-70">
-          {variedFullWeek ? '(6/6 — مواعيد متباينة)' : `(${daysCovered}/6)`}
-        </span>
-      </span>
-    );
-  }
-  return <span className="text-xs text-gray-300">—</span>;
-}
 
 // Convert raw minutes into "h س m د" (or just minutes if < 60).
 function fmtMins(mins) {
@@ -383,18 +344,18 @@ export default function TrainerWorkHistory() {
           <table className="w-full text-sm text-right" style={{ minWidth: '1380px' }}>
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100">
-                {['المدرب', 'القسم', '#', 'نوع الشيفت', 'بداية العمل', 'نهاية العمل', 'المواعيد', 'أيام العمل', 'الدوام', 'الدوام الإجمالي', 'ساعات إضافية', 'ساعات غير مؤكدة', 'الحالة']
+                {['المدرب', 'القسم', '#', 'نوع الشيفت', 'بداية العمل', 'نهاية العمل', 'المواعيد', 'أيام العمل', 'الدوام', 'ساعات إضافية', 'ساعات غير مؤكدة', 'الحالة']
                   .map(h => <th key={h} className="px-3 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>)}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {isLoading ? <SkeletonRows cols={13} rows={6} /> :
+              {isLoading ? <SkeletonRows cols={12} rows={6} /> :
                isError    ? (
-                 <tr><td colSpan={13} className="text-center py-12 text-sm text-red-600">حدث خطأ أثناء تحميل البيانات</td></tr>
+                 <tr><td colSpan={12} className="text-center py-12 text-sm text-red-600">حدث خطأ أثناء تحميل البيانات</td></tr>
                ) :
                filteredRows.length === 0 ? (
                  <tr>
-                   <td colSpan={13} className="text-center py-12">
+                   <td colSpan={12} className="text-center py-12">
                      <div className="flex flex-col items-center gap-2 text-gray-400">
                        <History className="w-8 h-8 text-gray-300" />
                        <p className="text-sm font-medium">لا توجد شيفتات في الفترة المحددة</p>
@@ -438,14 +399,6 @@ export default function TrainerWorkHistory() {
                    </td>
                    <td className="px-3 py-3 text-xs text-gray-700 whitespace-nowrap">
                      {EMPLOYMENT_LABEL[r.employment_type] || '—'}
-                   </td>
-                   <td className="px-3 py-3 whitespace-nowrap">
-                     <OverallEmpBadge
-                       type={r.overall_employment_type}
-                       split={r.overall_employment_split}
-                       daysCovered={r.overall_days_covered}
-                       uniformTimes={r.overall_uniform_times}
-                     />
                    </td>
                    <td className="px-3 py-3 whitespace-nowrap">
                      {r.extra_minutes > 0 ? (
