@@ -68,4 +68,96 @@ router.get('/lectures', (req, res) => {
   }
 });
 
+// ─── DIAGNOSTIC LOOKUPS (read-only, bounded) ─────────────────────────────────
+// Small targeted lookups by name/phone/group for investigating specific data
+// issues (missing remark, empty section column). LIKE-matched, capped at 50.
+function likeArg(q) { return '%' + String(q || '').trim() + '%'; }
+
+router.get('/remarks', (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (!q) return res.status(400).json({ error: 'q is required' });
+  try {
+    const rows = db.prepare(
+      `SELECT id, external_id, client_name, client_phone, assigned_to, task_type,
+              category, status, priority, line, details, added_at, last_updated
+         FROM remarks
+        WHERE client_phone LIKE ? OR client_name LIKE ? OR REPLACE(client_phone,' ','') LIKE ?
+        ORDER BY added_at DESC LIMIT 50`
+    ).all(likeArg(q), likeArg(q), likeArg(q));
+    res.json({ generated_at: new Date().toISOString(), q, count: rows.length, rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/absent', (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (!q) return res.status(400).json({ error: 'q is required' });
+  try {
+    let main = [], zoom = [];
+    try {
+      main = db.prepare(
+        `SELECT id, student_name, phone, group_name, line, date, time, lecture_no,
+                follow_up_status, auto_generated
+           FROM absent_students
+          WHERE phone LIKE ? OR student_name LIKE ? ORDER BY date DESC LIMIT 50`
+      ).all(likeArg(q), likeArg(q));
+    } catch (_) {}
+    try {
+      zoom = db.prepare(
+        `SELECT id, student_name, phone, group_name, line, date, time, lecture_no,
+                follow_up_status
+           FROM absent_zoom_students
+          WHERE phone LIKE ? OR student_name LIKE ? ORDER BY date DESC LIMIT 50`
+      ).all(likeArg(q), likeArg(q));
+    } catch (_) {}
+    res.json({ generated_at: new Date().toISOString(), q, absent_main: main, absent_zoom: zoom });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/batches', (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (!q) return res.status(400).json({ error: 'q is required' });
+  try {
+    const rows = db.prepare(
+      `SELECT group_name, line, status, dept_type, coordinators
+         FROM batches WHERE group_name LIKE ? ORDER BY group_name LIMIT 50`
+    ).all(likeArg(q));
+    let coordHist = [];
+    try {
+      coordHist = db.prepare(
+        `SELECT group_name, line, coordinator, effective_from, effective_to
+           FROM coordinator_history WHERE group_name LIKE ?
+          ORDER BY group_name, effective_from LIMIT 100`
+      ).all(likeArg(q));
+    } catch (_) {}
+    res.json({ generated_at: new Date().toISOString(), q, count: rows.length, rows, coordinator_history: coordHist });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/users', (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (!q) return res.status(400).json({ error: 'q is required' });
+  try {
+    const users = db.prepare(
+      `SELECT id, full_name, username, department, role FROM users
+        WHERE full_name LIKE ? OR username LIKE ? ORDER BY full_name LIMIT 50`
+    ).all(likeArg(q), likeArg(q));
+    let team = [];
+    try {
+      team = db.prepare(
+        `SELECT id, name, department, section, job_title, coordinator_type, user_id
+           FROM team_members WHERE name LIKE ? ORDER BY name LIMIT 50`
+      ).all(likeArg(q));
+    } catch (_) {}
+    res.json({ generated_at: new Date().toISOString(), q, users, team_members: team });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;

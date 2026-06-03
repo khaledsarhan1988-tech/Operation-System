@@ -114,6 +114,37 @@ function buildCoordFilter(table, value) {
   return ` AND ${nameInListInline(`${table}.coordinators`, value)}`;
 }
 
+// Expression-based strict dept filter: same logic as buildStrictDeptFilter, but
+// the coordinator + dept_type are arbitrary SQL EXPRESSIONS (not just a table
+// alias). Lets a query filter on a RESOLVED coordinator — e.g. one recovered
+// from coordinator_history when the group has left the `batches` table — so
+// ended-group rows aren't silently dropped by a dept filter.
+function buildStrictDeptFilterExpr(coordExpr, deptExpr, department) {
+  if (!department) return '';
+  const depts = Array.isArray(department) ? department : [department];
+  const cleaned = depts
+    .filter(Boolean)
+    .filter(d => d !== 'All')
+    .map(d => String(d).toLowerCase().trim().replace(/'/g, "''"));
+  if (cleaned.length === 0) return '';
+  const inList = cleaned.map(d => `'${d}'`).join(',');
+  return ` AND (
+    EXISTS (
+      SELECT 1 FROM users u
+      WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(${coordExpr}))
+        AND LOWER(TRIM(u.department)) IN (${inList})
+    )
+    OR (
+      LOWER(TRIM(${deptExpr})) IN (${inList})
+      AND NOT EXISTS (
+        SELECT 1 FROM users u
+        WHERE LOWER(TRIM(u.full_name)) = LOWER(TRIM(${coordExpr}))
+          AND u.department IS NOT NULL AND u.department != 'All'
+      )
+    )
+  )`;
+}
+
 // ── DATE-AWARE COORDINATOR HELPERS ────────────────────────────────────────────
 // When an event has a date (absences, lectures, remarks), we attribute it to
 // the coordinator who was responsible AT THAT DATE — not the current value
@@ -287,6 +318,26 @@ function coordinatorAtDateExpr(groupExpr, lineExpr, dateExpr) {
               AND ch_d.line       = ${lineExpr}
               AND DATE(ch_d.effective_from) <= ${dateExpr}
               AND (ch_d.effective_to IS NULL OR DATE(ch_d.effective_to) > ${dateExpr}))`;
+}
+
+/**
+ * Single coordinator-of-record at a date (most recent match).
+ *
+ * Unlike a `batches` join, this survives the group LEAVING the batches table:
+ * ended/removed groups disappear from `batches` (so a LEFT JOIN yields NULL
+ * coordinators + NULL dept_type → the section shows "—"), but their rows remain
+ * in `coordinator_history`. Use this as a fallback to recover the coordinator
+ * (and, via the coordinator's registered department, the section) for absences
+ * whose group is no longer in `batches`.
+ */
+function coordAtDateSingleExpr(groupExpr, lineExpr, dateExpr) {
+  const effG = effectiveGroupNameAtDate(groupExpr, lineExpr, dateExpr);
+  return `(SELECT ch1.coordinator FROM coordinator_history ch1
+            WHERE ch1.group_name = ${effG}
+              AND ch1.line       = ${lineExpr}
+              AND DATE(ch1.effective_from) <= ${dateExpr}
+              AND (ch1.effective_to IS NULL OR DATE(ch1.effective_to) > ${dateExpr})
+            ORDER BY DATE(ch1.effective_from) DESC LIMIT 1)`;
 }
 
 /**
@@ -537,14 +588,21 @@ function buildRemarksNotesMainInnerQ({ from_date, to_date, department, employee,
   let resolvedDept = department && department !== 'All' ? department : '';
   if (coordinator && !resolvedDept) {
     const coordUser = db.prepare(
-      `SELECT department FROM users WHERE LOWER(TRIM(full_name))=LOWER(TRIM(?)) AND department != 'All' LIMIT 1${line ? ` AND line IN ('${line.replace(/'/g, "''")}','All')` : ''}`
+      `SELECT department FROM users WHERE LOWER(TRIM(full_name))=LOWER(TRIM(?)) AND department != 'All'${line ? ` AND line IN ('${line.replace(/'/g, "''")}','All')` : ''} LIMIT 1`
     ).get(coordinator.trim());
     if (coordUser?.department) resolvedDept = coordUser.department;
   }
 
-  const deptFilter1 = buildStrictDeptFilter('b', resolvedDept);
-  const empFilter1  = buildCoordFilter('b', employee);
-  const coord1      = buildCoordFilter('b', coordinator);
+  // Coordinator-at-date fallback: ended groups disappear from `batches` (so the
+  // part1 LEFT JOIN yields NULL coordinators + NULL dept_type → section "—" AND
+  // the rows get dropped by the coordinator/dept filters below). They remain in
+  // coordinator_history, so resolve the coordinator from there and filter on the
+  // RESOLVED value — recovering both the section and the rows themselves.
+  const coordAtDate1   = coordAtDateSingleExpr('a.group_name', 'a.line', "COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)");
+  const resolvedCoord1 = `COALESCE(b.coordinators, ${coordAtDate1})`;
+  const deptFilter1 = buildStrictDeptFilterExpr(resolvedCoord1, 'b.dept_type', resolvedDept);
+  const empFilter1  = employee    ? ` AND ${nameInListInline(resolvedCoord1, employee)}`    : '';
+  const coord1      = coordinator ? ` AND ${nameInListInline(resolvedCoord1, coordinator)}` : '';
   const search1     = search ? ` AND (a.student_name LIKE '%${escapeLike(search)}%' ESCAPE '\\' OR a.group_name LIKE '%${escapeLike(search)}%' ESCAPE '\\' OR a.phone LIKE '%${escapeLike(search)}%' ESCAPE '\\')` : '';
 
   const deptFilter2 = buildStrictDeptFilter('b2', resolvedDept);
@@ -576,9 +634,9 @@ function buildRemarksNotesMainInnerQ({ from_date, to_date, department, employee,
       COALESCE(c_lu.name, NULLIF(TRIM(a.student_name),'')) AS student_name,
       a.phone AS student_phone, a.group_name,
       COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS absence_date,
-      b.coordinators,
+      ${resolvedCoord1} AS coordinators,
       COALESCE(
-        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) AND u.department != 'All' LIMIT 1),
+        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(${resolvedCoord1})) AND u.department != 'All' LIMIT 1),
         b.dept_type
       ) AS dept_type
     FROM absent_students a
@@ -728,7 +786,7 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
   let resolvedDept = department && department !== 'All' ? department : '';
   if (coordinator && !resolvedDept) {
     const coordUser = db.prepare(
-      `SELECT department FROM users WHERE LOWER(TRIM(full_name))=LOWER(TRIM(?)) AND department != 'All' LIMIT 1${line ? ` AND line IN ('${line.replace(/'/g, "''")}','All')` : ''}`
+      `SELECT department FROM users WHERE LOWER(TRIM(full_name))=LOWER(TRIM(?)) AND department != 'All'${line ? ` AND line IN ('${line.replace(/'/g, "''")}','All')` : ''} LIMIT 1`
     ).get(coordinator.trim());
     if (coordUser?.department) resolvedDept = coordUser.department;
   }
