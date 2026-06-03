@@ -204,8 +204,17 @@ function ShiftSection({
     const next = voiceNotes.map((r, i) => (i === index ? { ...r, [key]: value } : r));
     onVoiceNotesChange(next);
   };
-  const addVN    = () => onVoiceNotesChange([...voiceNotes, { start: '', end: '' }]);
+  const addVN    = () => onVoiceNotesChange([...voiceNotes, { start: '', end: '', days: [] }]);
   const removeVN = (index) => onVoiceNotesChange(voiceNotes.filter((_, i) => i !== index));
+  // Per-day Voice Note scoping — same as breaks.
+  const toggleVNDay = (index, day) => {
+    const next = voiceNotes.map((r, i) => {
+      if (i !== index) return r;
+      const cur = Array.isArray(r.days) ? r.days : [];
+      return { ...r, days: cur.includes(day) ? cur.filter(d => d !== day) : [...cur, day] };
+    });
+    onVoiceNotesChange(next);
+  };
 
   // When the user actively changes the shift, apply sensible default times so
   // the AM/PM marker matches the shift kind:
@@ -386,26 +395,46 @@ function ShiftSection({
           </label>
           <div className="space-y-2">
             {voiceNotes.map((vn, i) => (
-              <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
-                <div>
-                  <div className="text-[10px] text-violet-500 mb-0.5">من</div>
-                  <input type="time"
-                         className={`${inputCls} bg-violet-50/50 border-violet-200 focus:border-violet-400 focus:ring-violet-500/30`}
-                         value={vn.start || ''}
-                         onChange={e => updateVN(i, 'start', e.target.value)} dir="ltr" />
+              <div key={i} className="space-y-1">
+                <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
+                  <div>
+                    <div className="text-[10px] text-violet-500 mb-0.5">من</div>
+                    <input type="time"
+                           className={`${inputCls} bg-violet-50/50 border-violet-200 focus:border-violet-400 focus:ring-violet-500/30`}
+                           value={vn.start || ''}
+                           onChange={e => updateVN(i, 'start', e.target.value)} dir="ltr" />
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-violet-500 mb-0.5">إلى</div>
+                    <input type="time"
+                           className={`${inputCls} bg-violet-50/50 border-violet-200 focus:border-violet-400 focus:ring-violet-500/30`}
+                           value={vn.end || ''}
+                           onChange={e => updateVN(i, 'end', e.target.value)} dir="ltr" />
+                  </div>
+                  <button type="button" onClick={() => removeVN(i)}
+                          title="حذف Voice Note"
+                          className="h-[42px] w-[42px] flex items-center justify-center rounded-xl border border-violet-200 text-violet-500 hover:bg-violet-50 transition-all">
+                    <X size={14} />
+                  </button>
                 </div>
-                <div>
-                  <div className="text-[10px] text-violet-500 mb-0.5">إلى</div>
-                  <input type="time"
-                         className={`${inputCls} bg-violet-50/50 border-violet-200 focus:border-violet-400 focus:ring-violet-500/30`}
-                         value={vn.end || ''}
-                         onChange={e => updateVN(i, 'end', e.target.value)} dir="ltr" />
-                </div>
-                <button type="button" onClick={() => removeVN(i)}
-                        title="حذف Voice Note"
-                        className="h-[42px] w-[42px] flex items-center justify-center rounded-xl border border-violet-200 text-violet-500 hover:bg-violet-50 transition-all">
-                  <X size={14} />
-                </button>
+                {/* Per-day scoping: which of the shift's days this Voice Note is on. */}
+                {shiftDays.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1 ps-0.5">
+                    <span className="text-[9px] text-violet-400">أيام الـ Voice Note:</span>
+                    {shiftDays.map(d => {
+                      const active = Array.isArray(vn.days) && vn.days.includes(d);
+                      return (
+                        <button key={d} type="button" onClick={() => toggleVNDay(i, d)}
+                          className={`text-[10px] px-1.5 py-0.5 rounded-md border transition-all ${active ? 'bg-violet-500 text-white border-violet-500' : 'bg-white text-gray-500 border-gray-300 hover:bg-gray-50'}`}>
+                          {DAY_AR[d] || d}
+                        </button>
+                      );
+                    })}
+                    {(!Array.isArray(vn.days) || vn.days.length === 0) && (
+                      <span className="text-[9px] text-violet-400">(كل أيام الشيفت)</span>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
             <button type="button" onClick={addVN}
