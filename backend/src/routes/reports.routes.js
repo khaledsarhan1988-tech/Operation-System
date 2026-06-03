@@ -205,33 +205,71 @@ function coordDeptAtDateFilter(batchAlias, dateExpr, activeDept) {
     .map(d => String(d).toLowerCase().trim().replace(/'/g, "''"));
   if (cleaned.length === 0) return '';
   const inList = cleaned.map(d => `'${d}'`).join(',');
+  // ── Team-history PRECEDENCE ───────────────────────────────────────────────
+  // For each coordinator-of-record at the event date, the effective department
+  // is resolved team-first:
+  //   1. team_member_dept_history.section (if a record covers the date)  ← wins
+  //   2. else user_department_history.department (if a record covers the date)
+  //   3. else fall back to batches.dept_type (only when NO coordinator has ANY
+  //      history — team or user — covering the date).
+  // Section values (general/private/semi) and users department values
+  // (General/Private/Semi) both lower-case to the same target list.
   return ` AND (
     EXISTS (
       SELECT 1
         FROM coordinator_history ch_c
-        JOIN user_department_history udh
-          ON LOWER(TRIM(udh.user_name)) = LOWER(TRIM(ch_c.coordinator))
-         AND DATE(udh.effective_from) <= ${dateExpr}
-         AND (udh.effective_to IS NULL OR DATE(udh.effective_to) > ${dateExpr})
        WHERE ch_c.group_name = ${batchAlias}.group_name
          AND ch_c.line       = ${batchAlias}.line
          AND DATE(ch_c.effective_from) <= ${dateExpr}
          AND (ch_c.effective_to IS NULL OR DATE(ch_c.effective_to) > ${dateExpr})
-         AND LOWER(TRIM(udh.department))  IN (${inList})
+         AND (
+           EXISTS (
+             SELECT 1 FROM team_member_dept_history tmh
+              WHERE LOWER(TRIM(tmh.member_name)) = LOWER(TRIM(ch_c.coordinator))
+                AND DATE(tmh.effective_from) <= ${dateExpr}
+                AND (tmh.effective_to IS NULL OR DATE(tmh.effective_to) > ${dateExpr})
+                AND LOWER(TRIM(tmh.section)) IN (${inList})
+           )
+           OR (
+             NOT EXISTS (
+               SELECT 1 FROM team_member_dept_history tmh2
+                WHERE LOWER(TRIM(tmh2.member_name)) = LOWER(TRIM(ch_c.coordinator))
+                  AND DATE(tmh2.effective_from) <= ${dateExpr}
+                  AND (tmh2.effective_to IS NULL OR DATE(tmh2.effective_to) > ${dateExpr})
+             )
+             AND EXISTS (
+               SELECT 1 FROM user_department_history udh
+                WHERE LOWER(TRIM(udh.user_name)) = LOWER(TRIM(ch_c.coordinator))
+                  AND DATE(udh.effective_from) <= ${dateExpr}
+                  AND (udh.effective_to IS NULL OR DATE(udh.effective_to) > ${dateExpr})
+                  AND LOWER(TRIM(udh.department)) IN (${inList})
+             )
+           )
+         )
     )
     OR (
       LOWER(TRIM(${batchAlias}.dept_type)) IN (${inList})
       AND NOT EXISTS (
         SELECT 1
           FROM coordinator_history ch_c2
-          JOIN user_department_history udh2
-            ON LOWER(TRIM(udh2.user_name)) = LOWER(TRIM(ch_c2.coordinator))
-           AND DATE(udh2.effective_from) <= ${dateExpr}
-           AND (udh2.effective_to IS NULL OR DATE(udh2.effective_to) > ${dateExpr})
          WHERE ch_c2.group_name = ${batchAlias}.group_name
            AND ch_c2.line       = ${batchAlias}.line
            AND DATE(ch_c2.effective_from) <= ${dateExpr}
            AND (ch_c2.effective_to IS NULL OR DATE(ch_c2.effective_to) > ${dateExpr})
+           AND (
+             EXISTS (
+               SELECT 1 FROM team_member_dept_history tmh3
+                WHERE LOWER(TRIM(tmh3.member_name)) = LOWER(TRIM(ch_c2.coordinator))
+                  AND DATE(tmh3.effective_from) <= ${dateExpr}
+                  AND (tmh3.effective_to IS NULL OR DATE(tmh3.effective_to) > ${dateExpr})
+             )
+             OR EXISTS (
+               SELECT 1 FROM user_department_history udh2
+                WHERE LOWER(TRIM(udh2.user_name)) = LOWER(TRIM(ch_c2.coordinator))
+                  AND DATE(udh2.effective_from) <= ${dateExpr}
+                  AND (udh2.effective_to IS NULL OR DATE(udh2.effective_to) > ${dateExpr})
+             )
+           )
       )
     )
   )`;

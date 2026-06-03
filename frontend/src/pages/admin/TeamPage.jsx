@@ -5,12 +5,13 @@ import { useSearchParams } from 'react-router-dom';
 import {
   Users, Plus, Pencil, Trash2, X, Search, Sun, Moon,
   Phone, Briefcase, CheckCircle, XCircle, ChevronDown, UserX,
-  Clock, Calendar as CalendarIcon,
+  Clock, Calendar as CalendarIcon, History,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import EmptyState from '../../components/ui/EmptyState';
 import ModernButton from '../../components/ui/ModernButton';
+import { useAuth } from '../../auth/AuthContext';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const DEPTS = {
@@ -821,6 +822,7 @@ export function MemberModal({ initial, onSave, onClose, loading }) {
                 <option value="">— اختر المسمى —</option>
                 <option value="منسق">منسق</option>
                 <option value="مدرب">مدرب</option>
+                <option value="تيم ليدر">تيم ليدر</option>
               </select>
             </div>
             <div>
@@ -925,7 +927,7 @@ function DeleteConfirm({ name, onConfirm, onCancel, loading }) {
 }
 
 // ─── SECTION GROUP ────────────────────────────────────────────────────────────
-function SectionGroup({ section, members, dept, onEdit, onDelete }) {
+function SectionGroup({ section, members, dept, onEdit, onDelete, onHistory }) {
   const [open, setOpen] = useState(true);
   const colors = DEPT_COLORS[dept];
 
@@ -969,7 +971,7 @@ function SectionGroup({ section, members, dept, onEdit, onDelete }) {
                     <span className="text-xs font-bold text-gray-600">{shiftLabel}</span>
                     <span className="text-xs text-gray-400">({rows.length})</span>
                   </div>
-                  {rows.map(m => <MemberRow key={m.id} member={m} onEdit={onEdit} onDelete={onDelete} showShift={false} />)}
+                  {rows.map(m => <MemberRow key={m.id} member={m} onEdit={onEdit} onDelete={onDelete} onHistory={onHistory} showShift={false} />)}
                 </div>
               );
             }).concat(
@@ -979,12 +981,12 @@ function SectionGroup({ section, members, dept, onEdit, onDelete }) {
                     <div className="flex items-center gap-2 px-5 py-2 bg-gray-50/50">
                       <span className="text-xs font-bold text-gray-400">بدون شيفت</span>
                     </div>
-                    {grouped['none'].map(m => <MemberRow key={m.id} member={m} onEdit={onEdit} onDelete={onDelete} />)}
+                    {grouped['none'].map(m => <MemberRow key={m.id} member={m} onEdit={onEdit} onDelete={onDelete} onHistory={onHistory} />)}
                   </div>
                 )] : []
             )
           ) : (
-            members.map(m => <MemberRow key={m.id} member={m} onEdit={onEdit} onDelete={onDelete} />)
+            members.map(m => <MemberRow key={m.id} member={m} onEdit={onEdit} onDelete={onDelete} onHistory={onHistory} />)
           )}
         </div>
       )}
@@ -1035,7 +1037,7 @@ function computeOverallEmployment(member) {
 }
 
 // ─── MEMBER ROW ───────────────────────────────────────────────────────────────
-function MemberRow({ member: m, onEdit, onDelete }) {
+function MemberRow({ member: m, onEdit, onDelete, onHistory }) {
   const isActive = m.status === 'active';
   const overall  = computeOverallEmployment(m);
   return (
@@ -1092,6 +1094,15 @@ function MemberRow({ member: m, onEdit, onDelete }) {
 
       {/* Actions — always visible */}
       <div className="flex items-center gap-1 flex-shrink-0">
+        {onHistory && (
+          <button
+            onClick={() => onHistory(m)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-violet-50 hover:bg-violet-100 text-violet-600 text-xs font-semibold transition-all border border-violet-100"
+            title="سجل تنقلات القسم والإدارة"
+          >
+            <History size={12} /> السجل
+          </button>
+        )}
         <button
           onClick={() => onEdit(m)}
           className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-600 text-xs font-semibold transition-all border border-blue-100"
@@ -1112,11 +1123,24 @@ function MemberRow({ member: m, onEdit, onDelete }) {
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 export default function TeamPage() {
   const qc = useQueryClient();
+  const { user: currentUser } = useAuth();
+  const isAdmin = currentUser?.role === 'admin';
   const [activeDept, setActiveDept] = useState('customer_services');
   const [search, setSearch] = useState('');
   const [showInactive, setShowInactive] = useState(false);
   const [editMember,   setEditMember]   = useState(null);   // member obj or true (new)
   const [deleteMember, setDeleteMember] = useState(null);   // member obj
+  const [historyMember, setHistoryMember] = useState(null); // member obj → dept/section history modal
+  // Employment date-range filters (mirror UserManagement). Only meaningful for
+  // the Customer Services tab where start_date/end_date are populated.
+  const [fHireFrom, setFHireFrom]   = useState('');
+  const [fHireTo, setFHireTo]       = useState('');
+  const [fLeaveFrom, setFLeaveFrom] = useState('');
+  const [fLeaveTo, setFLeaveTo]     = useState('');
+  const resetDateFilters = () => {
+    setFHireFrom(''); setFHireTo(''); setFLeaveFrom(''); setFLeaveTo('');
+  };
+  const hasDateFilter = fHireFrom || fHireTo || fLeaveFrom || fLeaveTo;
 
   const { data: all = [], isLoading } = useQuery({
     queryKey: ['team-members'],
@@ -1156,11 +1180,23 @@ export default function TeamPage() {
     onSuccess: () => { qc.invalidateQueries(['team-members']); setDeleteMember(null); },
   });
 
+  // Date-range helper — a row passes when its date falls inside [from, to].
+  // A missing date is excluded once any bound is set (same rule as UserManagement).
+  const inRange = (val, from, to) => {
+    if (!val) return false;
+    const d = String(val).slice(0, 10);
+    if (from && d < from) return false;
+    if (to && d > to) return false;
+    return true;
+  };
+
   // Filter
   const visible = all.filter(m => {
     if (m.department !== activeDept) return false;
     if (!showInactive && m.status === 'inactive') return false;
     if (search.trim() && !m.name.toLowerCase().includes(search.trim().toLowerCase())) return false;
+    if ((fHireFrom || fHireTo)   && !inRange(m.start_date, fHireFrom, fHireTo)) return false;
+    if ((fLeaveFrom || fLeaveTo) && !inRange(m.end_date, fLeaveFrom, fLeaveTo)) return false;
     return true;
   });
 
@@ -1233,6 +1269,38 @@ export default function TeamPage() {
         <span className="text-xs text-gray-400 font-medium">{totalVisible} موظف</span>
       </div>
 
+      {/* ── Employment date-range filters (Customer Services only) ── */}
+      {activeDept === 'customer_services' && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-3 flex flex-wrap items-end gap-3">
+          <div className="flex flex-col">
+            <label className="text-[11px] text-slate-500 mb-1">تاريخ التعيين (من)</label>
+            <input type="date" value={fHireFrom} onChange={e => setFHireFrom(e.target.value)}
+              className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
+          </div>
+          <div className="flex flex-col">
+            <label className="text-[11px] text-slate-500 mb-1">تاريخ التعيين (إلى)</label>
+            <input type="date" value={fHireTo} onChange={e => setFHireTo(e.target.value)}
+              className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
+          </div>
+          <div className="flex flex-col">
+            <label className="text-[11px] text-slate-500 mb-1">تاريخ ترك العمل (من)</label>
+            <input type="date" value={fLeaveFrom} onChange={e => setFLeaveFrom(e.target.value)}
+              className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
+          </div>
+          <div className="flex flex-col">
+            <label className="text-[11px] text-slate-500 mb-1">تاريخ ترك العمل (إلى)</label>
+            <input type="date" value={fLeaveTo} onChange={e => setFLeaveTo(e.target.value)}
+              className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
+          </div>
+          {hasDateFilter && (
+            <button onClick={resetDateFilters}
+              className="px-3 py-2 text-sm rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">
+              إعادة تعيين التواريخ
+            </button>
+          )}
+        </div>
+      )}
+
       {/* ── Sections ── */}
       {isLoading ? (
         <div className="space-y-3">
@@ -1250,6 +1318,7 @@ export default function TeamPage() {
               dept={activeDept}
               onEdit={setEditMember}
               onDelete={setDeleteMember}
+              onHistory={isAdmin ? setHistoryMember : null}
             />
           ))}
           {totalVisible === 0 && (
@@ -1282,6 +1351,248 @@ export default function TeamPage() {
           loading={deleteMutation.isPending}
         />
       )}
+      {historyMember && (
+        <TeamDeptHistoryModal
+          member={historyMember}
+          onClose={() => setHistoryMember(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── TEAM DEPT/SECTION HISTORY MODAL ─────────────────────────────────────────
+// Mirrors the users DeptHistoryModal but tracks BOTH department (إدارة) and
+// section (قسم) per record. Used to record a coordinator's moves over time so
+// the absence reports can attribute each absence to the section the coordinator
+// belonged to AT THE TIME of the event.
+function validateTeamHistory(rows) {
+  const issues = [];
+  if (!rows || rows.length === 0) return issues;
+  const norm = rows
+    .map(r => ({
+      ...r,
+      from: (r.effective_from || '').slice(0, 10),
+      to:   (r.effective_to || '').slice(0, 10) || null,
+    }))
+    .filter(r => r.from)
+    .sort((a, b) => a.from.localeCompare(b.from));
+
+  const openCount = norm.filter(r => !r.to).length;
+  if (openCount > 1) {
+    issues.push({ severity: 'error', message: `${openCount} سجلات "حالية" — لازم سجل واحد بس بدون "إلى تاريخ"` });
+  }
+  for (let i = 0; i < norm.length - 1; i++) {
+    if (!norm[i].to) {
+      issues.push({ severity: 'error', message: `سجل (${norm[i].from}) بدون "إلى" لكن في سجلات بعده` });
+    }
+  }
+  for (let i = 0; i < norm.length - 1; i++) {
+    const a = norm[i], b = norm[i + 1];
+    if (!a.to) continue;
+    if (a.to > b.from) {
+      issues.push({ severity: 'error', message: `تداخل بين (${a.from} → ${a.to}) و (${b.from} → ${b.to || 'لسه'})` });
+    } else if (a.to < b.from) {
+      issues.push({ severity: 'warning', message: `فجوة بين ${a.to} و ${b.from} — مفيش سجل في الفترة دي` });
+    }
+  }
+  for (const r of norm) {
+    if (r.to && r.to <= r.from) {
+      issues.push({ severity: 'error', message: `سجل: تاريخ النهاية (${r.to}) قبل أو يساوي البداية (${r.from})` });
+    }
+  }
+  return issues;
+}
+
+function TeamDeptHistoryModal({ member, onClose }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(null); // null | 'new' | rowId
+  const [form, setForm] = useState({ department: '', section: '', effective_from: '', effective_to: '' });
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['team-dept-history', member.id],
+    queryFn: () => api.get(`/team/${member.id}/dept-history`).then(r => r.data),
+  });
+  const rows = data?.history || [];
+  const issues = validateTeamHistory(rows);
+  const hasErrors = issues.some(i => i.severity === 'error');
+
+  const saveMutation = useMutation({
+    mutationFn: (payload) =>
+      editing === 'new'
+        ? api.post(`/team/${member.id}/dept-history`, payload).then(r => r.data)
+        : api.put(`/team/dept-history/${editing}`, payload).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries(['team-dept-history', member.id]);
+      setEditing(null);
+      setForm({ department: '', section: '', effective_from: '', effective_to: '' });
+    },
+  });
+  const deleteMutation = useMutation({
+    mutationFn: (rid) => api.delete(`/team/dept-history/${rid}`).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries(['team-dept-history', member.id]),
+  });
+
+  const startEdit = (row) => {
+    setEditing(row.id);
+    setForm({
+      department: row.department,
+      section: row.section,
+      effective_from: (row.effective_from || '').slice(0, 10),
+      effective_to:   (row.effective_to || '').slice(0, 10),
+    });
+  };
+  const startNew = () => {
+    setEditing('new');
+    setForm({ department: member.department, section: member.section, effective_from: '', effective_to: '' });
+  };
+  const handleSave = () => {
+    if (!form.department || !form.section || !form.effective_from) {
+      alert('الإدارة والقسم وتاريخ البداية مطلوبين');
+      return;
+    }
+    saveMutation.mutate({
+      department: form.department,
+      section: form.section,
+      effective_from: form.effective_from,
+      effective_to: form.effective_to || null,
+    });
+  };
+
+  const inputCls = 'border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/30';
+  const sectionOpts = DEPT_SECTIONS[form.department] || ['all', 'general', 'private', 'semi'];
+
+  const renderFields = () => (
+    <div className="grid grid-cols-2 gap-2">
+      <div>
+        <label className="block text-[10px] font-bold text-gray-600 mb-1">الإدارة *</label>
+        <select className={inputCls + ' w-full'} value={form.department}
+          onChange={e => {
+            const dep = e.target.value;
+            const opts = DEPT_SECTIONS[dep] || [];
+            setForm(f => ({ ...f, department: dep, section: opts.includes(f.section) ? f.section : (opts[0] || '') }));
+          }}>
+          {Object.entries(DEPTS).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className="block text-[10px] font-bold text-gray-600 mb-1">القسم *</label>
+        <select className={inputCls + ' w-full'} value={form.section} onChange={e => setForm(f => ({ ...f, section: e.target.value }))}>
+          {sectionOpts.map(s => <option key={s} value={s}>{SECTIONS[s] || s}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className="block text-[10px] font-bold text-gray-600 mb-1">من تاريخ *</label>
+        <input type="date" className={inputCls + ' w-full'} value={form.effective_from} onChange={e => setForm(f => ({ ...f, effective_from: e.target.value }))} />
+      </div>
+      <div>
+        <label className="block text-[10px] font-bold text-gray-600 mb-1">إلى (فاضي = لسه)</label>
+        <input type="date" className={inputCls + ' w-full'} value={form.effective_to} onChange={e => setForm(f => ({ ...f, effective_to: e.target.value }))} />
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" dir="rtl">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-violet-50/40">
+          <div className="flex items-center gap-3">
+            <div className="bg-violet-500 w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm">
+              <History size={18} />
+            </div>
+            <div>
+              <div className="text-sm font-bold text-gray-900">سجل تنقلات القسم والإدارة</div>
+              <div className="text-[11px] text-gray-500 mt-0.5">الموظف: <span className="font-semibold">{member.name}</span></div>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-white/60 rounded-lg"><X size={18} /></button>
+        </div>
+
+        <div className="px-5 py-2 bg-amber-50/40 border-b border-amber-100 text-[11px] text-amber-800">
+          💡 السجل ده بيستخدمه نظام تقارير الغياب لاحتساب الغياب حسب قسم (section) المنسق وقت كل غياب — وله الأولوية على سجل المستخدمين. ابدأ بأقدم سجل واتركها متتالية.
+        </div>
+
+        {issues.length > 0 && (
+          <div className={`px-5 py-3 border-b ${hasErrors ? 'bg-rose-50 border-rose-200' : 'bg-amber-50 border-amber-200'}`}>
+            <div className={`text-xs font-bold mb-1.5 ${hasErrors ? 'text-rose-800' : 'text-amber-800'}`}>
+              {hasErrors ? '🔴 مشاكل لازم تتصلح:' : '⚠ تنبيهات:'}
+            </div>
+            <ul className="space-y-1">
+              {issues.map((iss, i) => (
+                <li key={i} className={`text-[11px] flex items-start gap-1.5 ${iss.severity === 'error' ? 'text-rose-700' : 'text-amber-700'}`}>
+                  <span className="mt-0.5 shrink-0">{iss.severity === 'error' ? '✗' : '!'}</span>
+                  <span>{iss.message}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {issues.length === 0 && rows.length >= 2 && !isLoading && (
+          <div className="px-5 py-2 bg-emerald-50/60 border-b border-emerald-100 text-[11px] text-emerald-800">
+            ✅ كل السجلات متتالية بدون تداخل أو فجوة — النظام هيقرأ البيانات صح
+          </div>
+        )}
+
+        <div className="p-4 overflow-y-auto flex-1 space-y-3">
+          {isLoading ? (
+            <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-14 bg-gray-100 animate-pulse rounded-xl" />)}</div>
+          ) : (
+            <>
+              {rows.length === 0 && editing !== 'new' && (
+                <div className="text-center py-8 text-sm text-gray-400">مفيش سجلات</div>
+              )}
+              {rows.map(r => (
+                <div key={r.id} className="border border-gray-200 rounded-xl p-3">
+                  {editing === r.id ? (
+                    <div className="space-y-2">
+                      {renderFields()}
+                      <div className="flex gap-2 justify-end">
+                        <button onClick={() => setEditing(null)} className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-gray-100 hover:bg-gray-200">إلغاء</button>
+                        <button onClick={handleSave} disabled={saveMutation.isPending} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50">حفظ</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <span className="text-xs px-2.5 py-1 rounded-full font-bold border bg-sky-50 text-sky-700 border-sky-200">{DEPTS[r.department] || r.department}</span>
+                      <span className="text-xs px-2.5 py-1 rounded-full font-bold border bg-violet-50 text-violet-700 border-violet-200">{SECTIONS[r.section] || r.section}</span>
+                      <span className="text-xs text-gray-600 font-mono" dir="ltr">
+                        {(r.effective_from || '').slice(0, 10)} → {(r.effective_to || '').slice(0, 10) || 'لسه'}
+                      </span>
+                      {!r.effective_to && <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-bold">حالي</span>}
+                      <div className="ms-auto flex gap-1">
+                        <button onClick={() => startEdit(r)} className="p-1.5 rounded-lg hover:bg-violet-50 text-violet-600"><Pencil size={13} /></button>
+                        <button onClick={() => { if (confirm('حذف السجل ده؟')) deleteMutation.mutate(r.id); }} className="p-1.5 rounded-lg hover:bg-rose-50 text-rose-600"><Trash2 size={13} /></button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {editing === 'new' && (
+                <div className="border-2 border-dashed border-violet-300 rounded-xl p-3 bg-violet-50/40 space-y-2">
+                  <div className="text-xs font-bold text-violet-700 mb-1">سجل جديد</div>
+                  {renderFields()}
+                  <div className="flex gap-2 justify-end">
+                    <button onClick={() => setEditing(null)} className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-gray-100 hover:bg-gray-200">إلغاء</button>
+                    <button onClick={handleSave} disabled={saveMutation.isPending} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50">حفظ</button>
+                  </div>
+                </div>
+              )}
+
+              {editing !== 'new' && (
+                <button onClick={startNew}
+                  className="w-full py-2.5 rounded-xl border-2 border-dashed border-gray-300 text-xs font-bold text-gray-500 hover:bg-gray-50 hover:border-violet-400 hover:text-violet-600 transition-all">
+                  + إضافة سجل تنقل جديد
+                </button>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="px-5 py-3 bg-gray-50 border-t border-gray-100">
+          <button onClick={onClose} className="w-full py-2 rounded-xl bg-gray-200 hover:bg-gray-300 text-sm font-semibold text-gray-700">إغلاق</button>
+        </div>
+      </div>
     </div>
   );
 }

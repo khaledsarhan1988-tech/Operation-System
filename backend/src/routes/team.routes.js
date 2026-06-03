@@ -310,6 +310,16 @@ router.post('/', (req, res) => {
       empDates.start_date, empDates.end_date
     );
     const member = db.prepare('SELECT * FROM team_members WHERE id = ?').get(r.lastInsertRowid);
+    // Open the initial dept/section history record (mirrors users dept-history).
+    try {
+      const nowIso = new Date().toISOString();
+      db.prepare(
+        `INSERT INTO team_member_dept_history (team_member_id, member_name, department, section, effective_from, effective_to)
+         VALUES (?, ?, ?, ?, ?, NULL)`
+      ).run(member.id, String(member.name).trim(), member.department, member.section, nowIso);
+    } catch (e) {
+      console.error('team_member_dept_history create-track error:', e.message);
+    }
     return res.status(201).json(withShiftsArray(member));
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -333,8 +343,9 @@ router.put('/:id', (req, res) => {
   const dateErr = validateShiftsArray(allShifts);
   if (dateErr) return res.status(400).json(dateErr);
 
-  // Snapshot old state for the employment end_date transition logic.
-  const old = db.prepare('SELECT status, start_date, end_date FROM team_members WHERE id = ?').get(id);
+  // Snapshot old state for the employment end_date transition logic AND for
+  // detecting dept/section moves (history tracking below).
+  const old = db.prepare('SELECT status, start_date, end_date, department, section FROM team_members WHERE id = ?').get(id);
   if (!old) return res.status(404).json({ error: 'Not found' });
   const newStatus = status || 'active';
   // Employment dates — Customer Services only; transition-aware so the editable
@@ -363,7 +374,124 @@ router.put('/:id', (req, res) => {
     );
     const member = db.prepare('SELECT * FROM team_members WHERE id = ?').get(id);
     if (!member) return res.status(404).json({ error: 'Not found' });
+    // ── Track dept/section moves in team_member_dept_history ────────────────
+    // When either the management (department) or the sub-dept (section) changes
+    // we close the current open record and open a new one — same pattern the
+    // users dept-history uses, so the absence reports can attribute events to
+    // the section the coordinator held AT THE TIME of each absence.
+    if ((department && department !== old.department) || (section && section !== old.section)) {
+      try {
+        const nowIso = new Date().toISOString();
+        db.prepare(
+          `UPDATE team_member_dept_history SET effective_to = ?
+            WHERE team_member_id = ? AND effective_to IS NULL`
+        ).run(nowIso, id);
+        db.prepare(
+          `INSERT INTO team_member_dept_history (team_member_id, member_name, department, section, effective_from, effective_to)
+           VALUES (?, ?, ?, ?, ?, NULL)`
+        ).run(id, String(name).trim(), department, section, nowIso);
+      } catch (e) {
+        console.error('team_member_dept_history change-track error:', e.message);
+      }
+    }
     return res.json(withShiftsArray(member));
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── DEPT/SECTION HISTORY: CRUD for team_member_dept_history ──────────────────
+// Mirrors the users dept-history endpoints. READS allowed for leader+ (parent
+// router guard); WRITES are Admin/Manager only. Records track BOTH department
+// and section over time and feed the absence reports (team history takes
+// precedence over user_department_history).
+const requireAdminWrite = (req, res) => {
+  if (req.user?.role !== 'admin') {
+    res.status(403).json({ error: 'صلاحية للأدمن / المدير فقط' });
+    return false;
+  }
+  return true;
+};
+
+// GET /api/team/:id/dept-history — list all records, newest first
+router.get('/:id/dept-history', (req, res) => {
+  const { id } = req.params;
+  const member = db.prepare('SELECT id, name FROM team_members WHERE id = ?').get(id);
+  if (!member) return res.status(404).json({ error: 'team member not found' });
+  try {
+    const rows = db.prepare(
+      `SELECT id, team_member_id, member_name, department, section, effective_from, effective_to, detected_at
+         FROM team_member_dept_history
+        WHERE team_member_id = ?
+        ORDER BY DATE(effective_from) DESC, id DESC`
+    ).all(id);
+    return res.json({ member: { id: member.id, name: member.name }, history: rows });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/team/:id/dept-history — add a new record (Admin only)
+router.post('/:id/dept-history', (req, res) => {
+  if (!requireAdminWrite(req, res)) return;
+  const { id } = req.params;
+  const { department, section, effective_from, effective_to } = req.body;
+  const member = db.prepare('SELECT id, name FROM team_members WHERE id = ?').get(id);
+  if (!member) return res.status(404).json({ error: 'team member not found' });
+  if (!department || !section || !effective_from) {
+    return res.status(400).json({ error: 'department و section و effective_from مطلوبين' });
+  }
+  if (effective_to && effective_to <= effective_from) {
+    return res.status(400).json({ error: 'effective_to يجب أن يكون بعد effective_from' });
+  }
+  try {
+    const r = db.prepare(
+      `INSERT INTO team_member_dept_history (team_member_id, member_name, department, section, effective_from, effective_to)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(id, member.name, department, section, effective_from, effective_to || null);
+    const created = db.prepare(`SELECT * FROM team_member_dept_history WHERE id = ?`).get(r.lastInsertRowid);
+    return res.status(201).json(created);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/team/dept-history/:rid — edit a record (Admin only)
+router.put('/dept-history/:rid', (req, res) => {
+  if (!requireAdminWrite(req, res)) return;
+  const { rid } = req.params;
+  const { department, section, effective_from, effective_to } = req.body;
+  const row = db.prepare(`SELECT * FROM team_member_dept_history WHERE id = ?`).get(rid);
+  if (!row) return res.status(404).json({ error: 'History record not found' });
+  const newFrom = effective_from || row.effective_from;
+  const newTo   = effective_to === undefined ? row.effective_to : (effective_to || null);
+  if (newTo && newTo <= newFrom) {
+    return res.status(400).json({ error: 'effective_to يجب أن يكون بعد effective_from' });
+  }
+  const newDept = department || row.department;
+  const newSection = section || row.section;
+  try {
+    db.prepare(
+      `UPDATE team_member_dept_history
+          SET department = ?, section = ?, effective_from = ?, effective_to = ?
+        WHERE id = ?`
+    ).run(newDept, newSection, newFrom, newTo, rid);
+    const updated = db.prepare(`SELECT * FROM team_member_dept_history WHERE id = ?`).get(rid);
+    return res.json(updated);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/team/dept-history/:rid — remove a record (Admin only)
+router.delete('/dept-history/:rid', (req, res) => {
+  if (!requireAdminWrite(req, res)) return;
+  const { rid } = req.params;
+  const row = db.prepare(`SELECT id FROM team_member_dept_history WHERE id = ?`).get(rid);
+  if (!row) return res.status(404).json({ error: 'History record not found' });
+  try {
+    db.prepare(`DELETE FROM team_member_dept_history WHERE id = ?`).run(rid);
+    return res.json({ ok: true });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }

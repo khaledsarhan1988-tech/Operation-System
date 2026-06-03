@@ -1618,6 +1618,98 @@ initDb().then(db => {
     console.error('user_department_history bootstrap error:', e.message);
   }
 
+  // ── team_member_dept_history bootstrap + backfill ────────────────────────
+  // Mirrors user_department_history but for team_members, storing BOTH the
+  // management (department: customer_services/education) and the sub-dept
+  // (section: general/private/semi/...). Going forward, dept/section changes
+  // are tracked via PUT /team/:id (closes old record + opens new). The absence
+  // reports attribute each absence to the coordinator's SECTION at the time of
+  // the event using this table, which takes PRECEDENCE over the users table's
+  // history. Baseline effective_from='2000-01-01' so historical events fall
+  // inside the seeded record (same convention as user_department_history).
+  try {
+    db._raw.run(`CREATE TABLE IF NOT EXISTS team_member_dept_history (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      team_member_id  INTEGER NOT NULL REFERENCES team_members(id) ON DELETE CASCADE,
+      member_name     TEXT NOT NULL,
+      department      TEXT NOT NULL,
+      section         TEXT NOT NULL,
+      effective_from  TEXT NOT NULL,
+      effective_to    TEXT,
+      detected_at     TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+    )`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_tmdh_member  ON team_member_dept_history(team_member_id)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_tmdh_name    ON team_member_dept_history(member_name COLLATE NOCASE)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_tmdh_dates   ON team_member_dept_history(effective_from, effective_to)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_tmdh_section ON team_member_dept_history(section)`);
+
+    const tmdhCount = db.prepare(`SELECT COUNT(*) AS cnt FROM team_member_dept_history`).get();
+    if (tmdhCount && tmdhCount.cnt === 0) {
+      // Backfill strategy — start 100% consistent with the legacy absence logic.
+      // The absence filter attributes each event by the COORDINATOR-of-record;
+      // only Customer-Services members are ever coordinators, so:
+      //   • Customer-Services members → IMPORT their user_department_history rows
+      //     verbatim (department→section via lower-case). This reproduces the
+      //     EXACT attribution the old user-history filter produced, including
+      //     historical mid-period transitions. A CS member with NO user history
+      //     gets NO seed row — so the filter keeps falling back to dept_type
+      //     exactly like before (seeding a flat row here would wrongly override
+      //     dept_type and shift numbers on day one).
+      //   • Education / appointments members are NOT coordinators, so a flat
+      //     baseline row (current section, from 2000-01-01) is harmless for the
+      //     reports and just gives their history modal a sensible starting point.
+      const tms = db.prepare(
+        `SELECT id, name, department, section FROM team_members
+          WHERE name IS NOT NULL AND TRIM(name) != ''
+            AND department IS NOT NULL AND section IS NOT NULL`
+      ).all();
+      const getUserHist = db.prepare(
+        `SELECT department, effective_from, effective_to
+           FROM user_department_history
+          WHERE LOWER(TRIM(user_name)) = LOWER(TRIM(?))
+            AND department IS NOT NULL AND TRIM(department) != ''
+          ORDER BY DATE(effective_from), id`
+      );
+      const insImported = db.prepare(
+        `INSERT INTO team_member_dept_history (team_member_id, member_name, department, section, effective_from, effective_to)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      );
+      const insFlat = db.prepare(
+        `INSERT INTO team_member_dept_history (team_member_id, member_name, department, section, effective_from, effective_to)
+         VALUES (?, ?, ?, ?, '2000-01-01', NULL)`
+      );
+      let seededTm = 0, importedRows = 0, importedMembers = 0, flatMembers = 0, skippedCs = 0;
+      const txTm = db.transaction(() => {
+        for (const m of tms) {
+          const nm = m.name.trim();
+          if (m.department === 'customer_services') {
+            const hist = getUserHist.all(nm);
+            if (hist.length > 0) {
+              for (const h of hist) {
+                insImported.run(m.id, nm, m.department, String(h.department).toLowerCase().trim(), h.effective_from, h.effective_to || null);
+                seededTm += 1; importedRows += 1;
+              }
+              importedMembers += 1;
+            } else {
+              // No user history → leave empty so dept_type fallback is preserved.
+              skippedCs += 1;
+            }
+          } else {
+            insFlat.run(m.id, nm, m.department, m.section);
+            seededTm += 1; flatMembers += 1;
+          }
+        }
+      });
+      txTm();
+      if (seededTm > 0) {
+        saveNow();
+        console.log(`✅ Migration: team_member_dept_history seeded ${seededTm} rows (imported ${importedRows} row(s) for ${importedMembers} CS member(s); ${flatMembers} non-CS baseline; ${skippedCs} CS member(s) left empty to preserve dept_type fallback)`);
+      }
+    }
+  } catch (e) {
+    console.error('team_member_dept_history bootstrap error:', e.message);
+  }
+
   // ── group_count_approvals bootstrap ──────────────────────────────────────
   // "Receive a group" feature: stores the approved baseline client count per
   // group. Keyed by (group_name, line) so it survives the Excel sync that
