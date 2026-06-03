@@ -3059,11 +3059,13 @@ router.get('/trainer-utilization', (req, res) => {
     }
     if (segments.length === 0) return [];
     // 2) Collect busy intervals (rests + voice notes + lectures)
+    const busyDayKey = DOW_KEYS[getDow(dateStr)] || '';
+    const onDay = x => !x.days || !x.days.length || x.days.includes(busyDayKey);
     const busy = [];
     for (const sh of shifts) {
       if (!shiftCoversDay(sh, dateStr)) continue;
-      for (const r of sh.rests)              busy.push({ s: r.s, e: r.e });
-      for (const v of (sh.voiceNotes || [])) busy.push({ s: v.s, e: v.e });
+      for (const r of sh.rests)              { if (onDay(r)) busy.push({ s: r.s, e: r.e }); }
+      for (const v of (sh.voiceNotes || [])) { if (onDay(v)) busy.push({ s: v.s, e: v.e }); }
     }
     for (const l of (lectures || [])) {
       const start = parseTime12(l.time);
@@ -3098,19 +3100,25 @@ router.get('/trainer-utilization', (req, res) => {
     // trainer's shift window, and the post-filter at the bottom drops any
     // trainer with no activity in the requested range — so deactivated
     // trainers don't clutter the report unless they actually contributed.
+    // Section filter is applied per-shift (date-aware) below, NOT in SQL — a
+    // trainer can span sections across the period (per-shift section).
     let trainerWhere = `WHERE department='education'`;
-    if (section && section !== 'all') {
-      const s = String(section).replace(/'/g, "''");
-      trainerWhere += ` AND section='${s}'`;
-    }
     if (search) {
       const s = escapeLike(search);
       trainerWhere += ` AND name LIKE '%${s}%' ESCAPE '\\'`;
     }
     const trainers = db.prepare(`SELECT * FROM team_members ${trainerWhere}`).all();
+    const activeSection = (section && section !== 'all') ? String(section).toLowerCase() : null;
+    const shiftSection = (sh, trainer) => (sh && sh.section) || (trainer && trainer.section) || 'all';
 
-    // Skip trainers with no shift configured at all — they can't have utilization data.
-    const trainerRows = trainers.filter(t => t.shift || t.shift2);
+    // Keep trainers with ≥1 shift (read shifts_json, not just legacy columns);
+    // when a section filter is active, require a shift in that section.
+    const trainerRows = trainers.filter(t => {
+      const shs = parseTeamShifts(t);
+      if (!shs.length) return false;
+      if (!activeSection) return true;
+      return shs.some(sh => shiftSection(sh, t) === activeSection);
+    });
 
     // Lectures in the date window — main + zoom regular. Dedup zoom by (date,time,trainer)
     // because zoom side rows are per-student (multiple rows per slot).
@@ -3183,29 +3191,35 @@ router.get('/trainer-utilization', (req, res) => {
       const clampStart = trainerCountStart(t, shifts);   // count only from hire+shift start
       for (const date of dates) {
         if (clampStart && date < clampStart) continue;   // before the trainer was hired / had a shift
-        // Sum capacity from BOTH shifts on this date
+        // Section-scoped shifts for this day (all shifts when no filter). When
+        // a section filter is active we count ONLY the shifts in that section,
+        // so a trainer who moved sections shows the right days/hours per section.
+        const sectionShifts = activeSection ? shifts.filter(sh => shiftSection(sh, t) === activeSection) : shifts;
         let availMin = 0;
-        for (const sh of shifts) availMin += shiftMinsForDate(sh, date);
-        // Extra-shift minutes (one-off after-end-date entries) add to capacity
-        // for this specific day. Lets a trainer whose main shift ended still
-        // contribute days like "21/5 ended → 24/5 came back 4h".
-        const extraMin = extraByMemberDay[`${t.id}|${date}`] || 0;
+        for (const sh of sectionShifts) availMin += shiftMinsForDate(sh, date);
+        // The section this day belongs to: the covering shift's section, else
+        // (worked with no shift) the trainer's main section.
+        let daySection = null;
+        for (const sh of shifts) { if (shiftMinsForDate(sh, date) > 0) { daySection = shiftSection(sh, t); break; } }
+        if (!daySection) daySection = t.section || 'all';
+        const dayInSection = !activeSection || daySection === activeSection;
+        // Extra one-off hours add to capacity only when the day is in the active section.
+        const extraMin = dayInSection ? (extraByMemberDay[`${t.id}|${date}`] || 0) : 0;
         availMin += extraMin;
         const isWorkDay = availMin > 0;
         if (isWorkDay) workDayCount++;
-        // Sum booked
-        const lectures = byTrainerDay[`${tKey}|${date}`] || [];
+        // Booked counts only when the day belongs to the active section.
+        const lectures = dayInSection ? (byTrainerDay[`${tKey}|${date}`] || []) : [];
         const bookedMin = lectures.reduce((s, l) => s + parseDur(l.duration), 0);
         // Voice notes are WORK time inside the shift — they count as booked
-        // (the trainer is busy recording voice notes) but don't reduce the
-        // capacity (they're already inside the available shift window).
-        const vnMin = isWorkDay ? voiceNoteMinsForDate(shifts, date) : 0;
-        const voiceNotes = isWorkDay ? voiceNoteIntervalsForDate(shifts, date) : [];
+        // (the trainer is busy recording voice notes) but don't reduce capacity.
+        const vnMin = isWorkDay ? voiceNoteMinsForDate(sectionShifts, date) : 0;
+        const voiceNotes = isWorkDay ? voiceNoteIntervalsForDate(sectionShifts, date) : [];
         const totalBookedMin = bookedMin + vnMin;
         const utilization = isWorkDay && availMin > 0
           ? Math.round((totalBookedMin / availMin) * 100)
           : null;
-        const freeSlots = isWorkDay ? computeFreeSlots(shifts, date, lectures) : [];
+        const freeSlots = isWorkDay ? computeFreeSlots(sectionShifts, date, lectures) : [];
         const freeMin = freeSlots.reduce((s, f) => s + f.duration_min, 0);
         days[date] = {
           is_work_day: isWorkDay,
@@ -3233,7 +3247,7 @@ router.get('/trainer-utilization', (req, res) => {
         id: t.id,
         name: stripParens(t.name) || t.name,
         full_name: t.name,
-        section: t.section,
+        section: activeSection || t.section,
         status: t.status,                  // 'active' | 'inactive' — for the badge
         shift_summary: shiftSummary,
         has_voice_notes: hasVoiceNotes,
@@ -3972,9 +3986,11 @@ router.get('/find-available-trainer', (req, res) => {
           // Rest periods AND voice-note blocks get the same 10-min overlap
           // tolerance as shift end. Voice notes are work time but block
           // teaching slots — they can't host a new lecture.
+          // Per-day scoping: a break/voice block only blocks on its own days.
+          const onDay = x => !x.days || !x.days.length || x.days.includes(dayKey);
           const blocks = [
-            ...sh.rests.map(r => ({ s: r.s, e: r.e, type: 'rest' })),
-            ...(sh.voiceNotes || []).map(v => ({ s: v.s, e: v.e, type: 'voice_note' })),
+            ...sh.rests.filter(onDay).map(r => ({ s: r.s, e: r.e, type: 'rest' })),
+            ...(sh.voiceNotes || []).filter(onDay).map(v => ({ s: v.s, e: v.e, type: 'voice_note' })),
           ];
           const offending = blocks.find(b => {
             const overlap = Math.min(toMin, b.e) - Math.max(fromMin, b.s);
