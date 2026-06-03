@@ -435,6 +435,7 @@ function ExtraShiftsSection({ memberId, inputCls, labelCls }) {
   const [durationHours, setDurationHours] = useState('');
   const [notes, setNotes] = useState('');
   const [error, setError] = useState(null);
+  const [monthFilter, setMonthFilter] = useState('');   // 'YYYY-MM' for the monthly total ('' = all months)
 
   const addMut = useMutation({
     mutationFn: (body) => api.post(`/team/${memberId}/extra-shifts`, body).then(r => r.data),
@@ -460,6 +461,13 @@ function ExtraShiftsSection({ memberId, inputCls, labelCls }) {
     const rem = n % 60;
     return rem > 0 ? `${h} س ${rem} د` : `${h} س`;
   };
+
+  // Monthly extra-hours total: distinct months present + total for the selected one.
+  const AR_MONTHS = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+  const monthLabel = (ym) => { const [y, m] = ym.split('-'); return `${AR_MONTHS[(+m) - 1] || m} ${y}`; };
+  const extraMonths = [...new Set(rows.map(r => String(r.date || '').slice(0, 7)).filter(s => /^\d{4}-\d{2}$/.test(s)))].sort().reverse();
+  const monthRows = monthFilter ? rows.filter(r => String(r.date || '').slice(0, 7) === monthFilter) : rows;
+  const monthTotalMins = monthRows.reduce((s, r) => s + (Number(r.duration_min) || 0), 0);
 
   function submit() {
     setError(null);
@@ -490,6 +498,22 @@ function ExtraShiftsSection({ memberId, inputCls, labelCls }) {
         💡 لو الموظف خلص شيفته (تاريخ نهاية الشيفت)، لكن بيدخل أيام محددة لساعات إضافية —
         ضيف كل يوم هنا. الساعات بتتحسب في utilization من غير ما تفتح شيفت جديد.
       </p>
+
+      {/* Monthly total — pick a month to see its total extra hours */}
+      {rows.length > 0 && (
+        <div className="flex items-center gap-2 mb-3 bg-white border border-amber-200 rounded-lg px-3 py-2">
+          <label className="text-xs font-bold text-amber-900">إجمالي شهر:</label>
+          <select value={monthFilter} onChange={e => setMonthFilter(e.target.value)}
+            className="text-xs border border-amber-200 rounded-lg px-2 py-1 bg-white focus:outline-none">
+            <option value="">كل الشهور</option>
+            {extraMonths.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+          </select>
+          <span className="mr-auto text-sm font-extrabold text-amber-800">
+            {fmtMins(monthTotalMins)}
+            <span className="text-[10px] font-normal text-amber-600 ms-1">({monthRows.length} يوم)</span>
+          </span>
+        </div>
+      )}
 
       {/* Existing entries */}
       {isLoading ? (
