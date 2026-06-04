@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Cloud, CloudDownload, RefreshCw, CheckCircle, XCircle,
   AlertCircle, FileSpreadsheet, Eye, Play, AlertTriangle, Calendar,
-  FolderPlus,
+  FolderPlus, History,
 } from 'lucide-react';
 import api from '../../api/axios';
 import { useAuth } from '../../auth/AuthContext';
@@ -255,6 +255,57 @@ export default function DriveSync() {
   const [previewedAt, setPreviewedAt] = useState(null);
   const [forceReimport, setForceReimport] = useState(false);
 
+  // ── Backfill / recovery (replay a date range, day by day) ──────────────────
+  // Runs as a client-side loop over the existing per-day /drive/sync (force) so
+  // each request stays short (no 60s axios-timeout abort on a long server loop).
+  const [backfillFrom, setBackfillFrom] = useState('2026-05-16');
+  const [backfillTo, setBackfillTo] = useState(todayStr());
+  const [backfillRunning, setBackfillRunning] = useState(false);
+  const [backfillProg, setBackfillProg] = useState(null); // {done,total,ok,failed,current}
+  const [backfillDone, setBackfillDone] = useState(null);  // {ok,failed,total}
+
+  const enumerateDays = (fromStr, toStr) => {
+    const out = [];
+    const f = new Date(`${fromStr}T12:00:00Z`);
+    const t = new Date(`${toStr}T12:00:00Z`);
+    if (Number.isNaN(f.getTime()) || Number.isNaN(t.getTime()) || t < f) return out;
+    for (let d = new Date(f); d <= t; d.setUTCDate(d.getUTCDate() + 1)) {
+      out.push(d.toISOString().slice(0, 10));
+    }
+    return out;
+  };
+
+  const runBackfill = async () => {
+    const days = enumerateDays(backfillFrom, backfillTo);
+    if (!days.length) return;
+    const lines = canChooseLine ? AVAILABLE_LINES : [userLine];
+    const tasks = [];
+    lines.forEach(l => days.forEach(dt => tasks.push({ line: l, date: dt })));
+    const confirmMsg = isAr
+      ? `هتعيد مزامنة ${days.length} يوم × ${lines.length} لاين = ${tasks.length} عملية (إجباري). دي بتاخد دقائق — متقفلش الصفحة. تكمّل؟`
+      : `This will re-sync ${days.length} day(s) × ${lines.length} line(s) = ${tasks.length} operations (forced). Takes a few minutes — keep this page open. Continue?`;
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(confirmMsg)) return;
+    setBackfillRunning(true);
+    setBackfillDone(null);
+    let ok = 0, failed = 0;
+    for (let i = 0; i < tasks.length; i++) {
+      const { line, date } = tasks[i];
+      setBackfillProg({ done: i, total: tasks.length, ok, failed, current: `${line} — ${date}` });
+      try {
+        await api.post('/drive/sync', { line, date, force: true }, { timeout: 120000 });
+        ok++;
+      } catch (_) {
+        failed++;
+      }
+    }
+    setBackfillProg(null);
+    setBackfillRunning(false);
+    setBackfillDone({ ok, failed, total: tasks.length });
+    queryClient.invalidateQueries({ queryKey: ['syncs'] });
+    queryClient.invalidateQueries({ queryKey: ['upload-status'] });
+  };
+
   // Preview query — disabled by default, triggered by button
   const previewQuery = useQuery({
     queryKey: ['drive', 'files', selectedLine, date],
@@ -396,6 +447,74 @@ export default function DriveSync() {
             : `Done! ${prepareMutation.data.summary.created} new, ${prepareMutation.data.summary.existing} already existed.`}
         </div>
       )}
+
+      {/* Backfill / recovery — replay a date range to rebuild data the sync wiped */}
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
+        <div className="flex items-start gap-3">
+          <History className="w-5 h-5 text-amber-700 flex-shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-amber-900">
+              {isAr ? 'استرجاع البيانات (Backfill)' : 'Backfill / Recover data'}
+            </p>
+            <p className="text-[11px] text-amber-700 mt-0.5">
+              {isAr
+                ? 'يعيد مزامنة كل يوم في المدى من Drive (إجباري) عشان يعيد بناء أي بيانات اتمسحت قبل كده. شغّلها مرة واحدة، وسيبها تخلّص (متقفلش الصفحة).'
+                : 'Re-syncs every day in the range from Drive (forced) to rebuild any history a previous sync wiped. Run once and let it finish (keep this page open).'}
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs font-semibold text-amber-800 block mb-1">{isAr ? 'من تاريخ' : 'From'}</label>
+            <input
+              type="date"
+              value={backfillFrom}
+              onChange={(e) => setBackfillFrom(e.target.value)}
+              disabled={backfillRunning}
+              className="input w-full font-semibold"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-amber-800 block mb-1">{isAr ? 'إلى تاريخ' : 'To'}</label>
+            <input
+              type="date"
+              value={backfillTo}
+              onChange={(e) => setBackfillTo(e.target.value)}
+              disabled={backfillRunning}
+              className="input w-full font-semibold"
+            />
+          </div>
+        </div>
+        <div className="flex items-center gap-3 flex-wrap">
+          <button
+            onClick={runBackfill}
+            disabled={backfillRunning}
+            className="btn-primary bg-amber-600 hover:bg-amber-700 border-amber-600 flex items-center gap-2"
+          >
+            {backfillRunning
+              ? <RefreshCw className="w-4 h-4 animate-spin" />
+              : <History className="w-4 h-4" />}
+            {backfillRunning
+              ? (isAr ? 'جارٍ الاسترجاع...' : 'Recovering...')
+              : (isAr ? 'ابدأ الاسترجاع' : 'Start Backfill')}
+          </button>
+          {backfillProg && (
+            <span className="text-xs text-amber-800 font-medium">
+              {backfillProg.done}/{backfillProg.total} — {backfillProg.current}
+              {' · '}{isAr ? 'تم' : 'OK'} {backfillProg.ok}
+              {backfillProg.failed > 0 && ` · ${isAr ? 'فشل' : 'fail'} ${backfillProg.failed}`}
+            </span>
+          )}
+        </div>
+        {backfillDone && (
+          <div className="bg-white border border-amber-200 rounded-lg p-3 text-sm text-amber-900 flex items-center gap-2">
+            <CheckCircle className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+            {isAr
+              ? `خلص الاسترجاع: ${backfillDone.ok}/${backfillDone.total} نجحت${backfillDone.failed > 0 ? `، ${backfillDone.failed} فشلت` : ''}. راجع التقارير دلوقتي.`
+              : `Backfill done: ${backfillDone.ok}/${backfillDone.total} succeeded${backfillDone.failed > 0 ? `, ${backfillDone.failed} failed` : ''}. Check the reports now.`}
+          </div>
+        )}
+      </div>
 
       {/* Action buttons */}
       <div className="flex flex-wrap gap-3 items-center">
