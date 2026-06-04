@@ -13,7 +13,7 @@ export default function TrainersPayroll() {
     <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
       <PageHero
         title="مرتبات المدربين"
-        subtitle="مرتبات الموظفين — صفحة خاصة بصاحب الحساب فقط"
+        subtitle="صفحة خاصة بصاحب الحساب فقط"
         icon={Wallet}
         gradient="amber"
         actions={
