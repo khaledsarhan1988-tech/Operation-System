@@ -300,7 +300,12 @@ function employmentWindowFilter(batchAlias, dateExpr) {
        AND ch_ew.line       = ${batchAlias}.line
        AND DATE(ch_ew.effective_from) <= ${dateExpr}
        AND (ch_ew.effective_to IS NULL OR DATE(ch_ew.effective_to) > ${dateExpr})
-       AND (tm_ew.start_date IS NULL OR TRIM(tm_ew.start_date) = '' OR DATE(tm_ew.start_date) <= ${dateExpr})
+       -- NOTE: deliberately NOT filtering by tm_ew.start_date (hire date). It
+       -- defaults to the record-CREATION date when a member is added without an
+       -- explicit hire date (team.routes buildEmploymentDates… → _today()), so it
+       -- is frequently LATER than the coordinator actually started — which wrongly
+       -- dropped real events. coordinator_history.effective_from is the
+       -- authoritative "responsible since" date, so it already bounds the start.
        AND (tm_ew.end_date   IS NULL OR TRIM(tm_ew.end_date)   = '' OR DATE(tm_ew.end_date)   >= ${dateExpr})
   )`;
 }
@@ -5214,6 +5219,23 @@ router.get('/attendance-absence', (req, res) => {
   // clients. Per-lecture group size → SUM gives student-slots (denominator).
   const traineeCountExpr = `COALESCE(b.trainee_count, (SELECT COUNT(*) FROM clients cc WHERE cc.group_name = l.group_name${line ? ' AND cc.line = l.line' : ''}))`;
 
+  // ─── EXPECTED SLOTS (denominator) ──────────────────────────────────────────
+  // trainee_count alone is an unreliable denominator: it is frequently UNDER the
+  // real group size (defaults to a small/stale Batches value), AND lines record
+  // attendance two different ways — some write the PRESENT-count in
+  // lectures.attendance, others leave it empty and only list absentees in
+  // absent_students. Using SUM(trainee_count) produced rates that made no sense
+  // (e.g. present-count alone exceeded "expected", giving >100% / negative rates).
+  // So the per-lecture group size = MAX(enrolled, observed), where observed =
+  //   present (numeric lectures.attendance, else 0) + listed-absent (absent_students
+  //   rows for that group+date). This guarantees expected >= the students we
+  //   actually accounted for, so absence rate can never exceed 100% from a
+  //   too-small denominator. Where attendance is empty (Private/Semi), it falls
+  //   back to MAX(enrolled, listed-absent) = enrolled.
+  const presentNumExpr = `(CASE WHEN l.attendance GLOB '[0-9]*' THEN CAST(l.attendance AS INTEGER) ELSE 0 END)`;
+  const absentOnLectureExpr = `(SELECT COUNT(*) FROM absent_students asx WHERE asx.group_name = l.group_name AND asx.date = l.date${line ? ' AND asx.line = l.line' : ''})`;
+  const expectedSlotsExpr = `MAX(${traineeCountExpr}, ${presentNumExpr} + ${absentOnLectureExpr})`;
+
   const dateFilterL = buildDateFilter('l.date', from_date, to_date);
   const dateFilterResolved = from_date && to_date
     ? ` AND resolved_date BETWEEN '${from_date}' AND '${to_date}'`
@@ -5245,16 +5267,20 @@ router.get('/attendance-absence', (req, res) => {
          AND ch.line       = ${batchAlias}.line
          AND DATE(ch.effective_from) <= ${dateExpr}
          AND (ch.effective_to IS NULL OR DATE(ch.effective_to) > ${dateExpr})
-         AND (tm.start_date IS NULL OR TRIM(tm.start_date) = '' OR DATE(tm.start_date) <= ${dateExpr})
+         -- Hire-date (tm.start_date) lower-bound deliberately removed: it defaults
+         -- to the record-creation date for members added without an explicit hire
+         -- date, so it wrongly dropped real events that predate the roster record.
+         -- coordinator_history.effective_from already bounds "responsible since".
          AND (tm.end_date   IS NULL OR TRIM(tm.end_date)   = '' OR DATE(tm.end_date)   >= ${dateExpr})
     )`;
 
     // ─── MAIN EXPECTED per coordinator ─────────────────────────────────────
-    // Student-slot count: SUM(trainee_count) across main lectures in window.
-    // This is the correct denominator for student-level absences (Part1+Part2).
+    // Student-slot denominator: SUM of per-lecture group size = MAX(enrolled,
+    // present + listed-absent). See expectedSlotsExpr above for why trainee_count
+    // alone is wrong.
     const mainExpectedRows = db.prepare(`
       SELECT ${dateAwareCoord('l', 'l.date')} AS coordinator,
-        COALESCE(SUM(${traineeCountExpr}), 0) AS cnt
+        COALESCE(SUM(${expectedSlotsExpr}), 0) AS cnt
       FROM lectures l
       LEFT JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
       WHERE l.session_type = 'main' AND l.status != 'غير مؤكدة'
@@ -5502,7 +5528,8 @@ router.get('/attendance-absence/segments', (req, res) => {
        AND ch_s.line       = ${aliasGroup}.line
        AND DATE(ch_s.effective_from) <= ${dateExpr}
        AND (ch_s.effective_to IS NULL OR DATE(ch_s.effective_to) > ${dateExpr})
-       AND (tm_s.start_date IS NULL OR TRIM(tm_s.start_date) = '' OR DATE(tm_s.start_date) <= ${dateExpr})
+       -- Mirrors dateAwareCoord: hire-date lower-bound removed (unreliable default),
+       -- end_date kept. Keeps segment sums == the coordinator's row.
        AND (tm_s.end_date   IS NULL OR TRIM(tm_s.end_date)   = '' OR DATE(tm_s.end_date)   >= ${dateExpr})
        AND LOWER(TRIM(ch_s.coordinator)) = LOWER(TRIM('${safe}'))
   )`;
@@ -5526,9 +5553,14 @@ router.get('/attendance-absence/segments', (req, res) => {
     : to_date   ? ` AND resolved_date <= '${to_date}'` : '';
 
   try {
+    // Expected-slots denominator MUST mirror /attendance-absence exactly
+    // (MAX(enrolled, present + listed-absent)) so segment sums == the row.
     const traineeCountExpr = `COALESCE(b.trainee_count, (SELECT COUNT(*) FROM clients cc WHERE cc.group_name = l.group_name${line ? ' AND cc.line = l.line' : ''}))`;
+    const presentNumExpr = `(CASE WHEN l.attendance GLOB '[0-9]*' THEN CAST(l.attendance AS INTEGER) ELSE 0 END)`;
+    const absentOnLectureExpr = `(SELECT COUNT(*) FROM absent_students asx WHERE asx.group_name = l.group_name AND asx.date = l.date${line ? ' AND asx.line = l.line' : ''})`;
+    const expectedSlotsExpr = `MAX(${traineeCountExpr}, ${presentNumExpr} + ${absentOnLectureExpr})`;
     const me = db.prepare(`
-      SELECT ${segId('l.date')} AS seg, COALESCE(SUM(${traineeCountExpr}),0) AS cnt
+      SELECT ${segId('l.date')} AS seg, COALESCE(SUM(${expectedSlotsExpr}),0) AS cnt
       FROM lectures l LEFT JOIN batches b ON l.group_name=b.group_name${line ? ' AND b.line=l.line' : ''}
       WHERE l.session_type='main' AND l.status!='غير مؤكدة'
       ${dateFilterL}${cf('l','l.date')}${lineL}
@@ -5597,8 +5629,11 @@ router.get('/attendance-absence/segments', (req, res) => {
     const segments = [...segMap.entries()].map(([id, n]) => {
       const h = histById.get(id) || {};
       const hFrom = d10(h.effective_from), hTo = d10(h.effective_to);
-      // period = section window ∩ filter ∩ employment
-      let from = maxStr(maxStr(hFrom, from_date || null), empStart);
+      // period = section window ∩ filter ∩ (leave date). Start is NOT clamped by
+      // empStart (hire date) — it is unreliable (record-creation default) and the
+      // counts above ignore it, so clamping the displayed period by it would make
+      // the shown range disagree with the numbers.
+      let from = maxStr(hFrom, from_date || null);
       let to   = minStr(minStr(hTo, to_date || null), empEnd);
       let ended_by = 'ongoing', next_section = null;
       if (hTo) {

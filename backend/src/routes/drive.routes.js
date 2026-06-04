@@ -187,6 +187,59 @@ router.post('/sync', authenticate, requireRole('leader'), express.json(), async 
   }
 });
 
+// POST /api/drive/backfill-range — re-sync EVERY day in [from, to] for the given
+// lines (force=true by default). One-off RECOVERY tool: with the history-preserving
+// importers (delete-by-group+date), replaying each historical day rebuilds any
+// previously-wiped history WITHOUT deleting what is already there. Runs
+// synchronously; a multi-week range can take a few minutes (each day pulls all
+// file types). Even if the HTTP client times out, the server keeps committing
+// per file, so the recovery still completes — re-check via /sync-runs or reports.
+router.post('/backfill-range', express.json(), async (req, res) => {
+  const { from, to, lines: linesParam, fileTypes, force } = req.body || {};
+  const fromD = parseDate(from), toD = parseDate(to);
+  if (!from || !to || Number.isNaN(fromD.getTime()) || Number.isNaN(toD.getTime())) {
+    return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD).' });
+  }
+  // Enumerate the days at noon UTC (avoids midnight TZ drift in folder lookup).
+  const cur = new Date(Date.UTC(fromD.getUTCFullYear(), fromD.getUTCMonth(), fromD.getUTCDate(), 12));
+  const end = new Date(Date.UTC(toD.getUTCFullYear(), toD.getUTCMonth(), toD.getUTCDate(), 12));
+  if (end < cur) return res.status(400).json({ error: 'to must be on or after from.' });
+  const days = [];
+  for (let d = new Date(cur); d <= end; d.setUTCDate(d.getUTCDate() + 1)) days.push(new Date(d));
+  if (days.length > 120) return res.status(400).json({ error: 'Range too large (max 120 days).' });
+
+  // Resolve target lines (lock non-All users to their own line).
+  const userLine = req.user.line || 'Ahmed Hassan';
+  let lines = Array.isArray(linesParam) && linesParam.length ? linesParam : VALID_LINES;
+  if (userLine !== 'All') lines = [userLine];
+  lines = lines.filter((l) => VALID_LINES.includes(l));
+  if (!lines.length) return res.status(400).json({ error: 'No valid lines to sync.' });
+
+  const results = [];
+  let ok = 0, failed = 0;
+  for (const line of lines) {
+    for (const date of days) {
+      const iso = date.toISOString().slice(0, 10);
+      try {
+        const r = await driveSync.syncLineForDate({
+          line, date, userId: req.user.id, fileTypes, force: force !== false,
+        });
+        results.push({ line, date: iso, status: 'ok', summary: r.summary });
+        ok++;
+      } catch (err) {
+        results.push({ line, date: iso, status: 'error', error: err.message });
+        failed++;
+      }
+    }
+  }
+  const rematch = cascadeRematch();
+  return res.json({
+    from: days[0].toISOString().slice(0, 10),
+    to: days[days.length - 1].toISOString().slice(0, 10),
+    lines, days: days.length, ok, failed, results, rematch,
+  });
+});
+
 // POST /api/drive/sync-today
 router.post('/sync-today', authenticate, requireRole('leader'), express.json(), async (req, res) => {
   const userLine = req.user.line || 'Ahmed Hassan';

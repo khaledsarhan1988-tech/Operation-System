@@ -808,13 +808,26 @@ function syncLectures(buffer, line) {
     // `/api/reschedules/backfill-from-drive` endpoint, which compares
     // Excel files dated D vs D+1 directly. Do NOT re-enable live detection
     // here without revisiting that policy.
-    // HISTORY-PRESERVING REPLACE: delete only the main lectures of the groups
-    // PRESENT in this file, leaving ended groups (not in the file) untouched so
-    // their historical attendance is never wiped. (Old behavior deleted ALL
-    // main lectures for the line → ended-group history was lost every sync.)
-    if (uniqueGroups.length) {
-      const ph = uniqueGroups.map(() => '?').join(',');
-      db.prepare(`DELETE FROM lectures WHERE session_type = 'main' AND line = ? AND group_name IN (${ph})`).run(line, ...uniqueGroups);
+    // HISTORY-PRESERVING REPLACE: delete only the (group, date) pairs PRESENT in
+    // this file. Every other date — for these groups AND for ended groups absent
+    // from the file — is left untouched, so historical attendance is never wiped.
+    // (Old behavior deleted ALL of a group's main lectures by group_name, so any
+    // date the latest file no longer carried was lost on every sync, even for
+    // still-active groups. That is what zeroed past-window departments.)
+    {
+      // Space-INSENSITIVE group match: the same group is sometimes spelled with
+      // different spacing across daily files ("General_1 P_D(Sara Attia)" vs
+      // "(SaraAttia)"). An exact-name delete would miss the other spelling and
+      // leave a duplicate, so normalise spaces on both sides.
+      const delMain = db.prepare(`DELETE FROM lectures WHERE session_type = 'main' AND line = ? AND REPLACE(group_name,' ','') = REPLACE(?,' ','') AND date = ?`);
+      const seen = new Set();
+      rows.forEach(r => {
+        if (!r.group_name || !r.date) return;
+        const k = JSON.stringify([r.group_name, r.date]);
+        if (seen.has(k)) return;
+        seen.add(k);
+        delMain.run(line, r.group_name, r.date);
+      });
     }
     // Claim exclusive ownership of these groups' main lectures
     evictFromOtherLines('lectures', line, uniqueGroups, " AND session_type = 'main'");
@@ -857,11 +870,21 @@ function syncSideSessions(buffer, line) {
   const uniqueGroups = [...new Set(rows.map(r => r.group_name))];
   const run = db.transaction(() => {
     // ── RESCHEDULE DETECTION INTENTIONALLY DISABLED — see syncLectures ──
-    // HISTORY-PRESERVING REPLACE — delete only the groups present in this file
-    // (ended groups not in the file keep their historical side sessions).
-    if (uniqueGroups.length) {
-      const ph = uniqueGroups.map(() => '?').join(',');
-      db.prepare(`DELETE FROM lectures WHERE session_type = 'side' AND line = ? AND group_name IN (${ph})`).run(line, ...uniqueGroups);
+    // HISTORY-PRESERVING REPLACE — delete only the (group, date) pairs present in
+    // this file; every other date (and ended groups absent from the file) keeps
+    // its historical side sessions.
+    {
+      // Space-INSENSITIVE group match (see syncLectures note) to avoid duplicates
+      // from group-name spacing drift across daily files.
+      const delSide = db.prepare(`DELETE FROM lectures WHERE session_type = 'side' AND line = ? AND REPLACE(group_name,' ','') = REPLACE(?,' ','') AND date = ?`);
+      const seen = new Set();
+      rows.forEach(r => {
+        if (!r.group_name || !r.date) return;
+        const k = JSON.stringify([r.group_name, r.date]);
+        if (seen.has(k)) return;
+        seen.add(k);
+        delSide.run(line, r.group_name, r.date);
+      });
     }
     // Claim exclusive ownership of these groups' side sessions
     evictFromOtherLines('lectures', line, uniqueGroups, " AND session_type = 'side'");
@@ -912,11 +935,23 @@ function syncAbsent(buffer, line) {
 
   const uniqueAbsentGroups = [...new Set(rows.map(r => r.group_name).filter(Boolean))];
   const run = db.transaction(() => {
-    // HISTORY-PRESERVING REPLACE — delete only the absent rows of groups PRESENT
-    // in this file; ended groups (not in the file) keep their historical absences.
-    if (uniqueAbsentGroups.length) {
-      const ph = uniqueAbsentGroups.map(() => '?').join(',');
-      db.prepare(`DELETE FROM absent_students WHERE line = ? AND group_name IN (${ph})`).run(line, ...uniqueAbsentGroups);
+    // HISTORY-PRESERVING REPLACE — delete only the (group, date) pairs PRESENT in
+    // this file. Absences on any date NOT carried by this file (older sessions of
+    // still-active groups, and ended groups) are kept. (Old behavior deleted ALL
+    // of a group's absences by group_name → past-window absences were wiped every
+    // sync, which is what zeroed General's absences in the report.)
+    {
+      // Space-INSENSITIVE group match (see syncLectures note) to avoid duplicate
+      // absences from group-name spacing drift across daily files.
+      const delAbs = db.prepare(`DELETE FROM absent_students WHERE line = ? AND REPLACE(group_name,' ','') = REPLACE(?,' ','') AND date = ?`);
+      const seen = new Set();
+      rows.forEach(r => {
+        if (!r.group_name || !r.date) return;
+        const k = JSON.stringify([r.group_name, r.date]);
+        if (seen.has(k)) return;
+        seen.add(k);
+        delAbs.run(line, r.group_name, r.date);
+      });
     }
     // Claim exclusive ownership of these groups' absent records
     evictFromOtherLines('absent_students', line, uniqueAbsentGroups);
@@ -985,11 +1020,23 @@ function syncAbsentZoom(buffer, line) {
 
   const uniqueAbsentGroups = [...new Set(rows.map(r => canonicalGroupName(r.group_name)).filter(Boolean))];
   const run = db.transaction(() => {
-    // HISTORY-PRESERVING REPLACE — delete only the groups present in this file;
-    // ended groups (not in the file) keep their historical zoom absences.
-    if (uniqueAbsentGroups.length) {
-      const ph = uniqueAbsentGroups.map(() => '?').join(',');
-      db.prepare(`DELETE FROM absent_zoom_students WHERE line = ? AND group_name IN (${ph})`).run(line, ...uniqueAbsentGroups);
+    // HISTORY-PRESERVING REPLACE — delete only the (group, date) pairs present in
+    // this file (canonical group name); every other date (and ended groups absent
+    // from the file) keeps its historical zoom absences.
+    {
+      // Space-INSENSITIVE group match (see syncLectures note). Group is already
+      // canonicalised to the batches spelling where possible; this also covers
+      // ended groups (absent from batches) whose spacing drifts across files.
+      const delZoom = db.prepare(`DELETE FROM absent_zoom_students WHERE line = ? AND REPLACE(group_name,' ','') = REPLACE(?,' ','') AND date = ?`);
+      const seen = new Set();
+      rows.forEach(r => {
+        const gn = canonicalGroupName(r.group_name);
+        if (!gn || !r.date) return;
+        const k = JSON.stringify([gn, r.date]);
+        if (seen.has(k)) return;
+        seen.add(k);
+        delZoom.run(line, gn, r.date);
+      });
     }
     // Claim exclusive ownership of these groups' zoom-absent records
     evictFromOtherLines('absent_zoom_students', line, uniqueAbsentGroups);
