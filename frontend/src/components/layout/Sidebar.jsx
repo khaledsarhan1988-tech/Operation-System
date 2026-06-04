@@ -108,10 +108,6 @@ const REPORT_LINKS = [
       { to: '/admin/reports/trainer-work-history',   label: 'سجل عمل المدربين',          icon: History,   color: 'violet' },
     ],
   },
-  // Standalone PRIVATE item under Education reports — visible ONLY to the
-  // owner account (username='admin'). The `owner` field is enforced in
-  // getAdminLinks; the route + backend also reject anyone else.
-  { to: '/admin/reports/trainer-salaries',      label: 'تعريف أنظمة المرتبات',     icon: Wallet,        color: 'amber',   management: 'Education', owner: 'admin' },
   { to: '/admin/reports/quality',               label: 'nav.qualityReports',     icon: ShieldCheck,   color: 'green',   management: 'Quality' },
   { to: '/admin/reports/quality-snapshots',     label: 'nav.qualitySnapshots',   icon: Snowflake,     color: 'cyan',    management: 'Quality', sub: true },
   { to: '/admin/reschedules',                    label: 'إعادة جدولة المحاضرات',     icon: CalendarClock, color: 'indigo',  management: 'Quality', sub: true },
@@ -199,8 +195,9 @@ function getAdminLinks(user) {
   // mirrors the private salaries-definition page's access model.
   const isSalaryOwner = String(user?.username || '').toLowerCase() === 'admin';
   const employeeSalaries = isSalaryOwner ? [
-    { type: 'section', label: 'مرتبات الموظفين' },
-    { to: '/admin/salaries/trainers', label: 'مرتبات المدربين', icon: Wallet, color: 'amber' },
+    { type: 'section', label: 'مرتبات المدربين' },
+    { to: '/admin/reports/trainer-salaries', label: 'تعريف أنظمة المرتبات', icon: Wallet, color: 'amber' },
+    { to: '/admin/salaries/trainers',        label: 'مرتبات المدربين',      icon: Wallet, color: 'amber' },
   ] : [];
 
   return [...base, ...reports, ...monitoring, ...financeSection, ...employeeSalaries, ...DELIVERIES_LINKS];
