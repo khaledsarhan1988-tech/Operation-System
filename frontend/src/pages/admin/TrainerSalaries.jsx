@@ -92,8 +92,8 @@ export default function TrainerSalaries() {
       </datalist>
 
       <PageHero
-        title="مرتبات المدربين"
-        subtitle="تعريف أنظمة المرتبات — صفحة خاصة بصاحب الحساب فقط"
+        title="تعريف أنظمة المرتبات"
+        subtitle="تعريف أنظمة وفئات المرتبات — صفحة خاصة بصاحب الحساب فقط"
         icon={Wallet}
         gradient="amber"
         actions={

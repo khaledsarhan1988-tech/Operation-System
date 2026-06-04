@@ -47,6 +47,7 @@ import TrainerAvailabilityFinder from './pages/admin/TrainerAvailabilityFinder';
 import TrainerUtilizationDashboard from './pages/admin/TrainerUtilizationDashboard';
 import TrainerWorkHistory from './pages/admin/TrainerWorkHistory';
 import TrainerSalaries from './pages/admin/TrainerSalaries';
+import TrainersPayroll from './pages/admin/TrainersPayroll';
 import LectureReschedules from './pages/admin/LectureReschedules';
 import HolidaysManagement from './pages/admin/HolidaysManagement';
 import DashboardDetail from './pages/admin/DashboardDetail';
@@ -165,6 +166,7 @@ const router = createBrowserRouter([
       { path: 'reports/customer-services',    element: <SystemReports /> },
       { path: 'reports/education',            element: <EducationReports /> },
       { path: 'reports/trainer-salaries',     element: <PrivateRoute onlyUsername="admin"><TrainerSalaries /></PrivateRoute> },
+      { path: 'salaries/trainers',            element: <PrivateRoute onlyUsername="admin"><TrainersPayroll /></PrivateRoute> },
       { path: 'reports/quality',              element: <QualityReports /> },
       { path: 'reports/quality-diagnostic',   element: <QualityDiagnostic /> },
       { path: 'reports/quality-snapshots',    element: <QualitySnapshots /> },
