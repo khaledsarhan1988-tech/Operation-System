@@ -2393,10 +2393,16 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
           return { kind: 'time-outside', reason: `خارج الشيفت ⁦(${sh.startStr} → ${sh.endStr})⁩` };
         }
         const blocks = [
-          ...sh.rests.map(r => ({ startMin: r.startMin, endMin: r.endMin, type: 'rest' })),
-          ...(sh.voiceNotes || []).map(v => ({ startMin: v.startMin, endMin: v.endMin, type: 'voice_note' })),
+          ...sh.rests.map(r => ({ startMin: r.startMin, endMin: r.endMin, days: r.days, type: 'rest' })),
+          ...(sh.voiceNotes || []).map(v => ({ startMin: v.startMin, endMin: v.endMin, days: v.days, type: 'voice_note' })),
         ];
         const offending = blocks.find(b => {
+          // Per-day scoping: a break/voice block applies only to its own days
+          // (empty days = every work-day). Skip blocks that don't cover this
+          // lecture's day — same rule used by shiftMinsForDate / find-available
+          // -trainer. Without this, a Sat/Tue break was wrongly flagged on a
+          // Sun/Wed lecture ("داخل وقت راحة" false positive).
+          if (b.days && b.days.length && !b.days.includes(dayKey)) return false;
           const overlap = Math.min(lecEndMin, b.endMin) - Math.max(lecStartMin, b.startMin);
           return overlap > REST_OVERLAP_TOLERANCE_MIN;
         });
