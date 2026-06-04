@@ -240,7 +240,7 @@ function SystemCard({ system, onChanged }) {
         <table className="w-full text-sm border-collapse" dir="ltr">
           <thead>
             <tr className="bg-yellow-300 text-gray-900">
-              {['Shifts','Days','Hr','Week','T.W Hours','Total Amount','Per Hours','Kpis','Rate Per H For Kpis',''].map((h, i) => (
+              {['Shifts','Days','Hr','Week','T.W Hours','Total Amount','Per Hours','Kpis','Rate Per H For Kpis','Total + Kpis',''].map((h, i) => (
                 <th key={i} className="font-bold py-2 px-2 border border-gray-400 whitespace-nowrap text-center">{h}</th>
               ))}
             </tr>
@@ -263,6 +263,7 @@ function SystemCard({ system, onChanged }) {
                       <Td><OverrideInput value={r.per_hour_override} autoValue={e.perAuto} onChange={v => setField('per_hour_override', v)} /></Td>
                       <Td><NumInput value={r.kpis} onChange={v => setField('kpis', v)} /></Td>
                       <Td><OverrideInput value={r.rate_per_h_override} autoValue={e.rateAuto} onChange={v => setField('rate_per_h_override', v)} /></Td>
+                      <TotalCell value={num(r.total_amount) + num(r.kpis)} />
                       <Td>
                         <div className="flex items-center justify-center gap-1">
                           <IconBtn color="green" title="حفظ" onClick={() => updateRow.mutate({ id: editRowId, body: rowDraft })} disabled={updateRow.isPending}><Check size={15} /></IconBtn>
@@ -281,6 +282,7 @@ function SystemCard({ system, onChanged }) {
                       <CalcCell value={e.per} manual={e.perManual} />
                       <Td>{fmt(num(row.kpis))}</Td>
                       <CalcCell value={e.rate} manual={e.rateManual} />
+                      <TotalCell value={num(row.total_amount) + num(row.kpis)} />
                       <Td>
                         <div className="flex items-center justify-center gap-1">
                           <IconBtn color="amber" title="تعديل" onClick={() => startEdit(row)}><Pencil size={14} /></IconBtn>
@@ -309,6 +311,7 @@ function SystemCard({ system, onChanged }) {
                   <Td><OverrideInput value={rowDraft.per_hour_override} autoValue={e.perAuto} onChange={v => setField('per_hour_override', v)} /></Td>
                   <Td><NumInput value={rowDraft.kpis} onChange={v => setField('kpis', v)} /></Td>
                   <Td><OverrideInput value={rowDraft.rate_per_h_override} autoValue={e.rateAuto} onChange={v => setField('rate_per_h_override', v)} /></Td>
+                  <TotalCell value={num(rowDraft.total_amount) + num(rowDraft.kpis)} />
                   <Td>
                     <div className="flex items-center justify-center gap-1">
                       <IconBtn color="green" title="إضافة" onClick={() => createRow.mutate(rowDraft)} disabled={createRow.isPending}><Check size={15} /></IconBtn>
@@ -321,7 +324,7 @@ function SystemCard({ system, onChanged }) {
 
             {rows.length === 0 && !adding && (
               <tr>
-                <td colSpan={10} className="text-center text-gray-400 py-6 text-xs border border-gray-200">
+                <td colSpan={11} className="text-center text-gray-400 py-6 text-xs border border-gray-200">
                   لا توجد صفوف في هذا النظام
                 </td>
               </tr>
@@ -368,6 +371,16 @@ function CalcCell({ value, manual }) {
         manual ? 'bg-amber-100 text-amber-800' : 'bg-yellow-50 text-gray-700'
       }`}>
       {fmt(value)}{manual && <span className="text-[9px] align-top mr-0.5">✎</span>}
+    </td>
+  );
+}
+
+// Computed total column = Total Amount + Kpis. Always derived, green-tinted.
+function TotalCell({ value }) {
+  return (
+    <td title="Total Amount + Kpis"
+      className="border border-gray-300 px-2 py-1.5 text-center font-bold bg-emerald-50 text-emerald-800">
+      {fmt(value)}
     </td>
   );
 }
