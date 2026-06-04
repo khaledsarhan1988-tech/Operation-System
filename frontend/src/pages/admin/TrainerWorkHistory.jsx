@@ -225,7 +225,7 @@ function SkeletonRows({ cols = 11, rows = 6 }) {
   return Array.from({ length: rows }).map((_, i) => (
     <tr key={i} className="animate-pulse border-b border-gray-50">
       {Array.from({ length: cols }).map((__, j) => (
-        <td key={j} className="px-3 py-3">
+        <td key={j} className="px-2 py-2.5">
           <div className="h-3.5 bg-gray-100 rounded-full" style={{ width: `${50 + (j * 11 % 40)}%` }} />
         </td>
       ))}
@@ -395,7 +395,7 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                   'المدرب', 'القسم', '#', 'نوع الشيفت', 'بداية العمل', 'نهاية العمل', 'المواعيد', 'أيام العمل', 'الدوام',
                   ...(showSalaryCategory ? ['فئة المرتب'] : []),
                   'ساعات إضافية', 'ساعات غير مؤكدة', 'الحالة',
-                ].map(h => <th key={h} className="px-3 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>)}
+                ].map(h => <th key={h} className="px-2 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>)}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -429,7 +429,7 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                      </tr>
                    )}
                  <tr className="hover:bg-gray-50/60 transition-colors">
-                   <td className="px-3 py-3 font-semibold whitespace-nowrap">
+                   <td className="px-2 py-2.5 font-semibold whitespace-nowrap">
                      <button
                        type="button"
                        onClick={() => openTrainerEdit(r.trainer_id)}
@@ -442,36 +442,36 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                        <Pencil size={11} className="opacity-0 group-hover:opacity-70 transition-opacity" />
                      </button>
                    </td>
-                   <td className="px-3 py-3 whitespace-nowrap"><SectionBadge value={r.section} /></td>
-                   <td className="px-3 py-3 text-xs text-gray-500 font-mono text-center">{r.shift_index}</td>
-                   <td className="px-3 py-3 text-xs text-gray-700 whitespace-nowrap">
+                   <td className="px-2 py-2.5 whitespace-nowrap"><SectionBadge value={r.section} /></td>
+                   <td className="px-2 py-2.5 text-xs text-gray-500 font-mono text-center">{r.shift_index}</td>
+                   <td className="px-2 py-2.5 text-xs text-gray-700 whitespace-nowrap">
                      {SHIFT_KIND_LABEL[r.shift_kind] || r.shift_kind || '—'}
                    </td>
-                   <td className="px-3 py-3 text-xs text-gray-600 font-mono whitespace-nowrap" dir="ltr">{r.start_date || '—'}</td>
-                   <td className="px-3 py-3 text-xs whitespace-nowrap" dir="ltr">
+                   <td className="px-2 py-2.5 text-xs text-gray-600 font-mono whitespace-nowrap" dir="ltr">{r.start_date || '—'}</td>
+                   <td className="px-2 py-2.5 text-xs whitespace-nowrap" dir="ltr">
                      {r.end_date
                        ? <span className="text-gray-600 font-mono">{r.end_date}</span>
                        : <span className="text-emerald-700 font-bold font-sans">لسه شغال</span>}
                    </td>
-                   <td className="px-3 py-3 text-xs text-gray-700 whitespace-nowrap">
+                   <td className="px-2 py-2.5 text-xs text-gray-700 whitespace-nowrap">
                      {r.shift_start && r.shift_end
                        ? <span className="font-semibold">{fmtTimeAr(r.shift_start)} <span className="text-gray-400">←</span> {fmtTimeAr(r.shift_end)}</span>
                        : '—'}
                    </td>
-                   <td className="px-3 py-3 text-xs text-gray-600" style={{ maxWidth: '220px' }}>
+                   <td className="px-2 py-2.5 text-xs text-gray-600" style={{ maxWidth: '220px' }}>
                      {r.work_days_ar || '—'}
                    </td>
-                   <td className="px-3 py-3 text-xs text-gray-700 whitespace-nowrap">
+                   <td className="px-2 py-2.5 text-xs text-gray-700 whitespace-nowrap">
                      {EMPLOYMENT_LABEL[r.employment_type] || '—'}
                    </td>
                    {showSalaryCategory && (
-                     <td className="px-3 py-3 whitespace-nowrap">
+                     <td className="px-2 py-2.5 whitespace-nowrap">
                        {r.salary_category
                          ? <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold border ${salaryCatClass(r.salary_category)}`}>{r.salary_category}</span>
                          : <span className="text-xs text-gray-300">—</span>}
                      </td>
                    )}
-                   <td className="px-3 py-3 whitespace-nowrap">
+                   <td className="px-2 py-2.5 whitespace-nowrap">
                      {r.extra_minutes > 0 ? (
                        <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-lg bg-amber-50 text-amber-800 text-xs font-black border border-amber-200">
                          {fmtMins(r.extra_minutes)}
@@ -480,7 +480,7 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                        <span className="text-xs text-gray-300">—</span>
                      )}
                    </td>
-                   <td className="px-3 py-3 whitespace-nowrap">
+                   <td className="px-2 py-2.5 whitespace-nowrap">
                      {r.unconfirmed_minutes > 0 ? (
                        <button
                          type="button"
@@ -500,7 +500,7 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                        <span className="text-xs text-gray-300">—</span>
                      )}
                    </td>
-                   <td className="px-3 py-3 whitespace-nowrap"><StatusBadge value={r.status} /></td>
+                   <td className="px-2 py-2.5 whitespace-nowrap"><StatusBadge value={r.status} /></td>
                  </tr>
                  </Fragment>
                  );
