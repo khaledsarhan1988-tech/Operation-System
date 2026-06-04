@@ -12,7 +12,7 @@ const ROLE_HOME = {
   enrollment_leader: '/enrollment-leader',
 };
 
-export default function PrivateRoute({ children, minRole, allowedRoles, superAdmin }) {
+export default function PrivateRoute({ children, minRole, allowedRoles, superAdmin, onlyUsername }) {
   const { user, loading } = useAuth();
   const location = useLocation();
 
@@ -43,6 +43,13 @@ export default function PrivateRoute({ children, minRole, allowedRoles, superAdm
   // bounced back to their dashboard so they can't reach system-config pages
   // by URL even though the sidebar item is hidden.
   if (superAdmin && (user.role !== 'admin' || user.management !== 'All')) {
+    return <Navigate to={ROLE_HOME[user.role] || '/login'} replace />;
+  }
+
+  // Single-owner gate — a page locked to ONE specific account (case-insensitive
+  // username). Anyone else who hits the URL directly is bounced to their home.
+  // Used for private owner-only pages (e.g. trainer salary definitions).
+  if (onlyUsername && String(user.username || '').toLowerCase() !== String(onlyUsername).toLowerCase()) {
     return <Navigate to={ROLE_HOME[user.role] || '/login'} replace />;
   }
 

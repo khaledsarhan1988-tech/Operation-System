@@ -502,6 +502,102 @@ initDb().then(db => {
     console.error('official_holidays migration error:', e.message);
   }
 
+  // ── trainer_salary_defs: PRIVATE salary-definition table ────────────────
+  // Owner-only feature (System Admin, username='admin'). Stores the RAW
+  // salary inputs per trainer category/shift; the derived columns
+  // (T.W Hours = days*hr*week, Per Hour = total_amount/tw_hours,
+  //  Rate Per H For Kpis = kpis/tw_hours) are computed on display, NOT stored.
+  // Backend routes (trainer-salaries.routes.js) reject anyone but the owner.
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS trainer_salary_defs (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        category      TEXT    NOT NULL DEFAULT '',
+        shift_type    TEXT    NOT NULL DEFAULT 'Full Time',
+        days          REAL    NOT NULL DEFAULT 0,
+        hr            REAL    NOT NULL DEFAULT 0,
+        week          REAL    NOT NULL DEFAULT 0,
+        total_amount  REAL    NOT NULL DEFAULT 0,
+        kpis          REAL    NOT NULL DEFAULT 0,
+        sort_order    INTEGER NOT NULL DEFAULT 0,
+        created_at    TEXT    NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        updated_at    TEXT    NOT NULL DEFAULT (datetime('now', '+2 hours'))
+      )
+    `);
+    // Seed the 3 reference rows from the original spec — ONLY on a fresh table.
+    const hasRows = db._raw.exec(`SELECT COUNT(*) FROM trainer_salary_defs`)[0]?.values[0][0] || 0;
+    if (!hasRows) {
+      const seed = db._raw.prepare(`
+        INSERT INTO trainer_salary_defs (category, shift_type, days, hr, week, total_amount, kpis, sort_order)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      seed.run('فون كول',       'Full Time', 6, 8, 4, 6000, 750, 1);
+      seed.run('جلسات اساسيه',  'Part Time', 4, 8, 4, 6000, 400, 2);
+      seed.run('جلسات اساسيه',  'Full Time', 6, 8, 4, 8000, 750, 3);
+    }
+    saveNow();
+    console.log('✅ Migration: trainer_salary_defs table ready');
+  } catch (e) {
+    console.error('trainer_salary_defs migration error:', e.message);
+  }
+
+  // ── trainer_salary_systems: named groups ("نظام مدرب") for the salary defs ──
+  // Each system groups one or more shift rows. The owner adds a new trainer
+  // system (a named group) and attaches shift rows under it — mirroring the
+  // merged "مدرب" grouping in the original Excel. Rows link via defs.system_id.
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS trainer_salary_systems (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        name        TEXT    NOT NULL DEFAULT '',
+        sort_order  INTEGER NOT NULL DEFAULT 0,
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        updated_at  TEXT    NOT NULL DEFAULT (datetime('now', '+2 hours'))
+      )
+    `);
+    // Add the system_id link column to the defs table if it's not there yet.
+    const defCols = (db._raw.exec(`PRAGMA table_info(trainer_salary_defs)`)[0]?.values || []).map(v => v[1]);
+    if (!defCols.includes('system_id')) {
+      db._raw.run(`ALTER TABLE trainer_salary_defs ADD COLUMN system_id INTEGER REFERENCES trainer_salary_systems(id) ON DELETE CASCADE`);
+    }
+    // Backfill: convert each distinct category of any unlinked row into a
+    // named system and link the rows, so existing/seeded data keeps showing
+    // under a proper group instead of disappearing.
+    const orphans = db._raw.exec(`SELECT COUNT(*) FROM trainer_salary_defs WHERE system_id IS NULL`)[0]?.values[0][0] || 0;
+    if (orphans) {
+      const cats = db.prepare(`SELECT DISTINCT category FROM trainer_salary_defs WHERE system_id IS NULL`).all();
+      let order = db.prepare(`SELECT COALESCE(MAX(sort_order),0) AS m FROM trainer_salary_systems`).get().m;
+      const findSys = db.prepare(`SELECT id FROM trainer_salary_systems WHERE name = ?`);
+      const insSys  = db.prepare(`INSERT INTO trainer_salary_systems (name, sort_order) VALUES (?, ?)`);
+      const linkRows = db.prepare(`UPDATE trainer_salary_defs SET system_id = ? WHERE system_id IS NULL AND category = ?`);
+      for (const { category } of cats) {
+        const name = String(category || '').trim();
+        let sysId = findSys.get(name)?.id;
+        if (!sysId) { order += 1; sysId = insSys.run(name, order).lastInsertRowid; }
+        linkRows.run(sysId, category);
+      }
+    }
+    saveNow();
+    console.log('✅ Migration: trainer_salary_systems table ready');
+  } catch (e) {
+    console.error('trainer_salary_systems migration error:', e.message);
+  }
+
+  // ── trainer_salary_defs manual-override columns ─────────────────────────
+  // Let the owner type T.W Hours / Per Hours / Rate Per H Kpis by hand to
+  // override the auto formula. NULL = use the computed value; a number = a
+  // manual override that wins over the formula on display.
+  try {
+    const cols = (db._raw.exec(`PRAGMA table_info(trainer_salary_defs)`)[0]?.values || []).map(v => v[1]);
+    if (!cols.includes('tw_hours_override'))   db._raw.run(`ALTER TABLE trainer_salary_defs ADD COLUMN tw_hours_override REAL`);
+    if (!cols.includes('per_hour_override'))   db._raw.run(`ALTER TABLE trainer_salary_defs ADD COLUMN per_hour_override REAL`);
+    if (!cols.includes('rate_per_h_override')) db._raw.run(`ALTER TABLE trainer_salary_defs ADD COLUMN rate_per_h_override REAL`);
+    saveNow();
+    console.log('✅ Migration: trainer_salary_defs override columns ready');
+  } catch (e) {
+    console.error('trainer_salary_defs override migration error:', e.message);
+  }
+
   // ── lecture_reschedules: audit trail for lectures moved between dates ────
   // Sync detection writes here whenever the diff between an old & new
   // lectures Excel finds a (group + trainer + session_type) tuple that
@@ -2465,6 +2561,7 @@ initDb().then(db => {
   app.use('/api/group-approvals', require('./routes/group-approvals.routes'));
   app.use('/api/org-chart',     require('./routes/org-chart.routes'));
   app.use('/api/holidays',      require('./routes/holidays.routes'));
+  app.use('/api/trainer-salaries', require('./routes/trainer-salaries.routes'));
   app.use('/api/reschedules',   require('./routes/reschedules.routes'));
   app.use('/api/distribution',       require('./routes/distribution.routes'));
   app.use('/api/enrollment',         require('./routes/enrollment.routes'));
