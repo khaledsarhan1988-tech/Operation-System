@@ -598,6 +598,30 @@ initDb().then(db => {
     console.error('trainer_salary_defs override migration error:', e.message);
   }
 
+  // ── trainer_deductions: PRIVATE owner-only salary deductions ────────────
+  // Each row = one deduction for a trainer on a date, either in hours or in
+  // days. The money value is computed on the client from the trainer's
+  // salary row (hours × per-hour, days × per-hour × Hr). Owner-only via the
+  // trainer-salaries routes.
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS trainer_deductions (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        trainer_id  INTEGER NOT NULL REFERENCES team_members(id) ON DELETE CASCADE,
+        kind        TEXT    NOT NULL DEFAULT 'hours',  -- 'hours' | 'days'
+        amount      REAL    NOT NULL DEFAULT 0,        -- number of hours or days
+        date        TEXT    NOT NULL,                  -- YYYY-MM-DD
+        note        TEXT,
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now', '+2 hours'))
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_trainer_deductions_t ON trainer_deductions(trainer_id, date)`);
+    saveNow();
+    console.log('✅ Migration: trainer_deductions table ready');
+  } catch (e) {
+    console.error('trainer_deductions migration error:', e.message);
+  }
+
   // ── lecture_reschedules: audit trail for lectures moved between dates ────
   // Sync detection writes here whenever the diff between an old & new
   // lectures Excel finds a (group + trainer + session_type) tuple that

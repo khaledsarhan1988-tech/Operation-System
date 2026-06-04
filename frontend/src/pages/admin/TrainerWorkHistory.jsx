@@ -2,7 +2,7 @@ import { useState, useMemo, Fragment } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   History, CalendarDays, Search, Loader2, Users, Clock, Plus,
-  CheckCircle, XCircle, X, Pencil, AlertCircle,
+  CheckCircle, XCircle, X, Pencil, AlertCircle, Trash2, Wallet, MinusCircle,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -67,6 +67,52 @@ function salaryCatClass(value) {
   let h = 0;
   for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
   return SALARY_CAT_PALETTE[h % SALARY_CAT_PALETTE.length];
+}
+
+// ─── SALARY COMPUTATION ────────────────────────────────────────────────────────
+const n = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+
+// Money formatting: trim to ≤2 decimals, group thousands.
+function fmtMoney(v) {
+  const r = Math.round((Number(v) || 0) * 100) / 100;
+  return r.toLocaleString('en-US', { maximumFractionDigits: 2 });
+}
+
+// Which salary system applies to a section: Phone Call → "فون كول",
+// everything else (General / Private / Semi) → "جلسات اساسيه".
+function systemTargetForSection(section) {
+  return section === 'phone_call' ? 'فون كول' : 'جلسات اساسيه';
+}
+
+// Find the salary-def row that matches a trainer's (section, salary_category).
+function findSalaryRow(systems, section, salaryCategory) {
+  if (!Array.isArray(systems) || !salaryCategory) return null;
+  const target = systemTargetForSection(section);
+  const sys = systems.find(s => String(s.name || '').trim().includes(target));
+  if (!sys) return null;
+  const cat = String(salaryCategory).trim();
+  return (sys.rows || []).find(r => String(r.shift_type || '').trim() === cat) || null;
+}
+
+// Effective per-hour & day-wage from a salary-def row (honors overrides,
+// mirrors the definitions page: per = total/T.W, dayWage = Hr × per).
+function rowRates(row) {
+  if (!row) return { base: 0, perHour: 0, dayWage: 0, found: false };
+  const twAuto = n(row.days) * n(row.hr) * n(row.week);
+  const tw = (row.tw_hours_override != null && row.tw_hours_override !== '') ? n(row.tw_hours_override) : twAuto;
+  const total = n(row.total_amount);
+  const perAuto = tw > 0 ? total / tw : 0;
+  const perHour = (row.per_hour_override != null && row.per_hour_override !== '') ? n(row.per_hour_override) : perAuto;
+  return { base: total, perHour, dayWage: n(row.hr) * perHour, found: true };
+}
+
+// Sum deduction money for a list of {kind, amount} given the row's rates.
+function deductionMoney(deds, perHour, dayWage) {
+  let total = 0;
+  for (const d of deds || []) {
+    total += d.kind === 'days' ? n(d.amount) * dayWage : n(d.amount) * perHour;
+  }
+  return total;
 }
 
 
@@ -236,9 +282,9 @@ function SkeletonRows({ cols = 11, rows = 6 }) {
 // ─── MAIN COMPONENT ────────────────────────────────────────────────────────────
 export default function TrainerWorkHistory({ title = 'سجل عمل المدربين', showSalaryCategory = false, groupBySection = false } = {}) {
   const qc = useQueryClient();
-  // Column count for skeleton/empty/error rows — +1 when the salary-category
-  // column is shown (the "مرتبات المدربين" variant).
-  const colCount = showSalaryCategory ? 13 : 12;
+  // Column count for skeleton/empty/error rows. The salary variant adds the
+  // category column (+1) and four payroll columns (+4).
+  const colCount = showSalaryCategory ? 17 : 12;
   const [fromDate,    setFromDate]    = useState(defaultFromDate);
   const [toDate,      setToDate]      = useState(defaultToDate);
   const [section,     setSection]     = useState('all');
@@ -246,6 +292,7 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
   const [search,      setSearch]      = useState('');
   const [editMember,  setEditMember]  = useState(null);
   const [ucModal,     setUcModal]     = useState(null);  // { trainer, from, to, shift_start, shift_end }
+  const [dedModal,    setDedModal]    = useState(null);  // { trainer_id, trainer_name, perHour, dayWage }
 
   // ── trainer dropdown options — all education team members
   // (also used as the source for the click-to-edit modal — we look up the
@@ -294,6 +341,38 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
 
   const rows    = useMemo(() => data?.rows ?? [], [data]);
   const summary = data?.summary || { trainers_count: 0, shifts_count: 0, total_extra_min: 0 };
+
+  // ── Salary data (owner-only "مرتبات المدربين" variant only) ──
+  const { data: salarySystems = [] } = useQuery({
+    queryKey: ['trainer-salaries'],
+    queryFn: () => api.get('/trainer-salaries').then(r => r.data).catch(() => []),
+    enabled: showSalaryCategory,
+    staleTime: 5 * 60 * 1000,
+  });
+  const { data: deductions = [] } = useQuery({
+    queryKey: ['trainer-deductions', fromDate, toDate],
+    queryFn: () => api.get('/trainer-salaries/deductions', { params: { from: fromDate, to: toDate } })
+      .then(r => r.data).catch(() => []),
+    enabled: showSalaryCategory,
+    staleTime: 30 * 1000,
+  });
+  const deductionsByTrainer = useMemo(() => {
+    const m = new Map();
+    for (const d of deductions) {
+      if (!m.has(d.trainer_id)) m.set(d.trainer_id, []);
+      m.get(d.trainer_id).push(d);
+    }
+    return m;
+  }, [deductions]);
+
+  // Compute the salary breakdown for one report row.
+  const salaryFor = (r) => {
+    const row = findSalaryRow(salarySystems, r.section, r.salary_category);
+    const { base, perHour, dayWage, found } = rowRates(row);
+    const extraPay = (n(r.extra_minutes) / 60) * perHour;
+    const ded = deductionMoney(deductionsByTrainer.get(r.trainer_id), perHour, dayWage);
+    return { found, base, perHour, dayWage, extraPay, ded, net: base + extraPay - ded };
+  };
 
   // ── client-side trainer-name search (in addition to dropdown)
   const filteredRows = useMemo(() => {
@@ -395,6 +474,7 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                   'المدرب', 'القسم', '#', 'نوع الشيفت', 'بداية العمل', 'نهاية العمل', 'المواعيد', 'أيام العمل', 'الدوام',
                   ...(showSalaryCategory ? ['فئة المرتب'] : []),
                   'ساعات إضافية', 'ساعات غير مؤكدة', 'الحالة',
+                  ...(showSalaryCategory ? ['المرتب الأساسي', 'إضافي (ج)', 'الخصم', 'الصافي'] : []),
                 ].map(h => <th key={h} className="px-2 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>)}
               </tr>
             </thead>
@@ -501,6 +581,42 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                      )}
                    </td>
                    <td className="px-2 py-2.5 whitespace-nowrap"><StatusBadge value={r.status} /></td>
+                   {showSalaryCategory && (() => {
+                     const s = salaryFor(r);
+                     if (!s.found) {
+                       return (
+                         <>
+                           <td className="px-2 py-2.5 text-xs text-gray-300 text-center" colSpan={4}>— لا توجد فئة مرتب مطابقة —</td>
+                         </>
+                       );
+                     }
+                     return (
+                       <>
+                         <td className="px-2 py-2.5 text-xs font-bold text-gray-800 whitespace-nowrap text-center" dir="ltr">{fmtMoney(s.base)}</td>
+                         <td className="px-2 py-2.5 text-xs whitespace-nowrap text-center" dir="ltr">
+                           {s.extraPay > 0
+                             ? <span className="text-emerald-700 font-bold">+{fmtMoney(s.extraPay)}</span>
+                             : <span className="text-gray-300">—</span>}
+                         </td>
+                         <td className="px-2 py-2.5 whitespace-nowrap text-center">
+                           <button type="button"
+                             onClick={() => setDedModal({ trainer_id: r.trainer_id, trainer_name: r.trainer_name, perHour: s.perHour, dayWage: s.dayWage })}
+                             title="إضافة / تعديل الخصومات"
+                             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-bold border transition-colors ${
+                               s.ded > 0
+                                 ? 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'
+                                 : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+                             }`}>
+                             <MinusCircle size={12} />
+                             {s.ded > 0 ? `−${fmtMoney(s.ded)}` : 'خصم'}
+                           </button>
+                         </td>
+                         <td className="px-2 py-2.5 text-xs font-black whitespace-nowrap text-center" dir="ltr">
+                           <span className="inline-flex items-center px-2 py-0.5 rounded-lg bg-blue-50 text-blue-800 border border-blue-200">{fmtMoney(s.net)}</span>
+                         </td>
+                       </>
+                     );
+                   })()}
                  </tr>
                  </Fragment>
                  );
@@ -532,6 +648,140 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
       {ucModal && (
         <UnconfirmedModal context={ucModal} onClose={() => setUcModal(null)} />
       )}
+
+      {/* ── Deductions modal (مرتبات المدربين only) ── */}
+      {dedModal && (
+        <DeductionModal context={{ ...dedModal, from: fromDate, to: toDate }} onClose={() => setDedModal(null)} />
+      )}
+    </div>
+  );
+}
+
+// ─── DEDUCTIONS MODAL ──────────────────────────────────────────────────────────
+// Add/remove a trainer's deductions (hours or days, by date) for the selected
+// period. Money per entry is derived from the row's per-hour / day-wage passed
+// in via context, so totals match the table.
+function DeductionModal({ context, onClose }) {
+  const qc = useQueryClient();
+  const { trainer_id, trainer_name, perHour, dayWage, from, to } = context;
+  const [kind, setKind]   = useState('hours');
+  const [amount, setAmount] = useState('');
+  const [date, setDate]   = useState(from || '');
+  const [note, setNote]   = useState('');
+  const [error, setError] = useState(null);
+
+  const { data: list = [], isLoading } = useQuery({
+    queryKey: ['trainer-deductions', 'one', trainer_id, from, to],
+    queryFn: () => api.get('/trainer-salaries/deductions', { params: { trainer_id, from, to } }).then(r => r.data),
+  });
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['trainer-deductions'] });
+  };
+  const addMut = useMutation({
+    mutationFn: () => api.post('/trainer-salaries/deductions', { trainer_id, kind, amount, date, note }),
+    onSuccess: () => { invalidate(); setAmount(''); setNote(''); setError(null); },
+    onError: (e) => setError(e.response?.data?.error || e.message),
+  });
+  const delMut = useMutation({
+    mutationFn: (id) => api.delete(`/trainer-salaries/deductions/${id}`),
+    onSuccess: invalidate,
+  });
+
+  const money = (d) => d.kind === 'days' ? n(d.amount) * dayWage : n(d.amount) * perHour;
+  const total = list.reduce((a, d) => a + money(d), 0);
+  const canAdd = Number(amount) > 0 && /^\d{4}-\d{2}-\d{2}$/.test(date);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden" onClick={e => e.stopPropagation()} dir="rtl">
+        <div className="px-5 py-4 bg-gradient-to-l from-red-50 to-rose-100/50 border-b border-red-100 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-red-700 mb-1">خصومات المدرب</p>
+            <p className="text-sm font-black text-gray-900 leading-tight">{trainer_name}</p>
+            <p className="text-[11px] text-gray-500 mt-1">
+              سعر الساعة {fmtMoney(perHour)} ج · سعر اليوم {fmtMoney(dayWage)} ج
+            </p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/60 flex-shrink-0"><X size={15} className="text-gray-600" /></button>
+        </div>
+
+        {/* Add form */}
+        <div className="p-4 border-b border-gray-100 space-y-3">
+          {error && <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">{error}</div>}
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setKind('hours')}
+              className={`flex-1 py-1.5 rounded-lg text-sm font-bold border ${kind === 'hours' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200'}`}>ساعات</button>
+            <button type="button" onClick={() => setKind('days')}
+              className={`flex-1 py-1.5 rounded-lg text-sm font-bold border ${kind === 'days' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200'}`}>أيام</button>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[11px] font-bold text-gray-500 mb-1">{kind === 'days' ? 'عدد الأيام' : 'عدد الساعات'}</label>
+              <input type="number" min="0" step="any" value={amount} onChange={e => setAmount(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" placeholder="0" />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-gray-500 mb-1">التاريخ</label>
+              <input type="date" value={date} min={from || undefined} max={to || undefined}
+                onChange={e => setDate(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-[11px] font-bold text-gray-500 mb-1">ملاحظة (اختياري)</label>
+            <input type="text" value={note} onChange={e => setNote(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" placeholder="السبب..." />
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-500">
+              ≈ {fmtMoney(kind === 'days' ? n(amount) * dayWage : n(amount) * perHour)} ج
+            </span>
+            <button type="button" onClick={() => addMut.mutate()} disabled={!canAdd || addMut.isPending}
+              className="px-4 py-1.5 rounded-lg bg-red-600 text-white text-sm font-bold inline-flex items-center gap-1 disabled:opacity-50">
+              <Plus size={14} /> إضافة خصم
+            </button>
+          </div>
+        </div>
+
+        {/* List */}
+        <div className="max-h-[40vh] overflow-y-auto">
+          {isLoading ? (
+            <div className="p-8 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-gray-400" /></div>
+          ) : list.length === 0 ? (
+            <p className="p-8 text-center text-sm text-gray-400">لا توجد خصومات في الفترة المحددة</p>
+          ) : (
+            <table className="w-full text-sm text-right">
+              <thead><tr className="bg-gray-50 border-b border-gray-100 text-[11px] text-gray-500">
+                <th className="px-3 py-2">النوع</th><th className="px-3 py-2">العدد</th>
+                <th className="px-3 py-2">التاريخ</th><th className="px-3 py-2">قيمة (ج)</th>
+                <th className="px-3 py-2">ملاحظة</th><th className="px-3 py-2"></th>
+              </tr></thead>
+              <tbody className="divide-y divide-gray-50">
+                {list.map(d => (
+                  <tr key={d.id} className="hover:bg-gray-50/60">
+                    <td className="px-3 py-2 text-xs">{d.kind === 'days' ? 'أيام' : 'ساعات'}</td>
+                    <td className="px-3 py-2 text-xs font-mono" dir="ltr">{d.amount}</td>
+                    <td className="px-3 py-2 text-xs font-mono text-gray-600" dir="ltr">{d.date}</td>
+                    <td className="px-3 py-2 text-xs font-bold text-red-700" dir="ltr">−{fmtMoney(money(d))}</td>
+                    <td className="px-3 py-2 text-[11px] text-gray-500">{d.note || '—'}</td>
+                    <td className="px-3 py-2">
+                      <button onClick={() => delMut.mutate(d.id)} className="p-1 rounded hover:bg-red-50 text-red-500" title="حذف">
+                        <Trash2 size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <div className="px-5 py-3 bg-gray-50 border-t flex items-center justify-between">
+          <span className="text-sm font-black text-red-700">إجمالي الخصم: −{fmtMoney(total)} ج</span>
+          <button onClick={onClose} className="px-4 py-1.5 rounded-lg border border-gray-300 text-sm hover:bg-gray-100">تم</button>
+        </div>
+      </div>
     </div>
   );
 }

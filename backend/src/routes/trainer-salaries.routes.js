@@ -217,4 +217,63 @@ router.delete('/rows/:id', (req, res) => {
   }
 });
 
+/* ─── DEDUCTIONS (الخصومات) ───────────────────────────────────────────────
+ * Owner-only salary deductions per trainer (team_members.id). Each entry is
+ * hours or days on a date; the money value is computed on the client from the
+ * trainer's salary row. */
+
+// GET /deductions?from=&to=&trainer_id=  → list (optionally filtered)
+router.get('/deductions', (req, res) => {
+  try {
+    const { from, to, trainer_id } = req.query;
+    const where = [];
+    const params = [];
+    if (from)       { where.push('date >= ?'); params.push(from); }
+    if (to)         { where.push('date <= ?'); params.push(to); }
+    if (trainer_id) { where.push('trainer_id = ?'); params.push(parseInt(trainer_id, 10)); }
+    const sql = `SELECT * FROM trainer_deductions
+                 ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+                 ORDER BY date ASC, id ASC`;
+    return res.json(db.prepare(sql).all(...params));
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /deductions — body: { trainer_id, kind, amount, date, note? }
+router.post('/deductions', express.json(), (req, res) => {
+  const b = req.body || {};
+  const trainerId = parseInt(b.trainer_id, 10);
+  if (!trainerId) return res.status(400).json({ error: 'trainer_id مطلوب' });
+  const kind = b.kind === 'days' ? 'days' : 'hours';
+  const amount = num(b.amount);
+  if (!(amount > 0)) return res.status(400).json({ error: 'العدد يجب أن يكون أكبر من صفر' });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b.date || ''))) {
+    return res.status(400).json({ error: 'تاريخ غير صالح' });
+  }
+  try {
+    const r = db.prepare(`
+      INSERT INTO trainer_deductions (trainer_id, kind, amount, date, note)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(trainerId, kind, amount, b.date, String(b.note || '').trim() || null);
+    const row = db.prepare(`SELECT * FROM trainer_deductions WHERE id = ?`).get(r.lastInsertRowid);
+    return res.status(201).json(row);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /deductions/:id
+router.delete('/deductions/:id', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'invalid id' });
+  try {
+    const r = db.prepare(`DELETE FROM trainer_deductions WHERE id = ?`).run(id);
+    if (r.changes === 0) return res.status(404).json({ error: 'not found' });
+    return res.json({ deleted: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
