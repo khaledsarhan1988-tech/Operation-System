@@ -568,7 +568,11 @@ function RemarksNotesModal({ params, onClose }) {
     queryFn: () => api.get('/reports/remarks-notes-options').then(r => r.data),
     staleTime: 10 * 60 * 1000,
   });
-  const coordinators = opts?.coordinators ?? [];
+  // المنسق list from فريق العمل (active CS team members) — matches the name the
+  // reports filter on; falls back to the batches-derived list if empty.
+  const coordinators = (opts?.teamCoordinators ?? []).length
+    ? opts.teamCoordinators.map(c => c.name)
+    : (opts?.coordinators ?? []);
   const categories   = opts?.categories   ?? [];
   const assignedTo   = opts?.assignedTo   ?? [];
 
@@ -1205,7 +1209,10 @@ function ListModal({ title, endpoint, params, columns, onClose, extraFilters = [
                       className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]"
                     >
                       <option value="">الكل</option>
-                      {(filterOpts?.coordinators ?? []).map(c => <option key={c} value={c}>{c}</option>)}
+                      {((filterOpts?.teamCoordinators ?? []).length
+                        ? filterOpts.teamCoordinators.map(c => c.name)
+                        : (filterOpts?.coordinators ?? [])
+                       ).map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </div>
                 )}
@@ -2345,19 +2352,14 @@ export default function SystemReports() {
     gcTime:    15 * 60 * 1000,
   });
 
-  // Set of coordinator names (lowercase, handles multi-name fields like "A, B").
-  const coordNameSet = new Set(
-    (coordOpts?.coordinators ?? [])
-      .flatMap(c => String(c).split(','))
-      .map(s => s.trim().toLowerCase())
-      .filter(Boolean)
-  );
-  // Dropdown shows Agents + Leaders who are also coordinators in batches.
-  const agents = (usersData ?? []).filter(u =>
-    u.role === 'agent' ||
-    (u.role === 'leader' && u.full_name &&
-     coordNameSet.has(u.full_name.trim().toLowerCase()))
-  );
+  // المنسق dropdown is sourced from فريق العمل (active Customer-Services team
+  // members) via /reports/remarks-notes-options.teamCoordinators. This matches the
+  // name the reports actually filter on (coordinator_history.coordinator = the TEAM
+  // name, e.g. "Malika7" not the user's full_name "Malika Dardasha") and excludes
+  // inactive staff. Falls back to the batches-derived names if the list is empty.
+  const teamCoords = (coordOpts?.teamCoordinators ?? []).length
+    ? coordOpts.teamCoordinators
+    : (coordOpts?.coordinators ?? []).map(name => ({ name, line: 'All' }));
   const kpis = data?.kpis ?? {};
 
   const handleApply = () => {
@@ -2473,14 +2475,14 @@ export default function SystemReports() {
               <select value={filters.employee}
                 onChange={e => {
                   const val = e.target.value;
-                  const user = (usersData ?? []).find(u => u.full_name === val);
-                  const autoLine = (val && user?.line && user.line !== 'All') ? user.line : 'All';
+                  const tc = teamCoords.find(c => c.name === val);
+                  const autoLine = (val && tc?.line && tc.line !== 'All') ? tc.line : 'All';
                   setFilters(f => ({ ...f, employee: val, line: autoLine }));
                 }}
                 className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f] transition-all"
               >
                 <option value="">الكل</option>
-                {agents.map(u => <option key={u.id} value={u.full_name}>{u.full_name}</option>)}
+                {teamCoords.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
               </select>
             </div>
             <div>

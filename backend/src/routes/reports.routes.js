@@ -4478,7 +4478,24 @@ router.get('/remarks-notes-options', (req, res) => {
        ORDER BY val`
     ).all().map(r => r.val);
 
-    return res.json({ coordinators, categories, assignedTo });
+    // Active Customer-Services coordinators straight from فريق العمل (team_members).
+    // The reports match the `employee`/`coordinator` filter against
+    // coordinator_history.coordinator, which stores the TEAM name (e.g. "Malika7",
+    // not the user's full_name "Malika Dardasha") — so sourcing the dropdown here
+    // guarantees every option matches real data, and excludes inactive staff.
+    let teamCoordinators = [];
+    try {
+      teamCoordinators = db.prepare(
+        `SELECT TRIM(tm.name) AS name, tm.line AS line
+           FROM team_members tm
+          WHERE tm.department = 'customer_services'
+            AND tm.status = 'active'
+            AND tm.name IS NOT NULL AND TRIM(tm.name) != ''${buildLineFilter('tm', line)}
+          ORDER BY tm.name`
+      ).all();
+    } catch (_) { /* table/columns may differ — fall back to empty */ }
+
+    return res.json({ coordinators, categories, assignedTo, teamCoordinators });
   } catch (err) {
     console.error('[reports] remarks-notes-options error:', err);
     return res.status(500).json({ error: err.message });
