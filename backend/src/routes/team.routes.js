@@ -25,6 +25,30 @@ router.get('/', (req, res) => {
   }
 });
 
+// ─── GET /api/team/salary-categories ──────────────────────────────────────────
+// Distinct shift-type names defined on the (owner-only) salaries page, used to
+// populate the per-shift "فئة المرتب" picker in the member modal. Returns NAMES
+// ONLY — no amounts — so the salaries page itself stays private. Safe for any
+// leader/admin who edits team members.
+router.get('/salary-categories', (req, res) => {
+  try {
+    let rows = [];
+    try {
+      rows = db.prepare(
+        `SELECT DISTINCT TRIM(shift_type) AS name FROM trainer_salary_defs
+          WHERE shift_type IS NOT NULL AND TRIM(shift_type) <> ''
+          ORDER BY name`
+      ).all();
+    } catch {
+      // trainer_salary_defs may not exist yet on a fresh DB — fall back to empty.
+      rows = [];
+    }
+    return res.json(rows.map(r => r.name));
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/team/cs-user-diff ───────────────────────────────────────────────
 // Compares the Customer-Services فريق العمل roster against the users (login)
 // accounts, keyed by users.username ↔ team_members.name — the coordinator name
@@ -168,10 +192,14 @@ function normalizeRests(raw) {
 // start_date is required when shift is set; end_date is optional (NULL = still active).
 // voice_notes use the same [{start,end}, ...] shape as rests, normalized via normalizeRests.
 const VALID_SECTIONS = ['general', 'private', 'semi', 'phone_call', 'all'];
-function buildShiftBundle(rawShift, rawStart, rawEnd, rawRests, rawEmpType, rawDays, rawStartDate, rawEndDate, rawVoiceNotes, rawSection) {
+function buildShiftBundle(rawShift, rawStart, rawEnd, rawRests, rawEmpType, rawDays, rawStartDate, rawEndDate, rawVoiceNotes, rawSection, rawSalaryCategory) {
   const shift = rawShift || null;
+  // Salary category: a free-text label linking the shift to a salary scheme
+  // (e.g. "Full Time 7 to 12"). Display-only — does NOT affect work-days or
+  // utilization logic. Lives inside shifts_json, no dedicated column.
+  const salary_category = rawSalaryCategory ? String(rawSalaryCategory).trim().slice(0, 80) || null : null;
   if (!shift) {
-    return { shift: null, start: null, end: null, rests: null, voice_notes: null, emp_type: null, days: null, start_date: null, end_date: null, section: null };
+    return { shift: null, start: null, end: null, rests: null, voice_notes: null, emp_type: null, days: null, start_date: null, end_date: null, section: null, salary_category: null };
   }
   const emp_type = rawEmpType || null;
   const days = emp_type === 'full_time'
@@ -192,6 +220,7 @@ function buildShiftBundle(rawShift, rawStart, rawEnd, rawRests, rawEmpType, rawD
     start_date: rawStartDate || null,
     end_date: rawEndDate || null,
     section,
+    salary_category,
   };
 }
 
@@ -295,7 +324,7 @@ function readShiftsArray(rawShifts) {
       ? buildShiftBundle(
           s.shift, s.start, s.end, s.rests,
           s.employment_type, s.work_days,
-          s.start_date, s.end_date, s.voice_notes, s.section,
+          s.start_date, s.end_date, s.voice_notes, s.section, s.salary_category,
         )
       : null)
     .filter(b => b && b.shift);
@@ -325,6 +354,7 @@ function bundleToJsonShape(b) {
     employment_type: b.emp_type, work_days: b.days,
     start_date: b.start_date, end_date: b.end_date,
     section: b.section || null,
+    salary_category: b.salary_category || null,
   };
 }
 
@@ -361,12 +391,14 @@ function withShiftsArray(row) {
       rests: row.shift_rests, voice_notes: row.voice_notes,
       employment_type: row.employment_type, work_days: row.work_days,
       start_date: row.shift_start_date, end_date: row.shift_end_date,
+      salary_category: null,
     });
     if (row.shift2) arr.push({
       shift: row.shift2, start: row.shift2_start, end: row.shift2_end,
       rests: row.shift2_rests, voice_notes: row.shift2_voice_notes,
       employment_type: row.shift2_employment_type, work_days: row.shift2_work_days,
       start_date: row.shift2_start_date, end_date: row.shift2_end_date,
+      salary_category: null,
     });
   }
   return { ...row, shifts: arr };

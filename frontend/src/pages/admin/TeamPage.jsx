@@ -145,6 +145,7 @@ function initialShifts(member) {
       shift_start_date: s.start_date      || '',
       shift_end_date:   s.end_date        || '',
       section:          s.section         || '',
+      salary_category:  s.salary_category || '',
     }));
   }
   const out = [];
@@ -153,12 +154,14 @@ function initialShifts(member) {
     shift_rests: parseRests(member.shift_rests), voice_notes: parseRests(member.voice_notes),
     employment_type: member.employment_type || '', work_days: member.work_days || '',
     shift_start_date: member.shift_start_date || '', shift_end_date: member.shift_end_date || '',
+    salary_category: '',
   });
   if (member.shift2) out.push({
     shift: member.shift2, shift_start: member.shift2_start || '', shift_end: member.shift2_end || '',
     shift_rests: parseRests(member.shift2_rests), voice_notes: parseRests(member.shift2_voice_notes),
     employment_type: member.shift2_employment_type || '', work_days: member.shift2_work_days || '',
     shift_start_date: member.shift2_start_date || '', shift_end_date: member.shift2_end_date || '',
+    salary_category: '',
   });
   return out;
 }
@@ -167,14 +170,15 @@ function initialShifts(member) {
 const EMPTY_SHIFT = {
   shift: '', shift_start: '', shift_end: '', shift_rests: [], voice_notes: [],
   employment_type: '', work_days: '', shift_start_date: '', shift_end_date: '', section: '',
+  salary_category: '',
 };
 
 // ─── SHIFT SECTION (reusable for shift 1 and shift 2) ─────────────────────────
 function ShiftSection({
   title, shiftValue, startValue, endValue, restsValue, voiceNotesValue, employmentValue, daysValue,
-  startDateValue, endDateValue, sectionValue,
+  startDateValue, endDateValue, sectionValue, salaryCategoryValue, salaryCategoryOptions = [],
   onShiftChange, onStartChange, onEndChange, onRestsChange, onVoiceNotesChange, onEmploymentChange, onDaysChange,
-  onStartDateChange, onEndDateChange, onSectionChange,
+  onStartDateChange, onEndDateChange, onSectionChange, onSalaryCategoryChange,
   onRemove, inputCls, labelCls,
 }) {
   const rests = Array.isArray(restsValue) ? restsValue : [];
@@ -461,6 +465,27 @@ function ShiftSection({
         </div>
       </div>
 
+      {/* Salary category — links this shift to a salary scheme defined on the
+          (private) salaries page. Display/grouping only; no effect on days or
+          utilization. */}
+      <div>
+        <label className={labelCls}>
+          فئة المرتب
+          <span className="text-[10px] text-gray-400 mr-2">(من صفحة المرتبات)</span>
+        </label>
+        <select className={inputCls} value={salaryCategoryValue || ''}
+          onChange={e => onSalaryCategoryChange && onSalaryCategoryChange(e.target.value)}>
+          <option value="">— بدون —</option>
+          {Array.from(new Set([
+            ...(salaryCategoryOptions || []),
+            ...(salaryCategoryValue ? [salaryCategoryValue] : []),
+          ])).map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+        {(!salaryCategoryOptions || salaryCategoryOptions.length === 0) && (
+          <p className="mt-1 text-[10px] text-gray-400">عرّف فئات المرتب من صفحة "مرتبات المدربين" عشان تظهر هنا.</p>
+        )}
+      </div>
+
       {employmentValue && (
         <div>
           <label className={labelCls}>
@@ -743,6 +768,14 @@ export function MemberModal({ initial, onSave, onClose, loading }) {
   const [form, setForm] = useState(() => hydrateMember(initial));
   // Unlimited shifts — array of {shift, shift_start, shift_end, ...} objects.
   const [shifts, setShifts] = useState(() => initialShifts(initial));
+
+  // Salary-category options (names only) pulled from the salaries page, used by
+  // the per-shift "فئة المرتب" picker. Falls back to an empty list if blocked.
+  const { data: salaryCategories = [] } = useQuery({
+    queryKey: ['team', 'salary-categories'],
+    queryFn: () => api.get('/team/salary-categories').then(r => r.data).catch(() => []),
+    staleTime: 5 * 60 * 1000,
+  });
   const set = (k, v) => setForm(f => {
     // Education trainers are line-agnostic — auto-force line='All' whenever
     // the department is set to 'education'. Other departments keep manual
@@ -802,6 +835,7 @@ export function MemberModal({ initial, onSave, onClose, loading }) {
         start_date:      sh.shift_start_date,
         end_date:        sh.shift_end_date,
         section:         sh.section || '',
+        salary_category: sh.salary_category || '',
       }));
     onSave({ ...form, shifts: shiftsPayload });
   };
@@ -880,6 +914,9 @@ export function MemberModal({ initial, onSave, onClose, loading }) {
                 startDateValue={sh.shift_start_date}
                 endDateValue={sh.shift_end_date}
                 sectionValue={sh.section}
+                salaryCategoryValue={sh.salary_category}
+                salaryCategoryOptions={salaryCategories}
+                onSalaryCategoryChange={(v) => updateShift(idx, 'salary_category', v)}
                 onShiftChange={(v) => updateShift(idx, 'shift', v)}
                 onStartChange={(v) => updateShift(idx, 'shift_start', v)}
                 onEndChange={(v) => updateShift(idx, 'shift_end', v)}
