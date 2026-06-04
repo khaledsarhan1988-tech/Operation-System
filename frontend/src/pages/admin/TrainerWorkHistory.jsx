@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, Fragment } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   History, CalendarDays, Search, Loader2, Users, Clock, Plus,
@@ -35,6 +35,39 @@ const EMPLOYMENT_LABEL = {
   full_time: 'Full Time',
   part_time: 'Part Time',
 };
+
+// Section display order for the grouped "مرتبات المدربين" view: General →
+// Private → Semi → Phone Call → (anything else).
+const SECTION_ORDER = { general: 0, private: 1, semi: 2, phone_call: 3, all: 8 };
+const sectionRank = (s) => (s in SECTION_ORDER ? SECTION_ORDER[s] : 9);
+
+// Salary-category badge colors. Full Time & Part Time get fixed colors; every
+// other distinct label (Free Lance, Project, "Full Time 7 to 12", ...) gets a
+// stable color picked from a palette by hashing its text, so each category
+// keeps the same color across rows.
+const SALARY_CAT_FIXED = {
+  'Full Time': 'bg-emerald-100 text-emerald-800 border-emerald-200',
+  'Part Time': 'bg-sky-100 text-sky-800 border-sky-200',
+};
+const SALARY_CAT_PALETTE = [
+  'bg-violet-100 text-violet-800 border-violet-200',
+  'bg-amber-100 text-amber-800 border-amber-200',
+  'bg-rose-100 text-rose-800 border-rose-200',
+  'bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200',
+  'bg-indigo-100 text-indigo-800 border-indigo-200',
+  'bg-lime-100 text-lime-800 border-lime-200',
+  'bg-orange-100 text-orange-800 border-orange-200',
+  'bg-teal-100 text-teal-800 border-teal-200',
+  'bg-pink-100 text-pink-800 border-pink-200',
+  'bg-cyan-100 text-cyan-800 border-cyan-200',
+];
+function salaryCatClass(value) {
+  const key = String(value || '').trim();
+  if (SALARY_CAT_FIXED[key]) return SALARY_CAT_FIXED[key];
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  return SALARY_CAT_PALETTE[h % SALARY_CAT_PALETTE.length];
+}
 
 
 // Convert raw minutes into "h س m د" (or just minutes if < 60).
@@ -201,7 +234,7 @@ function SkeletonRows({ cols = 11, rows = 6 }) {
 }
 
 // ─── MAIN COMPONENT ────────────────────────────────────────────────────────────
-export default function TrainerWorkHistory({ title = 'سجل عمل المدربين', showSalaryCategory = false } = {}) {
+export default function TrainerWorkHistory({ title = 'سجل عمل المدربين', showSalaryCategory = false, groupBySection = false } = {}) {
   const qc = useQueryClient();
   // Column count for skeleton/empty/error rows — +1 when the salary-category
   // column is shown (the "مرتبات المدربين" variant).
@@ -268,6 +301,17 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
     const q = search.toLowerCase();
     return rows.filter(r => (r.trainer_name || '').toLowerCase().includes(q));
   }, [rows, search]);
+
+  // When grouping is on (مرتبات المدربين), order rows by section so each
+  // section's trainers sit together (General → Private → Semi → Phone Call),
+  // then by name within the section. Otherwise keep the backend's name order.
+  const displayRows = useMemo(() => {
+    if (!groupBySection) return filteredRows;
+    return [...filteredRows].sort((a, b) =>
+      (sectionRank(a.section) - sectionRank(b.section)) ||
+      String(a.trainer_name || '').localeCompare(String(b.trainer_name || ''), 'ar')
+    );
+  }, [filteredRows, groupBySection]);
 
   const inputCls  = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]';
   const selectCls = inputCls + ' min-w-[160px]';
@@ -369,8 +413,22 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                    </td>
                  </tr>
                ) :
-               filteredRows.map((r, i) => (
-                 <tr key={i} className="hover:bg-gray-50/60 transition-colors">
+               displayRows.map((r, i) => {
+                 const showHeader = groupBySection && (i === 0 || displayRows[i - 1].section !== r.section);
+                 const sectionCount = showHeader ? displayRows.filter(x => x.section === r.section).length : 0;
+                 return (
+                 <Fragment key={i}>
+                   {showHeader && (
+                     <tr className="bg-gray-100/70 border-y border-gray-200">
+                       <td colSpan={colCount} className="px-3 py-2">
+                         <span className="inline-flex items-center gap-2 text-xs font-black text-gray-700">
+                           <SectionBadge value={r.section} />
+                           <span className="text-gray-400">({sectionCount})</span>
+                         </span>
+                       </td>
+                     </tr>
+                   )}
+                 <tr className="hover:bg-gray-50/60 transition-colors">
                    <td className="px-3 py-3 font-semibold whitespace-nowrap">
                      <button
                        type="button"
@@ -409,7 +467,7 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                    {showSalaryCategory && (
                      <td className="px-3 py-3 whitespace-nowrap">
                        {r.salary_category
-                         ? <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold border bg-amber-100 text-amber-800 border-amber-200">{r.salary_category}</span>
+                         ? <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold border ${salaryCatClass(r.salary_category)}`}>{r.salary_category}</span>
                          : <span className="text-xs text-gray-300">—</span>}
                      </td>
                    )}
@@ -444,7 +502,9 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                    </td>
                    <td className="px-3 py-3 whitespace-nowrap"><StatusBadge value={r.status} /></td>
                  </tr>
-               ))}
+                 </Fragment>
+                 );
+               })}
             </tbody>
           </table>
         </div>
