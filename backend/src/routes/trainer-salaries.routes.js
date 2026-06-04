@@ -61,7 +61,12 @@ const numOrNull = (v) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 };
-const cleanShift = (v) => (v === 'Part Time' ? 'Part Time' : 'Full Time');
+// Any non-empty shift label is allowed (Full Time, Part Time, Free Lance,
+// Project, "Full Time From 7 To 12", ...). Trimmed and capped; empty → default.
+const cleanShift = (v) => {
+  const s = String(v == null ? '' : v).trim().slice(0, 80);
+  return s || 'Full Time';
+};
 
 /* ─── READ: systems with nested rows ──────────────────────────────────── */
 router.get('/', (req, res) => {

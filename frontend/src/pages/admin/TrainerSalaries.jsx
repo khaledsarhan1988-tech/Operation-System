@@ -76,8 +76,21 @@ export default function TrainerSalaries() {
 
   const totalRows = systems.reduce((a, s) => a + (s.rows?.length || 0), 0);
 
+  // Shift-type suggestions for the editable Shifts field: the two defaults plus
+  // every distinct value already used, so custom types (Free Lance, Project,
+  // "Full Time From 7 To 12", …) are remembered and offered as autocomplete.
+  const shiftOptions = Array.from(new Set([
+    'Full Time', 'Part Time',
+    ...systems.flatMap(s => (s.rows || []).map(r => r.shift_type)).filter(Boolean),
+  ]));
+
   return (
     <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
+      {/* Shared autocomplete source for every Shifts field on the page */}
+      <datalist id="salary-shift-types">
+        {shiftOptions.map(o => <option key={o} value={o} />)}
+      </datalist>
+
       <PageHero
         title="مرتبات المدربين"
         subtitle="تعريف أنظمة المرتبات — صفحة خاصة بصاحب الحساب فقط"
@@ -382,13 +395,15 @@ function OverrideInput({ value, autoValue, onChange }) {
   );
 }
 
+// Editable shift field: free text with autocomplete suggestions from the
+// shared <datalist>. Lets the owner type any custom shift type while still
+// offering one-click picks for common/previously-used ones.
 function ShiftSelect({ value, onChange }) {
   return (
-    <select value={value} onChange={e => onChange(e.target.value)}
-      className="px-2 py-1 rounded border border-gray-300 text-sm bg-white">
-      <option value="Full Time">Full Time</option>
-      <option value="Part Time">Part Time</option>
-    </select>
+    <input type="text" list="salary-shift-types" value={value}
+      onChange={e => onChange(e.target.value)}
+      placeholder="نوع الشيفت"
+      className="w-36 px-2 py-1 rounded border border-gray-300 text-sm bg-white text-center" />
   );
 }
 
