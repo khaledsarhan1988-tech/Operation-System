@@ -201,8 +201,11 @@ function SkeletonRows({ cols = 11, rows = 6 }) {
 }
 
 // ─── MAIN COMPONENT ────────────────────────────────────────────────────────────
-export default function TrainerWorkHistory() {
+export default function TrainerWorkHistory({ title = 'سجل عمل المدربين', showSalaryCategory = false } = {}) {
   const qc = useQueryClient();
+  // Column count for skeleton/empty/error rows — +1 when the salary-category
+  // column is shown (the "مرتبات المدربين" variant).
+  const colCount = showSalaryCategory ? 13 : 12;
   const [fromDate,    setFromDate]    = useState(defaultFromDate);
   const [toDate,      setToDate]      = useState(defaultToDate);
   const [section,     setSection]     = useState('all');
@@ -272,7 +275,7 @@ export default function TrainerWorkHistory() {
   return (
     <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
       <PageHero
-        title="سجل عمل المدربين"
+        title={title}
         subtitle={isLoading
           ? 'جاري التحميل...'
           : `${summary.shifts_count} شيفت لـ ${summary.trainers_count} مدرب`}
@@ -344,18 +347,21 @@ export default function TrainerWorkHistory() {
           <table className="w-full text-sm text-right" style={{ minWidth: '1380px' }}>
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100">
-                {['المدرب', 'القسم', '#', 'نوع الشيفت', 'بداية العمل', 'نهاية العمل', 'المواعيد', 'أيام العمل', 'الدوام', 'ساعات إضافية', 'ساعات غير مؤكدة', 'الحالة']
-                  .map(h => <th key={h} className="px-3 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>)}
+                {[
+                  'المدرب', 'القسم', '#', 'نوع الشيفت', 'بداية العمل', 'نهاية العمل', 'المواعيد', 'أيام العمل', 'الدوام',
+                  ...(showSalaryCategory ? ['فئة المرتب'] : []),
+                  'ساعات إضافية', 'ساعات غير مؤكدة', 'الحالة',
+                ].map(h => <th key={h} className="px-3 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>)}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {isLoading ? <SkeletonRows cols={12} rows={6} /> :
+              {isLoading ? <SkeletonRows cols={colCount} rows={6} /> :
                isError    ? (
-                 <tr><td colSpan={12} className="text-center py-12 text-sm text-red-600">حدث خطأ أثناء تحميل البيانات</td></tr>
+                 <tr><td colSpan={colCount} className="text-center py-12 text-sm text-red-600">حدث خطأ أثناء تحميل البيانات</td></tr>
                ) :
                filteredRows.length === 0 ? (
                  <tr>
-                   <td colSpan={12} className="text-center py-12">
+                   <td colSpan={colCount} className="text-center py-12">
                      <div className="flex flex-col items-center gap-2 text-gray-400">
                        <History className="w-8 h-8 text-gray-300" />
                        <p className="text-sm font-medium">لا توجد شيفتات في الفترة المحددة</p>
@@ -400,6 +406,13 @@ export default function TrainerWorkHistory() {
                    <td className="px-3 py-3 text-xs text-gray-700 whitespace-nowrap">
                      {EMPLOYMENT_LABEL[r.employment_type] || '—'}
                    </td>
+                   {showSalaryCategory && (
+                     <td className="px-3 py-3 whitespace-nowrap">
+                       {r.salary_category
+                         ? <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold border bg-amber-100 text-amber-800 border-amber-200">{r.salary_category}</span>
+                         : <span className="text-xs text-gray-300">—</span>}
+                     </td>
+                   )}
                    <td className="px-3 py-3 whitespace-nowrap">
                      {r.extra_minutes > 0 ? (
                        <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-lg bg-amber-50 text-amber-800 text-xs font-black border border-amber-200">

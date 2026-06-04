@@ -4337,6 +4337,7 @@ router.get('/trainer-work-history', (req, res) => {
           work_days:    daysList.join(','),
           work_days_ar: daysAr,
           employment_type: sh.employment_type || null,
+          salary_category: sh.salary_category || null,
           overall_employment_type:    overall.type,
           overall_employment_split:   overall.split,
           overall_days_covered:       overall.days_covered,
