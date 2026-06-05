@@ -10,15 +10,18 @@ router.use(authenticate, requireRole('leader'));
 // ─── GET /api/team ────────────────────────────────────────────────────────────
 router.get('/', (req, res) => {
   const { department, section, shift, status = 'active', search } = req.query;
-  let where = [];
-  if (department) where.push(`department = '${department}'`);
-  if (section)    where.push(`section = '${section}'`);
-  if (shift)      where.push(`shift = '${shift}'`);
-  if (status && status !== 'all') where.push(`status = '${status}'`);
-  if (search)     where.push(`name LIKE '%${search.replace(/'/g, "''")}%'`);
+  // Parameterized — never interpolate req.query into SQL (was a SQL-injection /
+  // filter-bypass hole: section="all' OR '1'='1" returned all rows).
+  const where = [];
+  const params = [];
+  if (department) { where.push('department = ?'); params.push(department); }
+  if (section)    { where.push('section = ?');    params.push(section); }
+  if (shift)      { where.push('shift = ?');       params.push(shift); }
+  if (status && status !== 'all') { where.push('status = ?'); params.push(status); }
+  if (search)     { where.push("name LIKE ? ESCAPE '\\'"); params.push('%' + String(search).replace(/[\\%_]/g, c => '\\' + c) + '%'); }
   const sql = `SELECT * FROM team_members${where.length ? ' WHERE ' + where.join(' AND ') : ''} ORDER BY department, section, shift, name`;
   try {
-    const rows = db.prepare(sql).all();
+    const rows = db.prepare(sql).all(...params);
     return res.json(rows.map(withShiftsArray));
   } catch (err) {
     return res.status(500).json({ error: err.message });

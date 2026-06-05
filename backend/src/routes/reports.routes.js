@@ -317,12 +317,17 @@ function employmentWindowFilter(batchAlias, dateExpr) {
  */
 function coordinatorAtDateExpr(groupExpr, lineExpr, dateExpr) {
   const effG = effectiveGroupNameAtDate(groupExpr, lineExpr, dateExpr);
-  return `(SELECT GROUP_CONCAT(ch_d.coordinator, ', ')
-             FROM coordinator_history ch_d
-            WHERE ch_d.group_name = ${effG}
-              AND ch_d.line       = ${lineExpr}
-              AND DATE(ch_d.effective_from) <= ${dateExpr}
-              AND (ch_d.effective_to IS NULL OR DATE(ch_d.effective_to) > ${dateExpr}))`;
+  // DISTINCT coordinator: coordinator_history can hold redundant duplicate rows
+  // for the same group/coordinator/window (559 exact dupes live), which made the
+  // name render doubled ("doha, doha"). DISTINCT can't take a custom separator in
+  // SQLite, so dedupe in an inner subquery first.
+  return `(SELECT GROUP_CONCAT(c, ', ') FROM (
+             SELECT DISTINCT ch_d.coordinator AS c
+               FROM coordinator_history ch_d
+              WHERE ch_d.group_name = ${effG}
+                AND ch_d.line       = ${lineExpr}
+                AND DATE(ch_d.effective_from) <= ${dateExpr}
+                AND (ch_d.effective_to IS NULL OR DATE(ch_d.effective_to) > ${dateExpr})))`;
 }
 
 /**
@@ -1599,7 +1604,7 @@ router.get('/absent-list', (req, res) => {
       c.name AS student_name,
       c.phone, l.group_name, l.date, l.time, NULL AS lecture_no,
       COALESCE(
-        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b2.coordinators)) LIMIT 1),
+        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b2.coordinators)) AND u.department != 'All' LIMIT 1),
         b2.dept_type
       ) AS dept_type,
       COALESCE(
@@ -3163,10 +3168,15 @@ router.get('/trainer-utilization', (req, res) => {
   }
   // Voice-note intervals (for UI display) on a given date.
   function voiceNoteIntervalsForDate(shifts, dateStr) {
+    const dayKey = DOW_KEYS[getDow(dateStr)] || '';
     const out = [];
     for (const sh of shifts) {
       if (!shiftCoversDay(sh, dateStr)) continue;
       for (const v of (sh.voiceNotes || [])) {
+        // Respect per-day scoping: a voice note with `days` applies only on those
+        // days (mirrors shiftMinsForDate / the summary endpoint). Without this the
+        // heatmap counted a VN on days the trainer doesn't do it.
+        if (v.days && v.days.length && !v.days.includes(dayKey)) continue;
         out.push({ start_min: v.s, end_min: v.e, duration_min: v.e - v.s });
       }
     }
@@ -4074,7 +4084,7 @@ router.get('/find-available-trainer', (req, res) => {
 
   try {
     const trainers = db.prepare(`SELECT * FROM team_members ${trainerWhere}`).all();
-    let eligible = trainers.filter(t => t.shift || t.shift2);
+    let eligible = trainers.filter(t => parseTeamShifts(t).length > 0);  // canonical shifts_json, matches the utilization endpoints
     // Optional: course capability filter
     if (useCourseFilter) {
       const col = 'teachable_' + course_family;
