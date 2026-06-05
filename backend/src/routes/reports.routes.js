@@ -6237,20 +6237,20 @@ router.get('/quality-employee', (req, res) => {
     `).get(...(line ? [line] : []), ...dateMainLecParams);
     const zoom_expected_count = zoomExpectedRow?.cnt || 0;
 
+    // zoom-absent COUNT now reads the same source as its drill-down details: the
+    // uploaded absent_zoom_students file (owner's decision), so the badge and the
+    // detail list reconcile exactly. (Was lecture-slot math = a different number.)
+    const zaParams = [];
+    let zaWhere = `WHERE 1=1 AND ${coordMatch}`;
+    if (line) { zaWhere += ` AND a.line = ?`; zaParams.push(line); }
+    if (from) { zaWhere += ` AND a.date >= ?`; zaParams.push(from); }
+    if (to)   { zaWhere += ` AND a.date <= ?`; zaParams.push(to); }
     const zoomAbsentRow = db.prepare(`
-      SELECT COALESCE(SUM(absent_count), 0) AS cnt FROM (
-        SELECT COUNT(*) - SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != ''
-                                     AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END)
-                 AS absent_count
-        FROM lectures l
-        INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
-        WHERE l.session_type = 'side' AND l.status = 'مؤكدة'
-          AND (l.duration IS NULL OR l.duration <= '00:30') AND l.side_session_category = 'regular'${lineLA}${dateMainLec}
-          AND ${coordMatch}
-        GROUP BY l.group_name, l.date
-        HAVING absent_count > 0
-      ) sub
-    `).get(...(line ? [line] : []), ...dateMainLecParams);
+      SELECT COUNT(*) AS cnt
+        FROM absent_zoom_students a
+        INNER JOIN batches b ON REPLACE(b.group_name,' ','') = REPLACE(a.group_name,' ','')${line ? ' AND b.line = a.line' : ''}
+        ${zaWhere}
+    `).get(...zaParams);
     const zoom_absent_count = zoomAbsentRow?.cnt || 0;
     const zoom_absent_rate = zoom_expected_count > 0
       ? Math.round((zoom_absent_count / zoom_expected_count) * 100) : 0;

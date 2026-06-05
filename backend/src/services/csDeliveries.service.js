@@ -198,6 +198,23 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user }) {
      GROUP BY client_phone_norm
   `).all();
 
+  // Per-dept subscription months (owner's decision: a delivery page shows the
+  // months/levels paid IN THAT department, not the client's cross-dept total).
+  // Keyed by phone → {months, count, list} restricted to THIS page's dept.
+  const perDeptSub = new Map();
+  for (const r of db.prepare(`
+        SELECT client_phone_norm AS pn, COALESCE(months,0) AS months
+          FROM cs_subscriptions
+         WHERE is_ignored = 0 AND dept = ?
+           AND client_phone_norm IS NOT NULL AND client_phone_norm != ''
+         ORDER BY COALESCE(subscription_date,'') ASC, id ASC
+      `).all(dept)) {
+    const e = perDeptSub.get(r.pn) || { months: 0, count: 0, list: [] };
+    e.months += (r.months || 0); e.count += 1;
+    if (r.months != null) e.list.push(r.months);
+    perDeptSub.set(r.pn, e);
+  }
+
   // Most-recent subscription dept per phone (fallback when no active group).
   const deptRows = db.prepare(`
     SELECT client_phone_norm AS pn, dept
@@ -242,11 +259,13 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user }) {
       if (!ownsViaGroup && !ownsViaCs) continue;
     }
 
+    const pd = perDeptSub.get(pn) || { months: 0, count: 0, list: [] };
     items.push({
       phone: pn,
       name,
-      membership_count: s.membership_count,
-      total_months: s.total_months,
+      membership_count: pd.count,        // per-dept (was cross-dept s.membership_count)
+      total_months: pd.months,           // per-dept (was cross-dept s.total_months)
+      _pd: pd,
       status: st,
       status_note: statusMap.get(pn)?.note || null,
       active_groups: activeGroups,
@@ -274,19 +293,21 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user }) {
     const inactiveAll = [...(inactiveMap.get(it.phone) || [])];
     it.inactive_groups = inactiveAll.filter(g => !activeNorm.has(stripSpaces(g)));
 
+    // Per-dept (owner's decision): paid months + breakdown are restricted to THIS
+    // department's subscriptions. completed_count / last_level_date stay whole-
+    // journey (level history is inherently cross-dept and is informational only).
+    it.paid_months = it._pd.months;
+    it.months_list = it._pd.list;
     let lastLevelDate = null, daysSinceLast = null;
     try {
       const plan = csPlan.getClientPlan(it.phone);
-      it.paid_months = plan ? plan.summary.paid_months : it.total_months;
       it.completed_count = plan ? plan.summary.completed_count : null;
-      // Per-subscription months so the UI can show e.g. "6+3 = 9".
-      it.months_list = plan?.paid?.breakdown?.map(b => b.months).filter(m => m != null) || [];
       lastLevelDate = plan?.summary?.last_level_date || null;
       daysSinceLast = plan?.summary?.days_since_last_level ?? null;
     } catch (_) {
-      it.paid_months = it.total_months ?? null;
-      it.months_list = [];
+      it.completed_count = null;
     }
+    delete it._pd;
 
     // Remaining levels = total paid levels (إجمالي العضويات) MINUS the number of
     // groups the client appears in (active + inactive) — each group = one level
