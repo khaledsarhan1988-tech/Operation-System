@@ -5373,8 +5373,15 @@ router.get('/attendance-absence', (req, res) => {
     // overlap) collapses to one — the frontend splits on ',' and trims, so the
     // default comma separator is fine. This keeps each coordinator's total equal
     // to the sum of their movement-segments (segment-first source of truth).
+    // Attribute each event to ONE coordinator-of-record (the earliest-assigned
+    // among those active at the event date), NOT a GROUP_CONCAT of all of them.
+    // The old "A,B" combined key was split by the frontend and the FULL counts
+    // added to BOTH coordinators (and again into dept cards) → co-coordinated
+    // groups were double-counted. A single deterministic coordinator credits each
+    // event exactly once and also resolves section/status (which keyed on the
+    // combined string and came back null).
     const dateAwareCoord = (batchAlias, dateExpr) => `(
-      SELECT GROUP_CONCAT(DISTINCT ch.coordinator)
+      SELECT ch.coordinator
         FROM coordinator_history ch
         JOIN team_members tm
           ON LOWER(TRIM(tm.name)) = LOWER(TRIM(ch.coordinator))
@@ -5388,6 +5395,8 @@ router.get('/attendance-absence', (req, res) => {
          -- date, so it wrongly dropped real events that predate the roster record.
          -- coordinator_history.effective_from already bounds "responsible since".
          AND (tm.end_date   IS NULL OR TRIM(tm.end_date)   = '' OR DATE(tm.end_date)   >= ${dateExpr})
+       ORDER BY DATE(ch.effective_from) ASC, ch.coordinator ASC
+       LIMIT 1
     )`;
 
     // ─── MAIN EXPECTED per coordinator ─────────────────────────────────────
