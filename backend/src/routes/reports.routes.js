@@ -1101,11 +1101,42 @@ const normRemarkDate = (col) =>
   `THEN date(substr(${col},7,4)||'-'||substr(${col},4,2)||'-'||substr(${col},1,2)) ` +
   `ELSE date(${col}) END`;
 
-const nextRemarkDay = (col) =>
-  `CASE WHEN strftime('%w', ${col}) = '4' THEN date(${col}, '+2 days') ELSE date(${col}, '+1 day') END`;
+// Official-holiday ranges (e.g. Eid). Used to skip multi-day breaks when
+// computing the expected remark/lecture day — without this, an absence right
+// before a holiday expected its remark INSIDE the holiday (no working day), so
+// the date-exact join missed the follow-up the coordinator actually wrote on the
+// first day back. Read fresh per build (tiny table); empty/missing → no-op.
+function _holidayRanges() {
+  try {
+    return db.prepare(`SELECT start_date, end_date FROM official_holidays WHERE start_date IS NOT NULL AND end_date IS NOT NULL`)
+      .all()
+      .map(r => ({ s: String(r.start_date).slice(0, 10), e: String(r.end_date).slice(0, 10) }))
+      .filter(r => /^\d{4}-\d{2}-\d{2}$/.test(r.s) && /^\d{4}-\d{2}-\d{2}$/.test(r.e));
+  } catch (_) { return []; }
+}
+// Jump a date expression to the day AFTER any holiday range it lands in (forward),
+// or the day BEFORE the range (backward).
+function _holidaySkip(dateExpr, dir) {
+  let expr = `(${dateExpr})`;
+  for (const r of _holidayRanges()) {
+    expr = dir > 0
+      ? `CASE WHEN ${expr} BETWEEN '${r.s}' AND '${r.e}' THEN date('${r.e}','+1 day') ELSE ${expr} END`
+      : `CASE WHEN ${expr} BETWEEN '${r.s}' AND '${r.e}' THEN date('${r.s}','-1 day') ELSE ${expr} END`;
+  }
+  return expr;
+}
 
-const prevLectureDay = (rdSQL) =>
-  `CASE WHEN strftime('%w', ${rdSQL}) = '6' THEN date(${rdSQL}, '-2 days') ELSE date(${rdSQL}, '-1 day') END`;
+const nextRemarkDay = (col) => {
+  const base  = `CASE WHEN strftime('%w', ${col}) = '4' THEN date(${col}, '+2 days') ELSE date(${col}, '+1 day') END`;
+  const skip  = _holidaySkip(base, +1);                 // jump past Eid etc.
+  return `CASE WHEN strftime('%w', ${skip}) = '5' THEN date(${skip}, '+1 day') ELSE ${skip} END`;  // landing on Friday → Saturday
+};
+
+const prevLectureDay = (rdSQL) => {
+  const base  = `CASE WHEN strftime('%w', ${rdSQL}) = '6' THEN date(${rdSQL}, '-2 days') ELSE date(${rdSQL}, '-1 day') END`;
+  const skip  = _holidaySkip(base, -1);
+  return `CASE WHEN strftime('%w', ${skip}) = '5' THEN date(${skip}, '-1 day') ELSE ${skip} END`;
+};
 
 // ─── GET /api/reports/dashboard ───────────────────────────────────────────────
 router.get('/dashboard', (req, res) => {
