@@ -63,9 +63,17 @@ const normName = (s) =>
   String(s == null ? '' : s).replace(/\(.*?\)/g, '').trim().toLowerCase().replace(/\s+/g, ' ');
 
 // Does a (possibly comma-separated) coordinator string contain this person?
+// Coordinator names are stored inconsistently: users.full_name 'Radwa Gamal' vs
+// batches.coordinators 'RadwaGamal'. Match on the spaced form OR a space-stripped
+// compact key so the internal-space variant still matches (an agent was being
+// scoped to ZERO clients because of this).
 function coordStrHasName(coordStr, targetNorm) {
   if (!targetNorm) return false;
-  return String(coordStr || '').split(',').map(normName).some(c => c && c === targetNorm);
+  const targetCompact = targetNorm.replace(/\s+/g, '');
+  return String(coordStr || '').split(',').map(normName).some(c => {
+    if (!c) return false;
+    return c === targetNorm || c.replace(/\s+/g, '') === targetCompact;
+  });
 }
 
 // phone_norm → [{ group_name, dept_type, coordinators }] for groups still active.

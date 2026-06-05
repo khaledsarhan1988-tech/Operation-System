@@ -77,7 +77,12 @@ function setGenerate(id, status) {
   if (!['Start', 'Pending'].includes(status)) throw new Error('Invalid generate status');
   const row = db.prepare('SELECT num_students FROM enrollment_rows WHERE id = ?').get(id);
   if (!row) throw new Error('Row not found');
-  if (status === 'Start' && (Number(row.num_students) || 0) < 7) {
+  // Gate on the REAL roster count when a roster exists (num_students is a
+  // free-text field that could be hand-typed to bypass the ≥7 rule); fall back to
+  // num_students only when no roster rows have been entered.
+  const rosterCount = db.prepare('SELECT COUNT(*) AS c FROM enrollment_students WHERE enrollment_row_id = ?').get(id)?.c || 0;
+  const effectiveCount = rosterCount > 0 ? rosterCount : (Number(row.num_students) || 0);
+  if (status === 'Start' && effectiveCount < 7) {
     throw new Error('المجموعة محتاجة 7 طلاب أو أكثر علشان تتحول لـ Start');
   }
   db.prepare(
@@ -256,12 +261,16 @@ function suggestTeacher({ level, line = 'Ahmed Hassan' }) {
   const prev = previousLevel(level);
   if (!prev) return { previous_level: null, suggestions: [] };
 
+  // No batches join: ended groups (the most relevant prior groups a continuing
+  // student just came from) are gone from batches; the join contributed no column
+  // and dropped ~74% of candidates. Exclude future-dated lectures so MAX(date)
+  // reflects a real recent group, not an Aug-scheduled one.
   const rows = db.prepare(`
     SELECT l.group_name AS group_name, l.trainer AS trainer, MAX(l.date) AS last_date
       FROM lectures l
-      JOIN batches b ON b.group_name = l.group_name AND b.line = l.line
      WHERE l.line = ? AND l.session_type = 'main'
        AND l.trainer IS NOT NULL AND TRIM(l.trainer) != ''
+       AND l.date <= date('now', '+2 hours')
      GROUP BY l.group_name, l.trainer
   `).all(line);
 
