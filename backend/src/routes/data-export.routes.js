@@ -160,4 +160,25 @@ router.get('/users', (req, res) => {
   }
 });
 
+// ─── FULL CONSISTENT SNAPSHOT (read-only) ────────────────────────────────────
+// Streams a consistent point-in-time copy of the LIVE database (all tables) so a
+// trusted local tool can run the real report endpoints against today's data
+// without a manual backup download. Uses SQLite `VACUUM INTO` → a clean snapshot
+// (not a torn copy of a file being written). Key-gated like everything here.
+router.get('/db', (req, res) => {
+  const os = require('os');
+  const path = require('path');
+  const fs = require('fs');
+  const dest = path.join(os.tmpdir(), `export_snapshot_${process.pid}_${Date.now()}.db`);
+  try { try { fs.unlinkSync(dest); } catch (_) {} } catch (_) {}
+  try {
+    db.exec(`VACUUM INTO '${dest.replace(/'/g, "''")}'`);
+  } catch (e) {
+    return res.status(500).json({ error: 'snapshot_failed', detail: e.message });
+  }
+  res.download(dest, 'live-snapshot.db', (err) => {
+    try { fs.unlinkSync(dest); } catch (_) {}
+  });
+});
+
 module.exports = router;
