@@ -5317,14 +5317,36 @@ router.get('/attendance-absence', (req, res) => {
     const inList = depts.map(d => `'${d}'`).join(',');
     return ` AND EXISTS (
       SELECT 1 FROM coordinator_history ch_d
-        JOIN team_member_dept_history tmh_d
-          ON LOWER(TRIM(tmh_d.member_name)) = LOWER(TRIM(ch_d.coordinator))
-         AND DATE(tmh_d.effective_from) <= ${dateExpr}
-         AND (tmh_d.effective_to IS NULL OR DATE(tmh_d.effective_to) > ${dateExpr})
-         AND LOWER(TRIM(tmh_d.section)) IN (${inList})
        WHERE ch_d.group_name = ${groupExpr} AND ch_d.line = ${lineExpr}
          AND DATE(ch_d.effective_from) <= ${dateExpr}
          AND (ch_d.effective_to IS NULL OR DATE(ch_d.effective_to) > ${dateExpr})
+         AND (
+           EXISTS (
+             SELECT 1 FROM team_member_dept_history tmh_d
+              WHERE LOWER(TRIM(tmh_d.member_name)) = LOWER(TRIM(ch_d.coordinator))
+                AND DATE(tmh_d.effective_from) <= ${dateExpr}
+                AND (tmh_d.effective_to IS NULL OR DATE(tmh_d.effective_to) > ${dateExpr})
+                AND LOWER(TRIM(tmh_d.section)) IN (${inList})
+           )
+           OR (
+             -- Fallback: a coordinator with NO covering dept_history record (e.g.
+             -- members who predate section-history tracking) was silently dropped
+             -- from section-filtered reports. Use their current team_members
+             -- section so they aren't zeroed out.
+             NOT EXISTS (
+               SELECT 1 FROM team_member_dept_history tmh_x
+                WHERE LOWER(TRIM(tmh_x.member_name)) = LOWER(TRIM(ch_d.coordinator))
+                  AND DATE(tmh_x.effective_from) <= ${dateExpr}
+                  AND (tmh_x.effective_to IS NULL OR DATE(tmh_x.effective_to) > ${dateExpr})
+             )
+             AND EXISTS (
+               SELECT 1 FROM team_members tm_x
+                WHERE LOWER(TRIM(tm_x.name)) = LOWER(TRIM(ch_d.coordinator))
+                  AND tm_x.department = 'customer_services'
+                  AND LOWER(TRIM(tm_x.section)) IN (${inList})
+             )
+           )
+         )
     )`;
   };
   const deptFilterMainL    = sectionDeptFilter('l.group_name', 'l.line', 'l.date');
