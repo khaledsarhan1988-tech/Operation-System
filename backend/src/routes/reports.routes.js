@@ -4129,15 +4129,17 @@ router.get('/find-available-trainer', (req, res) => {
     const maxDate = allDates.reduce((a, b) => a > b ? a : b);
 
     // Fetch all relevant lectures once
+    // Conflict lectures come straight from `lectures` (NO batches join). The old
+    // INNER JOIN batches WHERE status='نشطة' silently hid every conflict whose
+    // group had ended / been renamed / had a space mismatch → a busy trainer was
+    // reported AVAILABLE → double-booking. Mirrors the utilization endpoints.
     const lecRaw = db.prepare(
       `SELECT DISTINCT l.group_name, l.date, l.time, l.duration, l.trainer, l.session_type
          FROM lectures l
-         INNER JOIN batches b ON l.group_name=b.group_name${line ? ' AND b.line=l.line' : ''}
-         WHERE b.status='نشطة'
-           AND l.date BETWEEN '${minDate}' AND '${maxDate}'
+         WHERE l.date BETWEEN '${minDate}' AND '${maxDate}'
            AND (l.session_type='main'
              OR (l.session_type='side' AND LOWER(COALESCE(l.side_session_category,'regular'))='regular'))
-         ${lineL}${lineB}`
+         ${lineL}`
     ).all();
 
     // Index by (trainerLower|date) → list of {time, duration, group_name, session_type}

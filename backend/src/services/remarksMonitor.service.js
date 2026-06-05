@@ -5,6 +5,14 @@ const { parseNotes, hashNotes, noteKey } = require('../utils/remarkNotesParser')
 
 const MIN_COLS = 13;
 
+// Production "done" status is the Arabic 'إنتهت' (the old code checked the
+// non-existent literal 'منتهية', so the 'resolved' monitor event NEVER fired).
+// Accept both spellings to be safe across any historical drift.
+function isResolvedStatus(s) {
+  const t = String(s || '').trim();
+  return t === 'إنتهت' || t === 'منتهية';
+}
+
 function normalizePhone(v) {
   if (v === null || v === undefined) return null;
   const s = String(v).trim();
@@ -137,7 +145,7 @@ function computeDiff(prevRow, currentRow, knownNoteKeys, snapshotAt) {
         occurred_at: n.timestamp || fallbackTime,
       });
     }
-    if (currentRow.status === 'منتهية') {
+    if (isResolvedStatus(currentRow.status)) {
       events.push({
         external_id: currentRow.external_id,
         event_type:  'resolved',
@@ -155,7 +163,7 @@ function computeDiff(prevRow, currentRow, knownNoteKeys, snapshotAt) {
       event_data:  JSON.stringify({ from: prevRow.status, to: currentRow.status }),
       occurred_at: fallbackTime,
     });
-    if (currentRow.status === 'منتهية' && prevRow.status !== 'منتهية') {
+    if (isResolvedStatus(currentRow.status) && !isResolvedStatus(prevRow.status)) {
       events.push({
         external_id: currentRow.external_id,
         event_type:  'resolved',
