@@ -4255,7 +4255,10 @@ router.get('/trainer-work-history', (req, res) => {
       `SELECT trainer, date, duration
          FROM lectures
         WHERE status = 'غير مؤكدة'
-          AND date BETWEEN ? AND ?`
+          AND date BETWEEN ? AND ?
+          AND group_name NOT LIKE '%Voice Note%'
+          AND group_name NOT LIKE '%Break%'
+          AND group_name NOT LIKE '%Test%'`
     ).all(from, to);
     const stripParens = (s) => String(s || '').replace(/\([^)]*\)/g, '').trim().toLowerCase();
     const parseDurationMin = (s) => {
@@ -4445,6 +4448,9 @@ router.get('/trainer-work-history/unconfirmed', (req, res) => {
          FROM lectures
         WHERE status = 'غير مؤكدة'
           AND date BETWEEN ? AND ?
+          AND group_name NOT LIKE '%Voice Note%'
+          AND group_name NOT LIKE '%Break%'
+          AND group_name NOT LIKE '%Test%'
         ORDER BY date ASC, time ASC`
     ).all(winLo, winHi);
     const target = stripParens(trainerName);
