@@ -7,5 +7,5 @@ import TrainerWorkHistory from './TrainerWorkHistory';
  * and the sidebar; this is a thin wrapper so both pages stay in sync.
  */
 export default function TrainersPayroll() {
-  return <TrainerWorkHistory title="مرتبات المدربين" showSalaryCategory groupBySection />;
+  return <TrainerWorkHistory title="مرتبات المدربين" showSalaryCategory groupBySection monthPicker />;
 }

@@ -143,6 +143,33 @@ function defaultToDate() {
   return `${y}-${String(m + 1).padStart(2, '0')}-${String(last).padStart(2, '0')}`;
 }
 
+// Arabic month names (Gregorian).
+const AR_MONTHS = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+
+// Build a month dropdown list (newest first): 12 months back → 2 ahead of the
+// current Cairo month. Each item = { value:'YYYY-MM', label:'مايو 2026' }.
+function buildMonths() {
+  const now = new Date(Date.now() + 2 * 60 * 60 * 1000);
+  const cy = now.getUTCFullYear(), cm = now.getUTCMonth();
+  const out = [];
+  for (let i = -12; i <= 2; i++) {
+    const d = new Date(Date.UTC(cy, cm + i, 1));
+    const y = d.getUTCFullYear(), m = d.getUTCMonth();
+    out.push({ value: `${y}-${String(m + 1).padStart(2, '0')}`, label: `${AR_MONTHS[m]} ${y}` });
+  }
+  return out.reverse();
+}
+
+// First & last calendar day of a 'YYYY-MM' month → { first, last } as ISO dates.
+function monthBounds(ym) {
+  const [y, m] = String(ym).split('-').map(Number);
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return {
+    first: `${y}-${String(m).padStart(2, '0')}-01`,
+    last:  `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`,
+  };
+}
+
 // "HH:MM" (24h) → Arabic 12-hour with period qualifier.
 //   "00:00" → "12 منتصف الليل"
 //   "08:30" → "8:30 صباحاً"
@@ -280,7 +307,7 @@ function SkeletonRows({ cols = 11, rows = 6 }) {
 }
 
 // ─── MAIN COMPONENT ────────────────────────────────────────────────────────────
-export default function TrainerWorkHistory({ title = 'سجل عمل المدربين', showSalaryCategory = false, groupBySection = false } = {}) {
+export default function TrainerWorkHistory({ title = 'سجل عمل المدربين', showSalaryCategory = false, groupBySection = false, monthPicker = false } = {}) {
   const qc = useQueryClient();
   // Column count for skeleton/empty/error rows. The salary variant adds the
   // category column (+1) and four payroll columns (+4).
@@ -395,6 +422,16 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
   const inputCls  = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]';
   const selectCls = inputCls + ' min-w-[160px]';
 
+  // Month dropdown (salary variant) — selecting a month sets from/to to its
+  // first/last calendar day so the payroll covers a whole month.
+  const months = useMemo(() => buildMonths(), []);
+  const selectedMonth = (fromDate || '').slice(0, 7);
+  const onMonthChange = (ym) => {
+    const { first, last } = monthBounds(ym);
+    setFromDate(first);
+    setToDate(last);
+  };
+
   return (
     <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
       <PageHero
@@ -418,22 +455,33 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
         {/* ── FILTERS ── */}
         <div className="px-6 pt-5 pb-4 border-b border-gray-100">
           <div className="flex flex-wrap items-end gap-3">
-            <div>
-              <label className="block text-[11px] font-bold text-gray-500 mb-1">من تاريخ</label>
-              <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3">
-                <CalendarDays size={14} className="text-gray-400" />
-                <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
-                  className="py-2 text-sm text-gray-700 focus:outline-none bg-transparent" />
+            {monthPicker ? (
+              <div>
+                <label className="block text-[11px] font-bold text-gray-500 mb-1">الشهر</label>
+                <select value={selectedMonth} onChange={e => onMonthChange(e.target.value)} className={selectCls}>
+                  {months.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                </select>
               </div>
-            </div>
-            <div>
-              <label className="block text-[11px] font-bold text-gray-500 mb-1">إلى تاريخ</label>
-              <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3">
-                <CalendarDays size={14} className="text-gray-400" />
-                <input type="date" value={toDate} onChange={e => setToDate(e.target.value)}
-                  className="py-2 text-sm text-gray-700 focus:outline-none bg-transparent" />
-              </div>
-            </div>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-500 mb-1">من تاريخ</label>
+                  <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3">
+                    <CalendarDays size={14} className="text-gray-400" />
+                    <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
+                      className="py-2 text-sm text-gray-700 focus:outline-none bg-transparent" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-500 mb-1">إلى تاريخ</label>
+                  <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3">
+                    <CalendarDays size={14} className="text-gray-400" />
+                    <input type="date" value={toDate} onChange={e => setToDate(e.target.value)}
+                      className="py-2 text-sm text-gray-700 focus:outline-none bg-transparent" />
+                  </div>
+                </div>
+              </>
+            )}
             <div>
               <label className="block text-[11px] font-bold text-gray-500 mb-1">القسم</label>
               <select value={section} onChange={e => setSection(e.target.value)} className={selectCls}>
