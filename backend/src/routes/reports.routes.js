@@ -6136,7 +6136,13 @@ router.get('/quality-employee', (req, res) => {
       SELECT COUNT(*) AS cnt FROM (
         SELECT COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS resolved_date
         FROM absent_students a
-        LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
+        -- Rename-aware: absent_students keep the OLD group name; batches carry the
+        -- NEW name after a rename. Match the batch under either so renamed-group
+        -- absences are still attributed (coordMatch reads b.coordinators).
+        LEFT JOIN batches b ON REPLACE(b.group_name,' ','') IN (
+              REPLACE(a.group_name,' ',''),
+              REPLACE(${currentGroupNameExpr('a.group_name', 'a.line')},' ','')
+            )${line ? ' AND b.line = a.line' : ''}
         LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
           AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)
         LEFT JOIN (
