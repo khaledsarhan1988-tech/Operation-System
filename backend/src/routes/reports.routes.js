@@ -1191,9 +1191,16 @@ router.get('/dashboard', (req, res) => {
     // 3. Main lectures count — session_type='main' (uploaded from "Lecture" Excel sheet)
     // Only confirmed lectures count — status='مؤكدة'
     // Date-aware: attribute by who was coordinator on lectures.date.
+    // LEFT JOIN batches (not INNER): ended groups disappear from batches but their
+    // lectures remain — an INNER JOIN silently undercounted them. COUNT(DISTINCT
+    // <canonical session>) so the lecture rows a rename left duplicated under the
+    // OLD name aren't double-counted: the key canonicalizes group_name to its
+    // current (renamed-to) name + date + time + trainer. (Non-destructive — no
+    // lecture rows are deleted; the count just dedups + includes ended groups.)
+    const sessKey = `${currentGroupNameExpr('lectures.group_name', 'lectures.line')} || '|' || lectures.date || '|' || COALESCE(lectures.time,'') || '|' || COALESCE(lectures.trainer,'')`;
     const mainLecturesRow = db.prepare(
-      `SELECT COUNT(*) as cnt FROM lectures
-       INNER JOIN batches ON lectures.group_name = batches.group_name${line ? ' AND batches.line = lectures.line' : ''}
+      `SELECT COUNT(DISTINCT ${sessKey}) as cnt FROM lectures
+       LEFT JOIN batches ON lectures.group_name = batches.group_name${line ? ' AND batches.line = lectures.line' : ''}
        WHERE lectures.session_type = 'main'
          AND lectures.status != 'غير مؤكدة'
        ${buildDateFilter('lectures.date', from_date, to_date)}
@@ -1202,8 +1209,8 @@ router.get('/dashboard', (req, res) => {
 
     // 4. Side sessions count — all confirmed side sessions
     const sideLecturesRow = db.prepare(
-      `SELECT COUNT(*) as cnt FROM lectures
-       INNER JOIN batches ON lectures.group_name = batches.group_name${line ? ' AND batches.line = lectures.line' : ''}
+      `SELECT COUNT(DISTINCT ${sessKey}) as cnt FROM lectures
+       LEFT JOIN batches ON lectures.group_name = batches.group_name${line ? ' AND batches.line = lectures.line' : ''}
        WHERE lectures.session_type = 'side'
          AND lectures.status != 'غير مؤكدة'
        ${buildDateFilter('lectures.date', from_date, to_date)}
@@ -1213,8 +1220,8 @@ router.get('/dashboard', (req, res) => {
     // 4b. Zoom calls count — confirmed regular side sessions.
     // Safety net: also count any session < 20 min even if wrongly classified.
     const zoomCallsRow = db.prepare(
-      `SELECT COUNT(*) as cnt FROM lectures
-       INNER JOIN batches ON lectures.group_name = batches.group_name${line ? ' AND batches.line = lectures.line' : ''}
+      `SELECT COUNT(DISTINCT ${sessKey}) as cnt FROM lectures
+       LEFT JOIN batches ON lectures.group_name = batches.group_name${line ? ' AND batches.line = lectures.line' : ''}
        WHERE lectures.session_type = 'side'
          AND lectures.status != 'غير مؤكدة'
          AND (lectures.side_session_category = 'regular'
