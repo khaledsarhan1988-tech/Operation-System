@@ -1310,7 +1310,7 @@ router.get('/dashboard', (req, res) => {
     // 7. Open remarks — count only for KPI, limited list for dashboard table
     const openRemarksCount = db.prepare(
       `SELECT COUNT(*) as cnt FROM remarks
-       WHERE LOWER(status) NOT IN ('closed','مغلق','resolved')
+       WHERE LOWER(status) NOT IN ('closed','مغلق','resolved','إنتهت')
        ${buildDateFilter(remarkDateExpr, from_date, to_date)}
        ${empRemark}${deptRemark}${lineRemarks}`
     ).get();
@@ -1318,7 +1318,7 @@ router.get('/dashboard', (req, res) => {
     const openRemarksList = db.prepare(
       `SELECT id, client_name, client_phone, details, category, status, priority, assigned_to, added_at, last_updated
        FROM remarks
-       WHERE LOWER(status) NOT IN ('closed','مغلق','resolved')
+       WHERE LOWER(status) NOT IN ('closed','مغلق','resolved','إنتهت')
        ${buildDateFilter(remarkDateExpr, from_date, to_date)}
        ${empRemark}${deptRemark}${lineRemarks}
        ORDER BY added_at DESC
@@ -1337,7 +1337,7 @@ router.get('/dashboard', (req, res) => {
            ELSE 'ok'
          END as urgency_level
        FROM remarks
-       WHERE LOWER(status) NOT IN ('closed','مغلق','resolved')
+       WHERE LOWER(status) NOT IN ('closed','مغلق','resolved','إنتهت')
          AND ROUND((julianday('now') - julianday(added_at)) * 24, 1) >= 3
          ${deptRemark}${lineRemarks}
        ORDER BY hours_open DESC
@@ -1883,7 +1883,11 @@ router.get('/remarks-list', (req, res) => {
   // Convert to YYYY-MM-DD for date comparison with batches.start_date / end_date
   const dateConvert = `(substr(r.added_at,7,4) || '-' || substr(r.added_at,4,2) || '-' || substr(r.added_at,1,2))`;
 
-  const baseWhere = `WHERE LOWER(remarks.status) NOT IN ('closed','مغلق','resolved')
+  // Production done-status is 'إنتهت' (Arabic) — treat it as closed. Only apply
+  // the default "hide closed/done" filter when the user hasn't explicitly asked
+  // for a status (otherwise filtering BY 'إنتهت' would contradict it → 0 rows).
+  const openDefault = status_filter ? '' : ` AND LOWER(remarks.status) NOT IN ('closed','مغلق','resolved','إنتهت')`;
+  const baseWhere = `WHERE 1=1${openDefault}
     ${dateFilter}${empFilter}${assignFilter}${priorityFilter}${categoryFilter}${statusFilter}${deptFilter}${searchFilter}${lineRemarks}`;
 
   // Use CTE to pre-compute active batches per phone — avoids N+1 correlated subquery
@@ -6181,7 +6185,7 @@ router.get('/quality-employee', (req, res) => {
     total_zoom_absent: result.reduce((s, r) => s + r.zoom_absent_count, 0),
   };
 
-  return res.json({ summary, rows: result, filters: { from, to, department: activeDept } });
+  return res.json({ summary, rows: result, filters: { from, to, department: (activeDepts && activeDepts[0]) || 'All' } });
 });
 
 // ─── GET /api/reports/quality-employee/details ────────────────────────────────
