@@ -146,16 +146,19 @@ function defaultToDate() {
 // Arabic month names (Gregorian).
 const AR_MONTHS = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
 
-// Build a month dropdown list (newest first): 12 months back → 2 ahead of the
-// current Cairo month. Each item = { value:'YYYY-MM', label:'مايو 2026' }.
+// Build a month dropdown list (newest first): from May 2026 (the data start)
+// up to 2 months ahead of the current Cairo month.
+// Each item = { value:'YYYY-MM', label:'مايو 2026' }.
 function buildMonths() {
   const now = new Date(Date.now() + 2 * 60 * 60 * 1000);
-  const cy = now.getUTCFullYear(), cm = now.getUTCMonth();
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 2, 1));
+  const endY = end.getUTCFullYear(), endM = end.getUTCMonth();
   const out = [];
-  for (let i = -12; i <= 2; i++) {
-    const d = new Date(Date.UTC(cy, cm + i, 1));
-    const y = d.getUTCFullYear(), m = d.getUTCMonth();
+  let y = 2026, m = 4; // May 2026 (month index 4)
+  while (y < endY || (y === endY && m <= endM)) {
     out.push({ value: `${y}-${String(m + 1).padStart(2, '0')}`, label: `${AR_MONTHS[m]} ${y}` });
+    m += 1;
+    if (m > 11) { m = 0; y += 1; }
   }
   return out.reverse();
 }
