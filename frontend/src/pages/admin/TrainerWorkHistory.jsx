@@ -94,16 +94,13 @@ function findSalaryRow(systems, section, salaryCategory) {
   return (sys.rows || []).find(r => String(r.shift_type || '').trim() === cat) || null;
 }
 
-// Effective per-hour & day-wage from a salary-def row (honors overrides,
-// mirrors the definitions page: per = total/T.W, dayWage = Hr × per).
+// Pay rates from a salary-def row. Base = the row's Total Amount. The hourly
+// rate used for extra hours & deductions is fixed at a 30-day / 8-hour month
+// (per the owner's rule): perHour = Total ÷ 30 ÷ 8, dayWage = Total ÷ 30.
 function rowRates(row) {
   if (!row) return { base: 0, perHour: 0, dayWage: 0, found: false };
-  const twAuto = n(row.days) * n(row.hr) * n(row.week);
-  const tw = (row.tw_hours_override != null && row.tw_hours_override !== '') ? n(row.tw_hours_override) : twAuto;
   const total = n(row.total_amount);
-  const perAuto = tw > 0 ? total / tw : 0;
-  const perHour = (row.per_hour_override != null && row.per_hour_override !== '') ? n(row.per_hour_override) : perAuto;
-  return { base: total, perHour, dayWage: n(row.hr) * perHour, found: true };
+  return { base: total, perHour: total / 240, dayWage: total / 30, found: true };
 }
 
 // Sum deduction money for a list of {kind, amount} given the row's rates.
