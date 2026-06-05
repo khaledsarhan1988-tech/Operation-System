@@ -495,7 +495,7 @@ router.put('/:id', (req, res) => {
 
   // Snapshot old state for the employment end_date transition logic AND for
   // detecting dept/section moves (history tracking below).
-  const old = db.prepare('SELECT status, start_date, end_date, department, section FROM team_members WHERE id = ?').get(id);
+  const old = db.prepare('SELECT name, status, start_date, end_date, department, section FROM team_members WHERE id = ?').get(id);
   if (!old) return res.status(404).json({ error: 'Not found' });
   const newStatus = status || 'active';
   // Employment dates — Customer Services only; transition-aware so the editable
@@ -524,6 +524,20 @@ router.put('/:id', (req, res) => {
     );
     const member = db.prepare('SELECT * FROM team_members WHERE id = ?').get(id);
     if (!member) return res.status(404).json({ error: 'Not found' });
+    // coordinator_type was never wired into the write path — make it editable.
+    // Only write when an explicit valid value is sent, so updates that omit it
+    // don't clear the existing value.
+    {
+      const ct = req.body.coordinator_type;
+      if (['standard', 'multi_task', 'on_leave'].includes(ct)) {
+        try { db.prepare('UPDATE team_members SET coordinator_type=? WHERE id=?').run(ct, id); } catch (_) {}
+      }
+    }
+    // On a NAME change, keep team_member_dept_history.member_name in sync so the
+    // date-aware section filter (which joins on member_name) keeps matching.
+    if (name && old && String(name).trim() !== String(old.name || '').trim()) {
+      try { db.prepare('UPDATE team_member_dept_history SET member_name=? WHERE team_member_id=?').run(String(name).trim(), id); } catch (_) {}
+    }
     // ── Track dept/section moves in team_member_dept_history ────────────────
     // When either the management (department) or the sub-dept (section) changes
     // we close the current open record and open a new one — same pattern the
