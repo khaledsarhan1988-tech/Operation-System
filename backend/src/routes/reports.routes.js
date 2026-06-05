@@ -5656,35 +5656,46 @@ router.get('/attendance-absence/segments', (req, res) => {
 
   // Coordinator employment dates (for the [hire, leave] cap).
   const tmRow = db.prepare(
-    `SELECT start_date, end_date FROM team_members WHERE department='customer_services' AND LOWER(TRIM(name))=LOWER(TRIM(?)) LIMIT 1`
+    `SELECT start_date, end_date, section FROM team_members WHERE department='customer_services' AND LOWER(TRIM(name))=LOWER(TRIM(?)) LIMIT 1`
   ).get(coordinator) || {};
   const empStart = d10(tmRow.start_date);
   const empEnd   = d10(tmRow.end_date);
+  const tmSection = tmRow.section || null;   // fallback section when no dept_history exists
 
   // Coordinator-scoped membership test that MIRRORS dateAwareCoord in
   // /attendance-absence EXACTLY (same TRIM match + team_members employment JOIN)
   // so the segment numbers SUM to the coordinator's row. `aliasGroup` is the
   // alias whose group_name/line to use — the EVENT's own (l / a), NOT batches,
   // so ENDED groups (removed from batches) are still counted.
-  const cf = (aliasGroup, dateExpr) => ` AND EXISTS (
-    SELECT 1 FROM coordinator_history ch_s
-      JOIN team_members tm_s
-        ON LOWER(TRIM(tm_s.name)) = LOWER(TRIM(ch_s.coordinator))
-       AND tm_s.department = 'customer_services'
-     WHERE ch_s.group_name = ${aliasGroup}.group_name
-       AND ch_s.line       = ${aliasGroup}.line
-       AND DATE(ch_s.effective_from) <= ${dateExpr}
-       AND (ch_s.effective_to IS NULL OR DATE(ch_s.effective_to) > ${dateExpr})
-       -- Mirrors dateAwareCoord: hire-date lower-bound removed (unreliable default),
-       -- end_date kept. Keeps segment sums == the coordinator's row.
-       AND (tm_s.end_date   IS NULL OR TRIM(tm_s.end_date)   = '' OR DATE(tm_s.end_date)   >= ${dateExpr})
-       AND LOWER(TRIM(ch_s.coordinator)) = LOWER(TRIM('${safe}'))
-  )`;
+  // Count an event for this coordinator ONLY if they are the SINGLE coordinator-
+  // of-record the row endpoint attributes it to (dateAwareCoord = earliest
+  // effective_from, tie-break coordinator ASC). Previously this was an "EXISTS
+  // ANY coordinator at the date == me" check, which re-counted shared-group events
+  // for BOTH co-coordinators → segments over-counted vs the row. Now segment sums
+  // reconcile to the row exactly even for co-coordinated groups.
+  const cf = (aliasGroup, dateExpr) => ` AND LOWER(TRIM('${safe}')) = LOWER(TRIM((
+    SELECT ch_w.coordinator FROM coordinator_history ch_w
+      JOIN team_members tm_w
+        ON LOWER(TRIM(tm_w.name)) = LOWER(TRIM(ch_w.coordinator))
+       AND tm_w.department = 'customer_services'
+     WHERE ch_w.group_name = ${aliasGroup}.group_name
+       AND ch_w.line       = ${aliasGroup}.line
+       AND DATE(ch_w.effective_from) <= ${dateExpr}
+       AND (ch_w.effective_to IS NULL OR DATE(ch_w.effective_to) > ${dateExpr})
+       AND (tm_w.end_date   IS NULL OR TRIM(tm_w.end_date)   = '' OR DATE(tm_w.end_date)   >= ${dateExpr})
+     ORDER BY DATE(ch_w.effective_from) ASC, ch_w.coordinator ASC LIMIT 1
+  )))`;
 
   // Bucket key = the section-history record applicable on the event date
   // (prefers a covering record; falls back to the nearest by start date so a
   // gap never drops an event — keeps segment sums == the coordinator total).
-  const segId = (d) => `(
+  // Returns the applicable dept_history record id, or -1 as a fallback bucket when
+  // the coordinator has NO dept_history rows at all (e.g. RadwaGamal/Malika7 who
+  // predate section-history tracking) — without this they returned NULL and bump()
+  // dropped every event → /segments showed {0,0,0,0} while the row had real
+  // numbers. The -1 bucket is labelled with the member's current team_members
+  // section in the segment build below.
+  const segId = (d) => `COALESCE((
     SELECT tmh.id FROM team_member_dept_history tmh
      WHERE LOWER(TRIM(tmh.member_name)) = LOWER('${safe}')
      ORDER BY
@@ -5692,7 +5703,7 @@ router.get('/attendance-absence/segments', (req, res) => {
              AND (tmh.effective_to IS NULL OR DATE(tmh.effective_to) > ${d}) THEN 0 ELSE 1 END,
        ABS(julianday(${d}) - julianday(tmh.effective_from))
      LIMIT 1
-  )`;
+  ), -1)`;
   const dateFilterL = buildDateFilter('l.date', from_date, to_date);
   const dateFilterResolved = from_date && to_date
     ? ` AND resolved_date BETWEEN '${from_date}' AND '${to_date}'`
@@ -5774,7 +5785,9 @@ router.get('/attendance-absence/segments', (req, res) => {
     const minStr = (a, b) => (!a ? b : (!b ? a : (a < b ? a : b)));
 
     const segments = [...segMap.entries()].map(([id, n]) => {
-      const h = histById.get(id) || {};
+      // id === -1 → the no-dept_history fallback bucket: label it with the
+      // member's current team_members section (ongoing window).
+      const h = histById.get(id) || (id === -1 ? { section: tmSection } : {});
       const hFrom = d10(h.effective_from), hTo = d10(h.effective_to);
       // period = section window ∩ filter ∩ (leave date). Start is NOT clamped by
       // empStart (hire date) — it is unreliable (record-creation default) and the
