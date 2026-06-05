@@ -3005,6 +3005,28 @@ router.get('/code-problems', (req, res) => {
 //       days:   { 'YYYY-MM-DD': { is_work_day, available_min, booked_min, utilization_pct, lectures: [...] } }
 //     }]
 //   }
+// Merge [startMin,endMin] intervals → total COVERED minutes (union length).
+// A trainer's booked time is their ACTUAL occupied wall-clock time: overlapping
+// or simultaneous sessions count ONCE, not summed. Without this, a side/zc
+// trainer attributed to many groups at the same clock time (or the same session
+// logged under several coordinator-name variants) had every duration summed →
+// utilization blew past 100% (e.g. 246% on a 7h shift). Non-overlapping work is
+// unaffected (union == sum), so a trainer who genuinely worked beyond their shift
+// still reads >100%.
+function mergeIntervalsMinutes(intervals) {
+  const iv = (intervals || [])
+    .filter(x => Array.isArray(x) && x.length === 2 && x[0] != null && x[1] != null && x[1] > x[0])
+    .sort((a, b) => a[0] - b[0]);
+  let total = 0, curS = null, curE = null;
+  for (const [s, e] of iv) {
+    if (curE === null)      { curS = s; curE = e; }
+    else if (s <= curE)     { if (e > curE) curE = e; }
+    else                    { total += curE - curS; curS = s; curE = e; }
+  }
+  if (curE !== null) total += curE - curS;
+  return total;
+}
+
 router.get('/trainer-utilization', (req, res) => {
   const { from, to, section = '', search = '' } = req.query;
   const line = lineFilter(req);
@@ -3308,12 +3330,18 @@ router.get('/trainer-utilization', (req, res) => {
         if (isWorkDay) workDayCount++;
         // Booked counts only when the day belongs to the active section.
         const lectures = dayInSection ? (byTrainerDay[`${tKey}|${date}`] || []) : [];
-        const bookedMin = lectures.reduce((s, l) => s + parseDur(l.duration), 0);
-        // Voice notes are WORK time inside the shift — they count as booked
-        // (the trainer is busy recording voice notes) but don't reduce capacity.
-        const vnMin = isWorkDay ? voiceNoteMinsForDate(sectionShifts, date) : 0;
         const voiceNotes = isWorkDay ? voiceNoteIntervalsForDate(sectionShifts, date) : [];
-        const totalBookedMin = bookedMin + vnMin;
+        // Booked = ACTUAL occupied wall-clock time (merge overlaps) — NOT the sum
+        // of every session duration. Overlapping/simultaneous sessions (one
+        // trainer attributed to many groups at the same time, or the same session
+        // under several coordinator-name variants) count ONCE.
+        const lecIntervals = lectures
+          .map(l => { const st = parseTime12(l.time), du = parseDur(l.duration); return (st >= 0 && du > 0) ? [st, st + du] : null; })
+          .filter(Boolean);
+        const vnIntervals = voiceNotes.map(v => [v.start_min, v.end_min]);
+        const bookedMin = mergeIntervalsMinutes(lecIntervals);                       // lecture occupied time
+        const totalBookedMin = mergeIntervalsMinutes([...lecIntervals, ...vnIntervals]);
+        const vnMin = totalBookedMin - bookedMin;                                    // voice-note time outside lectures
         const utilization = isWorkDay && availMin > 0
           ? Math.round((totalBookedMin / availMin) * 100)
           : null;
@@ -3477,6 +3505,30 @@ router.get('/trainer-utilization-summary', (req, res) => {
     }
     return total;
   }
+  // Voice-note work blocks for a date as [start,end] intervals (for merging).
+  function voiceNoteIntervalsForDate(shifts, dateStr) {
+    const dayKey = DOW_KEYS[getDow(dateStr)] || '';
+    const out = [];
+    for (const sh of shifts) {
+      if (!shiftCoversDay(sh, dateStr)) continue;
+      for (const v of (sh.voiceNotes || [])) {
+        if (v.days && v.days.length && !v.days.includes(dayKey)) continue;
+        out.push([v.s, v.e]);
+      }
+    }
+    return out;
+  }
+  // Booked = ACTUAL occupied wall-clock minutes that day (lectures + voice notes),
+  // overlapping/simultaneous sessions merged so they count ONCE — NOT the sum of
+  // every session duration (which inflated utilization past 100%). Mirrors the
+  // heatmap's booked. See mergeIntervalsMinutes().
+  function bookedOccupiedForDate(lectures, shifts, dateStr) {
+    const lecIv = (lectures || [])
+      .map(l => { const st = parseTime12(l.time), du = parseDur(l.duration); return (st >= 0 && du > 0) ? [st, st + du] : null; })
+      .filter(Boolean);
+    const vnIv = voiceNoteIntervalsForDate(shifts, dateStr);
+    return mergeIntervalsMinutes([...lecIv, ...vnIv]);
+  }
   // Section a shift belongs to (per-shift; falls back to the trainer's main section).
   const shiftSection = (sh, trainer) =>
     (sh && sh.section) || (trainer && trainer.section) || 'all';
@@ -3610,10 +3662,8 @@ router.get('/trainer-utilization-summary', (req, res) => {
         // 100%) or on an off day is reflected fully. Available still counts
         // shift time only.
         const lectures = lectureMap[`${tKey}|${date}`] || [];
-        const lectureMin = lectures.reduce((s, l) => s + parseDur(l.duration), 0);
-        const vnMin = voiceNoteMinsForDate(shifts, date);
         available += avail;
-        booked   += lectureMin + vnMin;
+        booked   += bookedOccupiedForDate(lectures, shifts, date);
       }
       return { available_min: available, booked_min: booked };
     }
@@ -3642,9 +3692,7 @@ router.get('/trainer-utilization-summary', (req, res) => {
         const extra = extraByMemberDay[`${trainer.id}|${date}`] || 0;
         if (extra > 0) { const sec = daySection || (trainer.section || 'all'); add(sec, extra, 0); if (!daySection) daySection = sec; }
         const lectures = lectureMap[`${tKey}|${date}`] || [];
-        const lectureMin = lectures.reduce((s, l) => s + parseDur(l.duration), 0);
-        const vnMin = voiceNoteMinsForDate(shifts, date);
-        const bookedDay = lectureMin + vnMin;
+        const bookedDay = bookedOccupiedForDate(lectures, shifts, date);
         if (bookedDay > 0) { const sec = daySection || (trainer.section || 'all'); add(sec, 0, bookedDay); }
       }
       return map;
