@@ -328,8 +328,10 @@ function coordinatorAtDateExpr(groupExpr, lineExpr, dateExpr) {
                 AND ch_d.line       = ${lineExpr}
                 AND DATE(ch_d.effective_from) <= ${dateExpr}
                 AND (ch_d.effective_to IS NULL OR DATE(ch_d.effective_to) > ${dateExpr})
-                AND TRIM(ch_d.coordinator) NOT IN ('--','')))`;   // '--' = "no coordinator" placeholder → show blank, not "--"
-}
+                AND TRIM(ch_d.coordinator) NOT IN ('--','')
+                AND EXISTS (SELECT 1 FROM team_members tm_x
+                             WHERE REPLACE(LOWER(TRIM(tm_x.name)),' ','') = REPLACE(LOWER(TRIM(ch_d.coordinator)),' ',''))))`;
+} // only coordinators registered in فريق العمل (team_members) are shown; unregistered names (and '--') render blank
 
 /**
  * Single coordinator-of-record at a date (most recent match).
@@ -349,6 +351,8 @@ function coordAtDateSingleExpr(groupExpr, lineExpr, dateExpr) {
               AND DATE(ch1.effective_from) <= ${dateExpr}
               AND (ch1.effective_to IS NULL OR DATE(ch1.effective_to) > ${dateExpr})
               AND TRIM(ch1.coordinator) NOT IN ('--','')
+              AND EXISTS (SELECT 1 FROM team_members tm_x
+                           WHERE REPLACE(LOWER(TRIM(tm_x.name)),' ','') = REPLACE(LOWER(TRIM(ch1.coordinator)),' ',''))
             ORDER BY DATE(ch1.effective_from) DESC LIMIT 1)`;
 }
 
