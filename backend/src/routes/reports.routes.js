@@ -2621,6 +2621,10 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
 
     for (const batch of batches) {
       const gn        = batch.group_name;
+      // Skip internal/placeholder buckets (not real teaching groups): they carry
+      // junk schedules (e.g. 9 main lectures on one day, trainee_count 319) and
+      // would flood the Code-Repair report with unresolvable false problems.
+      if (/free\s*slot|hiring\s*new\s*teacher/i.test(gn)) continue;
       const parsed    = parseGroupName(gn);
       const mainRows  = mainByGroup[gn] || [];
       const sideRows  = sideByGroup[gn] || [];
@@ -2743,6 +2747,12 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
         }
       }
 
+      // Intensive (مكثف) groups pack their sessions into a compressed window
+      // (2 day-tokens, e.g. "Sat_Sun"), so the +24/+25/+21-day last-date formulas
+      // don't apply — skip checks 3 & 4 for them (they produced false positives).
+      const groupIsIntensive = ['sat','sun','mon','tue','wed','thu','fri']
+        .filter(d => new RegExp('(^|_)' + d + '(_|$)').test(gn.toLowerCase())).length >= 2;
+
       // 2. Zoom call count ≠ trainee_count × expected-per-trainee
       // Intensive groups (مكثف): group name contains 2+ day abbreviations
       // (e.g. "Sat_Sun", "Mon_Tue") → 4 zoom calls per trainee.
@@ -2768,7 +2778,7 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
       }
 
       // 3. MAIN — last session date mismatch
-      if (mainDates.length > 0 && firstMainDate) {
+      if (mainDates.length > 0 && firstMainDate && !groupIsIntensive) {
         const lastMainRow   = mainRows[mainRows.length - 1];
         const actualLast    = effectiveDate(lastMainRow.date, lastMainRow.time, lastMainRow.duration);
         const calcLast      = expectedMainLast(firstMainDate);
@@ -2783,7 +2793,7 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
       }
 
       // 4. ZOOM CALL — last session date mismatch
-      if (sideSlotDates.length > 0 && firstSideDate) {
+      if (sideSlotDates.length > 0 && firstSideDate && !groupIsIntensive) {
         const lastSideRow   = sideRows[sideRows.length - 1];
         const actualSideLast = effectiveDate(lastSideRow.date, lastSideRow.time, lastSideRow.duration);
         const calcSideLast   = expectedSideLast(firstSideDate);
