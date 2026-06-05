@@ -327,7 +327,8 @@ function coordinatorAtDateExpr(groupExpr, lineExpr, dateExpr) {
               WHERE ch_d.group_name = ${effG}
                 AND ch_d.line       = ${lineExpr}
                 AND DATE(ch_d.effective_from) <= ${dateExpr}
-                AND (ch_d.effective_to IS NULL OR DATE(ch_d.effective_to) > ${dateExpr})))`;
+                AND (ch_d.effective_to IS NULL OR DATE(ch_d.effective_to) > ${dateExpr})
+                AND TRIM(ch_d.coordinator) NOT IN ('--','')))`;   // '--' = "no coordinator" placeholder → show blank, not "--"
 }
 
 /**
@@ -347,6 +348,7 @@ function coordAtDateSingleExpr(groupExpr, lineExpr, dateExpr) {
               AND ch1.line       = ${lineExpr}
               AND DATE(ch1.effective_from) <= ${dateExpr}
               AND (ch1.effective_to IS NULL OR DATE(ch1.effective_to) > ${dateExpr})
+              AND TRIM(ch1.coordinator) NOT IN ('--','')
             ORDER BY DATE(ch1.effective_from) DESC LIMIT 1)`;
 }
 
@@ -1644,7 +1646,7 @@ router.get('/absent-list', (req, res) => {
         ) AS dept_type,
         COALESCE(
           ${coordinatorAtDateExpr('a.group_name', 'a.line', `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`)},
-          b.coordinators
+          NULLIF(TRIM(b.coordinators),'--')
         ) AS coordinators
       FROM absent_students a
       LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
@@ -1675,7 +1677,7 @@ router.get('/absent-list', (req, res) => {
       ) AS dept_type,
       COALESCE(
         ${coordinatorAtDateExpr('l.group_name', 'l.line', 'l.date')},
-        b2.coordinators
+        NULLIF(TRIM(b2.coordinators),'--')
       ) AS coordinators
     FROM lectures l
     INNER JOIN batches b2 ON l.group_name = b2.group_name${line ? ' AND b2.line = l.line' : ''}
@@ -1817,7 +1819,7 @@ router.get('/absent-side-list', (req, res) => {
            ) AS dept_type,
            COALESCE(
              ${coordinatorAtDateExpr('a.group_name', 'a.line', 'a.date')},
-             MAX(b.coordinators)
+             NULLIF(TRIM(MAX(b.coordinators)),'--')
            ) AS coordinators
          ${azBaseFrom}
          GROUP BY a.id
