@@ -351,6 +351,23 @@ function coordAtDateSingleExpr(groupExpr, lineExpr, dateExpr) {
 }
 
 /**
+ * Department of a coordinator, matched by a NORMALIZED name key.
+ *
+ * Coordinator names are stored inconsistently across tables (batches.coordinators
+ * 'RadwaGamal', coordinator_history 'RadwaGamal', users.full_name 'Radwa Gamal').
+ * An exact full_name match silently fails → section renders "—". Match on the
+ * exact name OR a space-stripped, lowercased compact key so 'RadwaGamal' resolves
+ * to the user 'Radwa Gamal' (General). Returns NULL if still unmatched.
+ */
+function userDeptExpr(coordExpr) {
+  return `(SELECT u.department FROM users u
+            WHERE (LOWER(TRIM(u.full_name)) = LOWER(TRIM(${coordExpr}))
+                OR REPLACE(LOWER(TRIM(u.full_name)),' ','') = REPLACE(LOWER(TRIM(${coordExpr})),' ',''))
+              AND u.department IS NOT NULL AND u.department != 'All'
+            LIMIT 1)`;
+}
+
+/**
  * Forward rename resolution: given a group name that may be the OLD (pre-rename)
  * name, return the CURRENT name it was renamed TO (latest hop). When a group is
  * renamed, its `lectures` rows are relabeled to the new name but `absent_students`
@@ -822,6 +839,14 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
   const dept1  = buildStrictDeptFilter('b', resolvedDept);
   const emp1   = buildCoordFilter('b', employee);
   const coord1 = buildCoordFilter('b', coordinator);
+  // Resolved coordinator for the absence-sourced parts (partA / partA_zoom):
+  // ended groups leave batches (b.coordinators NULL) but remain in
+  // coordinator_history — recover the coordinator so ended/renamed-group zoom
+  // absences aren't dropped by the dept/coordinator filter. (a.date is present.)
+  const resolvedCoordA = `COALESCE(b.coordinators, ${coordAtDateSingleExpr('a.group_name', 'a.line', 'a.date')})`;
+  const deptA  = buildStrictDeptFilterExpr(resolvedCoordA, 'b.dept_type', resolvedDept);
+  const empA   = employee    ? ` AND ${nameInListInline(resolvedCoordA, employee)}`    : '';
+  const coordA = coordinator ? ` AND ${nameInListInline(resolvedCoordA, coordinator)}` : '';
   const srch1  = search ? ` AND (c.name LIKE '%${escapeLike(search)}%' ESCAPE '\\' OR c.phone LIKE '%${escapeLike(search)}%' ESCAPE '\\' OR c.group_name LIKE '%${escapeLike(search)}%' ESCAPE '\\')` : '';
   const srchA  = search ? ` AND (a.student_name LIKE '%${escapeLike(search)}%' ESCAPE '\\' OR a.phone LIKE '%${escapeLike(search)}%' ESCAPE '\\' OR a.group_name LIKE '%${escapeLike(search)}%' ESCAPE '\\')` : '';
 
@@ -841,13 +866,13 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
       a.phone AS client_phone,
       a.group_name,
       a.date AS session_date,
-      b.coordinators,
+      ${resolvedCoordA} AS coordinators,
       COALESCE(
-        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) AND u.department != 'All' LIMIT 1),
+        ${userDeptExpr(resolvedCoordA)},
         b.dept_type
       ) AS dept_type
     FROM absent_students a
-    INNER JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
+    LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
     LEFT JOIN (SELECT phone, MIN(name) AS name FROM clients GROUP BY phone) c_lu
       ON (a.student_name IS NULL OR TRIM(a.student_name) = '')
       AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
@@ -859,12 +884,12 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
     AND a.date IS NOT NULL AND TRIM(a.date) != ''
     AND EXISTS (
       SELECT 1 FROM lectures l
-      WHERE l.group_name = a.group_name
+      WHERE l.group_name IN (a.group_name, ${currentGroupNameExpr('a.group_name', 'a.line')})
         AND l.session_type = 'side'
         AND l.status != 'غير مؤكدة'
         AND l.date = a.date${line ? ' AND l.line = a.line' : ''}
     )
-    ${dept1}${emp1}${coord1}${srchA}${lineA}`;
+    ${deptA}${empA}${coordA}${srchA}${lineA}`;
 
   // partA_zoom — mirrors partA but reads from absent_zoom_students (the new
   // dedicated zoom-absent table). When the user uploads the zoom-absent Excel
@@ -878,13 +903,13 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
       a.phone AS client_phone,
       a.group_name,
       a.date AS session_date,
-      b.coordinators,
+      ${resolvedCoordA} AS coordinators,
       COALESCE(
-        (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) AND u.department != 'All' LIMIT 1),
+        ${userDeptExpr(resolvedCoordA)},
         b.dept_type
       ) AS dept_type
     FROM absent_zoom_students a
-    INNER JOIN batches b ON REPLACE(a.group_name,' ','') = REPLACE(b.group_name,' ','')${line ? ' AND b.line = a.line' : ''}
+    LEFT JOIN batches b ON REPLACE(a.group_name,' ','') = REPLACE(b.group_name,' ','')${line ? ' AND b.line = a.line' : ''}
     LEFT JOIN (SELECT phone, MIN(name) AS name FROM clients GROUP BY phone) c_lu
       ON (a.student_name IS NULL OR TRIM(a.student_name) = '')
       AND a.phone IS NOT NULL AND TRIM(a.phone) != ''
@@ -896,7 +921,10 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
     AND a.date IS NOT NULL AND TRIM(a.date) != ''
     AND EXISTS (
       SELECT 1 FROM lectures l
-       WHERE REPLACE(l.group_name,' ','') = REPLACE(a.group_name,' ','')
+       WHERE REPLACE(l.group_name,' ','') IN (
+               REPLACE(a.group_name,' ',''),
+               REPLACE(${currentGroupNameExpr('a.group_name', 'a.line')},' ','')
+             )
          AND l.date       = a.date
          AND l.session_type = 'side'
          AND l.status != 'غير مؤكدة'
@@ -905,7 +933,7 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
                   AND CAST(SUBSTR(l.duration,1,2) AS INTEGER)*60
                       + CAST(SUBSTR(l.duration,4,2) AS INTEGER) < 20))${line ? ' AND l.line = a.line' : ''}
     )
-    ${dept1}${emp1}${coord1}${srchA}${lineA}`;
+    ${deptA}${empA}${coordA}${srchA}${lineA}`;
 
   const part1 = `
     SELECT DISTINCT c.name AS client_name, c.phone AS client_phone,
@@ -1570,11 +1598,11 @@ router.get('/absent-list', (req, res) => {
         COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS date,
         a.time, a.lecture_no,
         COALESCE(
-          (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) AND u.department != 'All' LIMIT 1),
+          ${userDeptExpr('b.coordinators')},
           b.dept_type,
           -- ENDED groups leave the batches table (b.* NULL -> section shows
           -- dash); recover the section from coordinator_history's coordinator.
-          (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(${coordAtDateSingleExpr('a.group_name', 'a.line', `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`)})) AND u.department != 'All' LIMIT 1)
+          ${userDeptExpr(coordAtDateSingleExpr('a.group_name', 'a.line', `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`))}
         ) AS dept_type,
         COALESCE(
           ${coordinatorAtDateExpr('a.group_name', 'a.line', `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`)},
@@ -1745,8 +1773,9 @@ router.get('/absent-side-list', (req, res) => {
            COALESCE(
              MAX(b.dept_type),
              -- ENDED/renamed groups: b.* is NULL → section "—". Recover it from
-             -- the coordinator-of-record (coordinator_history) registered dept.
-             (SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(${coordAtDateSingleExpr('a.group_name', 'a.line', 'a.date')})) AND u.department != 'All' LIMIT 1)
+             -- the coordinator-of-record (coordinator_history) registered dept
+             -- (normalized name match handles 'RadwaGamal' vs 'Radwa Gamal').
+             ${userDeptExpr(coordAtDateSingleExpr('a.group_name', 'a.line', 'a.date'))}
            ) AS dept_type,
            COALESCE(
              ${coordinatorAtDateExpr('a.group_name', 'a.line', 'a.date')},
