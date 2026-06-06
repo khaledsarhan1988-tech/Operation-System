@@ -5509,7 +5509,7 @@ router.get('/attendance-absence', (req, res) => {
         JOIN team_members tm
           ON LOWER(TRIM(tm.name)) = LOWER(TRIM(ch.coordinator))
          AND tm.department = 'customer_services'
-       WHERE ch.group_name = ${batchAlias}.group_name
+       WHERE ch.group_name = ${effectiveGroupNameAtDate(`${batchAlias}.group_name`, `${batchAlias}.line`, dateExpr)}
          AND ch.line       = ${batchAlias}.line
          AND DATE(ch.effective_from) <= ${dateExpr}
          AND (ch.effective_to IS NULL OR DATE(ch.effective_to) > ${dateExpr})
