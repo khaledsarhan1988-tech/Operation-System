@@ -429,6 +429,21 @@ function syncBatches(buffer, line) {
           (old_group_name, new_group_name, line, renamed_on, detected_by)
         VALUES (?, ?, ?, DATE('now', '+2 hours'), 'auto-sync')
       `);
+      // Idempotency + anti-reverse guard (2026-06-06). group_renames was being
+      // polluted two ways: (a) UNIQUE(new_group_name,line,renamed_on) includes
+      // the DATE, so re-detecting the same rename on a later sync inserted a
+      // fresh RE-STAMPED row instead of being ignored; (b) a full-line resync of
+      // a STALE old-name Drive file flips batches back to the old name (see the
+      // DELETE FROM batches below) and records the REVERSE edge — so A→B and B→A
+      // both accumulate, which makes the rename-aware read helpers swap/zero. We
+      // guard against both here: skip if this exact edge already exists (keeps
+      // the EARLIEST renamed_on = the true rename date), and skip if the OPPOSITE
+      // edge already exists (first detected direction — the real rename — wins;
+      // never create an A↔B cycle). Read-layer is already hardened (commit
+      // 1f759dd); this stops the pollution at the source.
+      const renameExists = db.prepare(
+        `SELECT 1 FROM group_renames WHERE old_group_name = ? AND new_group_name = ? AND line = ?`
+      );
       // When a group is renamed (coordinator suffix changes in the code)
       // it's the SAME group. Carry its count-approval baseline over to the
       // new code so "استلام المجموعات" keeps tracking it instead of
@@ -451,6 +466,10 @@ function syncBatches(buffer, line) {
           if (newNames.includes(oldName)) continue;
           const target = newNames.find(n => !oldNames.includes(n));
           if (target) {
+            // Skip if already recorded (idempotent) or if the reverse edge exists
+            // (first/true direction wins — prevents re-stamps and A↔B cycles).
+            if (renameExists.get(oldName, target, line)) continue;
+            if (renameExists.get(target, oldName, line)) continue;
             insertRename.run(oldName, target, line);
             renames += 1;
             // Migrate the count-approval baseline to the renamed code.

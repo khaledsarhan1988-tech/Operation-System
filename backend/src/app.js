@@ -2504,6 +2504,74 @@ initDb().then(db => {
     console.error('enrollment_students migration error:', e.message);
   }
 
+  // ── group_renames de-pollution (2026-06-06) ───────────────────────────────
+  // The Drive sync used to re-record renames every run (UNIQUE includes
+  // renamed_on → re-stamped duplicate rows) and to emit REVERSE edges when a
+  // stale old-name Drive file resynced and flipped `batches` back to the old
+  // name. That left ~1930 rows (only ~836 distinct, 162 reverse pairs) which
+  // broke the rename-aware read helpers (swap/zero). The sync is now guarded
+  // (sync.service.js: idempotent + anti-reverse). This ONE-TIME, IDEMPOTENT
+  // migration cleans the existing rows: (1) keep the EARLIEST renamed_on per
+  // (old,new,line); (2) for each reverse pair drop the side whose new_group_name
+  // is NOT the live `batches` name (if neither/both live → keep the earlier
+  // renamed_on). A clean table makes this a no-op on later boots. A one-time
+  // pre-cleanup snapshot is kept in group_renames_backup_20260606.
+  try {
+    const raw = db._raw;
+    const before = raw.prepare('SELECT COUNT(*) c FROM group_renames').get().c;
+    raw.run('CREATE TABLE IF NOT EXISTS group_renames_backup_20260606 AS SELECT * FROM group_renames WHERE 0');
+    if (raw.prepare('SELECT COUNT(*) c FROM group_renames_backup_20260606').get().c === 0) {
+      raw.run('INSERT INTO group_renames_backup_20260606 SELECT * FROM group_renames');
+    }
+    const cleanup = db.transaction(() => {
+      // 1) Dedupe — keep the earliest renamed_on (min id tiebreak) per (old,new,line).
+      raw.run(`
+        DELETE FROM group_renames
+         WHERE id NOT IN (
+           SELECT g.id FROM group_renames g
+            WHERE NOT EXISTS (
+              SELECT 1 FROM group_renames g2
+               WHERE g2.old_group_name = g.old_group_name
+                 AND g2.new_group_name = g.new_group_name
+                 AND g2.line           = g.line
+                 AND ( DATE(g2.renamed_on) < DATE(g.renamed_on)
+                    OR (DATE(g2.renamed_on) = DATE(g.renamed_on) AND g2.id < g.id) )
+            )
+         )`);
+      // 2) Resolve reverse pairs (A→B & B→A on same line): drop the wrong side.
+      const pairs = raw.prepare(`
+        SELECT g1.id id1, g1.old_group_name a, g1.new_group_name b, g1.line ln,
+               g1.renamed_on r1, g2.id id2, g2.renamed_on r2
+          FROM group_renames g1
+          JOIN group_renames g2
+            ON g2.old_group_name = g1.new_group_name
+           AND g2.new_group_name = g1.old_group_name
+           AND g2.line           = g1.line
+         WHERE g1.old_group_name < g1.new_group_name`).all();
+      const inB   = raw.prepare('SELECT 1 FROM batches WHERE group_name = ? AND line = ? LIMIT 1');
+      const delId = raw.prepare('DELETE FROM group_renames WHERE id = ?');
+      for (const p of pairs) {
+        const aLive = !!inB.get(p.a, p.ln);
+        const bLive = !!inB.get(p.b, p.ln);
+        let drop;
+        if (bLive && !aLive)      drop = p.id2;   // a→b is correct (b is the live name)
+        else if (aLive && !bLive) drop = p.id1;   // b→a is correct (a is the live name)
+        else if (p.r1 < p.r2)     drop = p.id2;   // neither/both live → keep earlier renamed_on
+        else if (p.r2 < p.r1)     drop = p.id1;
+        else                      drop = Math.max(p.id1, p.id2);
+        delId.run(drop);
+      }
+    });
+    cleanup();
+    const after = raw.prepare('SELECT COUNT(*) c FROM group_renames').get().c;
+    if (before !== after) {
+      saveNow();
+      console.log(`✅ Migration: group_renames de-polluted (${before} → ${after} rows; backup in group_renames_backup_20260606)`);
+    }
+  } catch (e) {
+    console.error('group_renames de-pollution migration error:', e.message);
+  }
+
   // ── Auto-upsert admin user on every startup ───────────────────────────────
   // Ensures admin always exists even after DB reset (e.g. Railway redeploy).
   try {
