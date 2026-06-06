@@ -159,12 +159,30 @@ function buildStrictDeptFilterExpr(coordExpr, deptExpr, department) {
 // honoring renames recorded in `group_renames`. If the event date is BEFORE
 // a recorded rename for this group, we fall back to the old group_name —
 // so coord_history lookups attribute the event to the OLD coordinator.
+//
+// ⚠ RENAME-DUP HARDENING (2026-06-06): `group_renames` is polluted — the Drive
+// sync RE-RECORDS the same rename on every run, stamping `renamed_on` with the
+// run date (e.g. one real NORHAN→Radwa on 2026-06-01 also appears re-stamped on
+// 06-04 and 06-06), plus reverse rows (A→B and B→A both present). The old logic
+// picked the EARLIEST renamed_on STRICTLY AFTER the event date, so a re-stamped
+// duplicate dated AFTER a post-rename event wrongly rewound the name to the OLD
+// value → coordinator-at-date matched the OLD coordinator → real absences were
+// attributed away from the current coordinator (showed 0). Fix: only rewind when
+// the event predates the group's TRUE rename date = MIN(renamed_on) for this
+// (new_group_name,line). Later re-stamps are ignored, so a post-rename event
+// keeps the current name and attributes correctly. (Non-destructive; logic-only —
+// `group_renames` rows are untouched.)
 function effectiveGroupNameAtDate(groupExpr, lineExpr, dateExpr) {
   return `COALESCE(
     (SELECT gr.old_group_name FROM group_renames gr
       WHERE gr.new_group_name = ${groupExpr}
         AND gr.line           = ${lineExpr}
         AND DATE(gr.renamed_on) > ${dateExpr}
+        AND DATE(gr.renamed_on) = (
+          SELECT MIN(DATE(gr2.renamed_on)) FROM group_renames gr2
+           WHERE gr2.new_group_name = ${groupExpr}
+             AND gr2.line           = ${lineExpr}
+        )
       ORDER BY DATE(gr.renamed_on) ASC LIMIT 1),
     ${groupExpr}
   )`;
@@ -379,15 +397,42 @@ function userDeptExpr(coordExpr) {
  * renamed, its `lectures` rows are relabeled to the new name but `absent_students`
  * rows keep the old name — so matching an absence (old name) to its lecture (new
  * name) by `=` fails. COALESCE this so callers can match BOTH names.
+ *
+ * ⚠ RENAME-DUP HARDENING (2026-06-06): `group_renames` is polluted with BOGUS
+ * REVERSE rows — the Drive sync re-records active renames every run and also
+ * emits the reverse edge (one real norhan→Radwa on 06-01 also appears re-stamped
+ * 06-04/06-06, PLUS spurious Radwa→norhan on 06-04/06-06). The old "latest
+ * renamed_on hop" logic then SWAPPED names (Radwa→norhan AND norhan→Radwa both
+ * resolved to the other), so the two twin rows a rename leaves in `lectures`
+ * (old name + new name, same date/time/trainer) got DIFFERENT canonical keys →
+ * COUNT(DISTINCT sessKey) failed to dedup → per-coordinator lecture/zoom counts
+ * DOUBLED. Fix: anchor to the authoritative live name. The current name is the
+ * one that still exists in `batches` (the old name is dropped on rename). So:
+ *   1. if the name itself is a live batch → it's already current, return it;
+ *   2. else resolve to the rename target that is a live batch (the true new name);
+ *   3. else (ended group, gone from batches) fall back to the latest hop.
+ * This yields a STABLE canonical (both twins → the live name) and the correct
+ * current name for display/matching. (Non-destructive; logic-only.)
  */
 function currentGroupNameExpr(groupExpr, lineExpr) {
-  return `COALESCE(
-    (SELECT gr_f.new_group_name FROM group_renames gr_f
-      WHERE gr_f.old_group_name = ${groupExpr}
-        AND gr_f.line           = ${lineExpr}
-      ORDER BY DATE(gr_f.renamed_on) DESC LIMIT 1),
-    ${groupExpr}
-  )`;
+  return `CASE
+    WHEN EXISTS (SELECT 1 FROM batches b_cur
+                  WHERE b_cur.group_name = ${groupExpr} AND b_cur.line = ${lineExpr})
+      THEN ${groupExpr}
+    ELSE COALESCE(
+      (SELECT gr_b.new_group_name FROM group_renames gr_b
+        WHERE gr_b.old_group_name = ${groupExpr}
+          AND gr_b.line           = ${lineExpr}
+          AND EXISTS (SELECT 1 FROM batches b2
+                       WHERE b2.group_name = gr_b.new_group_name AND b2.line = ${lineExpr})
+        ORDER BY DATE(gr_b.renamed_on) DESC LIMIT 1),
+      (SELECT gr_f.new_group_name FROM group_renames gr_f
+        WHERE gr_f.old_group_name = ${groupExpr}
+          AND gr_f.line           = ${lineExpr}
+        ORDER BY DATE(gr_f.renamed_on) DESC LIMIT 1),
+      ${groupExpr}
+    )
+  END`;
 }
 
 /**
