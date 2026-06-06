@@ -307,15 +307,27 @@ function coordDeptAtDateFilter(batchAlias, dateExpr, activeDept) {
  * the same roster + employment-window rule). NOT applied unless the caller
  * passes ?roster_window=1, so other consumers (SystemReports, dashboard) are
  * unaffected.
+ *
+ * ⚠ ENDED/RENAME FIX (2026-06-06): this used to key the coordinator_history
+ * lookup off a BATCHES alias (b/b2) — `ch_ew.group_name = b.group_name`. But
+ * ENDED groups are removed from `batches`, and renamed groups keep their OLD
+ * name on the absence rows, so the absent-list's `LEFT JOIN batches` produced
+ * b.group_name = NULL → the EXISTS matched nothing → EVERY drill-down row for a
+ * coordinator whose groups have all ended/renamed was dropped (modal showed 0
+ * while the per-coordinator table showed the real count — e.g. yassmen 251 vs
+ * 0). Fix: key the lookup off the EVENT's OWN group (a/l), resolved rename-aware
+ * via effectiveGroupNameAtDate — exactly like coordFilterAtDate — so it never
+ * depends on a batches row existing.
  */
-function employmentWindowFilter(batchAlias, dateExpr) {
+function employmentWindowFilter(groupExpr, lineExpr, dateExpr) {
+  const effG = effectiveGroupNameAtDate(groupExpr, lineExpr, dateExpr);
   return ` AND EXISTS (
     SELECT 1 FROM coordinator_history ch_ew
       JOIN team_members tm_ew
         ON LOWER(TRIM(tm_ew.name)) = LOWER(TRIM(ch_ew.coordinator))
        AND tm_ew.department = 'customer_services'
-     WHERE ch_ew.group_name = ${batchAlias}.group_name
-       AND ch_ew.line       = ${batchAlias}.line
+     WHERE ch_ew.group_name = ${effG}
+       AND ch_ew.line       = ${lineExpr}
        AND DATE(ch_ew.effective_from) <= ${dateExpr}
        AND (ch_ew.effective_to IS NULL OR DATE(ch_ew.effective_to) > ${dateExpr})
        -- NOTE: deliberately NOT filtering by tm_ew.start_date (hire date). It
@@ -1667,8 +1679,8 @@ router.get('/absent-list', (req, res) => {
   const searchFilter2= search      ? ` AND l.group_name LIKE '%${escapeLike(search)}%' ESCAPE '\\'` : '';
   // Opt-in employment-window filter (attendance-absence drill-down only).
   const rosterWin    = req.query.roster_window === '1' || req.query.roster_window === 'true';
-  const ewFilterP1   = rosterWin ? employmentWindowFilter('b',  `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`) : '';
-  const ewFilterP2   = rosterWin ? employmentWindowFilter('b2', 'l.date') : '';
+  const ewFilterP1   = rosterWin ? employmentWindowFilter('a.group_name', 'a.line', `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`) : '';
+  const ewFilterP2   = rosterWin ? employmentWindowFilter('l.group_name', 'l.line', 'l.date') : '';
 
   // Part1: absent_students — with name lookup + date inference from lecture_no when date is missing
   const part1 = `
@@ -1789,7 +1801,7 @@ router.get('/absent-side-list', (req, res) => {
     : activeTo   ? ` AND l.date <= '${activeTo}'` : '';
   // Opt-in employment-window filter (attendance-absence drill-down only).
   const rosterWinS    = req.query.roster_window === '1' || req.query.roster_window === 'true';
-  const ewFilterSideB = rosterWinS ? employmentWindowFilter('b', 'l.date') : '';
+  const ewFilterSideB = rosterWinS ? employmentWindowFilter('l.group_name', 'l.line', 'l.date') : '';
 
   // ── Prefer absent_zoom_students when uploaded (student-level rows) ────────
   // When a group-name search is active, check specifically for that group's data
@@ -1816,7 +1828,7 @@ router.get('/absent-side-list', (req, res) => {
     // Time-aware dept filter — coordinator's dept on a.date (via history),
     // not the current batches.dept_type. Mirrors /attendance-absence.
     const azDeptFilter   = coordDeptAtDateFilter('b', 'a.date', activeDept);
-    const azEwFilter     = rosterWinS ? employmentWindowFilter('b', 'a.date') : '';
+    const azEwFilter     = rosterWinS ? employmentWindowFilter('a.group_name', 'a.line', 'a.date') : '';
 
     // Restrict zoom-absent rows to absences against REGULAR (≤15-min) zoom
     // sessions only. Onboarding/Offboarding/Compensatory rows live in the
