@@ -5601,25 +5601,71 @@ router.get('/attendance-absence', (req, res) => {
       GROUP BY coordinator
     `).all();
 
-    // ─── ZOOM ABSENT per coordinator (dashboard formula) ───────────────────
-    // absent = COUNT(*) - present(attendance>0). See comment above.
-    const zoomAbsentRows = db.prepare(`
-      SELECT coordinator, COALESCE(SUM(absent_count), 0) AS cnt FROM (
-        SELECT ${dateAwareCoord('l', 'l.date')} AS coordinator,
-          COUNT(*) -
-            SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != ''
-                     AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END)
-            AS absent_count
-        FROM lectures l
-        WHERE l.session_type = 'side'
-          AND l.status = 'مؤكدة'
-          AND (l.duration IS NULL OR l.duration <= '00:30') AND l.side_session_category = 'regular'
-        ${dateFilterL}${deptFilterMainL}${coordFilterMainL}${lineL}
-        GROUP BY coordinator, l.group_name, l.date
-        HAVING absent_count > 0
-      ) sub
-      GROUP BY coordinator
-    `).all();
+    // ─── ZOOM ABSENT per coordinator ───────────────────────────────────────
+    // SOURCE FIX (2026-06-06): prefer the uploaded absent_zoom_students file —
+    // the SAME source as the dashboard, /absent-side-list, and the 2026-06-06
+    // Owner decision ("zoom absence count + details both come from the uploaded
+    // file so they match"). The OLD lectures-based formula (side slots minus
+    // present) MASSIVELY over-counts because zoom attendance is NOT recorded in
+    // lectures.attendance (it lives only in the uploaded file) — so nearly every
+    // empty-attendance slot was wrongly counted as an absence (e.g. yassmen
+    // 1631 vs the real 296). This report's drill-down already counts from the
+    // file, so the per-coordinator number was inconsistent with its own modal.
+    // Fall back to the legacy lectures formula only when no file rows exist for
+    // the line (so a line that hasn't uploaded the file still shows something).
+    const hasZoomFile = db.prepare(
+      `SELECT EXISTS(SELECT 1 FROM absent_zoom_students${line ? ` WHERE line = '${line.replace(/'/g, "''")}'` : ''}) AS h`
+    ).get()?.h;
+
+    const zoomAbsentDeptA  = sectionDeptFilter('a.group_name', 'a.line', 'a.date');
+    const zoomAbsentCoordA = coordFilterAtDate('a.group_name', 'a.line', 'a.date', coordName);
+    const zoomAbsentDateA  = buildDateFilter('a.date', from_date, to_date);
+
+    const zoomAbsentRows = hasZoomFile
+      ? db.prepare(`
+          SELECT coordinator, COUNT(*) AS cnt FROM (
+            SELECT a.id, ${dateAwareCoord('a', 'a.date')} AS coordinator
+            FROM absent_zoom_students a
+            WHERE (
+              (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
+              OR (a.phone IS NOT NULL AND TRIM(a.phone)!='')
+            )
+            AND EXISTS (
+              SELECT 1 FROM lectures l
+               WHERE REPLACE(l.group_name,' ','') IN (
+                       REPLACE(a.group_name,' ',''),
+                       REPLACE(${currentGroupNameExpr('a.group_name', 'a.line')},' ','')
+                     )
+                 AND l.date = a.date
+                 AND l.session_type = 'side'
+                 AND (l.side_session_category = 'regular'
+                      OR (l.duration IS NOT NULL AND LENGTH(l.duration) >= 5
+                          AND CAST(SUBSTR(l.duration,1,2) AS INTEGER)*60
+                              + CAST(SUBSTR(l.duration,4,2) AS INTEGER) < 20))${line ? ' AND l.line = a.line' : ''}
+            )
+            ${zoomAbsentDateA}${zoomAbsentDeptA}${zoomAbsentCoordA}${lineA}
+            GROUP BY a.id
+          ) sub
+          WHERE coordinator IS NOT NULL
+          GROUP BY coordinator
+        `).all()
+      : db.prepare(`
+          SELECT coordinator, COALESCE(SUM(absent_count), 0) AS cnt FROM (
+            SELECT ${dateAwareCoord('l', 'l.date')} AS coordinator,
+              COUNT(*) -
+                SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance != ''
+                         AND CAST(l.attendance AS INTEGER) > 0 THEN 1 ELSE 0 END)
+                AS absent_count
+            FROM lectures l
+            WHERE l.session_type = 'side'
+              AND l.status = 'مؤكدة'
+              AND (l.duration IS NULL OR l.duration <= '00:30') AND l.side_session_category = 'regular'
+            ${dateFilterL}${deptFilterMainL}${coordFilterMainL}${lineL}
+            GROUP BY coordinator, l.group_name, l.date
+            HAVING absent_count > 0
+          ) sub
+          GROUP BY coordinator
+        `).all();
 
     // Merge per coordinator
     const map = new Map();
