@@ -364,6 +364,21 @@ function coordinatorAtDateExpr(groupExpr, lineExpr, dateExpr) {
 } // only coordinators registered in فريق العمل (team_members) are shown; unregistered names (and '--') render blank
 
 /**
+ * SQL fragment excluding INTERNAL / placeholder buckets — not real teaching
+ * groups. Students are parked in them temporarily (placement tests, free slots,
+ * new-teacher hiring) while their real group/coordinator is elsewhere, so they
+ * must NOT count as lecture absences nor be attributed to the bucket's
+ * coordinator. ~79% of "main absence" rows came from these. Use in absence /
+ * expected-lecture WHERE clauses: ` ... ${notInternalGroup('a.group_name')}`.
+ */
+function notInternalGroup(groupExpr) {
+  return ` AND LOWER(TRIM(${groupExpr})) NOT LIKE '%free slot%'
+           AND LOWER(TRIM(${groupExpr})) NOT LIKE '%hiring new teacher%'
+           AND LOWER(TRIM(${groupExpr})) NOT LIKE '%placem%test%'
+           AND ${groupExpr} NOT LIKE '%تحديد مستو%'`;
+}
+
+/**
  * Single coordinator-of-record at a date (most recent match).
  *
  * Unlike a `batches` join, this survives the group LEAVING the batches table:
@@ -769,7 +784,7 @@ function buildRemarksNotesMainInnerQ({ from_date, to_date, department, employee,
          AND l_chk.status != 'غير مؤكدة'
          AND l_chk.date = COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)${line ? ' AND l_chk.line = a.line' : ''}
     )
-    ${deptFilter1}${empFilter1}${coord1}${search1}${lineA}`;
+    ${deptFilter1}${empFilter1}${coord1}${search1}${notInternalGroup('a.group_name')}${lineA}`;
 
   const part2 = `
     SELECT
@@ -791,7 +806,7 @@ function buildRemarksNotesMainInnerQ({ from_date, to_date, department, employee,
         SELECT 1 FROM absent_students a2
         WHERE a2.group_name = l.group_name AND a2.date = l.date${line ? ' AND a2.line = l.line' : ''}
       )
-    ${deptFilter2}${empFilter2}${coord2}${search2}${lineL}`;
+    ${deptFilter2}${empFilter2}${coord2}${search2}${notInternalGroup('l.group_name')}${lineL}`;
 
   const remarksSubQ = `
     SELECT client_phone,
@@ -952,7 +967,7 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
         AND l.status != 'غير مؤكدة'
         AND l.date = a.date${line ? ' AND l.line = a.line' : ''}
     )
-    ${deptA}${empA}${coordA}${srchA}${lineA}`;
+    ${deptA}${empA}${coordA}${srchA}${notInternalGroup('a.group_name')}${lineA}`;
 
   // partA_zoom — mirrors partA but reads from absent_zoom_students (the new
   // dedicated zoom-absent table). When the user uploads the zoom-absent Excel
@@ -996,7 +1011,7 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
                   AND CAST(SUBSTR(l.duration,1,2) AS INTEGER)*60
                       + CAST(SUBSTR(l.duration,4,2) AS INTEGER) < 20))${line ? ' AND l.line = a.line' : ''}
     )
-    ${deptA}${empA}${coordA}${srchA}${lineA}`;
+    ${deptA}${empA}${coordA}${srchA}${notInternalGroup('a.group_name')}${lineA}`;
 
   const part1 = `
     SELECT DISTINCT c.name AS client_name, c.phone AS client_phone,
@@ -1037,7 +1052,7 @@ function buildRemarksNotesZoomInnerQ({ from_date, to_date, department, employee,
             )
         )
       )
-    ${dept1}${emp1}${coord1}${srch1}`;
+    ${dept1}${emp1}${coord1}${srch1}${notInternalGroup('c.group_name')}`;
 
   const rdSQL = normRemarkDate('r2.added_at');
   const part2 = `
@@ -1723,7 +1738,7 @@ router.get('/absent-list', (req, res) => {
         (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
         OR (a.phone IS NOT NULL AND TRIM(a.phone)!='')
       )
-      ${deptFilter}${empFilter}${coordFilter}${searchFilter}${ewFilterP1}${lineA}
+      ${deptFilter}${empFilter}${coordFilter}${searchFilter}${ewFilterP1}${notInternalGroup('a.group_name')}${lineA}
     ) p1_inner
     WHERE 1=1${dateFilterP1}`;
 
@@ -1752,7 +1767,7 @@ router.get('/absent-list', (req, res) => {
         SELECT 1 FROM absent_students a2
         WHERE a2.group_name = l.group_name AND a2.date = l.date${line ? ' AND a2.line = l.line' : ''}
       )
-    ${dateFilter2}${deptFilter2}${empFilter2}${coordFilter2}${searchFilter2}${ewFilterP2}${lineL}`;
+    ${dateFilter2}${deptFilter2}${empFilter2}${coordFilter2}${searchFilter2}${ewFilterP2}${notInternalGroup('l.group_name')}${lineL}`;
 
   const unionQ = `SELECT * FROM (${part1} UNION ALL ${part2}) t`;
 
@@ -1856,7 +1871,7 @@ router.get('/absent-side-list', (req, res) => {
                     AND CAST(SUBSTR(l.duration,1,2) AS INTEGER)*60
                         + CAST(SUBSTR(l.duration,4,2) AS INTEGER) < 20))${line ? ' AND l.line = a.line' : ''}
       )
-      ${azDateFilter}${azDeptFilter}${azEmpFilter}${azCoordFilter}${azSearchFilter}${azEwFilter}${lineA}`;
+      ${azDateFilter}${azDeptFilter}${azEmpFilter}${azCoordFilter}${azSearchFilter}${azEwFilter}${notInternalGroup('a.group_name')}${lineA}`;
 
     try {
       // COUNT(DISTINCT a.id) + GROUP BY a.id prevent row duplication when
@@ -5532,7 +5547,7 @@ router.get('/attendance-absence', (req, res) => {
       FROM lectures l
       LEFT JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
       WHERE l.session_type = 'main' AND l.status != 'غير مؤكدة'
-      ${dateFilterL}${deptFilterMainL}${coordFilterMainL}${lineL}
+      ${dateFilterL}${deptFilterMainL}${coordFilterMainL}${notInternalGroup('l.group_name')}${lineL}
       GROUP BY coordinator
     `).all();
 
@@ -5558,7 +5573,7 @@ router.get('/attendance-absence', (req, res) => {
           (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
           OR (a.phone IS NOT NULL AND TRIM(a.phone)!='')
         )
-        ${deptFilterAbsentP1}${coordFilterP1}${lineA}
+        ${deptFilterAbsentP1}${coordFilterP1}${notInternalGroup('a.group_name')}${lineA}
       ) p1
       WHERE 1=1${dateFilterResolved}
       GROUP BY coordinator
@@ -5578,7 +5593,7 @@ router.get('/attendance-absence', (req, res) => {
           SELECT 1 FROM absent_students a2
           WHERE a2.group_name = l.group_name AND a2.date = l.date${line ? ' AND a2.line = l.line' : ''}
         )
-      ${dateFilterL}${deptFilterMainL}${coordFilterMainL}${lineL}
+      ${dateFilterL}${deptFilterMainL}${coordFilterMainL}${notInternalGroup('l.group_name')}${lineL}
       GROUP BY coordinator
     `).all();
 
@@ -5595,7 +5610,7 @@ router.get('/attendance-absence', (req, res) => {
         WHERE l.session_type = 'side'
           AND l.status = 'مؤكدة'
           AND (l.duration IS NULL OR l.duration <= '00:30') AND l.side_session_category = 'regular'
-        ${dateFilterL}${deptFilterMainL}${coordFilterMainL}${lineL}
+        ${dateFilterL}${deptFilterMainL}${coordFilterMainL}${notInternalGroup('l.group_name')}${lineL}
         GROUP BY coordinator, l.group_name, l.date
       ) sub
       GROUP BY coordinator
@@ -5660,7 +5675,7 @@ router.get('/attendance-absence', (req, res) => {
             WHERE l.session_type = 'side'
               AND l.status = 'مؤكدة'
               AND (l.duration IS NULL OR l.duration <= '00:30') AND l.side_session_category = 'regular'
-            ${dateFilterL}${deptFilterMainL}${coordFilterMainL}${lineL}
+            ${dateFilterL}${deptFilterMainL}${coordFilterMainL}${notInternalGroup('l.group_name')}${lineL}
             GROUP BY coordinator, l.group_name, l.date
             HAVING absent_count > 0
           ) sub
@@ -6339,7 +6354,7 @@ router.get('/quality-employee', (req, res) => {
           (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
           OR (a.phone IS NOT NULL AND TRIM(a.phone)!='')
         )
-        AND ${coordMatch}
+        AND ${coordMatch}${notInternalGroup('a.group_name')}
       ) p1
       WHERE 1=1${dateResolvedFilter}
     `).get()?.cnt || 0;
@@ -6357,7 +6372,7 @@ router.get('/quality-employee', (req, res) => {
           SELECT 1 FROM absent_students a2
           WHERE a2.group_name = l.group_name AND a2.date = l.date${line ? ' AND a2.line = l.line' : ''}
         )
-      ${lineLA}${dateMainLec} AND ${coordMatch}
+      ${lineLA}${dateMainLec} AND ${coordMatch}${notInternalGroup('l.group_name')}
     `).get(...(line ? [line] : []), ...dateMainLecParams)?.cnt || 0;
 
     const main_absent_count = mainAbsentPart1 + mainAbsentPart2;
@@ -6366,7 +6381,7 @@ router.get('/quality-employee', (req, res) => {
       SELECT COALESCE(SUM(b.trainee_count), 0) AS cnt FROM lectures l
       INNER JOIN batches b ON b.group_name = l.group_name${line ? ' AND b.line = l.line' : ''}
       WHERE l.session_type = 'main' AND l.status != 'غير مؤكدة'${lineLA}${dateMainLec}
-        AND ${coordMatch}
+        AND ${coordMatch}${notInternalGroup('l.group_name')}
     `).get(...(line ? [line] : []), ...dateMainLecParams);
     const main_expected_count = mainExpectedRow?.cnt || 0;
     const main_absent_rate = main_expected_count > 0
@@ -6380,7 +6395,7 @@ router.get('/quality-employee', (req, res) => {
       INNER JOIN batches b ON b.group_name = l.group_name${line ? ' AND b.line = l.line' : ''}
       WHERE l.session_type = 'side' AND l.status = 'مؤكدة'
         AND (l.duration IS NULL OR l.duration <= '00:30') AND l.side_session_category = 'regular'${lineLA}${dateMainLec}
-        AND ${coordMatch}
+        AND ${coordMatch}${notInternalGroup('l.group_name')}
     `).get(...(line ? [line] : []), ...dateMainLecParams);
     const zoom_expected_count = zoomExpectedRow?.cnt || 0;
 
@@ -6388,7 +6403,7 @@ router.get('/quality-employee', (req, res) => {
     // uploaded absent_zoom_students file (owner's decision), so the badge and the
     // detail list reconcile exactly. (Was lecture-slot math = a different number.)
     const zaParams = [];
-    let zaWhere = `WHERE 1=1 AND ${coordMatch}`;
+    let zaWhere = `WHERE 1=1 AND ${coordMatch}${notInternalGroup('a.group_name')}`;
     if (line) { zaWhere += ` AND a.line = ?`; zaParams.push(line); }
     if (from) { zaWhere += ` AND a.date >= ?`; zaParams.push(from); }
     if (to)   { zaWhere += ` AND a.date <= ?`; zaParams.push(to); }
@@ -6558,7 +6573,7 @@ router.get('/quality-employee/details', (req, res) => {
           (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
           OR (a.phone IS NOT NULL AND TRIM(a.phone)!='')
         )
-        AND ${coordMatch}
+        AND ${coordMatch}${notInternalGroup('a.group_name')}
       ) p1
       WHERE 1=1${dateResolvedFilterD}
       ORDER BY date DESC LIMIT 250
@@ -6576,7 +6591,7 @@ router.get('/quality-employee/details', (req, res) => {
                         SELECT 1 FROM absent_students a2
                         WHERE a2.group_name = l.group_name AND a2.date = l.date${line ? ' AND a2.line = l.line' : ''}
                       )
-                      AND ${coordMatch}`;
+                      AND ${coordMatch}${notInternalGroup('l.group_name')}`;
     if (line) part2Where += ` AND l.line = ?`;
     if (from) { part2Where += ` AND l.date >= ?`; part2Params.push(from); }
     if (to)   { part2Where += ` AND l.date <= ?`; part2Params.push(to); }
@@ -6599,7 +6614,7 @@ router.get('/quality-employee/details', (req, res) => {
     // sessions with attendance < expected slots.
     const part1Params = [];
     if (line) part1Params.push(line);
-    let part1Where = `WHERE 1=1 AND ${coordMatch}`;
+    let part1Where = `WHERE 1=1 AND ${coordMatch}${notInternalGroup('a.group_name')}`;
     if (line) part1Where += ` AND a.line = ?`;
     if (from) { part1Where += ` AND a.date >= ?`; part1Params.push(from); }
     if (to)   { part1Where += ` AND a.date <= ?`; part1Params.push(to); }

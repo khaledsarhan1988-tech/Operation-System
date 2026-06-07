@@ -93,6 +93,11 @@ node -e "
 - **القاعدة:** استخدم **`LEFT JOIN batches`** واسترجع المنسق/القسم من `coordinator_history` (`coordAtDateSingleExpr` → `users.department`/قسم الفريق) عند غياب الـ batch. للعدّ: `LEFT JOIN` + `COUNT(DISTINCT canonical)`.
 - فلتر القسم في تقرير الحضور: إن لم يوجد سجل `team_member_dept_history` يغطّي التاريخ → fallback إلى `team_members.section` (وإلا يظهر المنسق بأصفار).
 
+### المجموعات الداخلية / placeholder (INTERNAL) — تُستبعد من تقارير الغياب (قرار الـ Owner 2026-06-06)
+- مجموعات **مش تدريس حقيقي**: اختبار تحديد المستوى (`Placement Test`/`Placemnent Test`/`تحديد مستوى` بكل الإملاءات)، `Free Slots(DONOT CLOSED)`، `Hiring New Teacher`. العميل يُوضع فيها مؤقتًا ومجموعته/منسقه الحقيقي مختلف (مثال: zain tamer في «Placemnent Test»/doha بينما مجموعته الفعلية مع magdy).
+- كانت **~79% من «غياب المحاضرات الأساسية»** تأتي منها وتُنسب لمنسق غلط.
+- **القاعدة:** استبعدها من **كل** تقارير الغياب/العدّ عبر helper `notInternalGroup(groupExpr)` (LIKE `%free slot%` / `%hiring new teacher%` / `%placem%test%` / `%تحديد مستو%`). مطبَّق في: `/absent-list` (part1+2)، `/absent-side-list`، `/remarks-notes-main`، `/remarks-notes-zoom`، `/attendance-absence`، `/quality-employee` (العدّ + التفاصيل). (code-problems كان يستبعد Free Slots/Hiring بالفعل.) النتيجة: absent-list 13,696 → 2,892.
+
 ### مطابقة تواريخ الريمارك بالغياب (DATE + HOLIDAY)
 - المتوقع: ريمارك `Attendance Main Session/Zoom Call` بتاريخ = **اليوم الذي بعد الغياب** (`nextRemarkDay`: +1، أو +2 لو خميس [الجمعة عطلة])، **ويتخطّى نطاقات `official_holidays`** (إجازة العيد). `prevLectureDay` هو العكس. تطبيع تاريخ الريمارك من `DD/MM/YYYY, ...` عبر `normRemarkDate`.
 
@@ -122,6 +127,7 @@ node -e "
 | SPACES | مسافات في أسماء المجموعات | `REPLACE(group_name,' ','')` الطرفين |
 | OVERLAP | جمع جلسات متداخلة | `mergeIntervalsMinutes` / COUNT(DISTINCT canonical) |
 | HOLIDAY | فجوة العيد في مطابقة التواريخ | `nextRemarkDay`/`prevLectureDay` تتخطّى `official_holidays` |
+| INTERNAL | مجموعات placeholder (Placement Test/Free Slots/Hiring) | استبعدها عبر `notInternalGroup(groupExpr)` من كل تقارير الغياب |
 
 ---
 
