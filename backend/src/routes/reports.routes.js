@@ -3260,6 +3260,13 @@ router.get('/trainer-utilization', (req, res) => {
   };
   const getDow = s => { if (!s) return -1; return new Date(s + 'T12:00:00').getDay(); };
   const stripParens = name => String(name || '').replace(/\([^)]*\)/g, '').trim();
+  // Group identity WITHOUT the trailing coordinator suffix (everything after the
+  // last ')'), so rename/coordinator twins like "...(Nada Khaled)hanaa" /
+  // "...(Nada Khaled) doha" collapse to the SAME session in the displayed list.
+  const baseGroupOf = (g) => {
+    const s = String(g || ''); const i = s.lastIndexOf(')');
+    return (i >= 0 ? s.slice(0, i + 1) : s).replace(/\s+/g, '').toLowerCase();
+  };
 
   // Normalize one of a trainer's two shifts. Returns {startMin,endMin,days[],rests[],voiceNotes[],...} or null.
   // Voice notes (work-time blocks) use the same shape as rests.
@@ -3430,8 +3437,10 @@ router.get('/trainer-utilization', (req, res) => {
       if (!k) continue;
       const bucketKey = `${k}|${l.date}`;
       const arr = byTrainerDay[bucketKey] = byTrainerDay[bucketKey] || [];
-      // dedupe by (time,duration) for zoom multi-student rows
-      if (!arr.some(x => x.group_name === l.group_name && x.time === l.time && x.duration === l.duration && x.session_type === l.session_type)) {
+      // dedupe by (BASE group, time, duration, type) — per-student zoom rows AND
+      // rename/coordinator twins of the same session collapse to one. (booked
+      // minutes are interval-merged anyway, so this only de-clutters the list.)
+      if (!arr.some(x => baseGroupOf(x.group_name) === baseGroupOf(l.group_name) && x.time === l.time && x.duration === l.duration && x.session_type === l.session_type)) {
         arr.push({
           group_name: l.group_name, time: l.time, duration: l.duration,
           session_type: l.session_type,
