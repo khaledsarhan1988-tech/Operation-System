@@ -644,6 +644,25 @@ function trainerCountStart(trainer, shifts) {
   return cands.sort().pop();                                  // max (later) of the two dates
 }
 
+// ─── trainerCountEnd ─────────────────────────────────────────────────────────
+// The LAST day a trainer was employed (all shifts have an end_date → the latest
+// one). Returns null when ANY shift is open-ended (still employed → no clamp).
+// Used to drop PHANTOM scheduled rows: when a trainer leaves, their recurring
+// `مجدولة` (scheduled) slots are removed from the live sheet, but stale rows
+// already imported into the DB persist (the importer only deletes group+date
+// keys present in the new file). Those stale rows are dated AFTER the trainer's
+// departure and falsely inflate booked/utilization (e.g. Nashwa 265%). We
+// exclude ONLY scheduled rows after this date — confirmed (مؤكدة) lectures are
+// always kept, so a real last-day lecture just past the shift end still counts.
+function trainerCountEnd(trainer, shifts) {
+  let latest = null;
+  for (const sh of (shifts || [])) {
+    if (!sh.endDate) return null;                            // open-ended shift = still employed
+    if (!latest || sh.endDate > latest) latest = sh.endDate;
+  }
+  return latest;                                             // null when no shifts
+}
+
 // ─── computeOverallEmployment ────────────────────────────────────────────────
 // "Asmaa Saber" pattern: a trainer with multiple shifts whose work_days
 // happen to cover all 6 work days when combined is effectively Full Time —
@@ -3422,7 +3441,7 @@ router.get('/trainer-utilization', (req, res) => {
       // Count EVERY actual session: all groups (incl. ended/removed from
       // batches), all session types & side categories, all per-student zoom
       // rows. Line scoping via lectures.line (no batches join).
-      `SELECT DISTINCT l.group_name, l.date, l.time, l.duration, l.trainer, l.session_type
+      `SELECT DISTINCT l.group_name, l.date, l.time, l.duration, l.trainer, l.session_type, l.status
          FROM lectures l
          WHERE l.date BETWEEN '${fromDate}' AND '${toDate}'
          ${lineL}
@@ -3443,7 +3462,7 @@ router.get('/trainer-utilization', (req, res) => {
       if (!arr.some(x => baseGroupOf(x.group_name) === baseGroupOf(l.group_name) && x.time === l.time && x.duration === l.duration && x.session_type === l.session_type)) {
         arr.push({
           group_name: l.group_name, time: l.time, duration: l.duration,
-          session_type: l.session_type,
+          session_type: l.session_type, status: l.status,
         });
       }
     }
@@ -3486,7 +3505,9 @@ router.get('/trainer-utilization', (req, res) => {
 
       const days = {};
       let totalAvailable = 0, totalBooked = 0, workDayCount = 0;
+      let staleAfterEnd = 0;                              // phantom scheduled rows after departure (flag)
       const clampStart = trainerCountStart(t, shifts);   // count only from hire+shift start
+      const clampEnd   = trainerCountEnd(t, shifts);     // drop scheduled phantom rows after departure
       for (const date of dates) {
         if (clampStart && date < clampStart) continue;   // before the trainer was hired / had a shift
         // Section-scoped shifts for this day (all shifts when no filter). When
@@ -3507,7 +3528,16 @@ router.get('/trainer-utilization', (req, res) => {
         const isWorkDay = availMin > 0;
         if (isWorkDay) workDayCount++;
         // Booked counts only when the day belongs to the active section.
-        const lectures = dayInSection ? (byTrainerDay[`${tKey}|${date}`] || []) : [];
+        let lectures = dayInSection ? (byTrainerDay[`${tKey}|${date}`] || []) : [];
+        // After the trainer has LEFT (all shifts ended) drop stale `مجدولة`
+        // (scheduled) phantom rows dated past their departure — they're not in
+        // the live sheet and falsely inflate booked. Confirmed lectures (مؤكدة)
+        // are always kept, so a genuine last-day session still counts.
+        if (clampEnd && date > clampEnd && lectures.length) {
+          const before = lectures.length;
+          lectures = lectures.filter(l => l.status !== 'مجدولة');
+          staleAfterEnd += (before - lectures.length);
+        }
         const voiceNotes = isWorkDay ? voiceNoteIntervalsForDate(sectionShifts, date) : [];
         // Booked = ACTUAL occupied wall-clock time (merge overlaps) — NOT the sum
         // of every session duration. Overlapping/simultaneous sessions (one
@@ -3561,6 +3591,9 @@ router.get('/trainer-utilization', (req, res) => {
           utilization_pct: totalAvailable > 0
             ? Math.round((totalBooked / totalAvailable) * 100) : null,
           work_days: workDayCount,
+          // Phantom scheduled rows excluded after this trainer's departure.
+          // >0 ⇒ the live sheet still has stale rows to clean for this trainer.
+          stale_after_shift_end: staleAfterEnd,
         },
         days,
       };
@@ -3788,7 +3821,7 @@ router.get('/trainer-utilization-summary', (req, res) => {
       // category — regular, onboarding, offboarding, compensatory), and all
       // per-student zoom rows. No batches join (ended groups vanish from it);
       // line scoping is applied directly on lectures.line.
-      `SELECT DISTINCT l.group_name, l.date, l.time, l.duration, l.trainer, l.session_type
+      `SELECT DISTINCT l.group_name, l.date, l.time, l.duration, l.trainer, l.session_type, l.status
          FROM lectures l
          WHERE l.date BETWEEN '${prevStart}' AND '${currEnd}'
          ${lineL}`
@@ -3824,10 +3857,19 @@ router.get('/trainer-utilization-summary', (req, res) => {
 
     // Helper: compute trainer's totals over a date range.
     // Voice notes count as BOOKED (productive work hours).
+    // Drop phantom `مجدولة` (scheduled) rows dated after a departed trainer's
+    // last shift end — they linger in the DB but aren't in the live sheet and
+    // would falsely inflate booked/salary. Confirmed lectures are always kept.
+    const dropPhantom = (lectures, clampEnd, date) =>
+      (clampEnd && date > clampEnd)
+        ? lectures.filter(l => l.status !== 'مجدولة')
+        : lectures;
+
     function totalsForRange(trainer, shifts, dates) {
       let available = 0, booked = 0;
       const tKey = stripParens(trainer.name).toLowerCase();
       const clampStart = trainerCountStart(trainer, shifts);   // count only from hire+shift start
+      const clampEnd   = trainerCountEnd(trainer, shifts);     // drop phantom rows after departure
       for (const date of dates) {
         if (holidaySet.has(date)) continue;   // official holiday → excluded from the calc
         if (clampStart && date < clampStart) continue;   // before the trainer was hired / had a shift
@@ -3839,7 +3881,7 @@ router.get('/trainer-utilization-summary', (req, res) => {
         // A trainer who worked beyond their schedule (utilization can exceed
         // 100%) or on an off day is reflected fully. Available still counts
         // shift time only.
-        const lectures = lectureMap[`${tKey}|${date}`] || [];
+        const lectures = dropPhantom(lectureMap[`${tKey}|${date}`] || [], clampEnd, date);
         available += avail;
         booked   += bookedOccupiedForDate(lectures, shifts, date);
       }
@@ -3855,6 +3897,7 @@ router.get('/trainer-utilization-summary', (req, res) => {
       const map = {};
       const tKey = stripParens(trainer.name).toLowerCase();
       const clampStart = trainerCountStart(trainer, shifts);
+      const clampEnd   = trainerCountEnd(trainer, shifts);
       const add = (sec, a, b) => {
         if (!map[sec]) map[sec] = { available_min: 0, booked_min: 0 };
         map[sec].available_min += a; map[sec].booked_min += b;
@@ -3869,7 +3912,7 @@ router.get('/trainer-utilization-summary', (req, res) => {
         }
         const extra = extraByMemberDay[`${trainer.id}|${date}`] || 0;
         if (extra > 0) { const sec = daySection || (trainer.section || 'all'); add(sec, extra, 0); if (!daySection) daySection = sec; }
-        const lectures = lectureMap[`${tKey}|${date}`] || [];
+        const lectures = dropPhantom(lectureMap[`${tKey}|${date}`] || [], clampEnd, date);
         const bookedDay = bookedOccupiedForDate(lectures, shifts, date);
         if (bookedDay > 0) { const sec = daySection || (trainer.section || 'all'); add(sec, 0, bookedDay); }
       }

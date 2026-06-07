@@ -569,6 +569,18 @@ export default function TrainerUtilization() {
                           غير نشط حالياً
                         </span>
                       )}
+                      {/* Phantom scheduled rows linger in the DB after a trainer
+                          leaves (no longer in the live sheet). They are excluded
+                          from booked/utilization, but we flag them so the sheet
+                          can be cleaned. */}
+                      {t.totals?.stale_after_shift_end > 0 && (
+                        <span
+                          title={`${t.totals.stale_after_shift_end} محاضرة "مجدولة" قديمة بعد انتهاء شيفت المدرّب — مش موجودة في الشيت الحالي، اتستبعدت من الحساب. راجع الـ Drive لتنظيفها.`}
+                          className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold bg-amber-100 text-amber-800 border border-amber-300 cursor-help"
+                        >
+                          ⚠ {t.totals.stale_after_shift_end} صف شبح
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-1 mt-0.5">
                       <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold border ${SECTION_TONE[t.section] || SECTION_TONE.all}`}>
