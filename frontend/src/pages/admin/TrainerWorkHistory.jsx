@@ -310,8 +310,9 @@ function SkeletonRows({ cols = 11, rows = 6 }) {
 export default function TrainerWorkHistory({ title = 'سجل عمل المدربين', showSalaryCategory = false, groupBySection = false, monthPicker = false } = {}) {
   const qc = useQueryClient();
   // Column count for skeleton/empty/error rows. The salary variant adds the
-  // category column (+1) and four payroll columns (+4).
-  const colCount = showSalaryCategory ? 17 : 12;
+  // category column (+1) and five payroll columns (+5): base, extra, deduction,
+  // out-of-duty, net.
+  const colCount = showSalaryCategory ? 18 : 12;
   const [fromDate,    setFromDate]    = useState(defaultFromDate);
   const [toDate,      setToDate]      = useState(defaultToDate);
   const [section,     setSection]     = useState('all');
@@ -320,6 +321,7 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
   const [editMember,  setEditMember]  = useState(null);
   const [ucModal,     setUcModal]     = useState(null);  // { trainer, from, to, shift_start, shift_end }
   const [dedModal,    setDedModal]    = useState(null);  // { trainer_id, trainer_name, perHour, dayWage }
+  const [oodModal,    setOodModal]    = useState(null);  // out-of-duty: { trainer_id, trainer_name, perHour }
 
   // ── trainer dropdown options — all education team members
   // (also used as the source for the click-to-edit modal — we look up the
@@ -383,6 +385,22 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
     enabled: showSalaryCategory,
     staleTime: 30 * 1000,
   });
+  // Out-of-duty PAID hours ("خارج مهام عمله") — period totals per trainer. A
+  // separate bucket from extra hours / utilization; paid at perHour and added
+  // to net only. Keyed by team_member_id (== report trainer_id).
+  const { data: oodTotals = [] } = useQuery({
+    queryKey: ['trainer-outofduty', fromDate, toDate],
+    queryFn: () => api.get('/team/outofduty-hours', { params: { from: fromDate, to: toDate } })
+      .then(r => r.data).catch(() => []),
+    enabled: showSalaryCategory,
+    staleTime: 30 * 1000,
+  });
+  const oodMinsByTrainer = useMemo(() => {
+    const m = new Map();
+    for (const o of oodTotals) m.set(o.team_member_id, n(o.total_min));
+    return m;
+  }, [oodTotals]);
+
   const deductionsByTrainer = useMemo(() => {
     const m = new Map();
     for (const d of deductions) {
@@ -418,6 +436,15 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
       String(a.trainer_name || '').localeCompare(String(b.trainer_name || ''), 'ar')
     );
   }, [filteredRows, groupBySection]);
+
+  // First display-row index for each trainer. Out-of-duty pay is a per-trainer
+  // monthly value, so it's shown/added on ONLY this row — a trainer with several
+  // shift rows must not get the pay counted multiple times.
+  const primaryRowByTrainer = useMemo(() => {
+    const m = new Map();
+    displayRows.forEach((r, i) => { if (!m.has(r.trainer_id)) m.set(r.trainer_id, i); });
+    return m;
+  }, [displayRows]);
 
   const inputCls  = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]';
   const selectCls = inputCls + ' min-w-[160px]';
@@ -522,7 +549,7 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                   'المدرب', 'القسم', '#', 'نوع الشيفت', 'بداية العمل', 'نهاية العمل', 'المواعيد', 'أيام العمل', 'الدوام',
                   ...(showSalaryCategory ? ['فئة المرتب'] : []),
                   'ساعات إضافية', 'ساعات غير مؤكدة', 'الحالة',
-                  ...(showSalaryCategory ? ['المرتب الأساسي', 'إضافي (ج)', 'الخصم', 'الصافي'] : []),
+                  ...(showSalaryCategory ? ['المرتب الأساسي', 'إضافي (ج)', 'الخصم', 'خارج مهام عمله', 'الصافي'] : []),
                 ].map(h => <th key={h} className="px-2 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>)}
               </tr>
             </thead>
@@ -634,10 +661,16 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                      if (!s.found) {
                        return (
                          <>
-                           <td className="px-2 py-2.5 text-xs text-gray-300 text-center" colSpan={4}>— لا توجد فئة مرتب مطابقة —</td>
+                           <td className="px-2 py-2.5 text-xs text-gray-300 text-center" colSpan={5}>— لا توجد فئة مرتب مطابقة —</td>
                          </>
                        );
                      }
+                     // Out-of-duty PAID hours — per trainer, shown/added on the
+                     // trainer's first row only (never affects utilization).
+                     const isPrimary = primaryRowByTrainer.get(r.trainer_id) === i;
+                     const oodMins   = isPrimary ? (oodMinsByTrainer.get(r.trainer_id) || 0) : 0;
+                     const oodPay    = (oodMins / 60) * s.perHour;
+                     const net       = s.net + oodPay;
                      return (
                        <>
                          <td className="px-2 py-2.5 text-xs font-bold text-gray-800 whitespace-nowrap text-center" dir="ltr">{fmtMoney(s.base)}</td>
@@ -659,8 +692,25 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                              {s.ded > 0 ? `−${fmtMoney(s.ded)}` : 'خصم'}
                            </button>
                          </td>
+                         <td className="px-2 py-2.5 whitespace-nowrap text-center">
+                           {isPrimary ? (
+                             <button type="button"
+                               onClick={() => setOodModal({ trainer_id: r.trainer_id, trainer_name: r.trainer_name, perHour: s.perHour })}
+                               title="إضافة / تعديل ساعات خارج مهام عمله (تُدفع ولا تؤثر على التشغيل)"
+                               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-bold border transition-colors ${
+                                 oodPay > 0
+                                   ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
+                                   : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+                               }`}>
+                               <Clock size={12} />
+                               {oodPay > 0 ? `+${fmtMoney(oodPay)}` : 'إضافة'}
+                             </button>
+                           ) : (
+                             <span className="text-xs text-gray-300">—</span>
+                           )}
+                         </td>
                          <td className="px-2 py-2.5 text-xs font-black whitespace-nowrap text-center" dir="ltr">
-                           <span className="inline-flex items-center px-2 py-0.5 rounded-lg bg-blue-50 text-blue-800 border border-blue-200">{fmtMoney(s.net)}</span>
+                           <span className="inline-flex items-center px-2 py-0.5 rounded-lg bg-blue-50 text-blue-800 border border-blue-200">{fmtMoney(net)}</span>
                          </td>
                        </>
                      );
@@ -700,6 +750,11 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
       {/* ── Deductions modal (مرتبات المدربين only) ── */}
       {dedModal && (
         <DeductionModal context={{ ...dedModal, from: fromDate, to: toDate }} onClose={() => setDedModal(null)} />
+      )}
+
+      {/* ── Out-of-duty paid hours modal (مرتبات المدربين only) ── */}
+      {oodModal && (
+        <OutOfDutyModal context={{ ...oodModal, from: fromDate, to: toDate }} onClose={() => setOodModal(null)} />
       )}
     </div>
   );
@@ -827,6 +882,168 @@ function DeductionModal({ context, onClose }) {
 
         <div className="px-5 py-3 bg-gray-50 border-t flex items-center justify-between">
           <span className="text-sm font-black text-red-700">إجمالي الخصم: −{fmtMoney(total)} ج</span>
+          <button onClick={onClose} className="px-4 py-1.5 rounded-lg border border-gray-300 text-sm hover:bg-gray-100">تم</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── OUT-OF-DUTY PAID HOURS MODAL ("خارج مهام عمله") ────────────────────────────
+// Add/remove a trainer's PAID extra hours that fall OUTSIDE their normal duties.
+// Each entry is a single date + (start/end time OR a number of hours) + note,
+// paid at the trainer's hourly rate (perHour, passed in via context). These
+// hours are paid only — they NEVER count toward utilization (separate table).
+function OutOfDutyModal({ context, onClose }) {
+  const qc = useQueryClient();
+  const { trainer_id, trainer_name, perHour } = context;
+  const [date, setDate]           = useState('');
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime]     = useState('');
+  const [hours, setHours]         = useState('');
+  const [note, setNote]           = useState('');
+  const [error, setError]         = useState(null);
+
+  const { data: list = [], isLoading } = useQuery({
+    queryKey: ['trainer-outofduty', 'one', trainer_id],
+    queryFn: () => api.get(`/team/${trainer_id}/outofduty-hours`).then(r => r.data),
+  });
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['trainer-outofduty'] });
+  };
+  const addMut = useMutation({
+    mutationFn: (body) => api.post(`/team/${trainer_id}/outofduty-hours`, body),
+    onSuccess: () => { invalidate(); setDate(''); setStartTime(''); setEndTime(''); setHours(''); setNote(''); setError(null); },
+    onError: (e) => setError(e.response?.data?.error || e.message),
+  });
+  const delMut = useMutation({
+    mutationFn: (id) => api.delete(`/team/outofduty-hours/${id}`),
+    onSuccess: invalidate,
+  });
+
+  const payFor = (mins) => (n(mins) / 60) * perHour;
+  const totalMins = list.reduce((a, r) => a + n(r.duration_min), 0);
+  const totalPay  = payFor(totalMins);
+
+  function submit() {
+    setError(null);
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { setError('من فضلك اختر التاريخ'); return; }
+    const body = { date, notes: note };
+    if (startTime && endTime) {
+      body.start_time = startTime;
+      body.end_time   = endTime;
+    } else if (hours) {
+      const mins = Math.round(Number(hours) * 60);
+      if (!Number.isFinite(mins) || mins <= 0) { setError('عدد ساعات غير صالح'); return; }
+      body.duration_min = mins;
+    } else {
+      setError('حدد وقت بداية ونهاية، أو عدد ساعات'); return;
+    }
+    addMut.mutate(body);
+  }
+
+  // Live preview of the amount the current form would add.
+  const previewMins = (startTime && endTime)
+    ? (() => { const [sh, sm] = startTime.split(':').map(Number); const [eh, em] = endTime.split(':').map(Number);
+               let d = (eh * 60 + em) - (sh * 60 + sm); if (d < 0) d += 1440; return d > 0 ? d : 0; })()
+    : Math.round(Number(hours || 0) * 60);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden" onClick={e => e.stopPropagation()} dir="rtl">
+        <div className="px-5 py-4 bg-gradient-to-l from-amber-50 to-orange-100/50 border-b border-amber-100 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-amber-700 mb-1 flex items-center gap-1"><Clock size={13} /> ساعات خارج مهام عمله</p>
+            <p className="text-sm font-black text-gray-900 leading-tight">{trainer_name}</p>
+            <p className="text-[11px] text-gray-500 mt-1">
+              سعر الساعة {fmtMoney(perHour)} ج · <span className="text-amber-700 font-bold">تُدفع ولا تؤثر على نسبة التشغيل</span>
+            </p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/60 flex-shrink-0"><X size={15} className="text-gray-600" /></button>
+        </div>
+
+        {/* Add form */}
+        <div className="p-4 border-b border-gray-100 space-y-3">
+          {error && <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">{error}</div>}
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <label className="block text-[11px] font-bold text-gray-500 mb-1">التاريخ <span className="text-red-500">*</span></label>
+              <input type="date" value={date} onChange={e => setDate(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-gray-500 mb-1">من (اختياري)</label>
+              <input type="time" value={startTime} onChange={e => setStartTime(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-gray-500 mb-1">إلى (اختياري)</label>
+              <input type="time" value={endTime} onChange={e => setEndTime(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" />
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <label className="block text-[11px] font-bold text-gray-500 mb-1">أو عدد ساعات</label>
+              <input type="number" step="0.25" min="0" placeholder="مثلاً 4" value={hours}
+                onChange={e => setHours(e.target.value)} disabled={!!(startTime && endTime)}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm disabled:bg-gray-50" />
+            </div>
+            <div className="col-span-2">
+              <label className="block text-[11px] font-bold text-gray-500 mb-1">ملاحظة (اختياري)</label>
+              <input type="text" value={note} onChange={e => setNote(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" placeholder="مثلاً: تدريب إضافي / مهمة" />
+            </div>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-500">≈ +{fmtMoney(payFor(previewMins))} ج</span>
+            <button type="button" onClick={submit} disabled={addMut.isPending || !date}
+              className="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold inline-flex items-center gap-1 disabled:opacity-50">
+              <Plus size={14} /> إضافة ساعات
+            </button>
+          </div>
+        </div>
+
+        {/* List */}
+        <div className="max-h-[40vh] overflow-y-auto">
+          {isLoading ? (
+            <div className="p-8 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-gray-400" /></div>
+          ) : list.length === 0 ? (
+            <p className="p-8 text-center text-sm text-gray-400">لا توجد ساعات مسجلة</p>
+          ) : (
+            <table className="w-full text-sm text-right">
+              <thead><tr className="bg-gray-50 border-b border-gray-100 text-[11px] text-gray-500">
+                <th className="px-3 py-2">التاريخ</th><th className="px-3 py-2">الوقت</th>
+                <th className="px-3 py-2">المدّة</th><th className="px-3 py-2">قيمة (ج)</th>
+                <th className="px-3 py-2">ملاحظة</th><th className="px-3 py-2"></th>
+              </tr></thead>
+              <tbody className="divide-y divide-gray-50">
+                {list.map(r => (
+                  <tr key={r.id} className="hover:bg-gray-50/60">
+                    <td className="px-3 py-2 text-xs font-mono text-gray-600" dir="ltr">{r.date}</td>
+                    <td className="px-3 py-2 text-[11px] font-mono text-gray-500" dir="ltr">
+                      {r.start_time && r.end_time ? `${r.start_time}→${r.end_time}` : '—'}
+                    </td>
+                    <td className="px-3 py-2 text-xs font-bold text-gray-700">{fmtMins(r.duration_min)}</td>
+                    <td className="px-3 py-2 text-xs font-bold text-amber-700" dir="ltr">+{fmtMoney(payFor(r.duration_min))}</td>
+                    <td className="px-3 py-2 text-[11px] text-gray-500">{r.notes || '—'}</td>
+                    <td className="px-3 py-2">
+                      <button onClick={() => delMut.mutate(r.id)} className="p-1 rounded hover:bg-red-50 text-red-500" title="حذف">
+                        <Trash2 size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <div className="px-5 py-3 bg-gray-50 border-t flex items-center justify-between">
+          <span className="text-sm font-black text-amber-700">
+            الإجمالي: {fmtMins(totalMins)} · +{fmtMoney(totalPay)} ج
+          </span>
           <button onClick={onClose} className="px-4 py-1.5 rounded-lg border border-gray-300 text-sm hover:bg-gray-100">تم</button>
         </div>
       </div>

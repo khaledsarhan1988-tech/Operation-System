@@ -487,6 +487,34 @@ initDb().then(db => {
     console.error('team_member_extra_shifts migration error:', e.message);
   }
 
+  // ── team_member_outofduty_hours: PAID extra hours OUTSIDE a trainer's normal
+  // duties ("خارج مهام عمله"). Each row is a single date's block; it is paid at
+  // the trainer's hourly rate (total_amount ÷ 240) and shown in a dedicated
+  // payroll column. CRITICAL: this table is INTENTIONALLY separate from
+  // team_member_extra_shifts and is NEVER read by any utilization calculation —
+  // these hours must not affect نسبة التشغيل at all (owner's rule).
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS team_member_outofduty_hours (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        team_member_id  INTEGER NOT NULL REFERENCES team_members(id) ON DELETE CASCADE,
+        date            TEXT NOT NULL,
+        start_time      TEXT,
+        end_time        TEXT,
+        duration_min    INTEGER NOT NULL,
+        notes           TEXT,
+        created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_tmood_member ON team_member_outofduty_hours(team_member_id)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_tmood_date   ON team_member_outofduty_hours(date)`);
+    saveNow();
+    console.log('✅ Migration: team_member_outofduty_hours table ready');
+  } catch (e) {
+    console.error('team_member_outofduty_hours migration error:', e.message);
+  }
+
   // ── official_holidays: ranges where lectures get bulk-rescheduled ────────
   // Admin enters an entry per holiday (start..end + name). The sync service
   // uses it to AUTO-MARK lecture reschedules whose old_date falls in the

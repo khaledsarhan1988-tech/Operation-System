@@ -806,4 +806,115 @@ router.delete('/extra-shifts/:entryId', (req, res) => {
   }
 });
 
+// ─── OUT-OF-DUTY PAID HOURS ("خارج مهام عمله") ────────────────────────────────
+// PAID extra hours outside a trainer's normal duties. Stored in a SEPARATE table
+// from extra-shifts and NEVER counted in utilization. Surfaced only in the
+// payroll page where each entry is paid at the trainer's hourly rate.
+
+// GET /api/team/outofduty-hours?from&to — period totals per trainer (for the
+// payroll column). Literal single-segment path, declared before /:id/... so it
+// can never be captured as an :id. Returns [{ team_member_id, total_min }].
+router.get('/outofduty-hours', (req, res) => {
+  const { from, to } = req.query;
+  try {
+    const where = [];
+    const params = [];
+    if (from && /^\d{4}-\d{2}-\d{2}$/.test(String(from))) { where.push('date >= ?'); params.push(from); }
+    if (to   && /^\d{4}-\d{2}-\d{2}$/.test(String(to)))   { where.push('date <= ?'); params.push(to); }
+    const rows = db.prepare(`
+      SELECT team_member_id, SUM(duration_min) AS total_min
+        FROM team_member_outofduty_hours
+       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+       GROUP BY team_member_id
+    `).all(...params);
+    return res.json(rows);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/team/:id/outofduty-hours — list one trainer's entries (newest first)
+router.get('/:id/outofduty-hours', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'invalid member id' });
+  try {
+    const rows = db.prepare(`
+      SELECT oo.*, u.full_name AS created_by_name
+        FROM team_member_outofduty_hours oo
+        LEFT JOIN users u ON u.id = oo.created_by
+       WHERE oo.team_member_id = ?
+       ORDER BY oo.date DESC, oo.start_time, oo.id DESC
+    `).all(id);
+    return res.json(rows);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/team/:id/outofduty-hours — add an entry. Admin / leader only.
+router.post('/:id/outofduty-hours', express.json(), (req, res) => {
+  if (req.user?.role !== 'admin' && req.user?.role !== 'leader') {
+    return res.status(403).json({ error: 'صلاحية للأدمن أو القائد فقط' });
+  }
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'invalid member id' });
+  const exists = db.prepare(`SELECT id FROM team_members WHERE id = ?`).get(id);
+  if (!exists) return res.status(404).json({ error: 'team member not found' });
+
+  const { date, start_time, end_time, duration_min, notes } = req.body || {};
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(String(date))) {
+    return res.status(400).json({ error: 'date is required (YYYY-MM-DD)' });
+  }
+
+  // Resolve duration: prefer (start_time + end_time) → fallback to duration_min.
+  let resolvedMin = null;
+  const sMin = timeStrToMins(start_time);
+  const eMin = timeStrToMins(end_time);
+  if (sMin !== null && eMin !== null) {
+    let diff = eMin - sMin;
+    if (diff < 0) diff += 24 * 60;
+    if (diff > 0) resolvedMin = diff;
+  }
+  if (resolvedMin === null && Number(duration_min) > 0) {
+    resolvedMin = Math.round(Number(duration_min));
+  }
+  if (!resolvedMin || resolvedMin <= 0) {
+    return res.status(400).json({ error: 'يجب تحديد وقت بداية ونهاية، أو عدد دقائق صالح' });
+  }
+
+  try {
+    const result = db.prepare(`
+      INSERT INTO team_member_outofduty_hours
+        (team_member_id, date, start_time, end_time, duration_min, notes, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id, date,
+      start_time || null, end_time || null,
+      resolvedMin,
+      notes || null,
+      req.user?.id || null,
+    );
+    const row = db.prepare(`SELECT * FROM team_member_outofduty_hours WHERE id = ?`).get(result.lastInsertRowid);
+    return res.status(201).json(row);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/team/outofduty-hours/:entryId — remove a single entry
+router.delete('/outofduty-hours/:entryId', (req, res) => {
+  if (req.user?.role !== 'admin' && req.user?.role !== 'leader') {
+    return res.status(403).json({ error: 'صلاحية للأدمن أو القائد فقط' });
+  }
+  const entryId = parseInt(req.params.entryId, 10);
+  if (!entryId) return res.status(400).json({ error: 'invalid entry id' });
+  try {
+    const r = db.prepare(`DELETE FROM team_member_outofduty_hours WHERE id = ?`).run(entryId);
+    if (r.changes === 0) return res.status(404).json({ error: 'entry not found' });
+    return res.json({ deleted: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
