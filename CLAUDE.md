@@ -130,6 +130,12 @@ node -e "
 ### أمان
 - أي endpoint يأخذ قيمًا من `req.query`/`req.body` في SQL لازم **parameterized** (`?` + bind). (مثال: ثغرة `GET /api/team` التي أُصلحت.)
 
+### منح صفحة لمستخدم بدون تغيير دوره (`extra_pages`) — قرار Owner 2026-06-08
+- عمود `extra_pages` (CSV من مفاتيح الصفحات) على جدول `users`. يسمح للأدمن يفتح صفحة محددة لـ agent **من غير ما يحوّله أدمن**.
+- المفتاح الحالي: `occupancy-trainers` = صفحات الإشغال والمدربين (`trainer-utilization`/`trainer-dashboard`/`find-available-trainer`/`trainer-work-history`) تحت `/agent`.
+- backend `/api/reports` أصلًا مفتوح لكل الـ agents (`requireRole('agent')`) → المنح **frontend-only** (مفيش تغيير صلاحية على السيرفر). القيمة بتيجي للفرونت من JWT payload (login/refresh) لأن `/me` و login response مش بيرجّعوا الحقل للـ Sidebar.
+- الحارس: `PrivateRoute requirePage="..."` (غير الأدمن لازم المفتاح في `extra_pages`)؛ الـ Sidebar بيظهر قسم ممنوح؛ UserManagement فيه multi-select "صفحات إضافية".
+
 ---
 
 ## 4) الأخطاء المتكررة في البيانات (فئات الجذور) — افحصها في أي تقرير
