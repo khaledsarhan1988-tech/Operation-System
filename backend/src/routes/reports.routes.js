@@ -1273,16 +1273,19 @@ router.get('/dashboard', (req, res) => {
 
   try {
     // 1. Active groups (3 statuses)
+    // Internal/non-real groups (placement test, free slots, تحديد مستوى) are NOT
+    // real classes — excluded from the group KPIs just like every other report
+    // (notInternalGroup), so "active groups" counts only real classes.
     const activeGroupsList = db.prepare(
-      `SELECT * FROM batches WHERE status='نشطة'${deptBatches}${empFilter}${lineBatches} ORDER BY start_date DESC`
+      `SELECT * FROM batches WHERE status='نشطة'${deptBatches}${empFilter}${lineBatches}${notInternalGroup('group_name')} ORDER BY start_date DESC`
     ).all();
 
     const waitingTraineesList = db.prepare(
-      `SELECT * FROM batches WHERE status='بانتظار تسجيل المتدربين'${deptBatches}${empFilter}${lineBatches} ORDER BY start_date DESC`
+      `SELECT * FROM batches WHERE status='بانتظار تسجيل المتدربين'${deptBatches}${empFilter}${lineBatches}${notInternalGroup('group_name')} ORDER BY start_date DESC`
     ).all();
 
     const waitingLecturesList = db.prepare(
-      `SELECT * FROM batches WHERE status='بانتظار تسجيل المحاضرات'${deptBatches}${empFilter}${lineBatches} ORDER BY start_date DESC`
+      `SELECT * FROM batches WHERE status='بانتظار تسجيل المحاضرات'${deptBatches}${empFilter}${lineBatches}${notInternalGroup('group_name')} ORDER BY start_date DESC`
     ).all();
 
     // 2. Expired active groups
@@ -1292,7 +1295,7 @@ router.get('/dashboard', (req, res) => {
          AND end_date IS NOT NULL
          AND end_date != ''
          AND end_date <= date('now', '+2 hours')
-       ${deptBatches}${empFilter}${lineBatches}
+       ${deptBatches}${empFilter}${lineBatches}${notInternalGroup('group_name')}
        ORDER BY end_date DESC`
     ).all();
 
