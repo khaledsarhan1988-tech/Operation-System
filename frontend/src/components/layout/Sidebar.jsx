@@ -234,11 +234,13 @@ export default function Sidebar({ mobile, onClose }) {
   const grantedLinks = [];
   if (user?.role !== 'admin' && grantedPages.includes('occupancy-trainers')) {
     grantedLinks.push(
+      // Labels + order MUST mirror the admin "الإشغال والمدربين" group exactly
+      // (same i18n keys, same sequence) so agent ↔ admin look identical.
       { type: 'section', label: 'الإشغال والمدربين' },
-      { to: '/agent/reports/trainer-utilization',    label: 'إشغال المدربين',   icon: Activity,  color: 'teal'   },
-      { to: '/agent/reports/trainer-dashboard',      label: 'لوحة الإشغال',     icon: BarChart3, color: 'indigo', sub: true },
-      { to: '/agent/reports/find-available-trainer', label: 'مدرب متاح',        icon: Sparkles,  color: 'cyan',   sub: true },
-      { to: '/agent/reports/trainer-work-history',   label: 'سجل عمل المدربين', icon: History,   color: 'violet', sub: true },
+      { to: '/agent/reports/trainer-utilization',    label: 'nav.trainerUtilization',   icon: Activity,  color: 'teal'   },
+      { to: '/agent/reports/find-available-trainer', label: 'nav.findAvailableTrainer', icon: Sparkles,  color: 'cyan'   },
+      { to: '/agent/reports/trainer-dashboard',      label: 'nav.trainerDashboard',     icon: BarChart3, color: 'indigo' },
+      { to: '/agent/reports/trainer-work-history',   label: 'سجل عمل المدربين',          icon: History,   color: 'violet' },
     );
   }
   const baseLinks = [...roleLinks, ...grantedLinks];
