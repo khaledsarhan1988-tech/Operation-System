@@ -5593,11 +5593,17 @@ router.get('/attendance-absence', (req, res) => {
     // Student-slot denominator: SUM of per-lecture group size = MAX(enrolled,
     // present + listed-absent). See expectedSlotsExpr above for why trainee_count
     // alone is wrong.
+    // De-duplicated batches join: a group with >1 row in `batches` (e.g. an
+    // active row + an `إنتهت` row, or repeated placement entries) would multiply
+    // the LEFT JOIN and inflate SUM(expectedSlots). Collapse to ONE row per
+    // (group, line) taking the largest trainee_count so the denominator is
+    // counted once. (b is used ONLY for b.trainee_count here.)
     const mainExpectedRows = db.prepare(`
       SELECT ${dateAwareCoord('l', 'l.date')} AS coordinator,
         COALESCE(SUM(${expectedSlotsExpr}), 0) AS cnt
       FROM lectures l
-      LEFT JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
+      LEFT JOIN (SELECT group_name, line, MAX(trainee_count) AS trainee_count FROM batches GROUP BY group_name, line) b
+             ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
       WHERE l.session_type = 'main' AND l.status != 'غير مؤكدة'
       ${dateFilterL}${deptFilterMainL}${coordFilterMainL}${notInternalGroup('l.group_name')}${lineL}
       GROUP BY coordinator
@@ -6345,7 +6351,8 @@ router.get('/quality-employee', (req, res) => {
   ]);
   const mainExpectedByCoord = _toMap(db.prepare(`
     SELECT ${_dateAwareCoordQ('l', 'l.date')} AS coordinator, COALESCE(SUM(${_expectedSlotsQ}), 0) AS cnt
-    FROM lectures l LEFT JOIN batches b ON l.group_name=b.group_name${qLineLit ? ' AND b.line=l.line' : ''}
+    FROM lectures l LEFT JOIN (SELECT group_name, line, MAX(trainee_count) AS trainee_count FROM batches GROUP BY group_name, line) b
+           ON l.group_name=b.group_name${qLineLit ? ' AND b.line=l.line' : ''}
     WHERE l.session_type='main' AND l.status != 'غير مؤكدة'
     ${qDateL}${notInternalGroup('l.group_name')}${qLineL} GROUP BY coordinator
   `).all());
