@@ -1,11 +1,16 @@
 import { useState } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 import QuickAddTodo from '../todos/QuickAddTodo';
 
 export default function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { pathname } = useLocation();
+  // Wide, data-heavy pages (e.g. the trainer payroll table with many columns)
+  // use the FULL available width instead of the centered 1600px cap, so columns
+  // don't overflow the frame and the empty side margins are used.
+  const fullWidth = /\/salaries\//.test(pathname);
 
   return (
     <div className="flex h-screen overflow-hidden bg-surface">
@@ -35,7 +40,7 @@ export default function AppShell() {
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <Topbar onMenuClick={() => setSidebarOpen(true)} />
         <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 xl:p-10">
-          <div className="max-w-[1600px] mx-auto">
+          <div className={fullWidth ? 'w-full' : 'max-w-[1600px] mx-auto'}>
             <Outlet />
           </div>
         </main>
