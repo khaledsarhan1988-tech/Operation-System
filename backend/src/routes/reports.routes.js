@@ -1557,16 +1557,22 @@ router.get('/dashboard', (req, res) => {
     // (each group = one row). Internal groups excluded like everywhere else.
     // KPI = number of DISTINCT duplicated groups; the modal list shows every
     // actual row (with its status / id) so the owner sees which one to delete.
+    // Extra exclusions for THIS card only (not global): "Go English" (non-real,
+    // 0 lectures) and "Grammar" crash-courses. Grammar groups ARE real (have
+    // confirmed lectures) so they're excluded ONLY here — they still count in
+    // absence/expected reports; the owner just doesn't want them flagged as
+    // duplicates to clean.
+    const dupExtraExclude = ` AND LOWER(group_name) NOT LIKE '%go english%' AND LOWER(group_name) NOT LIKE '%gramm%'`;
     const dupGroupKeys = db.prepare(
       `SELECT group_name, line FROM batches
-       WHERE 1=1${deptBatches}${empFilter}${lineBatches}${notInternalGroup('group_name')}
+       WHERE 1=1${deptBatches}${empFilter}${lineBatches}${notInternalGroup('group_name')}${dupExtraExclude}
        GROUP BY group_name, line HAVING COUNT(*) > 1`
     ).all();
     const duplicateGroupsList = dupGroupKeys.length
       ? db.prepare(
           `SELECT b.* FROM batches b
            JOIN (SELECT group_name, line FROM batches
-                 WHERE 1=1${deptBatches}${empFilter}${lineBatches}${notInternalGroup('group_name')}
+                 WHERE 1=1${deptBatches}${empFilter}${lineBatches}${notInternalGroup('group_name')}${dupExtraExclude}
                  GROUP BY group_name, line HAVING COUNT(*) > 1) d
              ON b.group_name = d.group_name AND b.line = d.line
            ORDER BY b.group_name, b.status`
