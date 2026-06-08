@@ -105,12 +105,22 @@ const router = createBrowserRouter([
       { path: 'my-progression',     element: <MyProgression /> },
       { path: 'todos',              element: <MyTodos /> },
       { path: 'targets',            element: <TargetsManagement /> },
-      // Per-page grants (users.extra_pages) — a non-admin can be given specific
-      // report pages without changing their role. Gated by requirePage.
-      { path: 'reports/trainer-utilization',    element: <PrivateRoute requirePage="occupancy-trainers"><TrainerUtilization /></PrivateRoute> },
-      { path: 'reports/trainer-dashboard',      element: <PrivateRoute requirePage="occupancy-trainers"><TrainerUtilizationDashboard /></PrivateRoute> },
-      { path: 'reports/find-available-trainer', element: <PrivateRoute requirePage="occupancy-trainers"><TrainerAvailabilityFinder /></PrivateRoute> },
-      { path: 'reports/trainer-work-history',   element: <PrivateRoute requirePage="occupancy-trainers"><TrainerWorkHistory /></PrivateRoute> },
+    ],
+  },
+
+  // ── Per-page grants (users.extra_pages) ───────────────────────────
+  // Neutral, role-agnostic mount so a user of ANY role (agent, enrollment,
+  // CS, leader) granted a page can reach it. The parent only requires an
+  // authenticated session; each child is gated by requirePage so a user
+  // still needs the specific grant in extra_pages (admins always pass).
+  {
+    path: '/reports',
+    element: <PrivateRoute><AppShell /></PrivateRoute>,
+    children: [
+      { path: 'trainer-utilization',    element: <PrivateRoute requirePage="occupancy-trainers"><TrainerUtilization /></PrivateRoute> },
+      { path: 'trainer-dashboard',      element: <PrivateRoute requirePage="occupancy-trainers"><TrainerUtilizationDashboard /></PrivateRoute> },
+      { path: 'find-available-trainer', element: <PrivateRoute requirePage="occupancy-trainers"><TrainerAvailabilityFinder /></PrivateRoute> },
+      { path: 'trainer-work-history',   element: <PrivateRoute requirePage="occupancy-trainers"><TrainerWorkHistory /></PrivateRoute> },
     ],
   },
 

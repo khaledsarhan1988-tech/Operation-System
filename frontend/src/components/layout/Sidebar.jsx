@@ -237,10 +237,10 @@ export default function Sidebar({ mobile, onClose }) {
       // Labels + order MUST mirror the admin "الإشغال والمدربين" group exactly
       // (same i18n keys, same sequence) so agent ↔ admin look identical.
       { type: 'section', label: 'الإشغال والمدربين' },
-      { to: '/agent/reports/trainer-utilization',    label: 'nav.trainerUtilization',   icon: Activity,  color: 'teal'   },
-      { to: '/agent/reports/find-available-trainer', label: 'nav.findAvailableTrainer', icon: Sparkles,  color: 'cyan'   },
-      { to: '/agent/reports/trainer-dashboard',      label: 'nav.trainerDashboard',     icon: BarChart3, color: 'indigo' },
-      { to: '/agent/reports/trainer-work-history',   label: 'سجل عمل المدربين',          icon: History,   color: 'violet' },
+      { to: '/reports/trainer-utilization',    label: 'nav.trainerUtilization',   icon: Activity,  color: 'teal'   },
+      { to: '/reports/find-available-trainer', label: 'nav.findAvailableTrainer', icon: Sparkles,  color: 'cyan'   },
+      { to: '/reports/trainer-dashboard',      label: 'nav.trainerDashboard',     icon: BarChart3, color: 'indigo' },
+      { to: '/reports/trainer-work-history',   label: 'سجل عمل المدربين',          icon: History,   color: 'violet' },
     );
   }
   const baseLinks = [...roleLinks, ...grantedLinks];
