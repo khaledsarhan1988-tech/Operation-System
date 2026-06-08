@@ -66,7 +66,35 @@ const timeToMins = t => {
 // ─── TRAINER CARD ─────────────────────────────────────────────────────────────
 function TrainerCard({ trainer }) {
   const [expanded, setExpanded] = useState(false);
-  const { fully_available, partially_available, available_count, total_slots, slots } = trainer;
+  const { fully_available, partially_available, available_count, total_slots, slots, pair_patterns } = trainer;
+  const hasPatterns = Array.isArray(pair_patterns) && pair_patterns.length > 0;
+
+  const slotsGrid = (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+      {slots.map((s, i) => (
+        <div
+          key={i}
+          className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs ${
+            s.available ? 'bg-emerald-50 border border-emerald-100' : 'bg-rose-50 border border-rose-100'
+          }`}
+        >
+          {s.available
+            ? <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />
+            : <XCircle size={13} className="text-rose-500 shrink-0" />}
+          <span className="font-mono font-semibold text-gray-700 text-[11px]" dir="ltr">{fmtArDate(s.date)}</span>
+          <span className="text-gray-500 text-[11px]">{DAY_AR[s.day]} (أسبوع {s.week})</span>
+          {!s.available && (
+            <span className="text-rose-600 text-[10px] truncate ms-auto">{s.reason}</span>
+          )}
+          {s.available && s.free_slots?.length > 0 && (
+            <span className="text-emerald-700 text-[10px] truncate ms-auto" dir="ltr" title={s.free_slots.join('   •   ')}>
+              {s.free_slots.join('  •  ')}
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
 
   let statusBadge;
   if (fully_available) {
@@ -154,35 +182,44 @@ function TrainerCard({ trainer }) {
             })}
           </div>
 
-          {/* Slots */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-            {slots.map((s, i) => (
-              <div
-                key={i}
-                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs ${
-                  s.available
-                    ? 'bg-emerald-50 border border-emerald-100'
-                    : 'bg-rose-50 border border-rose-100'
-                }`}
-              >
-                {s.available
-                  ? <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />
-                  : <XCircle      size={13} className="text-rose-500 shrink-0" />}
-                <span className="font-mono font-semibold text-gray-700 text-[11px]" dir="ltr">
-                  {fmtArDate(s.date)}
-                </span>
-                <span className="text-gray-500 text-[11px]">{DAY_AR[s.day]} (أسبوع {s.week})</span>
-                {!s.available && (
-                  <span className="text-rose-600 text-[10px] truncate ms-auto">{s.reason}</span>
-                )}
-                {s.available && s.free_slots?.length > 0 && (
-                  <span className="text-emerald-700 text-[10px] truncate ms-auto" dir="ltr" title={s.free_slots.join('   •   ')}>
-                    {s.free_slots.join('  •  ')}
-                  </span>
-                )}
+          {/* Recurring day-pair patterns (no-window mode) */}
+          {hasPatterns && (
+            <div className="mb-3 rounded-xl border border-indigo-100 bg-indigo-50/40 overflow-hidden">
+              <div className="px-3 py-1.5 bg-indigo-100/60 text-[11px] font-bold text-indigo-800 flex items-center gap-1.5">
+                <Clock size={12} /> ساعات فاضية متكرّرة — ثابتة على نفس الميعاد كل الأسابيع
               </div>
-            ))}
-          </div>
+              <table className="w-full text-xs">
+                <tbody className="divide-y divide-indigo-100">
+                  {pair_patterns.map(pp => (
+                    <tr key={pp.key}>
+                      <td className="px-3 py-2 font-bold text-gray-700 whitespace-nowrap align-top w-28">{pp.label}</td>
+                      <td className="px-3 py-2">
+                        {pp.slots.length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5 justify-end" dir="ltr">
+                            {pp.slots.map((s, i) => (
+                              <span key={i} className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 font-semibold border border-emerald-200 text-[11px]">{s}</span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-gray-400 text-[11px]">لا يوجد وقت ثابت على الزوج ده طول الأسابيع</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Daily details — collapsible when recurring patterns are shown */}
+          {hasPatterns ? (
+            <details>
+              <summary className="cursor-pointer text-[11px] font-bold text-gray-500 hover:text-gray-700 mb-2 select-none">
+                ▾ التفاصيل اليومية ({available_count}/{total_slots})
+              </summary>
+              {slotsGrid}
+            </details>
+          ) : slotsGrid}
         </div>
       )}
     </div>

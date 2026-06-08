@@ -4361,6 +4361,21 @@ router.get('/find-available-trainer', (req, res) => {
     if (cur < end) free.push({ s: cur, e: end });
     return free;
   };
+  // Intersect two interval sets; keep overlaps >= MIN_GAP.
+  const intersectRanges = (a, b) => {
+    const out = [];
+    for (const x of a) for (const y of b) {
+      const s = Math.max(x.s, y.s), e = Math.min(x.e, y.e);
+      if (e - s >= MIN_GAP) out.push({ s, e });
+    }
+    return out.sort((p, q) => p.s - q.s);
+  };
+  // Day-pairs the academy schedules recurring groups on (Owner: 2026-06-06).
+  const DAY_PAIRS = [
+    { key: 'sat_tue', days: ['saturday', 'tuesday'],  label: 'السبت + الثلاثاء' },
+    { key: 'sun_wed', days: ['sunday', 'wednesday'],  label: 'الأحد + الأربعاء' },
+    { key: 'mon_thu', days: ['monday', 'thursday'],   label: 'الإثنين + الخميس' },
+  ];
 
   try {
     const trainers = db.prepare(`SELECT * FROM team_members ${trainerWhere}`).all();
@@ -4451,6 +4466,7 @@ router.get('/find-available-trainer', (req, res) => {
             available: true,
             reason: null,
             free_slots: free.map(f => `${fmt12(f.s)} → ${fmt12(f.e)}`),
+            free_ranges: free,   // numeric — used to compute recurring day-pair patterns
           };
         }
 
@@ -4514,6 +4530,39 @@ router.get('/find-available-trainer', (req, res) => {
         .map(sh => `${SHIFT_AR[sh.label] || sh.label} ${fmt12(sh.startMin)}-${fmt12(sh.endMin)}`)
         .join(' + ');
 
+      // ── Recurring free-slot patterns (no-window mode only) ─────────────────
+      // The Owner schedules recurring groups on day-pairs (Sat+Tue / Sun+Wed /
+      // Mon+Thu). A slot is "schedulable" only if the trainer is free at that
+      // time on EVERY occurrence of the day across ALL selected weeks (strict
+      // intersection — Owner decision 2026-06-06). Per-day pattern = ∩ of free
+      // ranges over that day's occurrences; pair pattern = ∩ of the two days.
+      let day_patterns = null, pair_patterns = null;
+      if (noWindow) {
+        const perDay = {};
+        for (const day of selectedDays) {
+          const occ = slotResults.filter(s => s.day === day);
+          if (occ.length === 0) { perDay[day] = []; continue; }
+          // Each occurrence contributes its free ranges ([] if unavailable that day).
+          let acc = occ[0].free_ranges || [];
+          for (let i = 1; i < occ.length; i++) acc = intersectRanges(acc, occ[i].free_ranges || []);
+          perDay[day] = acc;
+        }
+        day_patterns = selectedDays.map(day => ({
+          day,
+          label: DOW_AR[DOW_KEYS.indexOf(day)] || day,
+          slots: (perDay[day] || []).map(f => `${fmt12(f.s)} → ${fmt12(f.e)}`),
+        }));
+        pair_patterns = DAY_PAIRS
+          .filter(p => p.days.every(d => selectedDays.includes(d)))
+          .map(p => {
+            const common = intersectRanges(perDay[p.days[0]] || [], perDay[p.days[1]] || []);
+            return { key: p.key, label: p.label, days: p.days, slots: common.map(f => `${fmt12(f.s)} → ${fmt12(f.e)}`) };
+          });
+      }
+
+      // Drop the internal numeric ranges from the payload (free_slots strings stay).
+      const slimSlots = slotResults.map(({ free_ranges, ...rest }) => rest);
+
       return {
         id: t.id,
         name: stripParens(t.name) || t.name,
@@ -4529,7 +4578,9 @@ router.get('/find-available-trainer', (req, res) => {
         partially_available: availableCount > 0 && availableCount < slotResults.length,
         available_count: availableCount,
         total_slots: slotResults.length,
-        slots: slotResults,
+        slots: slimSlots,
+        day_patterns,
+        pair_patterns,
       };
     });
 
