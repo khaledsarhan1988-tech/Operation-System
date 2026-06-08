@@ -175,6 +175,11 @@ function TrainerCard({ trainer }) {
                 {!s.available && (
                   <span className="text-rose-600 text-[10px] truncate ms-auto">{s.reason}</span>
                 )}
+                {s.available && s.free_slots?.length > 0 && (
+                  <span className="text-emerald-700 text-[10px] truncate ms-auto" dir="ltr" title={s.free_slots.join('   •   ')}>
+                    {s.free_slots.join('  •  ')}
+                  </span>
+                )}
               </div>
             ))}
           </div>
@@ -204,7 +209,10 @@ export default function TrainerAvailabilityFinder() {
     return t - f;
   }, [fromTime, toTime]);
 
-  const canSubmit = selectedDays.length > 0 && durationMin > 0;
+  // Time window is OPTIONAL — both empty → "any free slot" mode (returns every
+  // trainer that has any unbooked gap on the chosen days).
+  const noWindow = !fromTime && !toTime;
+  const canSubmit = selectedDays.length > 0 && (noWindow || durationMin > 0);
 
   const { data, isFetching } = useQuery({
     queryKey: ['find-available-trainer', section, selectedDays.join(','), fromTime, toTime, weeksCount, startDate, courseFamily, courseLevel],
@@ -312,20 +320,32 @@ export default function TrainerAvailabilityFinder() {
           <div>
             <label className={labelCls}>
               <Clock size={11} className="inline ml-1 -mt-0.5" />
-              من الساعة <span className="text-rose-500">*</span>
+              من الساعة <span className="text-[10px] text-gray-400">(اختياري)</span>
             </label>
             <input type="time" value={fromTime} onChange={e => setFromTime(e.target.value)} className={inputCls} dir="ltr" />
           </div>
           <div>
             <label className={labelCls}>
-              إلى الساعة <span className="text-rose-500">*</span>
+              إلى الساعة <span className="text-[10px] text-gray-400">(اختياري)</span>
             </label>
             <input type="time" value={toTime} onChange={e => setToTime(e.target.value)} className={inputCls} dir="ltr" />
           </div>
           <div className="flex items-end pb-1">
             <div className="w-full text-center px-3 py-2 rounded-xl bg-blue-50 border border-blue-100">
-              <div className="text-[10px] text-blue-700 font-bold">المدة المحسوبة</div>
-              <div className="text-sm font-extrabold text-blue-900">{fmtMins(durationMin)}</div>
+              {noWindow ? (
+                <>
+                  <div className="text-[10px] text-blue-700 font-bold">الوضع</div>
+                  <div className="text-xs font-extrabold text-blue-900">كل الأوقات المتاحة</div>
+                  <div className="text-[9px] text-blue-600 mt-0.5">سيب الوقت فاضي = كل المدربين اللي عندهم وقت فاضي</div>
+                </>
+              ) : (
+                <>
+                  <div className="text-[10px] text-blue-700 font-bold">المدة المحسوبة</div>
+                  <div className="text-sm font-extrabold text-blue-900">{fmtMins(durationMin)}</div>
+                  <button type="button" onClick={() => { setFromTime(''); setToTime(''); }}
+                    className="mt-0.5 text-[10px] text-blue-600 hover:underline">مسح الوقت (عرض الكل)</button>
+                </>
+              )}
             </div>
           </div>
         </div>

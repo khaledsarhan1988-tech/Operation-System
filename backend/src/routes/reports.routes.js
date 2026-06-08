@@ -4251,14 +4251,27 @@ router.get('/find-available-trainer', (req, res) => {
   if (selectedDays.length === 0) {
     return res.status(400).json({ error: 'يجب اختيار يوم واحد على الأقل من أيام الأسبوع' });
   }
+  // Time window is OPTIONAL (2026-06-06). Both empty → "any free slot" mode:
+  // return every trainer who has ANY unbooked gap in their shift on the chosen
+  // days (gaps = shift minus rests/voice-notes/booked lectures). Both filled →
+  // the original specific-window search. Exactly one filled is rejected.
+  const hasFrom = !!String(from_time).trim();
+  const hasTo   = !!String(to_time).trim();
+  const noWindow = !hasFrom && !hasTo;
   const fromMin = HHMM(from_time);
   const toMin   = HHMM_END(to_time);
-  if (fromMin == null || toMin == null) {
-    return res.status(400).json({ error: 'الوقت غير صحيح — استخدم HH:MM' });
+  if (!noWindow) {
+    if (hasFrom !== hasTo) {
+      return res.status(400).json({ error: 'حدّد وقت البداية والنهاية معًا، أو اتركهما فارغين لعرض كل الأوقات المتاحة' });
+    }
+    if (fromMin == null || toMin == null) {
+      return res.status(400).json({ error: 'الوقت غير صحيح — استخدم HH:MM' });
+    }
+    if (toMin <= fromMin) {
+      return res.status(400).json({ error: 'وقت النهاية يجب أن يكون بعد وقت البداية' });
+    }
   }
-  if (toMin <= fromMin) {
-    return res.status(400).json({ error: 'وقت النهاية يجب أن يكون بعد وقت البداية' });
-  }
+  const MIN_GAP = 15; // minutes — ignore slivers shorter than a zoom slot in no-window mode
   const nWeeks = Math.max(1, Math.min(12, parseInt(weeks_count) || 1));
   const courseLevelN = parseInt(course_level);
   const useCourseFilter = ['starter','general','conversation'].includes(course_family)
@@ -4332,6 +4345,22 @@ router.get('/find-available-trainer', (req, res) => {
     return `${String(h12).padStart(2,'0')}:${String(mm).padStart(2,'0')} ${ampm}`;
   };
   const SHIFT_AR = { morning: 'صباحي', evening: 'مسائي' };
+  // Free-gap computation for no-window mode: [start,end] minus the union of
+  // block intervals (rests + voice notes + booked lectures).
+  const freeIntervals = (start, end, blocks) => {
+    const bs = blocks
+      .filter(b => b.e > start && b.s < end)
+      .map(b => ({ s: Math.max(b.s, start), e: Math.min(b.e, end) }))
+      .sort((a, b) => a.s - b.s);
+    const free = [];
+    let cur = start;
+    for (const b of bs) {
+      if (b.s > cur) free.push({ s: cur, e: b.s });
+      cur = Math.max(cur, b.e);
+    }
+    if (cur < end) free.push({ s: cur, e: end });
+    return free;
+  };
 
   try {
     const trainers = db.prepare(`SELECT * FROM team_members ${trainerWhere}`).all();
@@ -4386,6 +4415,45 @@ router.get('/find-available-trainer', (req, res) => {
         if (earliestStart && slot.date < earliestStart) {
           return { ...slot, available: false, reason: 'قبل بداية شيفت المدرب' };
         }
+
+        // ── NO-WINDOW MODE: report any free gap in the day's shift(s) ─────────
+        if (noWindow) {
+          const lectures = lectureMap[`${tKey}|${slot.date}`] || [];
+          const lecBlocks = lectures.map(l => {
+            const s = parseTime12(l.time), dur = parseDur(l.duration);
+            return (s >= 0 && dur > 0) ? { s, e: s + dur } : null;
+          }).filter(Boolean);
+          let free = [];
+          let hadShift = false;
+          for (const sh of shifts) {
+            if (!shiftActiveOn(sh, slot.date)) continue;
+            if (!sh.days.includes(dayKey)) continue;
+            hadShift = true;
+            const onDay = x => !x.days || !x.days.length || x.days.includes(dayKey);
+            const blocks = [
+              ...sh.rests.filter(onDay),
+              ...(sh.voiceNotes || []).filter(onDay),
+              ...lecBlocks,
+            ];
+            for (const f of freeIntervals(sh.startMin, sh.endMin, blocks)) {
+              if (f.e - f.s >= MIN_GAP) free.push(f);
+            }
+          }
+          if (!hadShift) {
+            return { ...slot, available: false, reason: `${DOW_AR[dow]} مش في أيام عمل المدرب` };
+          }
+          if (free.length === 0) {
+            return { ...slot, available: false, reason: 'الشيفت محجوز بالكامل' };
+          }
+          free.sort((a, b) => a.s - b.s);
+          return {
+            ...slot,
+            available: true,
+            reason: null,
+            free_slots: free.map(f => `${fmt12(f.s)} → ${fmt12(f.e)}`),
+          };
+        }
+
         // Find any shift that covers this date+day AND fits the requested window
         let suitable = null, fallbackReason = null;
         for (const sh of shifts) {
@@ -4481,7 +4549,9 @@ router.get('/find-available-trainer', (req, res) => {
       request: {
         section,
         days: selectedDays,
-        from_time, to_time,
+        from_time: noWindow ? null : from_time,
+        to_time:   noWindow ? null : to_time,
+        no_window: noWindow,
         weeks_count: nWeeks,
         course_family: useCourseFilter ? course_family : null,
         course_level: useCourseFilter ? courseLevelN : null,
