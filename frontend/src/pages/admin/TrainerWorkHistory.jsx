@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   History, CalendarDays, Search, Loader2, Users, Clock, Plus,
   CheckCircle, XCircle, X, Pencil, AlertCircle, Trash2, Wallet, MinusCircle,
+  Lock, Unlock,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -469,6 +470,60 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
     return m;
   }, [displayRows]);
 
+  // ── Month lock (قفل الشهر) — a locked month renders from a frozen snapshot
+  // and disables all edits, immune to later salary/KPI/hours changes.
+  const { data: locks = [] } = useQuery({
+    queryKey: ['payroll-locks'],
+    queryFn: () => api.get('/trainer-salaries/locks').then(r => r.data).catch(() => []),
+    enabled: showSalaryCategory,
+    staleTime: 30 * 1000,
+  });
+  const isLocked = showSalaryCategory && locks.some(l => l.month === kpiMonth);
+  const lockInfo = locks.find(l => l.month === kpiMonth) || null;
+  const { data: snapshot } = useQuery({
+    queryKey: ['payroll-lock-snapshot', kpiMonth],
+    queryFn: () => api.get(`/trainer-salaries/locks/${kpiMonth}`).then(r => r.data).catch(() => null),
+    enabled: isLocked,
+    staleTime: 30 * 1000,
+  });
+
+  // Unified computed rows (live). Each carries its salary breakdown in `_sal`
+  // so the table + the lock snapshot share one shape.
+  const computedRows = useMemo(() => displayRows.map((r, i) => {
+    const s = salaryFor(r);
+    const isPrimary = primaryRowByTrainer.get(r.trainer_id) === i;
+    const oodMins = isPrimary ? (oodMinsByTrainer.get(r.trainer_id) || 0) : 0;
+    const oodPay  = (oodMins / 60) * s.perHour;
+    const award   = isPrimary ? kpiAwardByTrainer.get(r.trainer_id) : null;
+    const kpiPay  = isPrimary
+      ? (award?.no_absence ? s.kpiAmts.no_absence : 0)
+        + (award?.on_time ? s.kpiAmts.on_time : 0)
+        + (award?.attendance ? s.kpiAmts.attendance : 0)
+      : 0;
+    return {
+      ...r,
+      _primary: isPrimary,
+      _award: award ? { no_absence: !!award.no_absence, on_time: !!award.on_time, attendance: !!award.attendance } : { no_absence: false, on_time: false, attendance: false },
+      _sal: {
+        found: s.found, base: s.base, perHour: s.perHour, dayWage: s.dayWage,
+        extraPay: s.extraPay, ded: s.ded, oodMins, oodPay, kpiPay,
+        kpiAmts: s.kpiAmts, net: s.net + oodPay + kpiPay,
+      },
+    };
+  }), [displayRows, primaryRowByTrainer, oodMinsByTrainer, kpiAwardByTrainer, salarySystems, deductions]);
+
+  // When locked, render the frozen snapshot rows; otherwise the live computed rows.
+  const tableRows = (isLocked && snapshot?.rows) ? snapshot.rows : computedRows;
+
+  const lockMut = useMutation({
+    mutationFn: () => api.post(`/trainer-salaries/locks/${kpiMonth}`, { rows: computedRows }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['payroll-locks'] }); qc.invalidateQueries({ queryKey: ['payroll-lock-snapshot'] }); },
+  });
+  const unlockMut = useMutation({
+    mutationFn: () => api.delete(`/trainer-salaries/locks/${kpiMonth}`),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['payroll-locks'] }); qc.invalidateQueries({ queryKey: ['payroll-lock-snapshot'] }); },
+  });
+
   const inputCls  = 'bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a5f]/30 focus:border-[#1e3a5f]';
   const selectCls = inputCls + ' min-w-[160px]';
 
@@ -563,6 +618,38 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
           </div>
         </div>
 
+        {/* ── LOCK BAR (مرتبات المدربين only) ── */}
+        {showSalaryCategory && monthPicker && (
+          isLocked ? (
+            <div className="mx-4 mt-3 flex items-center gap-3 bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
+              <Lock size={16} className="text-blue-600 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-black text-blue-800">هذا الشهر مقفول — الأرقام مجمّدة ولا تتأثر بأي تغيير لاحق</p>
+                {lockInfo?.locked_at && <p className="text-[10px] text-blue-500">تم القفل: {lockInfo.locked_at}</p>}
+              </div>
+              <button
+                onClick={() => { if (confirm('فتح قفل الشهر؟ هيرجع يحسب الأرقام لحظيًا من القيم الحالية.')) unlockMut.mutate(); }}
+                disabled={unlockMut.isPending}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-blue-300 text-blue-700 text-xs font-bold hover:bg-blue-50 disabled:opacity-50">
+                <Unlock size={13} /> فتح القفل
+              </button>
+            </div>
+          ) : (
+            <div className="mx-4 mt-3 flex items-center gap-3 bg-amber-50/60 border border-amber-200 rounded-xl px-4 py-2.5">
+              <Lock size={16} className="text-amber-500 flex-shrink-0" />
+              <p className="flex-1 text-[11px] text-amber-700 min-w-0">
+                لما تخلّص مراجعة الشهر، اقفله عشان تتجمّد أرقامه — وبعدها تقدر تغيّر الأسعار من غير ما الشهر ده يتأثر.
+              </p>
+              <button
+                onClick={() => { if (confirm('قفل الشهر بأرقامه الحالية؟ بعد القفل تتجمّد ولن تتأثر بأي تغيير.')) lockMut.mutate(); }}
+                disabled={lockMut.isPending || computedRows.length === 0}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-xs font-bold hover:opacity-90 disabled:opacity-50">
+                <Lock size={13} /> {lockMut.isPending ? 'جاري القفل...' : 'قفل الشهر'}
+              </button>
+            </div>
+          )
+        )}
+
         {/* ── TABLE ── */}
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-right" style={{ minWidth: '1380px' }}>
@@ -577,11 +664,11 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {isLoading ? <SkeletonRows cols={colCount} rows={6} /> :
-               isError    ? (
+              {(isLoading && !isLocked) ? <SkeletonRows cols={colCount} rows={6} /> :
+               (isError && !isLocked) ? (
                  <tr><td colSpan={colCount} className="text-center py-12 text-sm text-red-600">حدث خطأ أثناء تحميل البيانات</td></tr>
                ) :
-               filteredRows.length === 0 ? (
+               tableRows.length === 0 ? (
                  <tr>
                    <td colSpan={colCount} className="text-center py-12">
                      <div className="flex flex-col items-center gap-2 text-gray-400">
@@ -591,9 +678,9 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                    </td>
                  </tr>
                ) :
-               displayRows.map((r, i) => {
-                 const showHeader = groupBySection && (i === 0 || displayRows[i - 1].section !== r.section);
-                 const sectionCount = showHeader ? displayRows.filter(x => x.section === r.section).length : 0;
+               tableRows.map((r, i) => {
+                 const showHeader = groupBySection && (i === 0 || tableRows[i - 1].section !== r.section);
+                 const sectionCount = showHeader ? tableRows.filter(x => x.section === r.section).length : 0;
                  return (
                  <Fragment key={i}>
                    {showHeader && (
@@ -680,7 +767,10 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                    </td>
                    <td className="px-2 py-2.5 whitespace-nowrap"><StatusBadge value={r.status} /></td>
                    {showSalaryCategory && (() => {
-                     const s = salaryFor(r);
+                     // Salary breakdown comes precomputed in `_sal` (live) or from
+                     // the frozen snapshot row (locked month). When locked, the
+                     // action buttons become read-only chips.
+                     const s = r._sal || {};
                      if (!s.found) {
                        return (
                          <>
@@ -688,19 +778,8 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                          </>
                        );
                      }
-                     // Out-of-duty PAID hours — per trainer, shown/added on the
-                     // trainer's first row only (never affects utilization).
-                     const isPrimary = primaryRowByTrainer.get(r.trainer_id) === i;
-                     const oodMins   = isPrimary ? (oodMinsByTrainer.get(r.trainer_id) || 0) : 0;
-                     const oodPay    = (oodMins / 60) * s.perHour;
-                     // KPIs awarded (manual) — per trainer/month, first row only.
-                     const award     = isPrimary ? kpiAwardByTrainer.get(r.trainer_id) : null;
-                     const kpiPay    = isPrimary
-                       ? (award?.no_absence ? s.kpiAmts.no_absence : 0)
-                         + (award?.on_time ? s.kpiAmts.on_time : 0)
-                         + (award?.attendance ? s.kpiAmts.attendance : 0)
-                       : 0;
-                     const net       = s.net + oodPay + kpiPay;
+                     const isPrimary = r._primary;
+                     const oodPay = n(s.oodPay), kpiPay = n(s.kpiPay), net = n(s.net);
                      return (
                        <>
                          <td className="px-2 py-2.5 text-xs font-bold text-gray-800 whitespace-nowrap text-center" dir="ltr">{fmtMoney(s.base)}</td>
@@ -710,58 +789,58 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                              : <span className="text-gray-300">—</span>}
                          </td>
                          <td className="px-2 py-2.5 whitespace-nowrap text-center">
-                           <button type="button"
-                             onClick={() => setDedModal({ trainer_id: r.trainer_id, trainer_name: r.trainer_name, perHour: s.perHour, dayWage: s.dayWage })}
-                             title="إضافة / تعديل الخصومات"
-                             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-bold border transition-colors ${
-                               s.ded > 0
-                                 ? 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'
-                                 : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
-                             }`}>
-                             <MinusCircle size={12} />
-                             {s.ded > 0 ? `−${fmtMoney(s.ded)}` : 'خصم'}
-                           </button>
+                           {isLocked ? (
+                             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-bold ${s.ded > 0 ? 'text-red-700' : 'text-gray-300'}`}>
+                               {s.ded > 0 ? `−${fmtMoney(s.ded)}` : '—'}
+                             </span>
+                           ) : (
+                             <button type="button"
+                               onClick={() => setDedModal({ trainer_id: r.trainer_id, trainer_name: r.trainer_name, perHour: s.perHour, dayWage: s.dayWage })}
+                               title="إضافة / تعديل الخصومات"
+                               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-bold border transition-colors ${
+                                 s.ded > 0 ? 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100' : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+                               }`}>
+                               <MinusCircle size={12} />
+                               {s.ded > 0 ? `−${fmtMoney(s.ded)}` : 'خصم'}
+                             </button>
+                           )}
                          </td>
                          <td className="px-2 py-2.5 whitespace-nowrap text-center">
-                           {isPrimary ? (
+                           {!isPrimary ? <span className="text-xs text-gray-300">—</span> : isLocked ? (
+                             <span className={`inline-flex px-2 py-0.5 rounded-lg text-xs font-bold ${oodPay > 0 ? 'text-amber-700' : 'text-gray-300'}`}>
+                               {oodPay > 0 ? `+${fmtMoney(oodPay)}` : '—'}
+                             </span>
+                           ) : (
                              <button type="button"
                                onClick={() => setOodModal({ trainer_id: r.trainer_id, trainer_name: r.trainer_name, perHour: s.perHour })}
                                title="إضافة / تعديل ساعات خارج مهام عمله (تُدفع ولا تؤثر على التشغيل)"
                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-bold border transition-colors ${
-                                 oodPay > 0
-                                   ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
-                                   : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+                                 oodPay > 0 ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
                                }`}>
                                <Clock size={12} />
                                {oodPay > 0 ? `+${fmtMoney(oodPay)}` : 'إضافة'}
                              </button>
-                           ) : (
-                             <span className="text-xs text-gray-300">—</span>
                            )}
                          </td>
                          <td className="px-2 py-2.5 whitespace-nowrap text-center">
-                           {isPrimary ? (
+                           {!isPrimary ? <span className="text-xs text-gray-300">—</span> : isLocked ? (
+                             <span className={`inline-flex px-2 py-0.5 rounded-lg text-xs font-bold ${kpiPay > 0 ? 'text-emerald-700' : 'text-gray-300'}`}>
+                               {kpiPay > 0 ? `+${fmtMoney(kpiPay)}` : '—'}
+                             </span>
+                           ) : (
                              <button type="button"
                                onClick={() => setKpiModal({
                                  trainer_id: r.trainer_id, trainer_name: r.trainer_name,
                                  month: kpiMonth, amts: s.kpiAmts,
-                                 awarded: {
-                                   no_absence: !!award?.no_absence,
-                                   on_time:    !!award?.on_time,
-                                   attendance: !!award?.attendance,
-                                 },
+                                 awarded: { ...(r._award || {}) },
                                })}
                                title="اختيار الـ KPIs المضافة للراتب"
                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-bold border transition-colors ${
-                                 kpiPay > 0
-                                   ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
-                                   : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+                                 kpiPay > 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
                                }`}>
                                <Wallet size={12} />
                                {kpiPay > 0 ? `+${fmtMoney(kpiPay)}` : 'اختر'}
                              </button>
-                           ) : (
-                             <span className="text-xs text-gray-300">—</span>
                            )}
                          </td>
                          <td className="px-2 py-2.5 text-xs font-black whitespace-nowrap text-center" dir="ltr">

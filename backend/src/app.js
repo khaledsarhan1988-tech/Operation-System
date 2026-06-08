@@ -688,6 +688,26 @@ initDb().then(db => {
     console.error('trainer_kpi_awards migration error:', e.message);
   }
 
+  // ── payroll_month_locks: frozen payroll snapshot for a locked month ─────
+  // When the owner LOCKS a month, the fully-computed payroll rows (as shown)
+  // are snapshotted here as JSON. A locked month renders from this snapshot,
+  // NOT a live recompute — so later changes to salary systems / KPIs / hours
+  // never alter a finished month. Unlocking deletes the snapshot → live again.
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS payroll_month_locks (
+        month         TEXT PRIMARY KEY,
+        snapshot_json TEXT NOT NULL,
+        locked_by     INTEGER,
+        locked_at     TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+      )
+    `);
+    saveNow();
+    console.log('✅ Migration: payroll_month_locks table ready');
+  } catch (e) {
+    console.error('payroll_month_locks migration error:', e.message);
+  }
+
   // ── trainer_deductions: PRIVATE owner-only salary deductions ────────────
   // Each row = one deduction for a trainer on a date, either in hours or in
   // days. The money value is computed on the client from the trainer's

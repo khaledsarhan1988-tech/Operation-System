@@ -329,4 +329,68 @@ router.put('/kpi-awards', express.json(), (req, res) => {
   }
 });
 
+/* ─── MONTH LOCKS (قفل/تجميد الشهر) ────────────────────────────────────────
+ * Freeze a month's payroll into a JSON snapshot so future changes to salary
+ * systems / KPIs / hours never alter a finished month. */
+
+// GET /locks  → list of locked months (lightweight, no snapshot body)
+router.get('/locks', (req, res) => {
+  try {
+    return res.json(db.prepare(`SELECT month, locked_at, locked_by FROM payroll_month_locks ORDER BY month DESC`).all());
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /locks/:month  → the frozen snapshot rows for a month (404 if not locked)
+router.get('/locks/:month', (req, res) => {
+  const month = String(req.params.month || '');
+  if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'month=YYYY-MM' });
+  try {
+    const row = db.prepare(`SELECT * FROM payroll_month_locks WHERE month = ?`).get(month);
+    if (!row) return res.status(404).json({ error: 'الشهر غير مقفول' });
+    let rows = [];
+    try { rows = JSON.parse(row.snapshot_json) || []; } catch (_) { rows = []; }
+    return res.json({ month, locked_at: row.locked_at, locked_by: row.locked_by, rows });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /locks/:month  → lock the month with the computed snapshot rows.
+// body: { rows: [...] } — the fully-computed payroll rows as displayed.
+router.post('/locks/:month', express.json({ limit: '8mb' }), (req, res) => {
+  const month = String(req.params.month || '');
+  if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'month=YYYY-MM' });
+  const rows = (req.body && Array.isArray(req.body.rows)) ? req.body.rows : null;
+  if (!rows) return res.status(400).json({ error: 'rows مطلوبة' });
+  try {
+    db.prepare(`
+      INSERT INTO payroll_month_locks (month, snapshot_json, locked_by)
+      VALUES (?, ?, ?)
+      ON CONFLICT(month) DO UPDATE SET
+        snapshot_json = excluded.snapshot_json,
+        locked_by     = excluded.locked_by,
+        locked_at     = datetime('now', '+2 hours')
+    `).run(month, JSON.stringify(rows), req.user?.id || null);
+    const row = db.prepare(`SELECT month, locked_at, locked_by FROM payroll_month_locks WHERE month = ?`).get(month);
+    return res.status(201).json(row);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /locks/:month  → unlock (removes the snapshot → live again)
+router.delete('/locks/:month', (req, res) => {
+  const month = String(req.params.month || '');
+  if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'month=YYYY-MM' });
+  try {
+    const r = db.prepare(`DELETE FROM payroll_month_locks WHERE month = ?`).run(month);
+    if (r.changes === 0) return res.status(404).json({ error: 'الشهر غير مقفول' });
+    return res.json({ unlocked: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
