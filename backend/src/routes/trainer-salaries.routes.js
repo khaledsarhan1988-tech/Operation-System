@@ -153,14 +153,19 @@ router.post('/rows', express.json(), (req, res) => {
     const maxOrder = db.prepare(
       `SELECT COALESCE(MAX(sort_order),0) AS m FROM trainer_salary_defs WHERE system_id = ?`
     ).get(systemId).m;
+    // KPI breakdown — kpis (total) is always the SUM of the 3 components.
+    const kNo = num(b.kpi_no_absence), kOn = num(b.kpi_on_time), kAt = num(b.kpi_attendance);
+    const kpisTotal = kNo + kOn + kAt;
     const r = db.prepare(`
       INSERT INTO trainer_salary_defs
         (system_id, category, shift_type, days, hr, week, total_amount, kpis,
+         kpi_no_absence, kpi_on_time, kpi_attendance,
          tw_hours_override, per_hour_override, rate_per_h_override, sort_order)
-      VALUES (?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       systemId, cleanShift(b.shift_type),
-      num(b.days), num(b.hr), num(b.week), num(b.total_amount), num(b.kpis),
+      num(b.days), num(b.hr), num(b.week), num(b.total_amount), kpisTotal,
+      kNo, kOn, kAt,
       numOrNull(b.tw_hours_override), numOrNull(b.per_hour_override), numOrNull(b.rate_per_h_override),
       maxOrder + 1
     );
@@ -177,6 +182,8 @@ router.put('/rows/:id', express.json(), (req, res) => {
   if (!id) return res.status(400).json({ error: 'invalid id' });
   const b = req.body || {};
   try {
+    const kNo = num(b.kpi_no_absence), kOn = num(b.kpi_on_time), kAt = num(b.kpi_attendance);
+    const kpisTotal = kNo + kOn + kAt;
     const r = db.prepare(`
       UPDATE trainer_salary_defs SET
         shift_type          = ?,
@@ -185,6 +192,9 @@ router.put('/rows/:id', express.json(), (req, res) => {
         week                = ?,
         total_amount        = ?,
         kpis                = ?,
+        kpi_no_absence      = ?,
+        kpi_on_time         = ?,
+        kpi_attendance      = ?,
         tw_hours_override   = ?,
         per_hour_override   = ?,
         rate_per_h_override = ?,
@@ -192,7 +202,8 @@ router.put('/rows/:id', express.json(), (req, res) => {
       WHERE id = ?
     `).run(
       cleanShift(b.shift_type),
-      num(b.days), num(b.hr), num(b.week), num(b.total_amount), num(b.kpis),
+      num(b.days), num(b.hr), num(b.week), num(b.total_amount), kpisTotal,
+      kNo, kOn, kAt,
       numOrNull(b.tw_hours_override), numOrNull(b.per_hour_override), numOrNull(b.rate_per_h_override),
       id
     );

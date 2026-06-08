@@ -635,6 +635,32 @@ initDb().then(db => {
     console.error('trainer_salary_defs override migration error:', e.message);
   }
 
+  // ── trainer_salary_defs KPI breakdown columns ──────────────────────────
+  // Split the single `kpis` amount into 3 components (owner's spec):
+  //   عدم الغياب في أي يوم · الدخول في المواعيد المحددة · نسبة حضور الطلاب
+  // `kpis` stays = the SUM of the 3 (kept in sync on every write) for the
+  // existing Rate-Per-H / Total+Kpis display. On first add we backfill each
+  // existing row by splitting its current kpis 50/25/25 (a safe default the
+  // owner then adjusts to the exact figures). The actual KPI breakdown amounts
+  // are what the payroll "KPIs" selection adds to a trainer's net.
+  try {
+    const cols = (db._raw.exec(`PRAGMA table_info(trainer_salary_defs)`)[0]?.values || []).map(v => v[1]);
+    const fresh = !cols.includes('kpi_no_absence');
+    if (!cols.includes('kpi_no_absence')) db._raw.run(`ALTER TABLE trainer_salary_defs ADD COLUMN kpi_no_absence REAL NOT NULL DEFAULT 0`);
+    if (!cols.includes('kpi_on_time'))    db._raw.run(`ALTER TABLE trainer_salary_defs ADD COLUMN kpi_on_time    REAL NOT NULL DEFAULT 0`);
+    if (!cols.includes('kpi_attendance')) db._raw.run(`ALTER TABLE trainer_salary_defs ADD COLUMN kpi_attendance REAL NOT NULL DEFAULT 0`);
+    if (fresh) {
+      db._raw.run(`UPDATE trainer_salary_defs SET
+        kpi_no_absence = kpis * 0.5,
+        kpi_on_time    = kpis * 0.25,
+        kpi_attendance = kpis * 0.25`);
+    }
+    saveNow();
+    console.log('✅ Migration: trainer_salary_defs KPI breakdown columns ready');
+  } catch (e) {
+    console.error('trainer_salary_defs KPI breakdown migration error:', e.message);
+  }
+
   // ── trainer_deductions: PRIVATE owner-only salary deductions ────────────
   // Each row = one deduction for a trainer on a date, either in hours or in
   // days. The money value is computed on the client from the trainer's

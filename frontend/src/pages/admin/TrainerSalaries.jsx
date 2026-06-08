@@ -33,8 +33,13 @@ const num = (v) => {
 // Is an override value actually set (vs. empty → use auto formula)?
 const hasVal = (v) => v !== '' && v !== null && v !== undefined;
 
+// KPI total = sum of the 3 breakdown components (the single `kpis` field is
+// kept = this sum server-side, but we always derive from the parts for live UI).
+const kpiTotal = (r) => num(r.kpi_no_absence) + num(r.kpi_on_time) + num(r.kpi_attendance);
+
 const blankRow = () => ({
   shift_type: 'Full Time', days: 0, hr: 0, week: 0, total_amount: 0, kpis: 0,
+  kpi_no_absence: 0, kpi_on_time: 0, kpi_attendance: 0,
   tw_hours_override: '', per_hour_override: '', rate_per_h_override: '',
 });
 
@@ -48,7 +53,7 @@ function effective(r) {
   const tw = hasVal(r.tw_hours_override) ? num(r.tw_hours_override) : twAuto;
   const perAuto = tw > 0 ? num(r.total_amount) / tw : 0;
   const per = hasVal(r.per_hour_override) ? num(r.per_hour_override) : perAuto;
-  const rateAuto = tw > 0 ? num(r.kpis) / tw : 0;
+  const rateAuto = tw > 0 ? kpiTotal(r) / tw : 0;
   const rate = hasVal(r.rate_per_h_override) ? num(r.rate_per_h_override) : rateAuto;
   return {
     twAuto, tw, twManual: hasVal(r.tw_hours_override),
@@ -261,9 +266,9 @@ function SystemCard({ system, onChanged }) {
                       <Td><OverrideInput value={r.tw_hours_override} autoValue={e.twAuto} onChange={v => setField('tw_hours_override', v)} /></Td>
                       <Td><NumInput value={r.total_amount} onChange={v => setField('total_amount', v)} /></Td>
                       <Td><OverrideInput value={r.per_hour_override} autoValue={e.perAuto} onChange={v => setField('per_hour_override', v)} /></Td>
-                      <Td><NumInput value={r.kpis} onChange={v => setField('kpis', v)} /></Td>
+                      <KpiEditCell row={r} setField={setField} />
                       <Td><OverrideInput value={r.rate_per_h_override} autoValue={e.rateAuto} onChange={v => setField('rate_per_h_override', v)} /></Td>
-                      <TotalCell value={num(r.total_amount) + num(r.kpis)} />
+                      <TotalCell value={num(r.total_amount) + kpiTotal(r)} />
                       <Td>
                         <div className="flex items-center justify-center gap-1">
                           <IconBtn color="green" title="حفظ" onClick={() => updateRow.mutate({ id: editRowId, body: rowDraft })} disabled={updateRow.isPending}><Check size={15} /></IconBtn>
@@ -280,9 +285,9 @@ function SystemCard({ system, onChanged }) {
                       <CalcCell value={e.tw} manual={e.twManual} />
                       <Td>{fmt(num(row.total_amount))}</Td>
                       <CalcCell value={e.per} manual={e.perManual} />
-                      <Td>{fmt(num(row.kpis))}</Td>
+                      <KpiViewCell row={row} />
                       <CalcCell value={e.rate} manual={e.rateManual} />
-                      <TotalCell value={num(row.total_amount) + num(row.kpis)} />
+                      <TotalCell value={num(row.total_amount) + kpiTotal(row)} />
                       <Td>
                         <div className="flex items-center justify-center gap-1">
                           <IconBtn color="amber" title="تعديل" onClick={() => startEdit(row)}><Pencil size={14} /></IconBtn>
@@ -309,9 +314,9 @@ function SystemCard({ system, onChanged }) {
                   <Td><OverrideInput value={rowDraft.tw_hours_override} autoValue={e.twAuto} onChange={v => setField('tw_hours_override', v)} /></Td>
                   <Td><NumInput value={rowDraft.total_amount} onChange={v => setField('total_amount', v)} /></Td>
                   <Td><OverrideInput value={rowDraft.per_hour_override} autoValue={e.perAuto} onChange={v => setField('per_hour_override', v)} /></Td>
-                  <Td><NumInput value={rowDraft.kpis} onChange={v => setField('kpis', v)} /></Td>
+                  <KpiEditCell row={rowDraft} setField={setField} />
                   <Td><OverrideInput value={rowDraft.rate_per_h_override} autoValue={e.rateAuto} onChange={v => setField('rate_per_h_override', v)} /></Td>
-                  <TotalCell value={num(rowDraft.total_amount) + num(rowDraft.kpis)} />
+                  <TotalCell value={num(rowDraft.total_amount) + kpiTotal(rowDraft)} />
                   <Td>
                     <div className="flex items-center justify-center gap-1">
                       <IconBtn color="green" title="إضافة" onClick={() => createRow.mutate(rowDraft)} disabled={createRow.isPending}><Check size={15} /></IconBtn>
@@ -359,6 +364,46 @@ function NumInput({ value, onChange }) {
     <input type="number" value={value} min={0} step="any"
       onChange={e => onChange(e.target.value)}
       className="w-20 px-2 py-1 rounded border border-gray-300 text-sm text-center" />
+  );
+}
+
+// KPI breakdown — 3 components. The single `Kpis` total is their sum.
+const KPI_PARTS = [
+  { key: 'kpi_no_absence', label: 'عدم الغياب', short: 'غياب' },
+  { key: 'kpi_on_time',    label: 'المواعيد',   short: 'مواعيد' },
+  { key: 'kpi_attendance', label: 'حضور الطلاب', short: 'حضور' },
+];
+
+// Edit cell: 3 small labelled inputs stacked + their live sum.
+function KpiEditCell({ row, setField }) {
+  return (
+    <td className="border border-gray-300 px-2 py-1.5 align-top" dir="rtl">
+      <div className="flex flex-col gap-1 w-[120px] mx-auto">
+        {KPI_PARTS.map(p => (
+          <label key={p.key} className="flex items-center justify-between gap-1">
+            <span className="text-[10px] text-gray-500 whitespace-nowrap">{p.short}</span>
+            <input type="number" min={0} step="any" value={row[p.key] ?? 0}
+              onChange={e => setField(p.key, e.target.value)}
+              className="w-16 px-1.5 py-0.5 rounded border border-gray-300 text-xs text-center" />
+          </label>
+        ))}
+        <div className="text-[10px] text-center text-emerald-700 font-bold border-t border-gray-200 pt-0.5">
+          ∑ {fmt(kpiTotal(row))}
+        </div>
+      </div>
+    </td>
+  );
+}
+
+// View cell: total + the 3 parts underneath.
+function KpiViewCell({ row }) {
+  return (
+    <td className="border border-gray-300 px-2 py-1.5 text-center" dir="rtl">
+      <div className="font-semibold text-gray-800">{fmt(kpiTotal(row))}</div>
+      <div className="text-[9px] text-gray-400 leading-tight" dir="ltr">
+        {fmt(num(row.kpi_no_absence))} / {fmt(num(row.kpi_on_time))} / {fmt(num(row.kpi_attendance))}
+      </div>
+    </td>
   );
 }
 
