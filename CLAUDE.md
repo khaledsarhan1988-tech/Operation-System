@@ -89,6 +89,7 @@ node -e "
 - قوائم/أعمدة المنسقين تعرض **فقط** المنسقين المسجّلين في **فريق العمل** (`team_members`). الأسماء غير المسجّلة و الـ placeholder **`--`** تُعرض **فارغة**.
 - منسق فريق خدمة العملاء النشطين = `team_members WHERE department='customer_services' AND status='active'`. dropdown تقارير خدمة العملاء يأتي من هؤلاء (لا من `users`).
 - **النسب المنتهية (المجموعة بمنسقين):** كل حدث يُنسب لـ **منسق واحد** = الأقدم (`ORDER BY effective_from ASC, coordinator ASC LIMIT 1`) — لا GROUP_CONCAT ولا حساب مزدوج. `/attendance-absence/segments` يطابق نفس المنطق فيتساوى مجموع المقاطع مع صف المنسق.
+- **غياب موظفي الجودة = غياب الحضور/الغياب (تحديث 2026-06-08):** `quality-employee` كان ينسب الغياب عبر `batches.coordinators` الحالية (نموذج مختلف + يُسقط المجموعات المنتهية) → أرقام لا تطابق `/attendance-absence` (مثال: shrouk gamal 0 مقابل 129، doha 123 مقابل 196). الآن يبني نفس خرائط الغياب per-coordinator بنفس منطق `dateAwareCoord` (coordinator_history + عضو روستر مُوظَّف + منسق واحد أقدم + ended-group resilient) ويبحث بالاسم المضغوط ⇒ الرقمان متطابقان لكل منسق. أي تعديل في حساب غياب أحد التقريرين يجب أن ينعكس في الآخر.
 
 ### المجموعات المعاد تسميتها (RENAME)
 - عند إعادة التسمية: **`lectures`/`batches` بالاسم الجديد**، لكن **`absent_students`/`absent_zoom_students` بالاسم القديم**، و**`group_renames`** يخزّن (old→new). أي مطابقة غياب↔محاضرة/batch بالاسم بالضبط هشّة.

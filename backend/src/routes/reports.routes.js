@@ -6288,10 +6288,110 @@ router.get('/quality-employee', (req, res) => {
   const lineCps    = line ? ` AND cps.line = ?` : '';
   const lineB      = line ? ` AND b.line = cps.line` : '';
 
+  // ─── ABSENCE per coordinator — mirrors /attendance-absence EXACTLY ─────────
+  // Previously quality attributed absence via current `batches.coordinators`,
+  // which (a) used a different model than /attendance-absence and (b) dropped
+  // ENDED groups (removed from batches), zeroing coordinators whose groups
+  // finished (e.g. shrouk gamal: 0 here vs 437 there). We now reuse the SAME
+  // date-aware coordinator-of-record attribution (coordinator_history + employed
+  // roster member, single earliest coordinator) so both pages reconcile. Built
+  // once for all coordinators, then looked up per agent by compact name.
+  const qLineLit = line ? `'${line.replace(/'/g, "''")}'` : null;
+  const qLineL = qLineLit ? ` AND l.line = ${qLineLit}` : '';
+  const qLineA = qLineLit ? ` AND a.line = ${qLineLit}` : '';
+  const qDateL = buildDateFilter('l.date', from, to);
+  const qDateA = buildDateFilter('a.date', from, to);
+  const qDateResolved = (from && to) ? ` AND resolved_date BETWEEN '${from}' AND '${to}'`
+    : from ? ` AND resolved_date >= '${from}'` : to ? ` AND resolved_date <= '${to}'` : '';
+  const _compactQ = v => String(v == null ? '' : v).toLowerCase().replace(/\s/g, '');
+  const _dateAwareCoordQ = (alias, dateExpr) => `(
+    SELECT ch.coordinator FROM coordinator_history ch
+      JOIN team_members tm ON LOWER(TRIM(tm.name)) = LOWER(TRIM(ch.coordinator)) AND tm.department='customer_services'
+     WHERE ch.group_name = ${effectiveGroupNameAtDate(`${alias}.group_name`, `${alias}.line`, dateExpr)}
+       AND ch.line = ${alias}.line
+       AND DATE(ch.effective_from) <= ${dateExpr}
+       AND (ch.effective_to IS NULL OR DATE(ch.effective_to) > ${dateExpr})
+       AND (tm.end_date IS NULL OR TRIM(tm.end_date)='' OR DATE(tm.end_date) >= ${dateExpr})
+     ORDER BY DATE(ch.effective_from) ASC, ch.coordinator ASC LIMIT 1)`;
+  const _presentNumQ = `(CASE WHEN l.attendance GLOB '[0-9]*' THEN CAST(l.attendance AS INTEGER) ELSE 0 END)`;
+  const _absentOnLecQ = `(SELECT COUNT(*) FROM absent_students asx WHERE asx.group_name = l.group_name AND asx.date = l.date${qLineLit ? ` AND asx.line = ${qLineLit}` : ''})`;
+  const _traineeCountQ = `COALESCE(b.trainee_count, (SELECT COUNT(*) FROM clients cc WHERE cc.group_name = l.group_name${qLineLit ? ` AND cc.line = ${qLineLit}` : ''}))`;
+  const _expectedSlotsQ = `MAX(${_traineeCountQ}, ${_presentNumQ} + ${_absentOnLecQ})`;
+  const _toMap = (rows) => { const m = new Map(); for (const r of rows) { if (r.coordinator == null) continue; const k = _compactQ(r.coordinator); if (!k || k === '--') continue; m.set(k, (m.get(k) || 0) + (r.cnt || 0)); } return m; };
+
+  const mainAbsentByCoord = _toMap([
+    ...db.prepare(`
+      SELECT coordinator, COUNT(*) AS cnt FROM (
+        SELECT ${_dateAwareCoordQ('a', `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`)} AS coordinator,
+          COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS resolved_date
+        FROM absent_students a
+        LEFT JOIN (
+          SELECT group_name, date, line, ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
+          FROM lectures WHERE session_type='main' AND status != 'غير مؤكدة'${qLineLit ? ` AND line=${qLineLit}` : ''}
+        ) lec_inf ON (a.date IS NULL OR TRIM(a.date)='') AND lec_inf.group_name=a.group_name
+          AND a.lecture_no IS NOT NULL AND lec_inf.lec_num=a.lecture_no${qLineLit ? ' AND lec_inf.line=a.line' : ''}
+        WHERE ((a.student_name IS NOT NULL AND TRIM(a.student_name)!='') OR (a.phone IS NOT NULL AND TRIM(a.phone)!=''))
+        ${notInternalGroup('a.group_name')}${qLineA}
+      ) p1 WHERE 1=1${qDateResolved} GROUP BY coordinator
+    `).all(),
+    ...db.prepare(`
+      SELECT ${_dateAwareCoordQ('l', 'l.date')} AS coordinator, COUNT(*) AS cnt
+      FROM lectures l INNER JOIN clients c ON c.group_name=l.group_name${qLineLit ? ' AND c.line=l.line' : ''}
+      WHERE l.session_type='main' AND l.status='مؤكدة' AND (l.attendance IS NULL OR TRIM(l.attendance)='')
+        AND c.name IS NOT NULL AND TRIM(c.name)!='' AND c.phone IS NOT NULL AND TRIM(c.phone)!=''
+        AND NOT EXISTS (SELECT 1 FROM absent_students a2 WHERE a2.group_name=l.group_name AND a2.date=l.date${qLineLit ? ' AND a2.line=l.line' : ''})
+      ${qDateL}${notInternalGroup('l.group_name')}${qLineL} GROUP BY coordinator
+    `).all(),
+  ]);
+  const mainExpectedByCoord = _toMap(db.prepare(`
+    SELECT ${_dateAwareCoordQ('l', 'l.date')} AS coordinator, COALESCE(SUM(${_expectedSlotsQ}), 0) AS cnt
+    FROM lectures l LEFT JOIN batches b ON l.group_name=b.group_name${qLineLit ? ' AND b.line=l.line' : ''}
+    WHERE l.session_type='main' AND l.status != 'غير مؤكدة'
+    ${qDateL}${notInternalGroup('l.group_name')}${qLineL} GROUP BY coordinator
+  `).all());
+  const zoomExpectedByCoord = _toMap(db.prepare(`
+    SELECT coordinator, COALESCE(SUM(expected_slots),0) AS cnt FROM (
+      SELECT ${_dateAwareCoordQ('l', 'l.date')} AS coordinator, COUNT(*) AS expected_slots
+      FROM lectures l
+      WHERE l.session_type='side' AND l.status='مؤكدة'
+        AND (l.duration IS NULL OR l.duration <= '00:30') AND l.side_session_category='regular'
+      ${qDateL}${notInternalGroup('l.group_name')}${qLineL}
+      GROUP BY coordinator, l.group_name, l.date
+    ) sub GROUP BY coordinator
+  `).all());
+  const _hasZoomFileQ = db.prepare(`SELECT EXISTS(SELECT 1 FROM absent_zoom_students${qLineLit ? ` WHERE line=${qLineLit}` : ''}) AS h`).get()?.h;
+  const zoomAbsentByCoord = _toMap(_hasZoomFileQ
+    ? db.prepare(`
+        SELECT coordinator, COUNT(*) AS cnt FROM (
+          SELECT a.id, ${_dateAwareCoordQ('a', 'a.date')} AS coordinator
+          FROM absent_zoom_students a
+          WHERE ((a.student_name IS NOT NULL AND TRIM(a.student_name)!='') OR (a.phone IS NOT NULL AND TRIM(a.phone)!=''))
+            AND EXISTS (
+              SELECT 1 FROM lectures l WHERE REPLACE(l.group_name,' ','') IN (
+                REPLACE(a.group_name,' ',''), REPLACE(${currentGroupNameExpr('a.group_name', 'a.line')},' ',''))
+                AND l.date=a.date AND l.session_type='side'
+                AND (l.side_session_category='regular' OR (l.duration IS NOT NULL AND LENGTH(l.duration)>=5
+                     AND CAST(SUBSTR(l.duration,1,2) AS INTEGER)*60 + CAST(SUBSTR(l.duration,4,2) AS INTEGER) < 20))${qLineLit ? ' AND l.line=a.line' : ''}
+            )
+          ${qDateA}${notInternalGroup('a.group_name')}${qLineA}
+          GROUP BY a.id
+        ) sub WHERE coordinator IS NOT NULL GROUP BY coordinator
+      `).all()
+    : db.prepare(`
+        SELECT coordinator, COALESCE(SUM(absent_count),0) AS cnt FROM (
+          SELECT ${_dateAwareCoordQ('l', 'l.date')} AS coordinator,
+            COUNT(*) - SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance!='' AND CAST(l.attendance AS INTEGER)>0 THEN 1 ELSE 0 END) AS absent_count
+          FROM lectures l
+          WHERE l.session_type='side' AND l.status='مؤكدة'
+            AND (l.duration IS NULL OR l.duration <= '00:30') AND l.side_session_category='regular'
+          ${qDateL}${notInternalGroup('l.group_name')}${qLineL}
+          GROUP BY coordinator, l.group_name, l.date HAVING absent_count > 0
+        ) sub GROUP BY coordinator
+      `).all());
+
   // Query template parameters: ?, ?, ? = agent_name, from, to, [line]
   const result = agents.map(agent => {
     const agentName = agent.full_name;
-    const coordMatch = nameInListInline('b.coordinators', agentName);
 
     // 1. Open remarks (date filter optional)
     let openWhere = `WHERE LOWER(TRIM(r.assigned_to)) = LOWER(TRIM(?))
@@ -6354,118 +6454,20 @@ router.get('/quality-employee', (req, res) => {
       `SELECT COUNT(*) AS c FROM code_problem_status cps ${cpsWhere}`
     ).get(...cpsParams)?.c || 0;
 
-    // 6. Main absence — formula must match /attendance-absence exactly so both
-    //    pages show the same numbers. The formula has TWO parts:
-    //      Part 1: rows in absent_students table for the agent's groups
-    //      Part 2: confirmed main lectures with empty attendance, where clients
-    //              exist in that group and no absent record covers the lecture
-    //              (treated as "everyone in the group is absent")
-    //    main_absent = part1 + part2
-    //    main_expected = SUM(trainee_count) across confirmed main lectures
-    const lineLA = line ? ` AND l.line = ?` : '';
-    const lineAA = line ? ` AND a.line = ?` : '';
-    const dateMainAbs = from && to ? ` AND a.date BETWEEN ? AND ?` : from ? ` AND a.date >= ?` : to ? ` AND a.date <= ?` : '';
-    const dateMainAbsParams = from && to ? [from, to] : from ? [from] : to ? [to] : [];
-    const dateMainLec = from && to ? ` AND l.date BETWEEN ? AND ?` : from ? ` AND l.date >= ?` : to ? ` AND l.date <= ?` : '';
-    const dateMainLecParams = from && to ? [from, to] : from ? [from] : to ? [to] : [];
-
-    // Part 1: absent_students count — mirrors /attendance-absence Part 1 exactly:
-    //   • resolves missing a.date via lecture_no → ROW_NUMBER over main lectures
-    //   • only counts rows with student_name OR a phone that maps to a real client
-    //   • filters by RESOLVED date (so rows with empty date but valid lecture_no
-    //     can still land in the requested window)
-    const dateResolvedFilter = (from && to)
-      ? ` AND resolved_date BETWEEN '${from}' AND '${to}'`
-      : from ? ` AND resolved_date >= '${from}'`
-      : to   ? ` AND resolved_date <= '${to}'`
-      : '';
-    const lineLec = line ? ` AND line = '${line.replace(/'/g, "''")}'` : '';
-
-    const mainAbsentPart1 = db.prepare(`
-      SELECT COUNT(*) AS cnt FROM (
-        SELECT COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS resolved_date
-        FROM absent_students a
-        -- Rename-aware: absent_students keep the OLD group name; batches carry the
-        -- NEW name after a rename. Match the batch under either so renamed-group
-        -- absences are still attributed (coordMatch reads b.coordinators).
-        LEFT JOIN batches b ON REPLACE(b.group_name,' ','') IN (
-              REPLACE(a.group_name,' ',''),
-              REPLACE(${currentGroupNameExpr('a.group_name', 'a.line')},' ','')
-            )${line ? ' AND b.line = a.line' : ''}
-        LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
-          AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)
-        LEFT JOIN (
-          SELECT group_name, date, line,
-            ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
-          FROM lectures WHERE session_type='main' AND status != 'غير مؤكدة'${lineLec}
-        ) lec_inf ON (a.date IS NULL OR TRIM(a.date)='')
-          AND lec_inf.group_name = a.group_name
-          AND a.lecture_no IS NOT NULL
-          AND lec_inf.lec_num = a.lecture_no${line ? ' AND lec_inf.line = a.line' : ''}
-        WHERE (
-          (a.student_name IS NOT NULL AND TRIM(a.student_name)!='')
-          OR (a.phone IS NOT NULL AND TRIM(a.phone)!='')
-        )
-        AND ${coordMatch}${notInternalGroup('a.group_name')}
-      ) p1
-      WHERE 1=1${dateResolvedFilter}
-    `).get()?.cnt || 0;
-
-    // Part 2: empty-attendance lectures × clients in group, NOT already in absent_students
-    const mainAbsentPart2 = db.prepare(`
-      SELECT COUNT(*) AS cnt FROM lectures l
-      INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
-      INNER JOIN clients c ON c.group_name = l.group_name${line ? ' AND c.line = l.line' : ''}
-      WHERE l.session_type = 'main' AND l.status = 'مؤكدة'
-        AND (l.attendance IS NULL OR TRIM(l.attendance) = '')
-        AND c.name IS NOT NULL AND TRIM(c.name) != ''
-        AND c.phone IS NOT NULL AND TRIM(c.phone) != ''
-        AND NOT EXISTS (
-          SELECT 1 FROM absent_students a2
-          WHERE a2.group_name = l.group_name AND a2.date = l.date${line ? ' AND a2.line = l.line' : ''}
-        )
-      ${lineLA}${dateMainLec} AND ${coordMatch}${notInternalGroup('l.group_name')}
-    `).get(...(line ? [line] : []), ...dateMainLecParams)?.cnt || 0;
-
-    const main_absent_count = mainAbsentPart1 + mainAbsentPart2;
-
-    const mainExpectedRow = db.prepare(`
-      SELECT COALESCE(SUM(b.trainee_count), 0) AS cnt FROM lectures l
-      INNER JOIN batches b ON b.group_name = l.group_name${line ? ' AND b.line = l.line' : ''}
-      WHERE l.session_type = 'main' AND l.status != 'غير مؤكدة'${lineLA}${dateMainLec}
-        AND ${coordMatch}${notInternalGroup('l.group_name')}
-    `).get(...(line ? [line] : []), ...dateMainLecParams);
-    const main_expected_count = mainExpectedRow?.cnt || 0;
+    // 6+7. Main & Zoom absence — looked up from the per-coordinator maps built
+    //    above, which reuse /attendance-absence's EXACT date-aware attribution
+    //    (coordinator_history + employed roster member, single earliest
+    //    coordinator, ended-group resilient). This guarantees the Quality page
+    //    and /attendance-absence show the SAME number for every coordinator —
+    //    including those whose groups have ended (e.g. shrouk gamal). Lookup by
+    //    compact name (lowercase, spaces removed) tolerates spelling drift.
+    const _ak = agentName.toLowerCase().replace(/\s/g, '');
+    const main_absent_count   = mainAbsentByCoord.get(_ak)   || 0;
+    const main_expected_count = mainExpectedByCoord.get(_ak) || 0;
     const main_absent_rate = main_expected_count > 0
       ? Math.round((main_absent_count / main_expected_count) * 100) : 0;
-
-    // 7. Zoom absence — must also match /attendance-absence:
-    //    expected = COUNT side sessions (each side row = 1 student slot)
-    //    absent   = SUM (slots - present) per (group,date) where session is confirmed
-    const zoomExpectedRow = db.prepare(`
-      SELECT COUNT(*) AS cnt FROM lectures l
-      INNER JOIN batches b ON b.group_name = l.group_name${line ? ' AND b.line = l.line' : ''}
-      WHERE l.session_type = 'side' AND l.status = 'مؤكدة'
-        AND (l.duration IS NULL OR l.duration <= '00:30') AND l.side_session_category = 'regular'${lineLA}${dateMainLec}
-        AND ${coordMatch}${notInternalGroup('l.group_name')}
-    `).get(...(line ? [line] : []), ...dateMainLecParams);
-    const zoom_expected_count = zoomExpectedRow?.cnt || 0;
-
-    // zoom-absent COUNT now reads the same source as its drill-down details: the
-    // uploaded absent_zoom_students file (owner's decision), so the badge and the
-    // detail list reconcile exactly. (Was lecture-slot math = a different number.)
-    const zaParams = [];
-    let zaWhere = `WHERE 1=1 AND ${coordMatch}${notInternalGroup('a.group_name')}`;
-    if (line) { zaWhere += ` AND a.line = ?`; zaParams.push(line); }
-    if (from) { zaWhere += ` AND a.date >= ?`; zaParams.push(from); }
-    if (to)   { zaWhere += ` AND a.date <= ?`; zaParams.push(to); }
-    const zoomAbsentRow = db.prepare(`
-      SELECT COUNT(*) AS cnt
-        FROM absent_zoom_students a
-        INNER JOIN batches b ON REPLACE(b.group_name,' ','') = REPLACE(a.group_name,' ','')${line ? ' AND b.line = a.line' : ''}
-        ${zaWhere}
-    `).get(...zaParams);
-    const zoom_absent_count = zoomAbsentRow?.cnt || 0;
+    const zoom_expected_count = zoomExpectedByCoord.get(_ak) || 0;
+    const zoom_absent_count   = zoomAbsentByCoord.get(_ak)   || 0;
     const zoom_absent_rate = zoom_expected_count > 0
       ? Math.round((zoom_absent_count / zoom_expected_count) * 100) : 0;
 
