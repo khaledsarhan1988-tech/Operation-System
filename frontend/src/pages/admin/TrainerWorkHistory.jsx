@@ -310,9 +310,9 @@ function SkeletonRows({ cols = 11, rows = 6 }) {
 export default function TrainerWorkHistory({ title = 'سجل عمل المدربين', showSalaryCategory = false, groupBySection = false, monthPicker = false } = {}) {
   const qc = useQueryClient();
   // Column count for skeleton/empty/error rows. The salary variant adds the
-  // category column (+1) and five payroll columns (+5): base, extra, deduction,
-  // out-of-duty, net.
-  const colCount = showSalaryCategory ? 18 : 12;
+  // category column (+1) and six payroll columns (+6): base, extra, deduction,
+  // out-of-duty, KPIs, net.
+  const colCount = showSalaryCategory ? 19 : 12;
   const [fromDate,    setFromDate]    = useState(defaultFromDate);
   const [toDate,      setToDate]      = useState(defaultToDate);
   const [section,     setSection]     = useState('all');
@@ -322,6 +322,7 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
   const [ucModal,     setUcModal]     = useState(null);  // { trainer, from, to, shift_start, shift_end }
   const [dedModal,    setDedModal]    = useState(null);  // { trainer_id, trainer_name, perHour, dayWage }
   const [oodModal,    setOodModal]    = useState(null);  // out-of-duty: { trainer_id, trainer_name, perHour }
+  const [kpiModal,    setKpiModal]    = useState(null);  // KPIs: { trainer_id, trainer_name, month, amts, awarded }
 
   // ── trainer dropdown options — all education team members
   // (also used as the source for the click-to-edit modal — we look up the
@@ -401,6 +402,22 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
     return m;
   }, [oodTotals]);
 
+  // KPI awards for the selected month — which KPI components each trainer earned
+  // (manual). Keyed by trainer_id. Money is derived from the salary-def amounts.
+  const kpiMonth = (fromDate || '').slice(0, 7);
+  const { data: kpiAwards = [] } = useQuery({
+    queryKey: ['trainer-kpi-awards', kpiMonth],
+    queryFn: () => api.get('/trainer-salaries/kpi-awards', { params: { month: kpiMonth } })
+      .then(r => r.data).catch(() => []),
+    enabled: showSalaryCategory && /^\d{4}-\d{2}$/.test(kpiMonth),
+    staleTime: 30 * 1000,
+  });
+  const kpiAwardByTrainer = useMemo(() => {
+    const m = new Map();
+    for (const a of kpiAwards) m.set(a.trainer_id, a);
+    return m;
+  }, [kpiAwards]);
+
   const deductionsByTrainer = useMemo(() => {
     const m = new Map();
     for (const d of deductions) {
@@ -416,7 +433,13 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
     const { base, perHour, dayWage, found } = rowRates(row);
     const extraPay = (n(r.extra_minutes) / 60) * perHour;
     const ded = deductionMoney(deductionsByTrainer.get(r.trainer_id), perHour, dayWage);
-    return { found, base, perHour, dayWage, extraPay, ded, net: base + extraPay - ded };
+    // KPI component amounts from the matched salary-def row (for the selectable KPIs column).
+    const kpiAmts = {
+      no_absence: n(row?.kpi_no_absence),
+      on_time:    n(row?.kpi_on_time),
+      attendance: n(row?.kpi_attendance),
+    };
+    return { found, base, perHour, dayWage, extraPay, ded, kpiAmts, net: base + extraPay - ded };
   };
 
   // ── client-side trainer-name search (in addition to dropdown)
@@ -549,7 +572,7 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                   'المدرب', 'القسم', '#', 'نوع الشيفت', 'بداية العمل', 'نهاية العمل', 'المواعيد', 'أيام العمل', 'الدوام',
                   ...(showSalaryCategory ? ['فئة المرتب'] : []),
                   'ساعات إضافية', 'ساعات غير مؤكدة', 'الحالة',
-                  ...(showSalaryCategory ? ['المرتب الأساسي', 'إضافي (ج)', 'الخصم', 'خارج مهام عمله', 'الصافي'] : []),
+                  ...(showSalaryCategory ? ['المرتب الأساسي', 'إضافي (ج)', 'الخصم', 'خارج مهام عمله', 'KPIs', 'الصافي'] : []),
                 ].map(h => <th key={h} className="px-2 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>)}
               </tr>
             </thead>
@@ -661,7 +684,7 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                      if (!s.found) {
                        return (
                          <>
-                           <td className="px-2 py-2.5 text-xs text-gray-300 text-center" colSpan={5}>— لا توجد فئة مرتب مطابقة —</td>
+                           <td className="px-2 py-2.5 text-xs text-gray-300 text-center" colSpan={6}>— لا توجد فئة مرتب مطابقة —</td>
                          </>
                        );
                      }
@@ -670,7 +693,14 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                      const isPrimary = primaryRowByTrainer.get(r.trainer_id) === i;
                      const oodMins   = isPrimary ? (oodMinsByTrainer.get(r.trainer_id) || 0) : 0;
                      const oodPay    = (oodMins / 60) * s.perHour;
-                     const net       = s.net + oodPay;
+                     // KPIs awarded (manual) — per trainer/month, first row only.
+                     const award     = isPrimary ? kpiAwardByTrainer.get(r.trainer_id) : null;
+                     const kpiPay    = isPrimary
+                       ? (award?.no_absence ? s.kpiAmts.no_absence : 0)
+                         + (award?.on_time ? s.kpiAmts.on_time : 0)
+                         + (award?.attendance ? s.kpiAmts.attendance : 0)
+                       : 0;
+                     const net       = s.net + oodPay + kpiPay;
                      return (
                        <>
                          <td className="px-2 py-2.5 text-xs font-bold text-gray-800 whitespace-nowrap text-center" dir="ltr">{fmtMoney(s.base)}</td>
@@ -704,6 +734,31 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                                }`}>
                                <Clock size={12} />
                                {oodPay > 0 ? `+${fmtMoney(oodPay)}` : 'إضافة'}
+                             </button>
+                           ) : (
+                             <span className="text-xs text-gray-300">—</span>
+                           )}
+                         </td>
+                         <td className="px-2 py-2.5 whitespace-nowrap text-center">
+                           {isPrimary ? (
+                             <button type="button"
+                               onClick={() => setKpiModal({
+                                 trainer_id: r.trainer_id, trainer_name: r.trainer_name,
+                                 month: kpiMonth, amts: s.kpiAmts,
+                                 awarded: {
+                                   no_absence: !!award?.no_absence,
+                                   on_time:    !!award?.on_time,
+                                   attendance: !!award?.attendance,
+                                 },
+                               })}
+                               title="اختيار الـ KPIs المضافة للراتب"
+                               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-bold border transition-colors ${
+                                 kpiPay > 0
+                                   ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                                   : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+                               }`}>
+                               <Wallet size={12} />
+                               {kpiPay > 0 ? `+${fmtMoney(kpiPay)}` : 'اختر'}
                              </button>
                            ) : (
                              <span className="text-xs text-gray-300">—</span>
@@ -755,6 +810,11 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
       {/* ── Out-of-duty paid hours modal (مرتبات المدربين only) ── */}
       {oodModal && (
         <OutOfDutyModal context={{ ...oodModal, from: fromDate, to: toDate }} onClose={() => setOodModal(null)} />
+      )}
+
+      {/* ── KPI selection modal (مرتبات المدربين only) ── */}
+      {kpiModal && (
+        <KpiAwardModal context={kpiModal} onClose={() => setKpiModal(null)} />
       )}
     </div>
   );
@@ -1045,6 +1105,92 @@ function OutOfDutyModal({ context, onClose }) {
             الإجمالي: {fmtMins(totalMins)} · +{fmtMoney(totalPay)} ج
           </span>
           <button onClick={onClose} className="px-4 py-1.5 rounded-lg border border-gray-300 text-sm hover:bg-gray-100">تم</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── KPI SELECTION MODAL ───────────────────────────────────────────────────────
+// Manually pick which KPI components a trainer earned this month. Each ticked
+// component adds its amount (from the trainer's salary system) to the net.
+const KPI_FIELDS = [
+  { key: 'no_absence', label: 'عدم الغياب في أي يوم' },
+  { key: 'on_time',    label: 'الدخول في المواعيد المحددة' },
+  { key: 'attendance', label: 'نسبة حضور الطلاب' },
+];
+function KpiAwardModal({ context, onClose }) {
+  const qc = useQueryClient();
+  const { trainer_id, trainer_name, month, amts, awarded } = context;
+  const [sel, setSel] = useState({ ...awarded });
+  const [error, setError] = useState(null);
+
+  const amountOf = (k) => n(amts?.[k]);
+  const selectedTotal = KPI_FIELDS.reduce((a, f) => a + (sel[f.key] ? amountOf(f.key) : 0), 0);
+
+  const saveMut = useMutation({
+    mutationFn: () => api.put('/trainer-salaries/kpi-awards', {
+      trainer_id, month,
+      no_absence: sel.no_absence ? 1 : 0,
+      on_time:    sel.on_time    ? 1 : 0,
+      attendance: sel.attendance ? 1 : 0,
+    }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['trainer-kpi-awards'] }); onClose(); },
+    onError: (e) => setError(e.response?.data?.error || e.message),
+  });
+
+  const AR_MONTHS2 = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+  const monthLabel = (() => { const [y, m] = String(month).split('-'); return `${AR_MONTHS2[(+m) - 1] || m} ${y}`; })();
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden" onClick={e => e.stopPropagation()} dir="rtl">
+        <div className="px-5 py-4 bg-gradient-to-l from-emerald-50 to-teal-100/50 border-b border-emerald-100 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-emerald-700 mb-1 flex items-center gap-1"><Wallet size={13} /> KPIs المضافة للراتب</p>
+            <p className="text-sm font-black text-gray-900 leading-tight">{trainer_name}</p>
+            <p className="text-[11px] text-gray-500 mt-1">شهر {monthLabel} · علّم على اللي استحقها المدرب</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/60 flex-shrink-0"><X size={15} className="text-gray-600" /></button>
+        </div>
+
+        <div className="p-4 space-y-2">
+          {error && <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">{error}</div>}
+          {KPI_FIELDS.map(f => {
+            const amt = amountOf(f.key);
+            const on  = !!sel[f.key];
+            return (
+              <button key={f.key} type="button"
+                onClick={() => setSel(s => ({ ...s, [f.key]: !s[f.key] }))}
+                className={`w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl border text-right transition-colors ${
+                  on ? 'bg-emerald-50 border-emerald-300' : 'bg-white border-gray-200 hover:bg-gray-50'
+                }`}>
+                <span className="flex items-center gap-2">
+                  <span className={`flex h-4 w-4 items-center justify-center rounded border text-[10px] ${
+                    on ? 'bg-emerald-600 border-emerald-600 text-white' : 'border-gray-300 text-transparent'
+                  }`}>✓</span>
+                  <span className="text-sm font-bold text-gray-700">{f.label}</span>
+                </span>
+                <span className={`text-xs font-black ${on ? 'text-emerald-700' : 'text-gray-400'}`} dir="ltr">+{fmtMoney(amt)} ج</span>
+              </button>
+            );
+          })}
+          {KPI_FIELDS.every(f => amountOf(f.key) === 0) && (
+            <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
+              ⚠ مفيش مبالغ KPI معرّفة لنظام مرتب المدرب ده — حدّدها أول من صفحة «تعريف أنظمة المرتبات».
+            </p>
+          )}
+        </div>
+
+        <div className="px-5 py-3 bg-gray-50 border-t flex items-center justify-between">
+          <span className="text-sm font-black text-emerald-700">الإجمالي المضاف: +{fmtMoney(selectedTotal)} ج</span>
+          <div className="flex items-center gap-2">
+            <button onClick={onClose} className="px-3 py-1.5 rounded-lg border border-gray-300 text-sm hover:bg-gray-100">إلغاء</button>
+            <button onClick={() => saveMut.mutate()} disabled={saveMut.isPending}
+              className="px-4 py-1.5 rounded-lg bg-emerald-600 text-white text-sm font-bold inline-flex items-center gap-1 disabled:opacity-50">
+              {saveMut.isPending ? 'جاري الحفظ...' : 'حفظ'}
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -661,6 +661,33 @@ initDb().then(db => {
     console.error('trainer_salary_defs KPI breakdown migration error:', e.message);
   }
 
+  // ── trainer_kpi_awards: which KPIs a trainer earned in a given month ─────
+  // Manual selection by the owner in the payroll page. One row per
+  // (trainer, month 'YYYY-MM'); each flag = whether that KPI component is
+  // awarded. The money added = sum of the awarded components' amounts taken
+  // from the trainer's salary-def row. Per-month so changing a system later
+  // doesn't silently move past awards (and locked months snapshot the result).
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS trainer_kpi_awards (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        trainer_id     INTEGER NOT NULL,
+        month          TEXT    NOT NULL,
+        no_absence     INTEGER NOT NULL DEFAULT 0,
+        on_time        INTEGER NOT NULL DEFAULT 0,
+        attendance     INTEGER NOT NULL DEFAULT 0,
+        updated_by     INTEGER,
+        updated_at     TEXT    NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        UNIQUE(trainer_id, month)
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_tka_month ON trainer_kpi_awards(month)`);
+    saveNow();
+    console.log('✅ Migration: trainer_kpi_awards table ready');
+  } catch (e) {
+    console.error('trainer_kpi_awards migration error:', e.message);
+  }
+
   // ── trainer_deductions: PRIVATE owner-only salary deductions ────────────
   // Each row = one deduction for a trainer on a date, either in hours or in
   // days. The money value is computed on the client from the trainer's
