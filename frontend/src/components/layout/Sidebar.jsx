@@ -232,16 +232,27 @@ export default function Sidebar({ mobile, onClose }) {
   // get these via getAdminLinks (management-scoped), so skip them here.
   const grantedPages = String(user?.extra_pages || '').split(',').map(s => s.trim()).filter(Boolean);
   const grantedLinks = [];
-  if (user?.role !== 'admin' && grantedPages.includes('occupancy-trainers')) {
-    grantedLinks.push(
-      // Labels + order MUST mirror the admin "الإشغال والمدربين" group exactly
-      // (same i18n keys, same sequence) so agent ↔ admin look identical.
-      { type: 'section', label: 'الإشغال والمدربين' },
-      { to: '/reports/trainer-utilization',    label: 'nav.trainerUtilization',   icon: Activity,  color: 'teal'   },
-      { to: '/reports/find-available-trainer', label: 'nav.findAvailableTrainer', icon: Sparkles,  color: 'cyan'   },
-      { to: '/reports/trainer-dashboard',      label: 'nav.trainerDashboard',     icon: BarChart3, color: 'indigo' },
-      { to: '/reports/trainer-work-history',   label: 'سجل عمل المدربين',          icon: History,   color: 'violet' },
-    );
+  if (user?.role !== 'admin') {
+    if (grantedPages.includes('occupancy-trainers')) {
+      grantedLinks.push(
+        // Labels + order MUST mirror the admin "الإشغال والمدربين" group exactly
+        // (same i18n keys, same sequence) so agent ↔ admin look identical.
+        { type: 'section', label: 'الإشغال والمدربين' },
+        { to: '/reports/trainer-utilization',    label: 'nav.trainerUtilization',   icon: Activity,  color: 'teal'   },
+        { to: '/reports/find-available-trainer', label: 'nav.findAvailableTrainer', icon: Sparkles,  color: 'cyan'   },
+        { to: '/reports/trainer-dashboard',      label: 'nav.trainerDashboard',     icon: BarChart3, color: 'indigo' },
+        { to: '/reports/trainer-work-history',   label: 'سجل عمل المدربين',          icon: History,   color: 'violet' },
+      );
+    }
+    // تسليمات الأقسام grants — the two CS pages live on the role-neutral
+    // /subscriptions/* routes, so a granted user of any role can reach them.
+    if (grantedPages.includes('cs-deliveries') || grantedPages.includes('cs-enrollment')) {
+      grantedLinks.push({ type: 'section', label: 'تسليمات الأقسام' });
+      if (grantedPages.includes('cs-deliveries'))
+        grantedLinks.push({ to: '/subscriptions/cs-department', label: 'Customer Services Department', icon: GraduationCap, color: 'violet' });
+      if (grantedPages.includes('cs-enrollment'))
+        grantedLinks.push({ to: '/subscriptions/enrollment', label: 'Enrollment', icon: GraduationCap, color: 'cyan' });
+    }
   }
   const baseLinks = [...roleLinks, ...grantedLinks];
 
