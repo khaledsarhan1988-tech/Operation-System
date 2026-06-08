@@ -1315,7 +1315,7 @@ router.get('/dashboard', (req, res) => {
        WHERE lectures.session_type = 'main'
          AND lectures.status = 'مؤكدة'
        ${buildDateFilter('lectures.date', from_date, to_date)}
-       ${deptBatches}${empFilterLectures}${lineL}`
+       ${deptBatches}${empFilterLectures}${lineL}${notInternalGroup('lectures.group_name')}`
     ).get();
 
     // 4. Side sessions count — all confirmed side sessions
@@ -1325,7 +1325,7 @@ router.get('/dashboard', (req, res) => {
        WHERE lectures.session_type = 'side'
          AND lectures.status = 'مؤكدة'
        ${buildDateFilter('lectures.date', from_date, to_date)}
-       ${deptBatches}${empFilterLectures}${lineL}`
+       ${deptBatches}${empFilterLectures}${lineL}${notInternalGroup('lectures.group_name')}`
     ).get();
 
     // 4b. Zoom calls count — confirmed regular side sessions.
@@ -1340,7 +1340,7 @@ router.get('/dashboard', (req, res) => {
                   AND CAST(SUBSTR(lectures.duration,1,2) AS INTEGER)*60
                       + CAST(SUBSTR(lectures.duration,4,2) AS INTEGER) < 20))
        ${buildDateFilter('lectures.date', from_date, to_date)}
-       ${deptBatches}${empFilterLectures}${lineL}`
+       ${deptBatches}${empFilterLectures}${lineL}${notInternalGroup('lectures.group_name')}`
     ).get();
 
     // 5. Absent main — Part1: absent_students with name lookup + date inference from lecture_no
