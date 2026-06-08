@@ -1185,6 +1185,35 @@ initDb().then(db => {
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_lectures_type_group_line ON lectures(session_type, group_name, line)`);
   } catch (e) { /* index already exists or schema mismatch — safe to ignore */ }
 
+  // ── lectures_history: archive for PHANTOM scheduled rows ─────────────────
+  // When a trainer/group leaves, their recurring `مجدولة` (scheduled) slots are
+  // removed from the live Drive sheet, but rows already imported linger in the
+  // DB (the importer only deletes group+date keys present in the new file).
+  // syncLectures/syncSideSessions now move those stale scheduled rows here
+  // (NEVER `مؤكدة` — real delivered history stays in `lectures`). Archived, not
+  // deleted, so the operation is fully reversible.
+  try {
+    db._raw.run(`CREATE TABLE IF NOT EXISTS lectures_history (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_name            TEXT,
+      date                  TEXT,
+      time                  TEXT,
+      duration              TEXT,
+      trainer               TEXT,
+      status                TEXT,
+      location              TEXT,
+      attendance            TEXT,
+      session_type          TEXT,
+      side_session_category TEXT,
+      line                  TEXT,
+      synced_at             TEXT,
+      archived_at           TEXT,
+      archived_reason       TEXT
+    )`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_lectures_history_grp ON lectures_history(line, session_type, group_name, date)`);
+    console.log('✅ Migration: lectures_history ready');
+  } catch (e) { console.error('lectures_history migration:', e.message); }
+
   // ── Absent Zoom students table (Zoom Call absences from new Excel) ──────
   // Mirrors absent_students. Created on demand for existing DBs.
   try {

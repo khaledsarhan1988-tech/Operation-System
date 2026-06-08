@@ -814,6 +814,55 @@ function _daysBetween(d1, d2) {
   return Math.round((b - a) / 86400000);
 }
 
+// ── PHANTOM-SCHEDULED RECONCILE ──────────────────────────────────────────────
+// After importing a line's COMPLETE schedule file, any `مجدولة` (scheduled) row
+// for that line/session_type whose (group, date) is NOT in the file is stale —
+// the live sheet no longer schedules it (trainer/group left). Move those rows to
+// `lectures_history` (archive, reversible). NEVER touch `مؤكدة`/`غير مؤكدة` rows:
+// confirmed lectures are real delivered history and must stay (and be counted),
+// even for ended/renamed groups absent from the file.
+//
+// SAFE because the caller only reaches here AFTER the file passed the upstream
+// anomaly guard (driveSync.detectAnomaly), which rejects partial/short files —
+// so the file is the full current schedule, not a fragment. Group match is
+// space + case-insensitive (matches the importer's REPLACE(...,' ','') delete),
+// so a row present under a spacing/case variant is kept, never archived.
+const _norm = s => String(s || '').toLowerCase().replace(/\s/g, '');
+function archivePhantomScheduled(line, sessionType, fileRows) {
+  const fileSet = new Set();
+  for (const r of fileRows) {
+    if (r && r.group_name && r.date) fileSet.add(_norm(r.group_name) + '|' + r.date);
+  }
+  if (fileSet.size === 0) return 0;   // empty parse → never archive (defensive)
+
+  const cands = db.prepare(
+    `SELECT id, group_name, date, time, duration, trainer, status, location,
+            attendance, session_type, side_session_category, line, synced_at
+       FROM lectures
+      WHERE line = ? AND session_type = ? AND status = 'مجدولة'`
+  ).all(line, sessionType);
+
+  const insH = db.prepare(`
+    INSERT INTO lectures_history (
+      group_name, date, time, duration, trainer, status, location, attendance,
+      session_type, side_session_category, line, synced_at, archived_at, archived_reason
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?, datetime('now','localtime'), 'phantom_scheduled_not_in_file')
+  `);
+  const del = db.prepare(`DELETE FROM lectures WHERE id = ?`);
+  let archived = 0;
+  for (const c of cands) {
+    if (fileSet.has(_norm(c.group_name) + '|' + c.date)) continue;   // still scheduled in file → keep
+    insH.run(c.group_name, c.date, c.time, c.duration, c.trainer, c.status, c.location,
+             c.attendance, c.session_type, c.side_session_category, c.line, c.synced_at);
+    del.run(c.id);
+    archived++;
+  }
+  if (archived > 0) {
+    console.log(`[archivePhantom] line=${line} ${sessionType}: archived ${archived} stale scheduled rows`);
+  }
+  return archived;
+}
+
 function syncLectures(buffer, line) {
   const rows = excel.parseLectures(buffer);
   const uniqueGroups = [...new Set(rows.map(r => r.group_name))];
@@ -855,6 +904,9 @@ function syncLectures(buffer, line) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'main', NULL, ?, datetime('now', 'localtime'))
     `);
     rows.forEach(r => insert.run(r.group_name, r.date, r.time, r.duration, r.trainer, r.status, r.location, r.attendance, line));
+
+    // Archive phantom scheduled rows no longer in the live sheet (see fn above).
+    archivePhantomScheduled(line, 'main', rows);
 
     // Update completed_lectures ONLY for this line's batches — count CONFIRMED lectures only
     // (unconfirmed lectures are excluded from all CS reports per business rule).
@@ -912,6 +964,9 @@ function syncSideSessions(buffer, line) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'side', ?, ?, datetime('now', 'localtime'))
     `);
     rows.forEach(r => insert.run(r.group_name, r.date, r.time, r.duration, r.trainer, r.status, r.location, r.attendance, r.side_session_category, line));
+
+    // Archive phantom scheduled side rows no longer in the live sheet.
+    archivePhantomScheduled(line, 'side', rows);
   });
   run();
   // Side sessions changed → recompute auto-absences for zoom calls (regular)
