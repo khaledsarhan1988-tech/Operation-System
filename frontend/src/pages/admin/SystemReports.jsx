@@ -2681,6 +2681,13 @@ export default function SystemReports() {
                 ? ['coordinator', 'date', 'dept']
                 : ['trainer', 'coordinator', 'date', 'dept'],
             })} />
+          <KpiCard label="مجموعات مكررة" value={kpis.duplicate_groups} icon={Copy}
+            gradient="linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%)"
+            loading={isLoading} pulse={(kpis.duplicate_groups ?? 0) > 0}
+            onClick={() => setGroupsModal({
+              title: 'مجموعات مكررة (نفس المجموعة في أكتر من صف بالشيت)',
+              groups: data?.duplicate_groups_list ?? [],
+            })} />
         </div>
       </div>
 

@@ -1551,12 +1551,35 @@ router.get('/dashboard', (req, res) => {
        ORDER BY (expected_side_count - side_count) DESC`
     ).all();
 
+    // Duplicate groups — same (group_name, line) appearing in MORE THAN ONE
+    // batch row (e.g. a row "بانتظار" + a row "نشطة", or active + إنتهت). These
+    // are data-entry duplicates the owner should clean in the Batches sheet
+    // (each group = one row). Internal groups excluded like everywhere else.
+    // KPI = number of DISTINCT duplicated groups; the modal list shows every
+    // actual row (with its status / id) so the owner sees which one to delete.
+    const dupGroupKeys = db.prepare(
+      `SELECT group_name, line FROM batches
+       WHERE 1=1${deptBatches}${empFilter}${lineBatches}${notInternalGroup('group_name')}
+       GROUP BY group_name, line HAVING COUNT(*) > 1`
+    ).all();
+    const duplicateGroupsList = dupGroupKeys.length
+      ? db.prepare(
+          `SELECT b.* FROM batches b
+           JOIN (SELECT group_name, line FROM batches
+                 WHERE 1=1${deptBatches}${empFilter}${lineBatches}${notInternalGroup('group_name')}
+                 GROUP BY group_name, line HAVING COUNT(*) > 1) d
+             ON b.group_name = d.group_name AND b.line = d.line
+           ORDER BY b.group_name, b.status`
+        ).all()
+      : [];
+
     return res.json({
       kpis: {
         active_groups:         activeGroupsList.length,
         waiting_trainees:      waitingTraineesList.length,
         waiting_lectures:      waitingLecturesList.length,
         expired_active_groups: expiredGroupsList.length,
+        duplicate_groups:      dupGroupKeys.length,
         main_lectures:         mainLecturesRow?.cnt ?? 0,
         side_sessions:         sideLecturesRow?.cnt ?? 0,
         zoom_calls:            zoomCallsRow?.cnt ?? 0,
@@ -1591,6 +1614,7 @@ router.get('/dashboard', (req, res) => {
       waiting_trainees_list:  waitingTraineesList,
       waiting_lectures_list:  waitingLecturesList,
       expired_groups_list:    expiredGroupsList,
+      duplicate_groups_list:  duplicateGroupsList,
       open_remarks_list:    openRemarksList,
       groups_with_errors: {
         remarks_errors:      remarksErrors,
