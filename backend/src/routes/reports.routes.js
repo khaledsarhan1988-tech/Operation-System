@@ -1299,7 +1299,7 @@ router.get('/dashboard', (req, res) => {
       `SELECT COUNT(DISTINCT ${sessKey}) as cnt FROM lectures
        LEFT JOIN batches ON lectures.group_name = batches.group_name${line ? ' AND batches.line = lectures.line' : ''}
        WHERE lectures.session_type = 'main'
-         AND lectures.status != 'غير مؤكدة'
+         AND lectures.status = 'مؤكدة'
        ${buildDateFilter('lectures.date', from_date, to_date)}
        ${deptBatches}${empFilterLectures}${lineL}`
     ).get();
@@ -1309,7 +1309,7 @@ router.get('/dashboard', (req, res) => {
       `SELECT COUNT(DISTINCT ${sessKey}) as cnt FROM lectures
        LEFT JOIN batches ON lectures.group_name = batches.group_name${line ? ' AND batches.line = lectures.line' : ''}
        WHERE lectures.session_type = 'side'
-         AND lectures.status != 'غير مؤكدة'
+         AND lectures.status = 'مؤكدة'
        ${buildDateFilter('lectures.date', from_date, to_date)}
        ${deptBatches}${empFilterLectures}${lineL}`
     ).get();
@@ -1320,7 +1320,7 @@ router.get('/dashboard', (req, res) => {
       `SELECT COUNT(DISTINCT ${sessKey}) as cnt FROM lectures
        LEFT JOIN batches ON lectures.group_name = batches.group_name${line ? ' AND batches.line = lectures.line' : ''}
        WHERE lectures.session_type = 'side'
-         AND lectures.status != 'غير مؤكدة'
+         AND lectures.status = 'مؤكدة'
          AND (lectures.side_session_category = 'regular'
               OR (lectures.duration IS NOT NULL AND LENGTH(lectures.duration) >= 5
                   AND CAST(SUBSTR(lectures.duration,1,2) AS INTEGER)*60
