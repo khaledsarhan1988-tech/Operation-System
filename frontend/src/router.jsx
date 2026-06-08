@@ -105,6 +105,12 @@ const router = createBrowserRouter([
       { path: 'my-progression',     element: <MyProgression /> },
       { path: 'todos',              element: <MyTodos /> },
       { path: 'targets',            element: <TargetsManagement /> },
+      // Per-page grants (users.extra_pages) — a non-admin can be given specific
+      // report pages without changing their role. Gated by requirePage.
+      { path: 'reports/trainer-utilization',    element: <PrivateRoute requirePage="occupancy-trainers"><TrainerUtilization /></PrivateRoute> },
+      { path: 'reports/trainer-dashboard',      element: <PrivateRoute requirePage="occupancy-trainers"><TrainerUtilizationDashboard /></PrivateRoute> },
+      { path: 'reports/find-available-trainer', element: <PrivateRoute requirePage="occupancy-trainers"><TrainerAvailabilityFinder /></PrivateRoute> },
+      { path: 'reports/trainer-work-history',   element: <PrivateRoute requirePage="occupancy-trainers"><TrainerWorkHistory /></PrivateRoute> },
     ],
   },
 

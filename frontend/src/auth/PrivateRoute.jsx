@@ -12,7 +12,7 @@ const ROLE_HOME = {
   enrollment_leader: '/enrollment-leader',
 };
 
-export default function PrivateRoute({ children, minRole, allowedRoles, superAdmin, onlyUsername }) {
+export default function PrivateRoute({ children, minRole, allowedRoles, superAdmin, onlyUsername, requirePage }) {
   const { user, loading } = useAuth();
   const location = useLocation();
 
@@ -51,6 +51,16 @@ export default function PrivateRoute({ children, minRole, allowedRoles, superAdm
   // Used for private owner-only pages (e.g. trainer salary definitions).
   if (onlyUsername && String(user.username || '').toLowerCase() !== String(onlyUsername).toLowerCase()) {
     return <Navigate to={ROLE_HOME[user.role] || '/login'} replace />;
+  }
+
+  // Per-PAGE grant — allow a non-admin to reach a specific page when their
+  // users.extra_pages list includes this page key (admins always pass). Lets a
+  // CS agent see e.g. the trainer-occupancy pages without changing their role.
+  if (requirePage) {
+    const pages = String(user.extra_pages || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (user.role !== 'admin' && !pages.includes(requirePage)) {
+      return <Navigate to={ROLE_HOME[user.role] || '/login'} replace />;
+    }
   }
 
   return children;

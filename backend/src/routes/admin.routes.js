@@ -40,7 +40,7 @@ function effectiveLine(req) {
 // GET /api/admin/users
 router.get('/users', (req, res) => {
   const requesterLine = req.user.line || 'All';
-  let sql = 'SELECT id, username, full_name, role, department, extra_departments, management, extra_managements, line, language, avatar_url, is_active, start_date, end_date, created_at FROM users';
+  let sql = 'SELECT id, username, full_name, role, department, extra_departments, management, extra_managements, extra_pages, line, language, avatar_url, is_active, start_date, end_date, created_at FROM users';
   const params = [];
   if (requesterLine !== 'All') {
     sql += ' WHERE line = ?';
@@ -55,10 +55,16 @@ router.get('/users', (req, res) => {
 router.post('/users', (req, res) => {
   const {
     username, password, full_name, role, department,
-    extra_departments, extra_managements,
+    extra_departments, extra_managements, extra_pages,
     language = 'ar', management = 'Customer Services', line = 'Ahmed Hassan',
     start_date, end_date,
   } = req.body;
+  // Normalize per-user page grants (CSV of page keys). Works for ANY role.
+  const normPages = (v) => {
+    const arr = (Array.isArray(v) ? v : String(v || '').split(',')).map(s => String(s).trim()).filter(Boolean);
+    return arr.length ? Array.from(new Set(arr)).join(',') : null;
+  };
+  const extraPagesField = normPages(extra_pages);
   // Employment dates — only Admin/Manager (role='admin') may set them.
   // For other creators the dates are left to the system: start_date defaults
   // to today (the creation date) and end_date stays NULL.
@@ -106,11 +112,11 @@ router.post('/users', (req, res) => {
 
   const hash = bcrypt.hashSync(password, 12);
   const result = db.prepare(`
-    INSERT INTO users (username, password_hash, full_name, role, department, extra_departments, language, management, extra_managements, line, start_date, end_date)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(username, hash, full_name, role, department || 'General', extrasField, language, management, extraMgmtsField, line, startDateVal, endDateVal);
+    INSERT INTO users (username, password_hash, full_name, role, department, extra_departments, language, management, extra_managements, extra_pages, line, start_date, end_date)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(username, hash, full_name, role, department || 'General', extrasField, language, management, extraMgmtsField, extraPagesField, line, startDateVal, endDateVal);
 
-  const user = db.prepare('SELECT id, username, full_name, role, department, extra_departments, management, extra_managements, line, language, is_active, start_date, end_date FROM users WHERE id = ?')
+  const user = db.prepare('SELECT id, username, full_name, role, department, extra_departments, management, extra_managements, extra_pages, line, language, is_active, start_date, end_date FROM users WHERE id = ?')
     .get(result.lastInsertRowid);
 
   // Mirror the hire date onto a matching Customer-Services team member, if any
@@ -136,7 +142,7 @@ router.post('/users', (req, res) => {
 // PUT /api/admin/users/:id
 router.put('/users/:id', (req, res) => {
   const { id } = req.params;
-  const { username, full_name, role, department, extra_departments, extra_managements, language, password, is_active, management, line, start_date, end_date } = req.body;
+  const { username, full_name, role, department, extra_departments, extra_managements, extra_pages, language, password, is_active, management, line, start_date, end_date } = req.body;
 
   // Snapshot current state — needed for dept-change detection AND for the
   // employment end_date transition logic (old is_active / old end_date).
@@ -213,6 +219,11 @@ router.put('/users/:id', (req, res) => {
   if (is_active  !== undefined) { fields.push('is_active = ?');  params.push(is_active ? 1 : 0); }
   if (management !== undefined) { fields.push('management = ?'); params.push(management); }
   if (extra_managements !== undefined) { fields.push('extra_managements = ?'); params.push(normalizedExtraMgmts); }
+  if (extra_pages !== undefined) {
+    const raw = Array.isArray(extra_pages) ? extra_pages : String(extra_pages || '').split(',');
+    const cleaned = raw.map(s => String(s).trim()).filter(Boolean);
+    fields.push('extra_pages = ?'); params.push(cleaned.length ? Array.from(new Set(cleaned)).join(',') : null);
+  }
   if (line       !== undefined) { fields.push('line = ?');       params.push(line); }
 
   // ── Employment dates — only Admin/Manager (role='admin') may change them ──

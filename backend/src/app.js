@@ -132,6 +132,15 @@ initDb().then(db => {
       saveNow();
       console.log('✅ Migration: added `extra_managements` column to users');
     }
+    // extra_pages: per-user PAGE grants (CSV of page keys, e.g.
+    // 'occupancy-trainers'). Lets a non-admin (e.g. a CS agent) see ONE specific
+    // report page without changing their role — page-level granularity below the
+    // role/management model. NULL by default.
+    if (!cols.includes('extra_pages')) {
+      db._raw.run(`ALTER TABLE users ADD COLUMN extra_pages TEXT`);
+      saveNow();
+      console.log('✅ Migration: added `extra_pages` column to users');
+    }
     // start_date / end_date: employment lifecycle dates (YYYY-MM-DD).
     //   start_date → hire date (تاريخ التعيين)
     //   end_date   → termination date (تاريخ ترك العمل). NULL = still employed.

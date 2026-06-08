@@ -17,9 +17,17 @@ const EMPTY_FORM = {
   username: '', password: '', full_name: '',
   role: 'agent', department: 'All', extra_departments: [],
   management: 'Customer Services', extra_managements: [],
+  extra_pages: [],
   line: 'Ahmed Hassan', language: 'ar', is_active: 1,
   start_date: '', end_date: '',
 };
+
+// Per-PAGE grants: give a user ONE specific report page without changing their
+// role/management. The `value` must match the router's requirePage key + the
+// Sidebar grant key.
+const GRANTABLE_PAGES = [
+  { value: 'occupancy-trainers', label: 'الإشغال والمدربين' },
+];
 
 // Sections a LEADER can manage. Matches users.department values used by the
 // org chart. ('All' / 'Appointments' aren't in this list because they're not
@@ -53,6 +61,8 @@ function UserModal({ open, onClose, user, onSaved }) {
       .split(',').map(s => s.trim()).filter(Boolean),
     management: user.management || 'Customer Services',
     extra_managements: (user.extra_managements || '')
+      .split(',').map(s => s.trim()).filter(Boolean),
+    extra_pages: (user.extra_pages || '')
       .split(',').map(s => s.trim()).filter(Boolean),
     line: user.line || 'Ahmed Hassan', language: user.language,
     is_active: user.is_active,
@@ -220,6 +230,37 @@ function UserModal({ open, onClose, user, onSaved }) {
               )}
             </div>
           )}
+          {/* Per-page grants — give a user ONE specific report page without
+              changing their role (e.g. a CS agent who needs trainer-occupancy). */}
+          <div>
+            <label className="label">صفحات إضافية (اختياري) — بدون تغيير الدور</label>
+            <div className="flex flex-wrap gap-2">
+              {GRANTABLE_PAGES.map(o => {
+                const selected = form.extra_pages.includes(o.value);
+                return (
+                  <button
+                    key={o.value}
+                    type="button"
+                    onClick={() => set('extra_pages', selected
+                      ? form.extra_pages.filter(v => v !== o.value)
+                      : [...form.extra_pages, o.value])}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${
+                      selected
+                        ? 'bg-teal-600 text-white border-teal-600 shadow-sm'
+                        : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    {selected ? '✓ ' : ''}{o.label}
+                  </button>
+                );
+              })}
+            </div>
+            {form.extra_pages.length > 0 && (
+              <p className="text-xs text-teal-600 mt-1.5 font-medium">
+                💡 المستخدم هيشوف صفحة <b>{form.extra_pages.map(v => (GRANTABLE_PAGES.find(g => g.value === v) || {}).label || v).join('، ')}</b> فقط — من غير ما يتغيّر دوره
+              </p>
+            )}
+          </div>
           <div>
             <label className="label">Line</label>
             <select className="input" value={form.line} onChange={e => set('line', e.target.value)}>

@@ -220,12 +220,28 @@ export default function Sidebar({ mobile, onClose }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const baseLinks = user?.role === 'admin'
+  const roleLinks = user?.role === 'admin'
     ? getAdminLinks(user)
     : user?.role === 'leader'            ? LEADER_LINKS
     : user?.role === 'enrollment_leader' ? ENROLLMENT_LEADER_LINKS
     : user?.role === 'enrollment'        ? ENROLLMENT_LINKS
     : AGENT_LINKS;
+  // Per-PAGE grants (users.extra_pages) for NON-admins — show specific report
+  // pages a user was given without changing their role. Links point to the
+  // /agent-mounted copies (guarded by requirePage in the router). Admins already
+  // get these via getAdminLinks (management-scoped), so skip them here.
+  const grantedPages = String(user?.extra_pages || '').split(',').map(s => s.trim()).filter(Boolean);
+  const grantedLinks = [];
+  if (user?.role !== 'admin' && grantedPages.includes('occupancy-trainers')) {
+    grantedLinks.push(
+      { type: 'section', label: 'الإشغال والمدربين' },
+      { to: '/agent/reports/trainer-utilization',    label: 'إشغال المدربين',   icon: Activity,  color: 'teal'   },
+      { to: '/agent/reports/trainer-dashboard',      label: 'لوحة الإشغال',     icon: BarChart3, color: 'indigo', sub: true },
+      { to: '/agent/reports/find-available-trainer', label: 'مدرب متاح',        icon: Sparkles,  color: 'cyan',   sub: true },
+      { to: '/agent/reports/trainer-work-history',   label: 'سجل عمل المدربين', icon: History,   color: 'violet', sub: true },
+    );
+  }
+  const baseLinks = [...roleLinks, ...grantedLinks];
 
   // Department-Deliveries scoping: a leader only sees their own department's
   // delivery link (unless they're an 'All' leader/super-admin). Admin & agent

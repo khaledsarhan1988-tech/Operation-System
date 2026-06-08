@@ -80,6 +80,7 @@ router.post('/login', loginLimiter, (req, res) => {
     department: user.department,
     management: user.management,
     extra_managements: user.extra_managements || null,
+    extra_pages: user.extra_pages || null,
     line: user.line,
     language: user.language,
     avatar_url: user.avatar_url || null,
@@ -153,6 +154,7 @@ router.post('/refresh', (req, res) => {
     department: stored.department,
     management: stored.management,
     extra_managements: stored.extra_managements || null,
+    extra_pages: stored.extra_pages || null,
     line: stored.line,
     language: stored.language,
     avatar_url: stored.avatar_url || null,
@@ -221,7 +223,7 @@ router.get('/me', authenticate, (req, res) => {
   const user = db.prepare(
     `SELECT id, username, full_name, role,
             department, extra_departments,
-            management, extra_managements,
+            management, extra_managements, extra_pages,
             line, language, avatar_url, is_active
        FROM users WHERE id = ?`
   ).get(req.user.id);
