@@ -976,6 +976,40 @@ function syncSideSessions(buffer, line) {
   return rows.length;
 }
 
+// ── DE-DUPLICATE / DE-GHOST ABSENCE ROWS ─────────────────────────────────────
+// Same root cause as phantom lectures: re-uploading the absence file with a
+// record moved to a different group leaves the OLD wrong-group row behind (the
+// importer deletes only the new file's group+date keys), inflating that group's
+// /coordinator's absences. Keep the LATEST-synced manual row per
+// (line, phone-or-name, date, time) — the most recent upload's attribution — and
+// archive older duplicates. SAFE: a student can't be absent in two groups at the
+// same moment, so same (phone/name,date,time) = the same event; only ONE survives.
+// Only touches manual rows (auto_generated=0) with a phone or name; auto rows are
+// regenerated separately. Returns count archived.
+function dedupeAbsenceTable(tbl, histTbl, line) {
+  const keyExpr = `COALESCE(NULLIF(TRIM(phone),''), LOWER(TRIM(student_name)))`;
+  const hasData = `((phone IS NOT NULL AND TRIM(phone)!='') OR (student_name IS NOT NULL AND TRIM(student_name)!=''))`;
+  const removeIds = db.prepare(`
+    SELECT id FROM ${tbl}
+     WHERE auto_generated=0 AND line=? AND ${hasData}
+       AND id NOT IN (
+         SELECT keep_id FROM (
+           SELECT id AS keep_id, ROW_NUMBER() OVER (
+             PARTITION BY line, ${keyExpr}, date, time
+             ORDER BY synced_at DESC, id DESC) rn
+           FROM ${tbl} WHERE auto_generated=0 AND line=? AND ${hasData}
+         ) WHERE rn=1
+       )`).all(line, line).map(r => r.id);
+  if (!removeIds.length) return 0;
+  const cols = db.prepare(`PRAGMA table_info(${tbl})`).all().map(c => c.name).join(',');
+  const insH = db.prepare(`INSERT INTO ${histTbl} (${cols}, archived_at) SELECT ${cols}, datetime('now','localtime') FROM ${tbl} WHERE id=?`);
+  const del  = db.prepare(`DELETE FROM ${tbl} WHERE id=?`);
+  const tx = db.transaction(() => { for (const id of removeIds) { insH.run(id); del.run(id); } });
+  tx();
+  console.log(`[dedupeAbsence] ${tbl} line=${line}: archived ${removeIds.length} ghost/duplicate rows`);
+  return removeIds.length;
+}
+
 function syncAbsent(buffer, line) {
   const rows = excel.parseAbsent(buffer);
 
@@ -1042,6 +1076,9 @@ function syncAbsent(buffer, line) {
     });
   });
   run();
+  // Remove ghost/duplicate manual rows left when a record moved group across uploads.
+  try { dedupeAbsenceTable('absent_students', 'absent_students_history', line); }
+  catch (e) { console.error('[dedupeAbsence:main]', e.message); }
   // Manual upload wiped the table → re-create auto-generated rows from current lectures+clients
   // Auto-absent refresh is best-effort — never let a failure here break the upload.
   try { regenerateAutoAbsents(line); }
@@ -1128,6 +1165,9 @@ function syncAbsentZoom(buffer, line) {
     });
   });
   run();
+  // Remove ghost/duplicate manual rows left when a record moved group across uploads.
+  try { dedupeAbsenceTable('absent_zoom_students', 'absent_zoom_students_history', line); }
+  catch (e) { console.error('[dedupeAbsence:zoom]', e.message); }
   // Manual upload wiped the table → re-create auto-generated rows from current lectures+clients
   // Auto-absent refresh is best-effort — never let a failure here break the upload.
   try { regenerateAutoAbsents(line); }
@@ -1142,4 +1182,4 @@ function regenerateAllLines() {
   });
 }
 
-module.exports = { syncFile, FILE_TYPES, VALID_LINES, regenerateAutoAbsents, regenerateAllLines };
+module.exports = { syncFile, FILE_TYPES, VALID_LINES, regenerateAutoAbsents, regenerateAllLines, dedupeAbsenceTable };

@@ -1241,6 +1241,19 @@ initDb().then(db => {
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_absent_zoom_phone_date ON absent_zoom_students(phone, date)`);
     saveNow();
     console.log('✅ Migration: absent_zoom_students table ready');
+    // Archive tables for DUPLICATE/GHOST absence rows (same root cause as
+    // phantom lectures): a re-upload moving a record to a new group leaves the
+    // OLD wrong-group row behind (importer deletes only the new file's
+    // group+date keys), inflating that coordinator's absences. dedupeAbsenceTable
+    // keeps the latest synced row per (line, phone-or-name, date, time) and moves
+    // the older duplicates here (reversible; same phone+date+time = one event).
+    db._raw.run(`CREATE TABLE IF NOT EXISTS absent_students_history AS SELECT * FROM absent_students WHERE 0`);
+    if (!(db._raw.exec(`PRAGMA table_info(absent_students_history)`)[0]?.values.map(r => r[1]) || []).includes('archived_at'))
+      db._raw.run(`ALTER TABLE absent_students_history ADD COLUMN archived_at TEXT`);
+    db._raw.run(`CREATE TABLE IF NOT EXISTS absent_zoom_students_history AS SELECT * FROM absent_zoom_students WHERE 0`);
+    if (!(db._raw.exec(`PRAGMA table_info(absent_zoom_students_history)`)[0]?.values.map(r => r[1]) || []).includes('archived_at'))
+      db._raw.run(`ALTER TABLE absent_zoom_students_history ADD COLUMN archived_at TEXT`);
+    console.log('✅ Migration: absent_*_history ready');
   } catch (e) {
     console.error('absent_zoom_students migration error:', e.message);
   }
