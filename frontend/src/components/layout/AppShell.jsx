@@ -39,7 +39,7 @@ export default function AppShell() {
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <Topbar onMenuClick={() => setSidebarOpen(true)} />
-        <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 xl:p-10">
+        <main className={`flex-1 overflow-y-auto ${fullWidth ? 'py-5 px-3' : 'p-4 md:p-6 lg:p-8 xl:p-10'}`}>
           <div className={fullWidth ? 'w-full' : 'max-w-[1600px] mx-auto'}>
             <Outlet />
           </div>

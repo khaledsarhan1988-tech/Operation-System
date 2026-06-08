@@ -652,7 +652,7 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
 
         {/* ── TABLE ── */}
         <div className="overflow-x-auto">
-          <table className="w-full text-sm text-right" style={{ minWidth: '1380px' }}>
+          <table className={`w-full text-sm text-right ${showSalaryCategory ? '[&_td]:!px-1.5 [&_th]:!px-1.5' : ''}`} style={{ minWidth: showSalaryCategory ? '1280px' : '1380px' }}>
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100">
                 {[
