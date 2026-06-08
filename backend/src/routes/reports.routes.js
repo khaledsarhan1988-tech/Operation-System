@@ -6012,7 +6012,7 @@ router.get('/attendance-absence/segments', (req, res) => {
       JOIN team_members tm_w
         ON LOWER(TRIM(tm_w.name)) = LOWER(TRIM(ch_w.coordinator))
        AND tm_w.department = 'customer_services'
-     WHERE ch_w.group_name = ${aliasGroup}.group_name
+     WHERE ch_w.group_name = ${effectiveGroupNameAtDate(`${aliasGroup}.group_name`, `${aliasGroup}.line`, dateExpr)}
        AND ch_w.line       = ${aliasGroup}.line
        AND DATE(ch_w.effective_from) <= ${dateExpr}
        AND (ch_w.effective_to IS NULL OR DATE(ch_w.effective_to) > ${dateExpr})
@@ -6053,9 +6053,9 @@ router.get('/attendance-absence/segments', (req, res) => {
     const expectedSlotsExpr = `MAX(${traineeCountExpr}, ${presentNumExpr} + ${absentOnLectureExpr})`;
     const me = db.prepare(`
       SELECT ${segId('l.date')} AS seg, COALESCE(SUM(${expectedSlotsExpr}),0) AS cnt
-      FROM lectures l LEFT JOIN batches b ON l.group_name=b.group_name${line ? ' AND b.line=l.line' : ''}
+      FROM lectures l LEFT JOIN ${DEDUP_BATCHES} b ON l.group_name=b.group_name${line ? ' AND b.line=l.line' : ''}
       WHERE l.session_type='main' AND l.status!='غير مؤكدة'
-      ${dateFilterL}${cf('l','l.date')}${lineL}
+      ${dateFilterL}${cf('l','l.date')}${notInternalGroup('l.group_name')}${lineL}
       GROUP BY seg`).all();
 
     const RES_DATE = `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`;
@@ -6063,13 +6063,13 @@ router.get('/attendance-absence/segments', (req, res) => {
       SELECT seg, COUNT(*) AS cnt FROM (
         SELECT ${segId(RES_DATE)} AS seg, ${RES_DATE} AS resolved_date
         FROM absent_students a
-        LEFT JOIN batches b ON a.group_name=b.group_name${line ? ' AND b.line=a.line' : ''}
+        LEFT JOIN ${DEDUP_BATCHES} b ON a.group_name=b.group_name${line ? ' AND b.line=a.line' : ''}
         LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
           AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND (c_lu.phone=a.phone OR c_lu.phone='0'||a.phone OR a.phone='0'||c_lu.phone)
         LEFT JOIN (SELECT group_name,date,line,ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num FROM lectures WHERE session_type='main' AND status!='غير مؤكدة'${line ? ` AND line='${line.replace(/'/g,"''")}'` : ''}) lec_inf
           ON (a.date IS NULL OR TRIM(a.date)='') AND lec_inf.group_name=a.group_name AND a.lecture_no IS NOT NULL AND lec_inf.lec_num=a.lecture_no${line ? ' AND lec_inf.line=a.line' : ''}
         WHERE ((a.student_name IS NOT NULL AND TRIM(a.student_name)!='') OR (a.phone IS NOT NULL AND TRIM(a.phone)!=''))
-        ${cf('a',RES_DATE)}${lineA}
+        ${cf('a',RES_DATE)}${notInternalGroup('a.group_name')}${lineA}
       ) p WHERE 1=1${dateFilterResolved} GROUP BY seg`).all();
 
     const ma2 = db.prepare(`
@@ -6079,7 +6079,7 @@ router.get('/attendance-absence/segments', (req, res) => {
       WHERE l.session_type='main' AND l.status='مؤكدة' AND (l.attendance IS NULL OR TRIM(l.attendance)='')
         AND c.name IS NOT NULL AND TRIM(c.name)!='' AND c.phone IS NOT NULL AND TRIM(c.phone)!=''
         AND NOT EXISTS (SELECT 1 FROM absent_students a2 WHERE a2.group_name=l.group_name AND a2.date=l.date${line ? ' AND a2.line=l.line' : ''})
-      ${dateFilterL}${cf('l','l.date')}${lineL}
+      ${dateFilterL}${cf('l','l.date')}${notInternalGroup('l.group_name')}${lineL}
       GROUP BY seg`).all();
 
     const ze = db.prepare(`
@@ -6087,20 +6087,42 @@ router.get('/attendance-absence/segments', (req, res) => {
         SELECT ${segId('l.date')} AS seg, COUNT(*) AS expected_slots
         FROM lectures l
         WHERE l.session_type='side' AND l.status='مؤكدة' AND (l.duration IS NULL OR l.duration<='00:30') AND l.side_session_category='regular'
-        ${dateFilterL}${cf('l','l.date')}${lineL}
+        ${dateFilterL}${cf('l','l.date')}${notInternalGroup('l.group_name')}${lineL}
         GROUP BY seg, l.group_name, l.date
       ) sub GROUP BY seg`).all();
 
-    const za = db.prepare(`
-      SELECT seg, COALESCE(SUM(absent_count),0) AS cnt FROM (
-        SELECT ${segId('l.date')} AS seg,
-          COUNT(*) - SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance!='' AND CAST(l.attendance AS INTEGER)>0 THEN 1 ELSE 0 END) AS absent_count
-        FROM lectures l
-        WHERE l.session_type='side' AND l.status='مؤكدة' AND (l.duration IS NULL OR l.duration<='00:30') AND l.side_session_category='regular'
-        ${dateFilterL}${cf('l','l.date')}${lineL}
-        GROUP BY seg, l.group_name, l.date
-        HAVING absent_count>0
-      ) sub GROUP BY seg`).all();
+    // Zoom-absent MUST mirror /attendance-absence (2026-06-06): prefer the
+    // uploaded absent_zoom_students file (per-student); fall back to the legacy
+    // lectures formula only when no file rows exist for the line.
+    const hasZoomFileSeg = db.prepare(
+      `SELECT EXISTS(SELECT 1 FROM absent_zoom_students${line ? ` WHERE line='${line.replace(/'/g, "''")}'` : ''}) AS h`
+    ).get()?.h;
+    const za = hasZoomFileSeg
+      ? db.prepare(`
+          SELECT seg, COUNT(*) AS cnt FROM (
+            SELECT a.id, ${segId('a.date')} AS seg
+            FROM absent_zoom_students a
+            WHERE ((a.student_name IS NOT NULL AND TRIM(a.student_name)!='') OR (a.phone IS NOT NULL AND TRIM(a.phone)!=''))
+              AND EXISTS (
+                SELECT 1 FROM lectures l
+                 WHERE REPLACE(l.group_name,' ','') IN (REPLACE(a.group_name,' ',''), REPLACE(${currentGroupNameExpr('a.group_name', 'a.line')},' ',''))
+                   AND l.date=a.date AND l.session_type='side'
+                   AND (l.side_session_category='regular' OR (l.duration IS NOT NULL AND LENGTH(l.duration)>=5
+                        AND CAST(SUBSTR(l.duration,1,2) AS INTEGER)*60 + CAST(SUBSTR(l.duration,4,2) AS INTEGER) < 20))${line ? ' AND l.line=a.line' : ''}
+              )
+            ${buildDateFilter('a.date', from_date, to_date)}${cf('a','a.date')}${notInternalGroup('a.group_name')}${lineA}
+            GROUP BY a.id
+          ) sub WHERE seg IS NOT NULL GROUP BY seg`).all()
+      : db.prepare(`
+          SELECT seg, COALESCE(SUM(absent_count),0) AS cnt FROM (
+            SELECT ${segId('l.date')} AS seg,
+              COUNT(*) - SUM(CASE WHEN l.attendance IS NOT NULL AND l.attendance!='' AND CAST(l.attendance AS INTEGER)>0 THEN 1 ELSE 0 END) AS absent_count
+            FROM lectures l
+            WHERE l.session_type='side' AND l.status='مؤكدة' AND (l.duration IS NULL OR l.duration<='00:30') AND l.side_session_category='regular'
+            ${dateFilterL}${cf('l','l.date')}${notInternalGroup('l.group_name')}${lineL}
+            GROUP BY seg, l.group_name, l.date
+            HAVING absent_count>0
+          ) sub GROUP BY seg`).all();
 
     const segMap = new Map();
     const bump = (rows, field) => rows.forEach(r => {
