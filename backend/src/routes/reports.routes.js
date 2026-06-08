@@ -60,6 +60,17 @@ function buildDateFilter(field, from_date, to_date) {
   return '';
 }
 
+// ─── DEDUP_BATCHES ───────────────────────────────────────────────────────────
+// One row per (group_name, line). A group can have MORE THAN ONE row in
+// `batches` — e.g. an active row plus an `إنتهت` (ended) row once ended groups
+// are kept in the sheet, or repeated placement/test entries (32 such groups
+// exist today). Joining `batches` directly on group_name then multiplies the
+// LEFT/INNER JOIN and inflates COUNT/SUM/list rows. Use this collapsed source
+// instead of the raw table wherever a join would otherwise multiply. Carries the
+// columns those queries read (coordinators / dept_type / trainee_count /
+// lecture_duration_min); MAX picks one value deterministically per group.
+const DEDUP_BATCHES = `(SELECT group_name, line, MAX(coordinators) AS coordinators, MAX(dept_type) AS dept_type, MAX(trainee_count) AS trainee_count, MAX(lecture_duration_min) AS lecture_duration_min FROM batches GROUP BY group_name, line)`;
+
 function buildDeptFilter(table, department) {
   if (!department || department === 'All') return '';
   const safe = department.replace(/'/g, "''");
@@ -1353,7 +1364,7 @@ router.get('/dashboard', (req, res) => {
            SELECT a.group_name,
              COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS resolved_date
            FROM absent_students a
-           LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
+           LEFT JOIN ${DEDUP_BATCHES} b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
            LEFT JOIN (
              SELECT group_name, date, line,
                ROW_NUMBER() OVER (PARTITION BY group_name ORDER BY date) AS lec_num
@@ -1371,7 +1382,7 @@ router.get('/dashboard', (req, res) => {
          WHERE 1=1${absentDateFP1}
          UNION ALL
          SELECT l.group_name FROM lectures l
-         INNER JOIN batches b2 ON l.group_name = b2.group_name${line ? ' AND b2.line = l.line' : ''}
+         INNER JOIN ${DEDUP_BATCHES} b2 ON l.group_name = b2.group_name${line ? ' AND b2.line = l.line' : ''}
          INNER JOIN clients c ON c.group_name = l.group_name${line ? ' AND c.line = l.line' : ''}
          WHERE l.session_type = 'main'
            AND l.status = 'مؤكدة'
@@ -1649,7 +1660,7 @@ router.get('/lectures-list', (req, res) => {
   try {
     const totalRow = db.prepare(
       `SELECT COUNT(*) as cnt FROM lectures l
-       LEFT JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
+       LEFT JOIN ${DEDUP_BATCHES} b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
        WHERE 1=1${allFilters}`
     ).get();
 
@@ -1658,7 +1669,7 @@ router.get('/lectures-list', (req, res) => {
          COALESCE((SELECT u.department FROM users u WHERE LOWER(TRIM(u.full_name))=LOWER(TRIM(b.coordinators)) LIMIT 1), b.dept_type) AS dept_type,
          b.coordinators, b.lecture_duration_min${sideExtraFields}
        FROM lectures l
-       LEFT JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
+       LEFT JOIN ${DEDUP_BATCHES} b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
        ${sideJoin}
        WHERE 1=1${allFilters}
        ORDER BY l.date DESC LIMIT ${Number(limit)} OFFSET ${offset}`
@@ -5616,7 +5627,7 @@ router.get('/attendance-absence', (req, res) => {
         SELECT ${dateAwareCoord('a', `COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date)`)} AS coordinator,
           COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS resolved_date
         FROM absent_students a
-        LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
+        LEFT JOIN ${DEDUP_BATCHES} b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
         LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
           AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)
         LEFT JOIN (
@@ -6077,7 +6088,7 @@ router.get('/attendance-absence-by-department', (req, res) => {
         COALESCE(SUM(b.trainee_count), 0) AS cnt,
         COUNT(DISTINCT b.coordinators) AS coords
       FROM lectures l
-      INNER JOIN batches b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
+      INNER JOIN ${DEDUP_BATCHES} b ON l.group_name = b.group_name${line ? ' AND b.line = l.line' : ''}
       WHERE l.session_type = 'main' AND l.status != 'غير مؤكدة'
       ${dateFilterL}${deptFilterB}${coordFilterB}${lineL}
       GROUP BY b.dept_type
@@ -6089,7 +6100,7 @@ router.get('/attendance-absence-by-department', (req, res) => {
         SELECT COALESCE(b.dept_type, '—') AS department,
           COALESCE(NULLIF(TRIM(a.date),''), lec_inf.date) AS resolved_date
         FROM absent_students a
-        LEFT JOIN batches b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
+        LEFT JOIN ${DEDUP_BATCHES} b ON a.group_name = b.group_name${line ? ' AND b.line = a.line' : ''}
         LEFT JOIN clients c_lu ON (a.student_name IS NULL OR TRIM(a.student_name)='')
           AND a.phone IS NOT NULL AND TRIM(a.phone)!='' AND (c_lu.phone = a.phone OR c_lu.phone = '0' || a.phone OR a.phone = '0' || c_lu.phone)
         LEFT JOIN (
@@ -6114,7 +6125,7 @@ router.get('/attendance-absence-by-department', (req, res) => {
     const mainAbsentPart2 = db.prepare(`
       SELECT COALESCE(b2.dept_type, '—') AS department, COUNT(*) AS cnt
       FROM lectures l
-      INNER JOIN batches b2 ON l.group_name = b2.group_name${line ? ' AND b2.line = l.line' : ''}
+      INNER JOIN ${DEDUP_BATCHES} b2 ON l.group_name = b2.group_name${line ? ' AND b2.line = l.line' : ''}
       INNER JOIN clients c ON c.group_name = l.group_name${line ? ' AND c.line = l.line' : ''}
       LEFT JOIN absent_students a ON a.group_name = l.group_name AND a.lecture_no IS NOT NULL${line ? ' AND a.line = l.line' : ''}
       WHERE l.session_type = 'main' AND l.status != 'غير مؤكدة'
