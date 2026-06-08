@@ -202,6 +202,7 @@ export default function TrainerAvailabilityFinder() {
   const [courseLevel, setCLevel]    = useState('');
   const [filterMode, setFilterMode] = useState('all'); // all | full | partial | none
   const [submitted, setSubmitted]   = useState(false);
+  const [ignoreTime, setIgnoreTime] = useState(false); // explicit "no time window" toggle
 
   const durationMin = useMemo(() => {
     const f = timeToMins(fromTime), t = timeToMins(toTime);
@@ -209,19 +210,20 @@ export default function TrainerAvailabilityFinder() {
     return t - f;
   }, [fromTime, toTime]);
 
-  // Time window is OPTIONAL — both empty → "any free slot" mode (returns every
-  // trainer that has any unbooked gap on the chosen days).
-  const noWindow = !fromTime && !toTime;
+  // Time window is OPTIONAL → "any free slot" mode (returns every trainer that
+  // has any unbooked gap on the chosen days). Triggered by the explicit toggle
+  // OR by both time fields being empty.
+  const noWindow = ignoreTime || (!fromTime && !toTime);
   const canSubmit = selectedDays.length > 0 && (noWindow || durationMin > 0);
 
   const { data, isFetching } = useQuery({
-    queryKey: ['find-available-trainer', section, selectedDays.join(','), fromTime, toTime, weeksCount, startDate, courseFamily, courseLevel],
+    queryKey: ['find-available-trainer', section, selectedDays.join(','), noWindow ? 'ANY' : fromTime, noWindow ? 'ANY' : toTime, weeksCount, startDate, courseFamily, courseLevel],
     queryFn: () => api.get('/reports/find-available-trainer', {
       params: {
         section,
         days: selectedDays.join(','),
-        from_time: fromTime,
-        to_time: toTime,
+        from_time: noWindow ? '' : fromTime,
+        to_time:   noWindow ? '' : toTime,
         weeks_count: weeksCount,
         start_date: startDate || undefined,
         course_family: courseFamily || undefined,
@@ -316,36 +318,40 @@ export default function TrainerAvailabilityFinder() {
         </div>
 
         {/* Row 3: time range */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div>
-            <label className={labelCls}>
-              <Clock size={11} className="inline ml-1 -mt-0.5" />
-              من الساعة <span className="text-[10px] text-gray-400">(اختياري)</span>
-            </label>
-            <input type="time" value={fromTime} onChange={e => setFromTime(e.target.value)} className={inputCls} dir="ltr" />
-          </div>
-          <div>
-            <label className={labelCls}>
-              إلى الساعة <span className="text-[10px] text-gray-400">(اختياري)</span>
-            </label>
-            <input type="time" value={toTime} onChange={e => setToTime(e.target.value)} className={inputCls} dir="ltr" />
-          </div>
-          <div className="flex items-end pb-1">
-            <div className="w-full text-center px-3 py-2 rounded-xl bg-blue-50 border border-blue-100">
-              {noWindow ? (
-                <>
-                  <div className="text-[10px] text-blue-700 font-bold">الوضع</div>
-                  <div className="text-xs font-extrabold text-blue-900">كل الأوقات المتاحة</div>
-                  <div className="text-[9px] text-blue-600 mt-0.5">سيب الوقت فاضي = كل المدربين اللي عندهم وقت فاضي</div>
-                </>
-              ) : (
-                <>
-                  <div className="text-[10px] text-blue-700 font-bold">المدة المحسوبة</div>
-                  <div className="text-sm font-extrabold text-blue-900">{fmtMins(durationMin)}</div>
-                  <button type="button" onClick={() => { setFromTime(''); setToTime(''); }}
-                    className="mt-0.5 text-[10px] text-blue-600 hover:underline">مسح الوقت (عرض الكل)</button>
-                </>
-              )}
+        <div className="space-y-2">
+          {/* Explicit "no time window" toggle — search all trainers with any free slot */}
+          <label className="inline-flex items-center gap-2 cursor-pointer select-none px-3 py-1.5 rounded-xl bg-indigo-50 border border-indigo-100 hover:bg-indigo-100 transition-colors">
+            <input type="checkbox" checked={ignoreTime} onChange={e => setIgnoreTime(e.target.checked)} className="w-4 h-4 accent-indigo-600" />
+            <span className="text-xs font-bold text-indigo-800">ابحث بدون تحديد وقت — كل المدربين اللي عندهم وقت فاضي</span>
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className={labelCls}>
+                <Clock size={11} className="inline ml-1 -mt-0.5" />
+                من الساعة <span className="text-[10px] text-gray-400">(اختياري)</span>
+              </label>
+              <input type="time" value={fromTime} disabled={ignoreTime} onChange={e => setFromTime(e.target.value)} className={`${inputCls} disabled:opacity-40 disabled:cursor-not-allowed`} dir="ltr" />
+            </div>
+            <div>
+              <label className={labelCls}>
+                إلى الساعة <span className="text-[10px] text-gray-400">(اختياري)</span>
+              </label>
+              <input type="time" value={toTime} disabled={ignoreTime} onChange={e => setToTime(e.target.value)} className={`${inputCls} disabled:opacity-40 disabled:cursor-not-allowed`} dir="ltr" />
+            </div>
+            <div className="flex items-end pb-1">
+              <div className="w-full text-center px-3 py-2 rounded-xl bg-blue-50 border border-blue-100">
+                {noWindow ? (
+                  <>
+                    <div className="text-[10px] text-blue-700 font-bold">الوضع</div>
+                    <div className="text-xs font-extrabold text-blue-900">كل الأوقات المتاحة</div>
+                  </>
+                ) : (
+                  <>
+                    <div className="text-[10px] text-blue-700 font-bold">المدة المحسوبة</div>
+                    <div className="text-sm font-extrabold text-blue-900">{fmtMins(durationMin)}</div>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </div>
