@@ -104,6 +104,28 @@ function rowRates(row) {
   return { base: total, perHour: total / 240, dayWage: total / 30, found: true };
 }
 
+// Inclusive calendar-day count between two ISO dates ('YYYY-MM-DD').
+function daysInclusive(a, b) {
+  const da = Date.parse(`${a}T00:00:00Z`), db = Date.parse(`${b}T00:00:00Z`);
+  if (Number.isNaN(da) || Number.isNaN(db)) return 0;
+  const d = Math.round((db - da) / 86400000) + 1;
+  return d > 0 ? d : 0;
+}
+
+// Prorate the base salary by the CALENDAR days a shift segment overlaps the
+// selected month (owner's rule). A shift covering the whole month → full base;
+// a partial shift → (total ÷ 30) × overlap days. Returns the prorated base plus
+// the day counts for display.
+function prorateBase(fullBase, dayWage, startDate, endDate, monthFrom, monthTo) {
+  const monthDays = daysInclusive(monthFrom, monthTo);
+  const segStart = (startDate && startDate > monthFrom) ? startDate : monthFrom;
+  const segEnd   = (endDate   && endDate   < monthTo)   ? endDate   : monthTo;
+  const overlap  = daysInclusive(segStart, segEnd);
+  // Full (or over) month coverage → full base (don't exceed for 31-day months).
+  if (overlap >= monthDays) return { base: fullBase, overlap: monthDays, monthDays, prorated: false };
+  return { base: dayWage * overlap, overlap, monthDays, prorated: true };
+}
+
 // Sum deduction money for a list of {kind, amount} given the row's rates.
 function deductionMoney(deds, perHour, dayWage) {
   let total = 0;
@@ -431,7 +453,14 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
   // Compute the salary breakdown for one report row.
   const salaryFor = (r) => {
     const row = findSalaryRow(salarySystems, r.section, r.salary_category);
-    const { base, perHour, dayWage, found } = rowRates(row);
+    const { base: baseFull, perHour, dayWage, found } = rowRates(row);
+    // Prorate base by the calendar days this shift segment covers in the month
+    // (monthPicker variant only — that's the payroll page). A full-month shift
+    // keeps the full base; a partial shift is reduced proportionally.
+    const pr = monthPicker
+      ? prorateBase(baseFull, dayWage, r.start_date, r.end_date, fromDate, toDate)
+      : { base: baseFull, overlap: 0, monthDays: 0, prorated: false };
+    const base = pr.base;
     const extraPay = (n(r.extra_minutes) / 60) * perHour;
     const ded = deductionMoney(deductionsByTrainer.get(r.trainer_id), perHour, dayWage);
     // KPI component amounts from the matched salary-def row (for the selectable KPIs column).
@@ -440,7 +469,11 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
       on_time:    n(row?.kpi_on_time),
       attendance: n(row?.kpi_attendance),
     };
-    return { found, base, perHour, dayWage, extraPay, ded, kpiAmts, net: base + extraPay - ded };
+    return {
+      found, base, baseFull, perHour, dayWage, extraPay, ded, kpiAmts,
+      prorated: pr.prorated, proDays: pr.overlap, monthDays: pr.monthDays,
+      net: base + extraPay - ded,
+    };
   };
 
   // ── client-side trainer-name search (in addition to dropdown)
@@ -505,7 +538,8 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
       _primary: isPrimary,
       _award: award ? { no_absence: !!award.no_absence, on_time: !!award.on_time, attendance: !!award.attendance } : { no_absence: false, on_time: false, attendance: false },
       _sal: {
-        found: s.found, base: s.base, perHour: s.perHour, dayWage: s.dayWage,
+        found: s.found, base: s.base, baseFull: s.baseFull, perHour: s.perHour, dayWage: s.dayWage,
+        prorated: s.prorated, proDays: s.proDays, monthDays: s.monthDays,
         extraPay: s.extraPay, ded: s.ded, oodMins, oodPay, kpiPay,
         kpiAmts: s.kpiAmts, net: s.net + oodPay + kpiPay,
       },
@@ -782,7 +816,13 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                      const oodPay = n(s.oodPay), kpiPay = n(s.kpiPay), net = n(s.net);
                      return (
                        <>
-                         <td className="px-2 py-2.5 text-xs font-bold text-gray-800 whitespace-nowrap text-center" dir="ltr">{fmtMoney(s.base)}</td>
+                         <td className="px-2 py-2.5 text-xs font-bold text-gray-800 whitespace-nowrap text-center"
+                           title={s.prorated ? `المرتب الكامل ${fmtMoney(s.baseFull)} · ${s.proDays} يوم من ${s.monthDays} (شهر ناقص)` : ''}>
+                           <span dir="ltr">{fmtMoney(s.base)}</span>
+                           {s.prorated && (
+                             <span className="block text-[9px] text-amber-600 font-normal">{s.proDays}/{s.monthDays} يوم</span>
+                           )}
+                         </td>
                          <td className="px-2 py-2.5 text-xs whitespace-nowrap text-center" dir="ltr">
                            {s.extraPay > 0
                              ? <span className="text-emerald-700 font-bold">+{fmtMoney(s.extraPay)}</span>
