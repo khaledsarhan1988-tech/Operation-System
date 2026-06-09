@@ -793,9 +793,9 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                      {EMPLOYMENT_LABEL[r.employment_type] || '—'}
                    </td>
                    {showSalaryCategory && (
-                     <td className="px-2 py-2.5 whitespace-nowrap">
+                     <td className="px-2 py-2.5 text-center">
                        {r.salary_category
-                         ? <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold border ${salaryCatClass(r.salary_category)}`}>{r.salary_category}</span>
+                         ? <span className={`inline-block px-1.5 py-0.5 rounded-lg text-[10px] font-bold border text-center leading-tight whitespace-normal break-words max-w-[58px] ${salaryCatClass(r.salary_category)}`}>{r.salary_category}</span>
                          : <span className="text-xs text-gray-300">—</span>}
                      </td>
                    )}
