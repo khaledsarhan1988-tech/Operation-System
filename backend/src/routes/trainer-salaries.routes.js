@@ -302,27 +302,28 @@ router.get('/kpi-awards', (req, res) => {
   }
 });
 
-// PUT /kpi-awards — upsert one trainer's award flags for a month.
-// body: { trainer_id, month, no_absence, on_time, attendance }
+// PUT /kpi-awards — upsert one shift's award flags for a month.
+// body: { trainer_id, month, shift_index, no_absence, on_time, attendance }
 router.put('/kpi-awards', express.json(), (req, res) => {
   const b = req.body || {};
   const trainerId = parseInt(b.trainer_id, 10);
   const month = String(b.month || '');
+  const shiftIndex = parseInt(b.shift_index, 10) || 1;
   if (!trainerId) return res.status(400).json({ error: 'trainer_id مطلوب' });
   if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'month=YYYY-MM مطلوب' });
   const flag = (v) => (v ? 1 : 0);
   try {
     db.prepare(`
-      INSERT INTO trainer_kpi_awards (trainer_id, month, no_absence, on_time, attendance, updated_by)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(trainer_id, month) DO UPDATE SET
+      INSERT INTO trainer_kpi_awards (trainer_id, month, shift_index, no_absence, on_time, attendance, updated_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(trainer_id, month, shift_index) DO UPDATE SET
         no_absence = excluded.no_absence,
         on_time    = excluded.on_time,
         attendance = excluded.attendance,
         updated_by = excluded.updated_by,
         updated_at = datetime('now', '+2 hours')
-    `).run(trainerId, month, flag(b.no_absence), flag(b.on_time), flag(b.attendance), req.user?.id || null);
-    const row = db.prepare(`SELECT * FROM trainer_kpi_awards WHERE trainer_id = ? AND month = ?`).get(trainerId, month);
+    `).run(trainerId, month, shiftIndex, flag(b.no_absence), flag(b.on_time), flag(b.attendance), req.user?.id || null);
+    const row = db.prepare(`SELECT * FROM trainer_kpi_awards WHERE trainer_id = ? AND month = ? AND shift_index = ?`).get(trainerId, month, shiftIndex);
     return res.json(row);
   } catch (err) {
     return res.status(500).json({ error: err.message });

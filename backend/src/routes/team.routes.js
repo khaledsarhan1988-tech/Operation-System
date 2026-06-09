@@ -811,9 +811,11 @@ router.delete('/extra-shifts/:entryId', (req, res) => {
 // from extra-shifts and NEVER counted in utilization. Surfaced only in the
 // payroll page where each entry is paid at the trainer's hourly rate.
 
-// GET /api/team/outofduty-hours?from&to — period totals per trainer (for the
-// payroll column). Literal single-segment path, declared before /:id/... so it
-// can never be captured as an :id. Returns [{ team_member_id, total_min }].
+// GET /api/team/outofduty-hours?from&to — RAW entries in the period (for the
+// payroll column). Returns [{ team_member_id, date, duration_min }] so the
+// frontend can bucket each entry into the shift whose date range contains it
+// (per-shift out-of-duty). Literal single-segment path, declared before
+// /:id/... so it can never be captured as an :id.
 router.get('/outofduty-hours', (req, res) => {
   const { from, to } = req.query;
   try {
@@ -822,10 +824,9 @@ router.get('/outofduty-hours', (req, res) => {
     if (from && /^\d{4}-\d{2}-\d{2}$/.test(String(from))) { where.push('date >= ?'); params.push(from); }
     if (to   && /^\d{4}-\d{2}-\d{2}$/.test(String(to)))   { where.push('date <= ?'); params.push(to); }
     const rows = db.prepare(`
-      SELECT team_member_id, SUM(duration_min) AS total_min
+      SELECT team_member_id, date, duration_min
         FROM team_member_outofduty_hours
        ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-       GROUP BY team_member_id
     `).all(...params);
     return res.json(rows);
   } catch (err) {

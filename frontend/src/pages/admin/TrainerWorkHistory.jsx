@@ -419,14 +419,24 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
     enabled: showSalaryCategory,
     staleTime: 30 * 1000,
   });
-  const oodMinsByTrainer = useMemo(() => {
+  // Raw out-of-duty entries grouped per trainer (each {date, mins}). Bucketed
+  // into shifts by date range so each shift segment shows its own hours.
+  const oodEntriesByTrainer = useMemo(() => {
     const m = new Map();
-    for (const o of oodTotals) m.set(o.team_member_id, n(o.total_min));
+    for (const o of oodTotals) {
+      if (!m.has(o.team_member_id)) m.set(o.team_member_id, []);
+      m.get(o.team_member_id).push({ date: o.date, mins: n(o.duration_min) });
+    }
     return m;
   }, [oodTotals]);
+  const oodMinsInRange = (tid, from, to) => {
+    const list = oodEntriesByTrainer.get(tid) || [];
+    let s = 0;
+    for (const e of list) if (e.date >= from && e.date <= to) s += e.mins;
+    return s;
+  };
 
-  // KPI awards for the selected month — which KPI components each trainer earned
-  // (manual). Keyed by trainer_id. Money is derived from the salary-def amounts.
+  // KPI awards for the selected month — PER SHIFT. Keyed by `trainerId:shiftIndex`.
   const kpiMonth = (fromDate || '').slice(0, 7);
   const { data: kpiAwards = [] } = useQuery({
     queryKey: ['trainer-kpi-awards', kpiMonth],
@@ -435,9 +445,9 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
     enabled: showSalaryCategory && /^\d{4}-\d{2}$/.test(kpiMonth),
     staleTime: 30 * 1000,
   });
-  const kpiAwardByTrainer = useMemo(() => {
+  const kpiAwardByShift = useMemo(() => {
     const m = new Map();
-    for (const a of kpiAwards) m.set(a.trainer_id, a);
+    for (const a of kpiAwards) m.set(`${a.trainer_id}:${a.shift_index || 1}`, a);
     return m;
   }, [kpiAwards]);
 
@@ -494,40 +504,6 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
     );
   }, [filteredRows, groupBySection]);
 
-  // First display-row index for each trainer. Out-of-duty pay is a per-trainer
-  // monthly value, so it's shown/added on ONLY this row — a trainer with several
-  // shift rows must not get the pay counted multiple times.
-  const primaryRowByTrainer = useMemo(() => {
-    const m = new Map();
-    displayRows.forEach((r, i) => { if (!m.has(r.trainer_id)) m.set(r.trainer_id, i); });
-    return m;
-  }, [displayRows]);
-
-  // Distinct calendar days each trainer actually worked in the selected month —
-  // the UNION of all their shift segments (so a day shared by two segments is
-  // counted once). Used to prorate the monthly KPI bonus by days worked.
-  const workedDaysByTrainer = useMemo(() => {
-    const monthDays = daysInclusive(fromDate, toDate);
-    const intervals = new Map();
-    for (const r of displayRows) {
-      const segStart = (r.start_date && r.start_date > fromDate) ? r.start_date : fromDate;
-      const segEnd   = (r.end_date   && r.end_date   < toDate)   ? r.end_date   : toDate;
-      if (!intervals.has(r.trainer_id)) intervals.set(r.trainer_id, []);
-      intervals.get(r.trainer_id).push([segStart, segEnd]);
-    }
-    const out = new Map();
-    for (const [tid, list] of intervals) {
-      const days = new Set();
-      for (const [s, e] of list) {
-        const ds = Date.parse(`${s}T00:00:00Z`), de = Date.parse(`${e}T00:00:00Z`);
-        if (Number.isNaN(ds) || Number.isNaN(de)) continue;
-        for (let t = ds; t <= de; t += 86400000) days.add(t);
-      }
-      out.set(tid, { worked: days.size, monthDays });
-    }
-    return out;
-  }, [displayRows, fromDate, toDate]);
-
   // ── Month lock (قفل الشهر) — a locked month renders from a frozen snapshot
   // and disables all edits, immune to later salary/KPI/hours changes.
   const { data: locks = [] } = useQuery({
@@ -545,30 +521,30 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
     staleTime: 30 * 1000,
   });
 
-  // Unified computed rows (live). Each carries its salary breakdown in `_sal`
-  // so the table + the lock snapshot share one shape.
-  const computedRows = useMemo(() => displayRows.map((r, i) => {
+  // Unified computed rows (live). Everything is PER SHIFT now: out-of-duty hours
+  // are bucketed into the shift whose date range contains them, and KPIs are
+  // selected per shift (different shifts → different salary systems). Each row
+  // carries its breakdown in `_sal` so the table + lock snapshot share one shape.
+  const computedRows = useMemo(() => displayRows.map((r) => {
     const s = salaryFor(r);
-    const isPrimary = primaryRowByTrainer.get(r.trainer_id) === i;
-    const oodMins = isPrimary ? (oodMinsByTrainer.get(r.trainer_id) || 0) : 0;
-    const oodPay  = (oodMins / 60) * s.perHour;
-    const award   = isPrimary ? kpiAwardByTrainer.get(r.trainer_id) : null;
-    // KPI bonus is monthly → prorate by the days the trainer actually worked
-    // this month (same calendar-day basis as the base salary).
-    const wd       = workedDaysByTrainer.get(r.trainer_id);
-    const kpiFactor = (monthPicker && wd && wd.monthDays > 0) ? Math.min(1, wd.worked / wd.monthDays) : 1;
-    const kpiPay  = isPrimary
-      ? ((award?.no_absence ? s.kpiAmts.no_absence : 0)
+    // This shift's date window within the month (for out-of-duty bucketing).
+    const segStart = (r.start_date && r.start_date > fromDate) ? r.start_date : fromDate;
+    const segEnd   = (r.end_date   && r.end_date   < toDate)   ? r.end_date   : toDate;
+    const oodMins  = oodMinsInRange(r.trainer_id, segStart, segEnd);
+    const oodPay   = (oodMins / 60) * s.perHour;
+    // KPI per shift. Proration factor ties to this shift's base proration
+    // (base ÷ full base = days worked ÷ 30), so KPI scales exactly like the base.
+    const kpiFactor = s.baseFull > 0 ? s.base / s.baseFull : 1;
+    const award   = kpiAwardByShift.get(`${r.trainer_id}:${r.shift_index}`);
+    const kpiPay  = ((award?.no_absence ? s.kpiAmts.no_absence : 0)
         + (award?.on_time ? s.kpiAmts.on_time : 0)
-        + (award?.attendance ? s.kpiAmts.attendance : 0)) * kpiFactor
-      : 0;
+        + (award?.attendance ? s.kpiAmts.attendance : 0)) * kpiFactor;
     return {
       ...r,
-      _primary: isPrimary,
       _award: award ? { no_absence: !!award.no_absence, on_time: !!award.on_time, attendance: !!award.attendance } : { no_absence: false, on_time: false, attendance: false },
       _kpiFactor: kpiFactor,
-      _workedDays: wd?.worked || 0,
-      _monthDays: wd?.monthDays || 0,
+      _shiftIndex: r.shift_index,
+      _segFrom: segStart, _segTo: segEnd,
       _sal: {
         found: s.found, base: s.base, baseFull: s.baseFull, perHour: s.perHour, dayWage: s.dayWage,
         prorated: s.prorated, proDays: s.proDays, monthDays: s.monthDays,
@@ -576,7 +552,7 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
         kpiAmts: s.kpiAmts, net: s.net + oodPay + kpiPay,
       },
     };
-  }), [displayRows, primaryRowByTrainer, oodMinsByTrainer, kpiAwardByTrainer, workedDaysByTrainer, salarySystems, deductions]);
+  }), [displayRows, oodEntriesByTrainer, kpiAwardByShift, salarySystems, deductions, fromDate, toDate]);
 
   // When locked, render the frozen snapshot rows; otherwise the live computed rows.
   const tableRows = (isLocked && snapshot?.rows) ? snapshot.rows : computedRows;
@@ -844,7 +820,6 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                          </>
                        );
                      }
-                     const isPrimary = r._primary;
                      const oodPay = n(s.oodPay), kpiPay = n(s.kpiPay), net = n(s.net);
                      return (
                        <>
@@ -878,14 +853,17 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                            )}
                          </td>
                          <td className="px-2 py-2.5 whitespace-nowrap text-center">
-                           {!isPrimary ? <span className="text-xs text-gray-300">—</span> : isLocked ? (
+                           {isLocked ? (
                              <span className={`inline-flex px-2 py-0.5 rounded-lg text-xs font-bold ${oodPay > 0 ? 'text-amber-700' : 'text-gray-300'}`}>
                                {oodPay > 0 ? `+${fmtMoney(oodPay)}` : '—'}
                              </span>
                            ) : (
                              <button type="button"
-                               onClick={() => setOodModal({ trainer_id: r.trainer_id, trainer_name: r.trainer_name, perHour: s.perHour })}
-                               title="إضافة / تعديل ساعات خارج مهام عمله (تُدفع ولا تؤثر على التشغيل)"
+                               onClick={() => setOodModal({
+                                 trainer_id: r.trainer_id, trainer_name: r.trainer_name, perHour: s.perHour,
+                                 shift_index: r._shiftIndex, segFrom: r._segFrom, segTo: r._segTo,
+                               })}
+                               title="ساعات خارج مهام عمله لهذا الشيفت (تُدفع ولا تؤثر على التشغيل)"
                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-bold border transition-colors ${
                                  oodPay > 0 ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
                                }`}>
@@ -895,7 +873,7 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                            )}
                          </td>
                          <td className="px-2 py-2.5 whitespace-nowrap text-center">
-                           {!isPrimary ? <span className="text-xs text-gray-300">—</span> : isLocked ? (
+                           {isLocked ? (
                              <span className={`inline-flex px-2 py-0.5 rounded-lg text-xs font-bold ${kpiPay > 0 ? 'text-emerald-700' : 'text-gray-300'}`}>
                                {kpiPay > 0 ? `+${fmtMoney(kpiPay)}` : '—'}
                              </span>
@@ -903,11 +881,11 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                              <button type="button"
                                onClick={() => setKpiModal({
                                  trainer_id: r.trainer_id, trainer_name: r.trainer_name,
-                                 month: kpiMonth, amts: s.kpiAmts,
+                                 month: kpiMonth, shift_index: r._shiftIndex, amts: s.kpiAmts,
                                  awarded: { ...(r._award || {}) },
-                                 factor: r._kpiFactor, workedDays: r._workedDays, monthDays: r._monthDays,
+                                 factor: r._kpiFactor, proDays: s.proDays, monthDays: s.monthDays, prorated: s.prorated,
                                })}
-                               title="اختيار الـ KPIs المضافة للراتب"
+                               title="اختيار الـ KPIs المضافة للراتب لهذا الشيفت"
                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-bold border transition-colors ${
                                  kpiPay > 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
                                }`}>
@@ -1108,18 +1086,20 @@ function DeductionModal({ context, onClose }) {
 // hours are paid only — they NEVER count toward utilization (separate table).
 function OutOfDutyModal({ context, onClose }) {
   const qc = useQueryClient();
-  const { trainer_id, trainer_name, perHour } = context;
-  const [date, setDate]           = useState('');
+  const { trainer_id, trainer_name, perHour, segFrom, segTo } = context;
+  const [date, setDate]           = useState(segFrom || '');
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime]     = useState('');
   const [hours, setHours]         = useState('');
   const [note, setNote]           = useState('');
   const [error, setError]         = useState(null);
 
-  const { data: list = [], isLoading } = useQuery({
+  const { data: allList = [], isLoading } = useQuery({
     queryKey: ['trainer-outofduty', 'one', trainer_id],
     queryFn: () => api.get(`/team/${trainer_id}/outofduty-hours`).then(r => r.data),
   });
+  // Only this shift's entries (date inside the shift's window within the month).
+  const list = allList.filter(r => (!segFrom || r.date >= segFrom) && (!segTo || r.date <= segTo));
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['trainer-outofduty'] });
@@ -1141,6 +1121,9 @@ function OutOfDutyModal({ context, onClose }) {
   function submit() {
     setError(null);
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { setError('من فضلك اختر التاريخ'); return; }
+    if ((segFrom && date < segFrom) || (segTo && date > segTo)) {
+      setError(`التاريخ لازم يكون داخل فترة الشيفت (${segFrom} → ${segTo})`); return;
+    }
     const body = { date, notes: note };
     if (startTime && endTime) {
       body.start_time = startTime;
@@ -1171,6 +1154,9 @@ function OutOfDutyModal({ context, onClose }) {
             <p className="text-[11px] text-gray-500 mt-1">
               سعر الساعة {fmtMoney(perHour)} ج · <span className="text-amber-700 font-bold">تُدفع ولا تؤثر على نسبة التشغيل</span>
             </p>
+            {(segFrom || segTo) && (
+              <p className="text-[10px] text-amber-600 font-bold mt-0.5" dir="ltr">هذا الشيفت: {segFrom} → {segTo}</p>
+            )}
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/60 flex-shrink-0"><X size={15} className="text-gray-600" /></button>
         </div>
@@ -1181,7 +1167,7 @@ function OutOfDutyModal({ context, onClose }) {
           <div className="grid grid-cols-3 gap-2">
             <div>
               <label className="block text-[11px] font-bold text-gray-500 mb-1">التاريخ <span className="text-red-500">*</span></label>
-              <input type="date" value={date} onChange={e => setDate(e.target.value)}
+              <input type="date" value={date} min={segFrom || undefined} max={segTo || undefined} onChange={e => setDate(e.target.value)}
                 className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" />
             </div>
             <div>
@@ -1273,18 +1259,17 @@ const KPI_FIELDS = [
 ];
 function KpiAwardModal({ context, onClose }) {
   const qc = useQueryClient();
-  const { trainer_id, trainer_name, month, amts, awarded, factor = 1, workedDays = 0, monthDays = 0 } = context;
+  const { trainer_id, trainer_name, month, shift_index = 1, amts, awarded, factor = 1, proDays = 0, monthDays = 0, prorated = false } = context;
   const [sel, setSel] = useState({ ...awarded });
   const [error, setError] = useState(null);
 
-  // KPI is monthly → prorated by days actually worked (same as base salary).
-  const prorated = factor < 0.9999;
+  // KPI per shift → prorated by the same factor as this shift's base salary.
   const amountOf = (k) => n(amts?.[k]) * factor;
   const selectedTotal = KPI_FIELDS.reduce((a, f) => a + (sel[f.key] ? amountOf(f.key) : 0), 0);
 
   const saveMut = useMutation({
     mutationFn: () => api.put('/trainer-salaries/kpi-awards', {
-      trainer_id, month,
+      trainer_id, month, shift_index,
       no_absence: sel.no_absence ? 1 : 0,
       on_time:    sel.on_time    ? 1 : 0,
       attendance: sel.attendance ? 1 : 0,
@@ -1303,10 +1288,10 @@ function KpiAwardModal({ context, onClose }) {
           <div className="min-w-0">
             <p className="text-xs font-bold text-emerald-700 mb-1 flex items-center gap-1"><Wallet size={13} /> KPIs المضافة للراتب</p>
             <p className="text-sm font-black text-gray-900 leading-tight">{trainer_name}</p>
-            <p className="text-[11px] text-gray-500 mt-1">شهر {monthLabel} · علّم على اللي استحقها المدرب</p>
+            <p className="text-[11px] text-gray-500 mt-1">شهر {monthLabel} · شيفت #{shift_index} · علّم على اللي استحقها</p>
             {prorated && (
               <p className="text-[10px] text-amber-600 font-bold mt-0.5">
-                ⚖ متناسبة مع أيام العمل: {workedDays}/{monthDays} يوم (المبالغ مقسومة تلقائيًا)
+                ⚖ متناسبة مع أيام الشيفت: {proDays}/{monthDays} يوم (المبالغ مقسومة تلقائيًا)
               </p>
             )}
           </div>

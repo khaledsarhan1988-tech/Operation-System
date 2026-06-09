@@ -688,6 +688,42 @@ initDb().then(db => {
     console.error('trainer_kpi_awards migration error:', e.message);
   }
 
+  // ── trainer_kpi_awards → per-SHIFT (add shift_index) ────────────────────
+  // KPIs are now selected per shift segment, not once per month (a trainer with
+  // multiple shifts has different salary systems → different KPI amounts). Key
+  // becomes (trainer_id, month, shift_index). Existing month-level awards are
+  // migrated to shift_index=1.
+  try {
+    const cols = (db._raw.exec(`PRAGMA table_info(trainer_kpi_awards)`)[0]?.values || []).map(v => v[1]);
+    if (!cols.includes('shift_index')) {
+      db._raw.run(`
+        CREATE TABLE trainer_kpi_awards_new (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          trainer_id  INTEGER NOT NULL,
+          month       TEXT    NOT NULL,
+          shift_index INTEGER NOT NULL DEFAULT 1,
+          no_absence  INTEGER NOT NULL DEFAULT 0,
+          on_time     INTEGER NOT NULL DEFAULT 0,
+          attendance  INTEGER NOT NULL DEFAULT 0,
+          updated_by  INTEGER,
+          updated_at  TEXT    NOT NULL DEFAULT (datetime('now', '+2 hours')),
+          UNIQUE(trainer_id, month, shift_index)
+        )
+      `);
+      db._raw.run(`
+        INSERT INTO trainer_kpi_awards_new (id, trainer_id, month, shift_index, no_absence, on_time, attendance, updated_by, updated_at)
+        SELECT id, trainer_id, month, 1, no_absence, on_time, attendance, updated_by, updated_at FROM trainer_kpi_awards
+      `);
+      db._raw.run(`DROP TABLE trainer_kpi_awards`);
+      db._raw.run(`ALTER TABLE trainer_kpi_awards_new RENAME TO trainer_kpi_awards`);
+      db._raw.run(`CREATE INDEX IF NOT EXISTS idx_tka_month ON trainer_kpi_awards(month)`);
+      saveNow();
+      console.log('✅ Migration: trainer_kpi_awards shift_index (per-shift) ready');
+    }
+  } catch (e) {
+    console.error('trainer_kpi_awards shift_index migration error:', e.message);
+  }
+
   // ── payroll_month_locks: frozen payroll snapshot for a locked month ─────
   // When the owner LOCKS a month, the fully-computed payroll rows (as shown)
   // are snapshotted here as JSON. A locked month renders from this snapshot,
