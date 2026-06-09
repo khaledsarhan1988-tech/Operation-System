@@ -503,6 +503,31 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
     return m;
   }, [displayRows]);
 
+  // Distinct calendar days each trainer actually worked in the selected month —
+  // the UNION of all their shift segments (so a day shared by two segments is
+  // counted once). Used to prorate the monthly KPI bonus by days worked.
+  const workedDaysByTrainer = useMemo(() => {
+    const monthDays = daysInclusive(fromDate, toDate);
+    const intervals = new Map();
+    for (const r of displayRows) {
+      const segStart = (r.start_date && r.start_date > fromDate) ? r.start_date : fromDate;
+      const segEnd   = (r.end_date   && r.end_date   < toDate)   ? r.end_date   : toDate;
+      if (!intervals.has(r.trainer_id)) intervals.set(r.trainer_id, []);
+      intervals.get(r.trainer_id).push([segStart, segEnd]);
+    }
+    const out = new Map();
+    for (const [tid, list] of intervals) {
+      const days = new Set();
+      for (const [s, e] of list) {
+        const ds = Date.parse(`${s}T00:00:00Z`), de = Date.parse(`${e}T00:00:00Z`);
+        if (Number.isNaN(ds) || Number.isNaN(de)) continue;
+        for (let t = ds; t <= de; t += 86400000) days.add(t);
+      }
+      out.set(tid, { worked: days.size, monthDays });
+    }
+    return out;
+  }, [displayRows, fromDate, toDate]);
+
   // ── Month lock (قفل الشهر) — a locked month renders from a frozen snapshot
   // and disables all edits, immune to later salary/KPI/hours changes.
   const { data: locks = [] } = useQuery({
@@ -528,15 +553,22 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
     const oodMins = isPrimary ? (oodMinsByTrainer.get(r.trainer_id) || 0) : 0;
     const oodPay  = (oodMins / 60) * s.perHour;
     const award   = isPrimary ? kpiAwardByTrainer.get(r.trainer_id) : null;
+    // KPI bonus is monthly → prorate by the days the trainer actually worked
+    // this month (same calendar-day basis as the base salary).
+    const wd       = workedDaysByTrainer.get(r.trainer_id);
+    const kpiFactor = (monthPicker && wd && wd.monthDays > 0) ? Math.min(1, wd.worked / wd.monthDays) : 1;
     const kpiPay  = isPrimary
-      ? (award?.no_absence ? s.kpiAmts.no_absence : 0)
+      ? ((award?.no_absence ? s.kpiAmts.no_absence : 0)
         + (award?.on_time ? s.kpiAmts.on_time : 0)
-        + (award?.attendance ? s.kpiAmts.attendance : 0)
+        + (award?.attendance ? s.kpiAmts.attendance : 0)) * kpiFactor
       : 0;
     return {
       ...r,
       _primary: isPrimary,
       _award: award ? { no_absence: !!award.no_absence, on_time: !!award.on_time, attendance: !!award.attendance } : { no_absence: false, on_time: false, attendance: false },
+      _kpiFactor: kpiFactor,
+      _workedDays: wd?.worked || 0,
+      _monthDays: wd?.monthDays || 0,
       _sal: {
         found: s.found, base: s.base, baseFull: s.baseFull, perHour: s.perHour, dayWage: s.dayWage,
         prorated: s.prorated, proDays: s.proDays, monthDays: s.monthDays,
@@ -544,7 +576,7 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
         kpiAmts: s.kpiAmts, net: s.net + oodPay + kpiPay,
       },
     };
-  }), [displayRows, primaryRowByTrainer, oodMinsByTrainer, kpiAwardByTrainer, salarySystems, deductions]);
+  }), [displayRows, primaryRowByTrainer, oodMinsByTrainer, kpiAwardByTrainer, workedDaysByTrainer, salarySystems, deductions]);
 
   // When locked, render the frozen snapshot rows; otherwise the live computed rows.
   const tableRows = (isLocked && snapshot?.rows) ? snapshot.rows : computedRows;
@@ -873,6 +905,7 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                                  trainer_id: r.trainer_id, trainer_name: r.trainer_name,
                                  month: kpiMonth, amts: s.kpiAmts,
                                  awarded: { ...(r._award || {}) },
+                                 factor: r._kpiFactor, workedDays: r._workedDays, monthDays: r._monthDays,
                                })}
                                title="اختيار الـ KPIs المضافة للراتب"
                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-bold border transition-colors ${
@@ -1240,11 +1273,13 @@ const KPI_FIELDS = [
 ];
 function KpiAwardModal({ context, onClose }) {
   const qc = useQueryClient();
-  const { trainer_id, trainer_name, month, amts, awarded } = context;
+  const { trainer_id, trainer_name, month, amts, awarded, factor = 1, workedDays = 0, monthDays = 0 } = context;
   const [sel, setSel] = useState({ ...awarded });
   const [error, setError] = useState(null);
 
-  const amountOf = (k) => n(amts?.[k]);
+  // KPI is monthly → prorated by days actually worked (same as base salary).
+  const prorated = factor < 0.9999;
+  const amountOf = (k) => n(amts?.[k]) * factor;
   const selectedTotal = KPI_FIELDS.reduce((a, f) => a + (sel[f.key] ? amountOf(f.key) : 0), 0);
 
   const saveMut = useMutation({
@@ -1269,6 +1304,11 @@ function KpiAwardModal({ context, onClose }) {
             <p className="text-xs font-bold text-emerald-700 mb-1 flex items-center gap-1"><Wallet size={13} /> KPIs المضافة للراتب</p>
             <p className="text-sm font-black text-gray-900 leading-tight">{trainer_name}</p>
             <p className="text-[11px] text-gray-500 mt-1">شهر {monthLabel} · علّم على اللي استحقها المدرب</p>
+            {prorated && (
+              <p className="text-[10px] text-amber-600 font-bold mt-0.5">
+                ⚖ متناسبة مع أيام العمل: {workedDays}/{monthDays} يوم (المبالغ مقسومة تلقائيًا)
+              </p>
+            )}
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/60 flex-shrink-0"><X size={15} className="text-gray-600" /></button>
         </div>
