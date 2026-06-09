@@ -824,10 +824,10 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                      return (
                        <>
                          <td className="px-2 py-2.5 text-xs font-bold text-gray-800 whitespace-nowrap text-center"
-                           title={s.prorated ? `المرتب الكامل ${fmtMoney(s.baseFull)} · ${s.proDays} يوم من ${s.monthDays} (شهر ناقص)` : ''}>
+                           title={s.prorated ? `المرتب الكامل ${fmtMoney(s.baseFull)} ÷ 30 × ${s.proDays} يوم = ${fmtMoney(s.base)}` : ''}>
                            <span dir="ltr">{fmtMoney(s.base)}</span>
                            {s.prorated && (
-                             <span className="block text-[9px] text-amber-600 font-normal">{s.proDays}/{s.monthDays} يوم</span>
+                             <span className="block text-[9px] text-amber-600 font-normal">{s.proDays} يوم ÷ 30</span>
                            )}
                          </td>
                          <td className="px-2 py-2.5 text-xs whitespace-nowrap text-center" dir="ltr">
@@ -1291,7 +1291,7 @@ function KpiAwardModal({ context, onClose }) {
             <p className="text-[11px] text-gray-500 mt-1">شهر {monthLabel} · شيفت #{shift_index} · علّم على اللي استحقها</p>
             {prorated && (
               <p className="text-[10px] text-amber-600 font-bold mt-0.5">
-                ⚖ متناسبة مع أيام الشيفت: {proDays}/{monthDays} يوم (المبالغ مقسومة تلقائيًا)
+                ⚖ متناسبة مع أيام الشيفت: {proDays} يوم ÷ 30 (المبالغ مقسومة تلقائيًا)
               </p>
             )}
           </div>
