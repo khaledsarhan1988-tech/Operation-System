@@ -4703,7 +4703,8 @@ router.get('/trainer-work-history', (req, res) => {
           AND date BETWEEN ? AND ?
           AND group_name NOT LIKE '%Voice Note%'
           AND group_name NOT LIKE '%Break%'
-          AND group_name NOT LIKE '%Test%'`
+          AND group_name NOT LIKE '%Test%'
+          AND group_name NOT LIKE '%تأجيل%'`
     ).all(from, to);
     const stripParens = (s) => String(s || '').replace(/\([^)]*\)/g, '').trim().toLowerCase();
     const parseDurationMin = (s) => {
@@ -4900,6 +4901,7 @@ router.get('/trainer-work-history/unconfirmed', (req, res) => {
           AND group_name NOT LIKE '%Voice Note%'
           AND group_name NOT LIKE '%Break%'
           AND group_name NOT LIKE '%Test%'
+          AND group_name NOT LIKE '%تأجيل%'
         ORDER BY date ASC, time ASC`
     ).all(winLo, winHi);
     const target = stripParens(trainerName);
