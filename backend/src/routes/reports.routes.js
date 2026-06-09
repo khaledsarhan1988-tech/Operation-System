@@ -3461,7 +3461,9 @@ router.get('/trainer-utilization', (req, res) => {
     // trainers don't clutter the report unless they actually contributed.
     // Section filter is applied per-shift (date-aware) below, NOT in SQL — a
     // trainer can span sections across the period (per-shift section).
-    let trainerWhere = `WHERE department='education'`;
+    // Team leaders (job_title='تيم ليدر') are administrative staff, NOT trainers
+    // → excluded from all occupancy/availability reports.
+    let trainerWhere = `WHERE department='education' AND (job_title IS NULL OR job_title <> 'تيم ليدر')`;
     if (search) {
       const s = escapeLike(search);
       trainerWhere += ` AND name LIKE '%${s}%' ESCAPE '\\'`;
@@ -3848,7 +3850,9 @@ router.get('/trainer-utilization-summary', (req, res) => {
     // Do NOT filter by section in SQL — a trainer can span multiple sections
     // across the period (per-shift section). Fetch all education trainers and
     // split/filter by section at the totals stage below.
-    let trainerWhere = `WHERE department='education'`;
+    // Team leaders (job_title='تيم ليدر') are administrative staff, NOT trainers
+    // → excluded from all occupancy/availability reports.
+    let trainerWhere = `WHERE department='education' AND (job_title IS NULL OR job_title <> 'تيم ليدر')`;
     if (search) {
       const s = escapeLike(search);
       trainerWhere += ` AND name LIKE '%${s}%' ESCAPE '\\'`;
@@ -4304,8 +4308,8 @@ router.get('/find-available-trainer', (req, res) => {
     }
   }
 
-  // Trainer query
-  let trainerWhere = `WHERE department='education' AND status='active'`;
+  // Trainer query — team leaders (job_title='تيم ليدر') are admin, not trainers.
+  let trainerWhere = `WHERE department='education' AND status='active' AND (job_title IS NULL OR job_title <> 'تيم ليدر')`;
   if (section && section !== 'all') {
     const s = String(section).replace(/'/g, "''");
     trainerWhere += ` AND section='${s}'`;
@@ -4647,6 +4651,10 @@ router.get('/trainer-work-history', (req, res) => {
   const to   = safeDate(req.query.to)   || monthLast;
   const section = (req.query.section || '').trim();
   const trainer = (req.query.trainer || '').trim();
+  // Team leaders (job_title='تيم ليدر') are admin staff. They're excluded from
+  // this report (سجل عمل المدربين) by default, but INCLUDED when the payroll page
+  // asks (include_leaders=1) so they still get their administrative salary.
+  const includeLeaders = req.query.include_leaders === '1' || req.query.include_leaders === 'true';
 
   const DAY_LABELS = {
     saturday: 'السبت', sunday: 'الأحد', monday: 'الاثنين',
@@ -4658,6 +4666,7 @@ router.get('/trainer-work-history', (req, res) => {
     // the report shows everyone whose shifts overlap the window, including
     // recently-deactivated ones, with their status as a column).
     let where = `WHERE department='education'`;
+    if (!includeLeaders) where += ` AND (job_title IS NULL OR job_title <> 'تيم ليدر')`;
     const params = [];
     if (section && section !== 'all') { where += ` AND section = ?`; params.push(section); }
     if (trainer)                       { where += ` AND name = ?`;    params.push(trainer); }

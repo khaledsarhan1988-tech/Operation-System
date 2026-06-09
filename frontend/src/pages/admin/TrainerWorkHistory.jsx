@@ -385,9 +385,11 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
 
   // ── report data
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['trainer-work-history', fromDate, toDate, section, trainer],
+    // Payroll variant includes team leaders (they get an admin salary); the
+    // plain سجل عمل المدربين excludes them.
+    queryKey: ['trainer-work-history', fromDate, toDate, section, trainer, showSalaryCategory],
     queryFn: () => api.get('/reports/trainer-work-history', {
-      params: { from: fromDate, to: toDate, section, trainer },
+      params: { from: fromDate, to: toDate, section, trainer, include_leaders: showSalaryCategory ? 1 : undefined },
     }).then(r => r.data),
     staleTime: 60 * 1000,
   });
