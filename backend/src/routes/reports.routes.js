@@ -4671,7 +4671,7 @@ router.get('/trainer-work-history', (req, res) => {
     if (section && section !== 'all') { where += ` AND section = ?`; params.push(section); }
     if (trainer)                       { where += ` AND name = ?`;    params.push(trainer); }
     const trainers = db.prepare(
-      `SELECT id, name, section, status, shifts_json,
+      `SELECT id, name, section, status, shifts_json, job_title,
               shift,  shift_start,  shift_end,  shift_rests,  voice_notes,
               employment_type,  work_days,  shift_start_date,  shift_end_date,
               shift2, shift2_start, shift2_end, shift2_rests, shift2_voice_notes,
@@ -4746,8 +4746,12 @@ router.get('/trainer-work-history', (req, res) => {
         });
       }
 
-      const memberExtras       = extrasByMember.get(t.id) || [];
-      const memberUnconfirmed  = unconfirmedByTrainer.get(stripParens(t.name)) || [];
+      // Team leaders (تيم ليدر) don't teach — never attribute lecture-derived
+      // extra/unconfirmed hours to them (their name may match a real trainer's
+      // lectures, e.g. a person who is both a trainer AND a team leader).
+      const isLeader = String(t.job_title || '').trim() === 'تيم ليدر';
+      const memberExtras       = isLeader ? [] : (extrasByMember.get(t.id) || []);
+      const memberUnconfirmed  = isLeader ? [] : (unconfirmedByTrainer.get(stripParens(t.name)) || []);
 
       // Overall (aggregated) employment type: union of work_days across ALL
       // configured shifts. A trainer with 2 Part-Time shifts whose days union
