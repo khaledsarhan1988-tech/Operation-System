@@ -330,6 +330,46 @@ router.put('/kpi-awards', express.json(), (req, res) => {
   }
 });
 
+/* ─── ADMIN ADJUSTMENTS (مكافأة / خصم إداري) ───────────────────────────────
+ * Flat per-shift amounts: a bonus added to net and a deduction subtracted. */
+
+// GET /admin-adjustments?month=YYYY-MM
+router.get('/admin-adjustments', (req, res) => {
+  const month = String(req.query.month || '');
+  if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'month=YYYY-MM مطلوب' });
+  try {
+    return res.json(db.prepare(`SELECT * FROM trainer_admin_adjustments WHERE month = ?`).all(month));
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /admin-adjustments — upsert one shift's admin bonus + deduction.
+// body: { trainer_id, month, shift_index, bonus, deduction }
+router.put('/admin-adjustments', express.json(), (req, res) => {
+  const b = req.body || {};
+  const trainerId = parseInt(b.trainer_id, 10);
+  const month = String(b.month || '');
+  const shiftIndex = parseInt(b.shift_index, 10) || 1;
+  if (!trainerId) return res.status(400).json({ error: 'trainer_id مطلوب' });
+  if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'month=YYYY-MM مطلوب' });
+  try {
+    db.prepare(`
+      INSERT INTO trainer_admin_adjustments (trainer_id, month, shift_index, bonus, deduction, updated_by)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(trainer_id, month, shift_index) DO UPDATE SET
+        bonus      = excluded.bonus,
+        deduction  = excluded.deduction,
+        updated_by = excluded.updated_by,
+        updated_at = datetime('now', '+2 hours')
+    `).run(trainerId, month, shiftIndex, num(b.bonus), num(b.deduction), req.user?.id || null);
+    const row = db.prepare(`SELECT * FROM trainer_admin_adjustments WHERE trainer_id = ? AND month = ? AND shift_index = ?`).get(trainerId, month, shiftIndex);
+    return res.json(row);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 /* ─── MONTH LOCKS (قفل/تجميد الشهر) ────────────────────────────────────────
  * Freeze a month's payroll into a JSON snapshot so future changes to salary
  * systems / KPIs / hours never alter a finished month. */

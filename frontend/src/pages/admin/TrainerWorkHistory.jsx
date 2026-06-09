@@ -333,9 +333,9 @@ function SkeletonRows({ cols = 11, rows = 6 }) {
 export default function TrainerWorkHistory({ title = 'سجل عمل المدربين', showSalaryCategory = false, groupBySection = false, monthPicker = false } = {}) {
   const qc = useQueryClient();
   // Column count for skeleton/empty/error rows. The salary variant adds the
-  // category column (+1) and six payroll columns (+6): base, extra, deduction,
-  // out-of-duty, KPIs, net.
-  const colCount = showSalaryCategory ? 19 : 12;
+  // category column (+1) and eight payroll columns (+8): base, extra, deduction,
+  // out-of-duty, KPIs, admin-bonus, admin-deduction, net.
+  const colCount = showSalaryCategory ? 21 : 12;
   const [fromDate,    setFromDate]    = useState(defaultFromDate);
   const [toDate,      setToDate]      = useState(defaultToDate);
   const [section,     setSection]     = useState('all');
@@ -346,6 +346,7 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
   const [dedModal,    setDedModal]    = useState(null);  // { trainer_id, trainer_name, perHour, dayWage }
   const [oodModal,    setOodModal]    = useState(null);  // out-of-duty: { trainer_id, trainer_name, perHour }
   const [kpiModal,    setKpiModal]    = useState(null);  // KPIs: { trainer_id, trainer_name, month, amts, awarded }
+  const [adjModal,    setAdjModal]    = useState(null);  // admin bonus/deduction: { trainer_id, trainer_name, month, shift_index, bonus, deduction }
 
   // ── trainer dropdown options — all education team members
   // (also used as the source for the click-to-edit modal — we look up the
@@ -453,6 +454,20 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
     return m;
   }, [kpiAwards]);
 
+  // Admin adjustments (مكافأة/خصم إداري) per shift — flat amounts.
+  const { data: adminAdj = [] } = useQuery({
+    queryKey: ['trainer-admin-adj', kpiMonth],
+    queryFn: () => api.get('/trainer-salaries/admin-adjustments', { params: { month: kpiMonth } })
+      .then(r => r.data).catch(() => []),
+    enabled: showSalaryCategory && /^\d{4}-\d{2}$/.test(kpiMonth),
+    staleTime: 30 * 1000,
+  });
+  const adminAdjByShift = useMemo(() => {
+    const m = new Map();
+    for (const a of adminAdj) m.set(`${a.trainer_id}:${a.shift_index || 1}`, a);
+    return m;
+  }, [adminAdj]);
+
   const deductionsByTrainer = useMemo(() => {
     const m = new Map();
     for (const d of deductions) {
@@ -541,6 +556,10 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
     const kpiPay  = ((award?.no_absence ? s.kpiAmts.no_absence : 0)
         + (award?.on_time ? s.kpiAmts.on_time : 0)
         + (award?.attendance ? s.kpiAmts.attendance : 0)) * kpiFactor;
+    // Admin bonus / deduction (flat, per shift).
+    const adj = adminAdjByShift.get(`${r.trainer_id}:${r.shift_index}`);
+    const adminBonus = n(adj?.bonus);
+    const adminDed   = n(adj?.deduction);
     return {
       ...r,
       _award: award ? { no_absence: !!award.no_absence, on_time: !!award.on_time, attendance: !!award.attendance } : { no_absence: false, on_time: false, attendance: false },
@@ -550,11 +569,11 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
       _sal: {
         found: s.found, base: s.base, baseFull: s.baseFull, perHour: s.perHour, dayWage: s.dayWage,
         prorated: s.prorated, proDays: s.proDays, monthDays: s.monthDays,
-        extraPay: s.extraPay, ded: s.ded, oodMins, oodPay, kpiPay,
-        kpiAmts: s.kpiAmts, net: s.net + oodPay + kpiPay,
+        extraPay: s.extraPay, ded: s.ded, oodMins, oodPay, kpiPay, adminBonus, adminDed,
+        kpiAmts: s.kpiAmts, net: s.net + oodPay + kpiPay + adminBonus - adminDed,
       },
     };
-  }), [displayRows, oodEntriesByTrainer, kpiAwardByShift, salarySystems, deductions, fromDate, toDate]);
+  }), [displayRows, oodEntriesByTrainer, kpiAwardByShift, adminAdjByShift, salarySystems, deductions, fromDate, toDate]);
 
   // When locked, render the frozen snapshot rows; otherwise the live computed rows.
   const tableRows = (isLocked && snapshot?.rows) ? snapshot.rows : computedRows;
@@ -703,8 +722,8 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                   'المدرب', 'القسم', '#', 'نوع الشيفت', 'بداية العمل', 'نهاية العمل', 'المواعيد', 'أيام العمل', 'الدوام',
                   ...(showSalaryCategory ? ['فئة المرتب'] : []),
                   'ساعات إضافية', 'ساعات غير مؤكدة', 'الحالة',
-                  ...(showSalaryCategory ? ['المرتب الأساسي', 'إضافي (ج)', 'الخصم', 'خارج مهام عمله', 'KPIs', 'الصافي'] : []),
-                ].map(h => <th key={h} className="px-2 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>)}
+                  ...(showSalaryCategory ? ['المرتب الأساسي', 'إضافي (ج)', 'الخصم', 'خارج مهام عمله', 'KPIs', 'مكافأة إدارية', 'خصم إداري', 'الصافي'] : []),
+                ].map((h, hi) => <th key={h} className={`px-2 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap ${hi === 0 ? 'sticky right-0 z-20 bg-gray-50' : ''}`}>{h}</th>)}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -737,8 +756,8 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                        </td>
                      </tr>
                    )}
-                 <tr className="hover:bg-gray-50/60 transition-colors">
-                   <td className="px-2 py-2.5 font-semibold whitespace-nowrap">
+                 <tr className={`transition-colors ${i % 2 ? 'bg-slate-50' : 'bg-white'} hover:bg-blue-50`}>
+                   <td className="px-2 py-2.5 font-semibold whitespace-nowrap sticky right-0 z-10 bg-inherit shadow-[-6px_0_6px_-6px_rgba(0,0,0,0.12)]">
                      <button
                        type="button"
                        onClick={() => openTrainerEdit(r.trainer_id)}
@@ -818,11 +837,12 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                      if (!s.found) {
                        return (
                          <>
-                           <td className="px-2 py-2.5 text-xs text-gray-300 text-center" colSpan={6}>— لا توجد فئة مرتب مطابقة —</td>
+                           <td className="px-2 py-2.5 text-xs text-gray-300 text-center" colSpan={8}>— لا توجد فئة مرتب مطابقة —</td>
                          </>
                        );
                      }
                      const oodPay = n(s.oodPay), kpiPay = n(s.kpiPay), net = n(s.net);
+                     const adminBonus = n(s.adminBonus), adminDed = n(s.adminDed);
                      return (
                        <>
                          <td className="px-2 py-2.5 text-xs font-bold text-gray-800 whitespace-nowrap text-center"
@@ -896,6 +916,42 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                              </button>
                            )}
                          </td>
+                         {/* مكافأة إدارية */}
+                         <td className="px-2 py-2.5 whitespace-nowrap text-center">
+                           {isLocked ? (
+                             <span className={`inline-flex px-2 py-0.5 rounded-lg text-xs font-bold ${adminBonus > 0 ? 'text-emerald-700' : 'text-gray-300'}`}>
+                               {adminBonus > 0 ? `+${fmtMoney(adminBonus)}` : '—'}
+                             </span>
+                           ) : (
+                             <button type="button"
+                               onClick={() => setAdjModal({ trainer_id: r.trainer_id, trainer_name: r.trainer_name, month: kpiMonth, shift_index: r._shiftIndex, bonus: adminBonus, deduction: adminDed, focus: 'bonus' })}
+                               title="مكافأة إدارية"
+                               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-bold border transition-colors ${
+                                 adminBonus > 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+                               }`}>
+                               <Plus size={12} />
+                               {adminBonus > 0 ? `+${fmtMoney(adminBonus)}` : 'إضافة'}
+                             </button>
+                           )}
+                         </td>
+                         {/* خصم إداري */}
+                         <td className="px-2 py-2.5 whitespace-nowrap text-center">
+                           {isLocked ? (
+                             <span className={`inline-flex px-2 py-0.5 rounded-lg text-xs font-bold ${adminDed > 0 ? 'text-red-700' : 'text-gray-300'}`}>
+                               {adminDed > 0 ? `−${fmtMoney(adminDed)}` : '—'}
+                             </span>
+                           ) : (
+                             <button type="button"
+                               onClick={() => setAdjModal({ trainer_id: r.trainer_id, trainer_name: r.trainer_name, month: kpiMonth, shift_index: r._shiftIndex, bonus: adminBonus, deduction: adminDed, focus: 'deduction' })}
+                               title="خصم إداري"
+                               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-bold border transition-colors ${
+                                 adminDed > 0 ? 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100' : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+                               }`}>
+                               <MinusCircle size={12} />
+                               {adminDed > 0 ? `−${fmtMoney(adminDed)}` : 'إضافة'}
+                             </button>
+                           )}
+                         </td>
                          <td className="px-2 py-2.5 text-xs font-black whitespace-nowrap text-center" dir="ltr">
                            <span className="inline-flex items-center px-2 py-0.5 rounded-lg bg-blue-50 text-blue-800 border border-blue-200">{fmtMoney(net)}</span>
                          </td>
@@ -947,6 +1003,11 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
       {/* ── KPI selection modal (مرتبات المدربين only) ── */}
       {kpiModal && (
         <KpiAwardModal context={kpiModal} onClose={() => setKpiModal(null)} />
+      )}
+
+      {/* ── Admin bonus / deduction modal (مرتبات المدربين only) ── */}
+      {adjModal && (
+        <AdminAdjustModal context={adjModal} onClose={() => setAdjModal(null)} />
       )}
     </div>
   );
@@ -1337,6 +1398,66 @@ function KpiAwardModal({ context, onClose }) {
               {saveMut.isPending ? 'جاري الحفظ...' : 'حفظ'}
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── ADMIN BONUS / DEDUCTION MODAL (مكافأة / خصم إداري) ─────────────────────────
+// Flat per-shift amounts: bonus (added to net) and deduction (subtracted).
+function AdminAdjustModal({ context, onClose }) {
+  const qc = useQueryClient();
+  const { trainer_id, trainer_name, month, shift_index = 1, bonus: bonus0, deduction: ded0 } = context;
+  const [bonus, setBonus] = useState(bonus0 ? String(bonus0) : '');
+  const [ded, setDed]     = useState(ded0 ? String(ded0) : '');
+  const [error, setError] = useState(null);
+
+  const saveMut = useMutation({
+    mutationFn: () => api.put('/trainer-salaries/admin-adjustments', {
+      trainer_id, month, shift_index, bonus: Number(bonus) || 0, deduction: Number(ded) || 0,
+    }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['trainer-admin-adj'] }); onClose(); },
+    onError: (e) => setError(e.response?.data?.error || e.message),
+  });
+
+  const net = (Number(bonus) || 0) - (Number(ded) || 0);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()} dir="rtl">
+        <div className="px-5 py-4 bg-gradient-to-l from-indigo-50 to-blue-100/50 border-b border-indigo-100 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-indigo-700 mb-1">تعديلات إدارية</p>
+            <p className="text-sm font-black text-gray-900 leading-tight">{trainer_name}</p>
+            <p className="text-[11px] text-gray-500 mt-1">شيفت #{shift_index} · مبالغ ثابتة تُضاف/تُخصم من الصافي</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/60 flex-shrink-0"><X size={15} className="text-gray-600" /></button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          {error && <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">{error}</div>}
+          <div>
+            <label className="block text-[11px] font-bold text-emerald-700 mb-1">مكافأة إدارية (تُضاف +)</label>
+            <input type="number" min="0" step="any" value={bonus} onChange={e => setBonus(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-emerald-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300" placeholder="0" />
+          </div>
+          <div>
+            <label className="block text-[11px] font-bold text-red-700 mb-1">خصم إداري (يُخصم −)</label>
+            <input type="number" min="0" step="any" value={ded} onChange={e => setDed(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-red-200 text-sm focus:outline-none focus:ring-2 focus:ring-red-300" placeholder="0" />
+          </div>
+          <p className="text-xs text-gray-500 text-center">
+            الأثر على الصافي: <b className={net >= 0 ? 'text-emerald-700' : 'text-red-700'} dir="ltr">{net >= 0 ? '+' : ''}{fmtMoney(net)} ج</b>
+          </p>
+        </div>
+
+        <div className="px-5 py-3 bg-gray-50 border-t flex items-center justify-end gap-2">
+          <button onClick={onClose} className="px-3 py-1.5 rounded-lg border border-gray-300 text-sm hover:bg-gray-100">إلغاء</button>
+          <button onClick={() => saveMut.mutate()} disabled={saveMut.isPending}
+            className="px-4 py-1.5 rounded-lg bg-indigo-600 text-white text-sm font-bold inline-flex items-center gap-1 disabled:opacity-50">
+            {saveMut.isPending ? 'جاري الحفظ...' : 'حفظ'}
+          </button>
         </div>
       </div>
     </div>

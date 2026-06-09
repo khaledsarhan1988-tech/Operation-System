@@ -744,6 +744,30 @@ initDb().then(db => {
     console.error('payroll_month_locks migration error:', e.message);
   }
 
+  // ── trainer_admin_adjustments: manual admin bonus / deduction per shift ──
+  // Flat EGP amounts the owner types per (trainer, month, shift): a مكافأة إدارية
+  // (added to net) and a خصم إداري (subtracted). Not prorated — explicit values.
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS trainer_admin_adjustments (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        trainer_id  INTEGER NOT NULL,
+        month       TEXT    NOT NULL,
+        shift_index INTEGER NOT NULL DEFAULT 1,
+        bonus       REAL    NOT NULL DEFAULT 0,
+        deduction   REAL    NOT NULL DEFAULT 0,
+        updated_by  INTEGER,
+        updated_at  TEXT    NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        UNIQUE(trainer_id, month, shift_index)
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_taa_month ON trainer_admin_adjustments(month)`);
+    saveNow();
+    console.log('✅ Migration: trainer_admin_adjustments table ready');
+  } catch (e) {
+    console.error('trainer_admin_adjustments migration error:', e.message);
+  }
+
   // ── trainer_deductions: PRIVATE owner-only salary deductions ────────────
   // Each row = one deduction for a trainer on a date, either in hours or in
   // days. The money value is computed on the client from the trainer's
