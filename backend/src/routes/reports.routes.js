@@ -2472,10 +2472,35 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
     ).all();
     // (defined below — declared up here so we can use it for both keys)
     const _stripParens = (s) => String(s || '').replace(/\([^)]*\)/g, '').trim();
+    // Raw shift objects of a record (canonical shifts_json, else legacy columns)
+    // — used to MERGE shifts across multiple records sharing a trainer name.
+    const _rawShiftsOf = (t) => {
+      let raw = null;
+      if (t.shifts_json) { try { raw = JSON.parse(t.shifts_json); } catch { raw = null; } }
+      if (!Array.isArray(raw) || raw.length === 0) {
+        raw = [];
+        if (t.shift)  raw.push({ shift: t.shift,  start: t.shift_start,  end: t.shift_end,  rests: t.shift_rests,  voice_notes: t.voice_notes,        work_days: t.work_days,        section: t.section, start_date: t.shift_start_date,  end_date: t.shift_end_date });
+        if (t.shift2) raw.push({ shift: t.shift2, start: t.shift2_start, end: t.shift2_end, rests: t.shift2_rests, voice_notes: t.shift2_voice_notes, work_days: t.shift2_work_days, section: t.section, start_date: t.shift2_start_date, end_date: t.shift2_end_date });
+      }
+      return Array.isArray(raw) ? raw : [];
+    };
+    // Key team rows by stripped name. A trainer may exist as SEVERAL records (e.g.
+    // split into a 'semi' record + a 'private' record after moving sections) — so
+    // MERGE all their shifts; a lecture valid in ANY of them passes the schedule
+    // check. Team leaders (job_title='تيم ليدر') are admin, NOT trainers → excluded
+    // so their (often empty / Sun-Wed) schedule never validates a real trainer's
+    // lectures (was the cause of false "خارج وقت عمل المدرب" flags).
     const teamMap = {};
     for (const t of teamRows) {
+      if (String(t.job_title || '').trim() === 'تيم ليدر') continue;
       const k = _stripParens(t.name).toLowerCase();
-      if (k) teamMap[k] = t;
+      if (!k) continue;
+      if (!teamMap[k]) {
+        teamMap[k] = { ...t, shifts_json: JSON.stringify(_rawShiftsOf(t)) };
+      } else {
+        const merged = [...JSON.parse(teamMap[k].shifts_json || '[]'), ..._rawShiftsOf(t)];
+        teamMap[k] = { ...teamMap[k], shifts_json: JSON.stringify(merged) };
+      }
     }
     // Parse course strings from the Batches sheet:
     //   "Private General 4" / "P General 2" / "General 4"  → general
