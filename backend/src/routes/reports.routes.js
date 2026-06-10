@@ -3530,8 +3530,11 @@ router.get('/trainer-utilization', (req, res) => {
       }
     } catch (_) { /* table might not exist yet on first deploy */ }
 
-    // Build response per trainer
-    const out = trainerRows.map(t => {
+    // Build ONE row for a given (trainer, section). The whole computation is
+    // scoped to `sec`: only that section's shifts feed available/free, and a
+    // day's booked counts only when the day belongs to `sec`. So a trainer who
+    // changed sections is split into a row per section (date-aware).
+    const buildRow = (t, sec) => {
       const tKey = stripParens(t.name).toLowerCase();
       const shifts = parseTeamShifts(t);
 
@@ -3559,7 +3562,7 @@ router.get('/trainer-utilization', (req, res) => {
         // Section-scoped shifts for this day (all shifts when no filter). When
         // a section filter is active we count ONLY the shifts in that section,
         // so a trainer who moved sections shows the right days/hours per section.
-        const sectionShifts = activeSection ? shifts.filter(sh => shiftSection(sh, t) === activeSection) : shifts;
+        const sectionShifts = shifts.filter(sh => shiftSection(sh, t) === sec);
         let availMin = 0;
         for (const sh of sectionShifts) availMin += shiftMinsForDate(sh, date);
         // The section this day belongs to: the covering shift's section, else
@@ -3567,7 +3570,7 @@ router.get('/trainer-utilization', (req, res) => {
         let daySection = null;
         for (const sh of shifts) { if (shiftMinsForDate(sh, date) > 0) { daySection = shiftSection(sh, t); break; } }
         if (!daySection) daySection = t.section || 'all';
-        const dayInSection = !activeSection || daySection === activeSection;
+        const dayInSection = daySection === sec;
         // Extra one-off hours add to capacity only when the day is in the active section.
         const extraMin = dayInSection ? (extraByMemberDay[`${t.id}|${date}`] || 0) : 0;
         availMin += extraMin;
@@ -3627,7 +3630,7 @@ router.get('/trainer-utilization', (req, res) => {
         id: t.id,
         name: stripParens(t.name) || t.name,
         full_name: t.name,
-        section: activeSection || t.section,
+        section: sec,
         status: t.status,                  // 'active' | 'inactive' — for the badge
         shift_summary: shiftSummary,
         has_voice_notes: hasVoiceNotes,
@@ -3643,16 +3646,26 @@ router.get('/trainer-utilization', (req, res) => {
         },
         days,
       };
-    })
-    // Drop trainers with zero activity in the entire window. Without this,
-    // deactivated trainers whose shift ended long before the filter range
-    // would still appear with empty rows. We keep trainers who had EITHER
-    // available capacity OR booked work (covers both: was on shift, and
-    // had lectures attributed even after shift technically ended).
-    .filter(t => (t.totals.available_min || 0) > 0 || (t.totals.booked_min || 0) > 0)
-    .sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+    };
 
-    return res.json({ dates, holiday_dates, trainers: out });
+    // One row per (trainer, section). When a section filter is active → just that
+    // section. Otherwise → split the trainer across EVERY distinct section in
+    // their shifts (a trainer who moved sections shows a row per section).
+    const out = [];
+    for (const t of trainerRows) {
+      const secs = activeSection
+        ? [activeSection]
+        : [...new Set(parseTeamShifts(t).map(sh => shiftSection(sh, t)))];
+      for (const sec of secs) out.push(buildRow(t, sec));
+    }
+    // Drop rows with zero activity in the entire window (covers: was on shift, or
+    // had lectures attributed even after shift ended). A trainer split per section
+    // keeps only the sections they were actually active in during the window.
+    const outFiltered = out
+      .filter(t => (t.totals.available_min || 0) > 0 || (t.totals.booked_min || 0) > 0)
+      .sort((a, b) => a.name.localeCompare(b.name, 'ar') || String(a.section).localeCompare(String(b.section)));
+
+    return res.json({ dates, holiday_dates, trainers: outFiltered });
   } catch (err) {
     console.error('[reports] trainer-utilization error:', err);
     return res.status(500).json({ error: err.message });
@@ -4309,11 +4322,12 @@ router.get('/find-available-trainer', (req, res) => {
   }
 
   // Trainer query — team leaders (job_title='تيم ليدر') are admin, not trainers.
-  let trainerWhere = `WHERE department='education' AND status='active' AND (job_title IS NULL OR job_title <> 'تيم ليدر')`;
-  if (section && section !== 'all') {
-    const s = String(section).replace(/'/g, "''");
-    trainerWhere += ` AND section='${s}'`;
-  }
+  // Section is filtered PER-SHIFT (date-aware), NOT via the legacy static
+  // `section` column — a trainer who moved sections must still surface under the
+  // section their (current) shift belongs to.
+  const trainerWhere = `WHERE department='education' AND status='active' AND (job_title IS NULL OR job_title <> 'تيم ليدر')`;
+  const activeSection = (section && section !== 'all') ? String(section).toLowerCase() : null;
+  const shiftSection = (sh, t) => (sh && sh.section) || (t && t.section) || 'all';
 
   function normalizeShift(t, sfx) {
     const shift = t['shift' + sfx];
@@ -4384,6 +4398,17 @@ router.get('/find-available-trainer', (req, res) => {
   try {
     const trainers = db.prepare(`SELECT * FROM team_members ${trainerWhere}`).all();
     let eligible = trainers.filter(t => parseTeamShifts(t).length > 0);  // canonical shifts_json, matches the utilization endpoints
+    // Per-shift section filter: keep trainers who have a shift in the section that
+    // is ACTIVE within the searched window — a section the trainer left before the
+    // window (e.g. moved to another section) must NOT surface under it.
+    const _winDates = slots.map(s => s.date).filter(Boolean);
+    const _winLo = _winDates.length ? _winDates.reduce((a, b) => a < b ? a : b) : null;
+    const _winHi = _winDates.length ? _winDates.reduce((a, b) => a > b ? a : b) : null;
+    const shiftActiveInWindow = (sh) =>
+      (!sh.startDate || !_winHi || sh.startDate <= _winHi) &&
+      (!sh.endDate   || !_winLo || sh.endDate   >= _winLo);
+    if (activeSection) eligible = eligible.filter(t =>
+      parseTeamShifts(t).some(sh => shiftSection(sh, t) === activeSection && shiftActiveInWindow(sh)));
     // Optional: course capability filter
     if (useCourseFilter) {
       const col = 'teachable_' + course_family;
@@ -4423,7 +4448,9 @@ router.get('/find-available-trainer', (req, res) => {
 
     // For each trainer, evaluate every slot
     const results = eligible.map(t => {
-      const shifts = parseTeamShifts(t);
+      // When a section is selected, only that section's shifts are considered
+      // for availability (a moved trainer's other-section shifts don't apply).
+      const shifts = parseTeamShifts(t).filter(sh => !activeSection || shiftSection(sh, t) === activeSection);
       const tKey = stripParens(t.name).toLowerCase();
       const earliestStart = shifts.map(s => s.startDate).filter(Boolean).sort()[0];
 
@@ -4571,7 +4598,7 @@ router.get('/find-available-trainer', (req, res) => {
         id: t.id,
         name: stripParens(t.name) || t.name,
         full_name: t.name,
-        section: t.section,
+        section: activeSection || t.section,
         shift_summary: shiftSummary,
         teachable: {
           starter:      t.teachable_starter,

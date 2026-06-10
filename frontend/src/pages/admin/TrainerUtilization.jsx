@@ -460,7 +460,11 @@ export default function TrainerUtilization() {
           they don't need Voice Note blocks. The audit only covers
           teaching sections: عام / خاص / شبه خاص. */}
       {!isLoading && trainers.length > 0 && (() => {
-        const auditPool = trainers.filter(t => t.section !== 'phone_call');
+        // Dedup by trainer id — a trainer split across sections appears in
+        // multiple rows, but the Voice-Note audit is per-person (not per-section).
+        const auditPool = [...new Map(
+          trainers.filter(t => t.section !== 'phone_call').map(t => [t.id, t])
+        ).values()];
         const missing = auditPool.filter(t => t.has_voice_notes === false);
         const total = auditPool.length;
         if (total === 0) return null; // current view shows only phone_call → no audit needed
@@ -554,7 +558,7 @@ export default function TrainerUtilization() {
             {/* ── Rows ── */}
             <tbody>
               {trainers.map(t => (
-                <tr key={t.id} className="border-b border-gray-50 hover:bg-slate-50/40 transition-colors">
+                <tr key={`${t.id}-${t.section}`} className="border-b border-gray-50 hover:bg-slate-50/40 transition-colors">
                   {/* Trainer cell */}
                   <td className="px-4 py-2 sticky right-0 bg-white border-l border-slate-100">
                     <div className="flex items-center gap-1.5">
