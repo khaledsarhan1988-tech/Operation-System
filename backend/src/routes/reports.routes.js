@@ -3493,9 +3493,52 @@ router.get('/trainer-utilization', (req, res) => {
       const s = escapeLike(search);
       trainerWhere += ` AND name LIKE '%${s}%' ESCAPE '\\'`;
     }
-    const trainers = db.prepare(`SELECT * FROM team_members ${trainerWhere}`).all();
+    const trainersRaw = db.prepare(`SELECT * FROM team_members ${trainerWhere}`).all();
     const activeSection = (section && section !== 'all') ? String(section).toLowerCase() : null;
     const shiftSection = (sh, trainer) => (sh && sh.section) || (trainer && trainer.section) || 'all';
+
+    // MERGE records that share a trainer name (team leaders already excluded by
+    // trainerWhere). A trainer split into several records — e.g. a 'شبه خاص'
+    // record + a 'خاص' record after moving sections — would otherwise be counted
+    // TWICE: lectures are attributed by NAME, so an ended-section record still
+    // grabbed the trainer's current lectures (via the daySection fallback),
+    // inflating that section. Merging their shifts lets the per-day section logic
+    // route each lecture to the section of the shift ACTIVE that day.
+    const rawShiftsOf = (t) => {
+      let raw = null;
+      if (t.shifts_json) { try { raw = JSON.parse(t.shifts_json); } catch { raw = null; } }
+      if (!Array.isArray(raw) || raw.length === 0) {
+        raw = [];
+        if (t.shift)  raw.push({ shift: t.shift,  start: t.shift_start,  end: t.shift_end,  rests: t.shift_rests,  voice_notes: t.voice_notes,        work_days: t.work_days,        section: t.section, start_date: t.shift_start_date,  end_date: t.shift_end_date });
+        if (t.shift2) raw.push({ shift: t.shift2, start: t.shift2_start, end: t.shift2_end, rests: t.shift2_rests, voice_notes: t.shift2_voice_notes, work_days: t.shift2_work_days, section: t.section, start_date: t.shift2_start_date, end_date: t.shift2_end_date });
+      }
+      return Array.isArray(raw) ? raw : [];
+    };
+    const _byName = new Map();
+    for (const t of trainersRaw) {
+      const k = stripParens(t.name).toLowerCase();
+      if (!k) continue;
+      const existing = _byName.get(k);
+      if (!existing) {
+        _byName.set(k, { ...t, shifts_json: JSON.stringify(rawShiftsOf(t)) });
+      } else {
+        const mergedShifts = [...JSON.parse(existing.shifts_json || '[]'), ...rawShiftsOf(t)];
+        // Prefer an ACTIVE record's identity (name/section), but take the
+        // EARLIEST hire date + "still-employed" status across the records — a
+        // record created later for a NEW shift (its own recent hire date) must
+        // NOT clamp away the trainer's earlier employment/section history.
+        const preferT = (t.status === 'active' && existing.status !== 'active');
+        const merged = { ...(preferT ? t : existing) };
+        merged.shifts_json = JSON.stringify(mergedShifts);
+        const starts = [existing.start_date, t.start_date].filter(Boolean).sort();
+        merged.start_date = starts[0] || merged.start_date || null;
+        merged.end_date = (existing.end_date && t.end_date)
+          ? (existing.end_date > t.end_date ? existing.end_date : t.end_date) : null;
+        merged.status = (existing.status === 'active' || t.status === 'active') ? 'active' : merged.status;
+        _byName.set(k, merged);
+      }
+    }
+    const trainers = [..._byName.values()];
 
     // Keep trainers with ≥1 shift (read shifts_json, not just legacy columns);
     // when a section filter is active, require a shift in that section.
