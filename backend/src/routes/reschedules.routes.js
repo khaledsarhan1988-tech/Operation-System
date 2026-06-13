@@ -978,6 +978,20 @@ router.post('/cleanup-false-positives', requireSuperAdmin, (req, res) => {
 // directions (forward — group was renamed TO X; backward — group was
 // renamed FROM Y). Returns Set<string> of all known aliases (always
 // includes the input).
+// Course base = the LEVEL + trainer core of a group name, with the leading
+// date/day/time prefix AND the trailing coordinator suffix stripped. So
+// "Jun_10_Sun_7Pm_General3_P(Mohamed Abdulkhaleq)magdy" and
+// "Apr_18_Sat_6Pm_ General3_P(Mohamed Abdulkhaleq)doha" both reduce to
+// "general3_p(mohamedabdulkhaleq)" — used to link a group across renames where
+// the date/day/time prefix changed (which group_renames doesn't record).
+function courseBaseOf(g) {
+  let s = String(g || '').trim();
+  const i = s.lastIndexOf(')');
+  if (i >= 0) s = s.slice(0, i + 1);                                  // drop coordinator suffix
+  s = s.replace(/^[A-Za-z]+_\d+_[A-Za-z]+_\s*\d+\s*[APMapm]+_/i, ''); // drop Mon_DD_Day_Time_ prefix
+  return s.replace(/\s+/g, '').toLowerCase();
+}
+
 function resolveGroupAliases(group, line) {
   const aliases = new Set([group]);
   const queue   = [group];
@@ -1005,6 +1019,21 @@ function resolveGroupAliases(group, line) {
       }
     }
   }
+  // ── ALSO link names that share the same COURSE BASE (level + trainer) on the
+  // same line — catches renames where only the date/day/time prefix changed
+  // (group_renames only records coordinator changes). Forensic/display only.
+  try {
+    const targetBase = courseBaseOf(group);
+    if (targetBase && /\(.+\)/.test(targetBase)) {   // must have a (trainer) core
+      const rows = db.prepare(
+        `SELECT group_name FROM lectures ${line ? 'WHERE line = ?' : ''}
+         UNION SELECT group_name FROM batches ${line ? 'WHERE line = ?' : ''}`
+      ).all(...(line ? [line, line] : []));
+      for (const r of rows) {
+        if (courseBaseOf(r.group_name) === targetBase) aliases.add(r.group_name);
+      }
+    }
+  } catch (_) { /* tables missing on first deploy */ }
   return aliases;
 }
 
@@ -1301,10 +1330,28 @@ router.get('/timeline', requireSuperAdmin, (req, res) => {
       ? lectureRows[lectureRows.length - 1]
       : null;
 
+    // CURRENT name of the group = the alias that's live now. Prefer a name that
+    // exists in `batches` (active first); else fall back to the latest-dated
+    // lecture's name. The frontend marks this one in the aliases list.
+    let currentName = null;
+    try {
+      const batchHit = db.prepare(`
+        SELECT group_name FROM batches
+         WHERE (${groupOrs})${lineClause}
+         ORDER BY (status = 'نشطة') DESC
+         LIMIT 1
+      `).get(...aliasArr, ...lineParam);
+      currentName = batchHit?.group_name || null;
+    } catch (_) { /* batches missing */ }
+    if (!currentName && lectureRows.length) {
+      currentName = lectureRows[lectureRows.length - 1].group_name;
+    }
+
     return res.json({
       group_query: group,
       line: line || 'all',
       aliases: aliasArr,
+      current_name: currentName,
       total_reschedules: reschedRows.length,
       date_range: dateRange,
       cancelled_by_weekday: cancelledByWeekday,

@@ -1098,6 +1098,7 @@ function GroupTimelineSection({ group, line }) {
 
   const {
     aliases = [],
+    current_name = null,
     total_reschedules = 0,
     date_range,
     cancelled_by_weekday = {},
@@ -1145,14 +1146,22 @@ function GroupTimelineSection({ group, line }) {
         <div className="bg-white border border-purple-200 rounded-lg p-2 text-xs">
           <p className="font-bold text-purple-700 mb-1">المجموعة معروفة بـ {aliases.length} أسماء:</p>
           <div className="space-y-1">
-            {aliases.map((a, i) => (
-              <div key={i} className="flex items-center gap-1.5">
-                <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-mono">
-                  {i + 1}
-                </span>
-                <span className="font-mono text-gray-700 break-all">{a}</span>
-              </div>
-            ))}
+            {aliases.map((a, i) => {
+              const isCurrent = current_name && a === current_name;
+              return (
+                <div key={i} className={`flex items-center gap-1.5 ${isCurrent ? 'bg-emerald-50 -mx-1 px-1 py-0.5 rounded' : ''}`}>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${isCurrent ? 'bg-emerald-200 text-emerald-800' : 'bg-purple-100 text-purple-700'}`}>
+                    {i + 1}
+                  </span>
+                  <span className={`font-mono break-all ${isCurrent ? 'text-emerald-800 font-bold' : 'text-gray-700'}`}>{a}</span>
+                  {isCurrent && (
+                    <span className="text-[9px] bg-emerald-500 text-white px-1.5 py-0.5 rounded-full font-bold whitespace-nowrap flex items-center gap-0.5">
+                      ✓ الاسم الحالي
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
