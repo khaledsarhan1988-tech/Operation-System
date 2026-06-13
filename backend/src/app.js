@@ -1384,6 +1384,43 @@ initDb().then(db => {
     console.log('✅ Migration: lectures_history ready');
   } catch (e) { console.error('lectures_history migration:', e.message); }
 
+  // ── schedule_change_log: append-only ledger of EVERY schedule change ─────
+  // Detected LIVE on each lecture sync (DB-old vs incoming-file diff, scoped to
+  // the file's groups+date range). Records added / deleted / moved lectures with
+  // their precise detection time — closing the gap where employees silently
+  // DELETE unconfirmed lectures (hidden absences) or add free extras. `flags`
+  // (suspicion markers) and review workflow are filled in later phases.
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS schedule_change_log (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        change_type   TEXT    NOT NULL,           -- 'added' | 'deleted' | 'moved'
+        group_name    TEXT    NOT NULL,
+        line          TEXT,
+        session_type  TEXT,                       -- 'main' | 'side'
+        date          TEXT,                       -- affected lecture date
+        time          TEXT,
+        trainer       TEXT,
+        status        TEXT,                       -- lecture status at change time
+        prev_status   TEXT,                       -- status before (for deleted/moved)
+        new_date      TEXT,                       -- moved → destination
+        new_time      TEXT,
+        new_trainer   TEXT,
+        flags         TEXT,                       -- suspicion markers (phase 3)
+        detected_at   TEXT    NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        sync_id       INTEGER,
+        review_status TEXT    NOT NULL DEFAULT 'new',
+        reviewed_by   INTEGER,
+        reviewed_at   TEXT
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_scl_detected ON schedule_change_log(detected_at)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_scl_group    ON schedule_change_log(group_name)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_scl_type     ON schedule_change_log(change_type)`);
+    saveNow();
+    console.log('✅ Migration: schedule_change_log ready');
+  } catch (e) { console.error('schedule_change_log migration:', e.message); }
+
   // ── Absent Zoom students table (Zoom Call absences from new Excel) ──────
   // Mirrors absent_students. Created on demand for existing DBs.
   try {

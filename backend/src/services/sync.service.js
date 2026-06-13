@@ -863,19 +863,112 @@ function archivePhantomScheduled(line, sessionType, fileRows) {
   return archived;
 }
 
+// ─── LIVE SCHEDULE-CHANGE DETECTION (Phase 1) ────────────────────────────────
+// Compares the OLD DB state (captured BEFORE the sync's delete-replace, scoped to
+// the file's groups + date range) against the NEW file rows, and logs EVERY
+// added / deleted / moved lecture into schedule_change_log with its detection
+// time. Closes the gap where a silently-deleted lecture (hidden absence) left no
+// trace. Runs inside the sync transaction so a failure rolls back atomically.
+const _normGroup   = (g) => String(g || '').replace(/\s+/g, '').toLowerCase();
+const _normTrainer = (t) => String(t || '').trim().toLowerCase();
+function _changeSlotKey(r) {
+  return `${r.date}|${_timeToMins(r.time)}|${_normGroup(r.group_name)}|${_normTrainer(r.trainer)}`;
+}
+function _changeStableKey(r) {
+  return `${_normGroup(r.group_name)}|${_normTrainer(r.trainer)}`;
+}
+function recordScheduleChanges({ line, sessionType, oldRows, newRows }) {
+  if ((!oldRows || !oldRows.length) && (!newRows || !newRows.length)) return 0;
+  const oldBySlot = new Map();
+  for (const r of (oldRows || [])) oldBySlot.set(_changeSlotKey(r), r);
+  const newSlots = new Set((newRows || []).map(_changeSlotKey));
+
+  // Deleted = slot in OLD but gone in NEW.
+  const deleted = [];
+  for (const [k, row] of oldBySlot) if (!newSlots.has(k)) deleted.push(row);
+  // Added = slot in NEW absent from OLD, grouped by stable key for pairing.
+  const addedByStable = new Map();
+  const added = [];
+  for (const r of (newRows || [])) {
+    if (oldBySlot.has(_changeSlotKey(r))) continue;       // unchanged slot
+    added.push(r);
+    const k = _changeStableKey(r);
+    if (!addedByStable.has(k)) addedByStable.set(k, []);
+    addedByStable.get(k).push(r);
+  }
+  if (deleted.length === 0 && added.length === 0) return 0;
+
+  const ins = db.prepare(`
+    INSERT INTO schedule_change_log
+      (change_type, group_name, line, session_type, date, time, trainer, status,
+       prev_status, new_date, new_time, new_trainer)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  // Group deletions/additions by stable key (group+trainer).
+  const delByStable = new Map();
+  for (const r of deleted) {
+    const k = _changeStableKey(r);
+    if (!delByStable.has(k)) delByStable.set(k, []);
+    delByStable.get(k).push(r);
+  }
+  const consumed = new Set();   // rows collapsed into a MOVE
+  let n = 0;
+  // CONSERVATIVE move detection — collapse to a single 'moved' ONLY when a
+  // group+trainer has EXACTLY ONE deletion AND ONE addition (an unambiguous
+  // reschedule). Anything else is recorded as SEPARATE deleted/added rows: this
+  // never HIDES a deletion as a benign "move" — which is exactly the fraud
+  // vector (delete one + add one to keep the count) the owner wants surfaced.
+  for (const [k, dels] of delByStable) {
+    const adds = addedByStable.get(k) || [];
+    if (dels.length === 1 && adds.length === 1) {
+      const o = dels[0], nw = adds[0];
+      if (_isMinorTimeDrift(o, nw)) { consumed.add(o); consumed.add(nw); continue; } // Excel jitter → ignore
+      ins.run('moved', o.group_name, line, sessionType, o.date, o.time, o.trainer,
+        nw.status || null, o.status || null, nw.date, nw.time, nw.trainer);
+      consumed.add(o); consumed.add(nw); n++;
+    }
+  }
+  for (const r of deleted) {
+    if (consumed.has(r)) continue;
+    ins.run('deleted', r.group_name, line, sessionType, r.date, r.time, r.trainer, r.status || null, r.status || null, null, null, null);
+    n++;
+  }
+  for (const r of added) {
+    if (consumed.has(r)) continue;
+    ins.run('added', r.group_name, line, sessionType, r.date, r.time, r.trainer, r.status || null, null, null, null, null);
+    n++;
+  }
+  if (n > 0) console.log(`[scheduleChanges] line=${line} ${sessionType}: logged ${n} change(s)`);
+  return n;
+}
+
+// Capture the OLD DB lectures for the file's groups within the file's date range
+// — the comparison baseline for recordScheduleChanges. Must run BEFORE delete.
+function _captureOldForDiff(line, sessionType, fileRows) {
+  const dates = fileRows.map(r => r.date).filter(Boolean);
+  if (!dates.length) return [];
+  const minD = dates.reduce((a, b) => (a < b ? a : b));
+  const maxD = dates.reduce((a, b) => (a > b ? a : b));
+  const groups = new Set(fileRows.map(r => _normGroup(r.group_name)).filter(Boolean));
+  if (!groups.size) return [];
+  return db.prepare(
+    `SELECT group_name, date, time, trainer, status FROM lectures
+      WHERE session_type = ? AND line = ? AND date BETWEEN ? AND ?`
+  ).all(sessionType, line, minD, maxD)
+    .filter(r => groups.has(_normGroup(r.group_name)));
+}
+
 function syncLectures(buffer, line) {
   const rows = excel.parseLectures(buffer);
   const uniqueGroups = [...new Set(rows.map(r => r.group_name))];
   const run = db.transaction(() => {
-    // ── RESCHEDULE DETECTION INTENTIONALLY DISABLED ──────────────────────
-    // Live detection compares the current DB state (which may have come from
-    // a different source, manual upload, or older sync) to the incoming
-    // Excel — producing reschedule rows whose "old" side does NOT correspond
-    // to any specific Drive file. Per business decision, reschedule audit
-    // data must come ONLY from Google Drive snapshots — see the
-    // `/api/reschedules/backfill-from-drive` endpoint, which compares
-    // Excel files dated D vs D+1 directly. Do NOT re-enable live detection
-    // here without revisiting that policy.
+    // ── LIVE SCHEDULE-CHANGE DETECTION (Phase 1) ─────────────────────────
+    // Capture the OLD DB state BEFORE the delete-replace, then (after insert)
+    // diff it vs the new file to log every added/deleted/moved lecture into
+    // schedule_change_log — the control ledger that surfaces silently-deleted
+    // lectures (hidden absences) and extra additions. (This re-enables live
+    // detection in the new, expanded form, per owner decision 2026-06-09.)
+    const _oldForDiff = _captureOldForDiff(line, 'main', rows);
     // HISTORY-PRESERVING REPLACE: delete only the (group, date) pairs PRESENT in
     // this file. Every other date — for these groups AND for ended groups absent
     // from the file — is left untouched, so historical attendance is never wiped.
@@ -904,6 +997,10 @@ function syncLectures(buffer, line) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'main', NULL, ?, datetime('now', 'localtime'))
     `);
     rows.forEach(r => insert.run(r.group_name, r.date, r.time, r.duration, r.trainer, r.status, r.location, r.attendance, line));
+
+    // Log every schedule change (added/deleted/moved) vs the captured old state.
+    try { recordScheduleChanges({ line, sessionType: 'main', oldRows: _oldForDiff, newRows: rows }); }
+    catch (e) { console.error('[recordScheduleChanges:main]', e.message); }
 
     // Archive phantom scheduled rows no longer in the live sheet (see fn above).
     archivePhantomScheduled(line, 'main', rows);
@@ -940,7 +1037,8 @@ function syncSideSessions(buffer, line) {
   const rows = excel.parseSideSessions(buffer);
   const uniqueGroups = [...new Set(rows.map(r => r.group_name))];
   const run = db.transaction(() => {
-    // ── RESCHEDULE DETECTION INTENTIONALLY DISABLED — see syncLectures ──
+    // ── LIVE SCHEDULE-CHANGE DETECTION (Phase 1) — see syncLectures ──────
+    const _oldForDiff = _captureOldForDiff(line, 'side', rows);
     // HISTORY-PRESERVING REPLACE — delete only the (group, date) pairs present in
     // this file; every other date (and ended groups absent from the file) keeps
     // its historical side sessions.
@@ -964,6 +1062,9 @@ function syncSideSessions(buffer, line) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'side', ?, ?, datetime('now', 'localtime'))
     `);
     rows.forEach(r => insert.run(r.group_name, r.date, r.time, r.duration, r.trainer, r.status, r.location, r.attendance, r.side_session_category, line));
+
+    try { recordScheduleChanges({ line, sessionType: 'side', oldRows: _oldForDiff, newRows: rows }); }
+    catch (e) { console.error('[recordScheduleChanges:side]', e.message); }
 
     // Archive phantom scheduled side rows no longer in the live sheet.
     archivePhantomScheduled(line, 'side', rows);
@@ -1182,4 +1283,4 @@ function regenerateAllLines() {
   });
 }
 
-module.exports = { syncFile, FILE_TYPES, VALID_LINES, regenerateAutoAbsents, regenerateAllLines, dedupeAbsenceTable };
+module.exports = { syncFile, FILE_TYPES, VALID_LINES, regenerateAutoAbsents, regenerateAllLines, dedupeAbsenceTable, recordScheduleChanges, _captureOldForDiff };
