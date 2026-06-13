@@ -183,6 +183,8 @@ export default function DepartmentDeliveries() {
                 <th className="px-3 py-3 font-medium">العضويات</th>
                 <th className="px-3 py-3 font-medium">الحالة</th>
                 <th className="px-3 py-3 font-medium">المجموعات النشطة</th>
+                <th className="px-3 py-3 font-medium">عدد المحاضرات</th>
+                <th className="px-3 py-3 font-medium">تاريخ أول/آخر محاضرة</th>
                 <th className="px-3 py-3 font-medium">المجموعات المنتهية</th>
                 <th className="px-3 py-3 font-medium">المستويات المتبقية</th>
                 <th className="px-3 py-3 font-medium">الوقت المتبقي المتوقع</th>
@@ -224,6 +226,30 @@ export default function DepartmentDeliveries() {
                       <div className="flex flex-col gap-1">
                         {it.active_groups.map((g, i) => (
                           <span key={i} className="text-xs bg-emerald-50 text-emerald-700 rounded px-1.5 py-0.5 font-mono break-all">{g}</span>
+                        ))}
+                      </div>
+                    ) : <span className="text-slate-300">—</span>}
+                  </td>
+                  <td className="px-3 py-3 text-center">
+                    {it.active_groups_meta?.length ? (
+                      <div className="flex flex-col gap-1">
+                        {it.active_groups_meta.map((m, i) => (
+                          <span key={i} className="inline-flex items-center justify-center min-w-7 px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-xs font-semibold">
+                            {m.lectures}
+                          </span>
+                        ))}
+                      </div>
+                    ) : <span className="text-slate-300">—</span>}
+                  </td>
+                  <td className="px-3 py-3">
+                    {it.active_groups_meta?.length ? (
+                      <div className="flex flex-col gap-1">
+                        {it.active_groups_meta.map((m, i) => (
+                          (m.start_date || m.end_date) ? (
+                            <span key={i} className="text-[11px] font-mono text-slate-600 whitespace-nowrap" dir="ltr">
+                              {m.start_date || '—'} → {m.end_date || '—'}
+                            </span>
+                          ) : <span key={i} className="text-slate-300 text-xs">—</span>
                         ))}
                       </div>
                     ) : <span className="text-slate-300">—</span>}
@@ -270,7 +296,7 @@ export default function DepartmentDeliveries() {
                 </tr>
               ))}
               {!listQ.isLoading && items.length === 0 && (
-                <tr><td colSpan={9} className="px-3 py-10 text-center text-slate-400">لا يوجد عملاء مطابقون</td></tr>
+                <tr><td colSpan={11} className="px-3 py-10 text-center text-slate-400">لا يوجد عملاء مطابقون</td></tr>
               )}
             </tbody>
           </table>

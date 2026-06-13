@@ -88,7 +88,7 @@ function coordStrHasName(coordStr, targetNorm) {
 // phone_norm → [{ group_name, dept_type, coordinators }] for groups still active.
 function buildActiveGroupMap() {
   const rows = db.prepare(`
-    SELECT c.phone AS phone, c.group_name AS group_name,
+    SELECT c.phone AS phone, c.group_name AS group_name, c.line AS line,
            b.dept_type AS dept_type, b.coordinators AS coordinators
       FROM clients c
       JOIN batches b
@@ -101,9 +101,32 @@ function buildActiveGroupMap() {
     if (!pn) continue;
     if (isIgnoredGroup(r.group_name)) continue;   // skip placeholder groups (Free Slots, …)
     if (!map.has(pn)) map.set(pn, []);
-    map.get(pn).push({ group_name: r.group_name, dept_type: r.dept_type, coordinators: r.coordinators });
+    map.get(pn).push({ group_name: r.group_name, line: r.line, dept_type: r.dept_type, coordinators: r.coordinators });
   }
   return map;
+}
+
+// Per active group: lecture count + first/last lecture date, taken from the
+// `lectures` table directly (NOT the batches report — owner's decision). Scope:
+// MAIN sessions only (side/zoom excluded), status مؤكدة + مجدولة ("all registered
+// on the system"). COUNT(DISTINCT date|time) collapses the ~40% rename twins so a
+// group isn't over-counted. Memoized per (group_name, line) for the page slice.
+function makeGroupLectureMeta() {
+  const stmt = db.prepare(`
+    SELECT COUNT(DISTINCT date || '|' || time) AS cnt, MIN(date) AS mn, MAX(date) AS mx
+      FROM lectures
+     WHERE group_name = ? AND line = ?
+       AND session_type = 'main' AND status IN ('مؤكدة', 'مجدولة')
+  `);
+  const memo = new Map();
+  return (group, line) => {
+    const key = String(group) + '' + String(line || '');
+    if (memo.has(key)) return memo.get(key);
+    const r = stmt.get(group, line || '') || {};
+    const meta = { lectures: r.cnt || 0, start_date: r.mn || null, end_date: r.mx || null };
+    memo.set(key, meta);
+    return meta;
+  };
 }
 
 // phone_norm → Set(group_name_raw) from completed-level Drive files.
@@ -296,11 +319,19 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user }) {
   // only for the current page slice so the report stays responsive on sql.js.
   const inactiveMap = buildInactiveGroupMap();
   const intensiveSet = buildIntensiveSet();
+  const groupLectureMeta = makeGroupLectureMeta();
   const csPlan = require('./csClientPlan.service');
   for (const it of pageItems) {
     const activeKeys = new Set(it.active_groups.map(canonGroupKey));
     const inactiveAll = [...(inactiveMap.get(it.phone) || [])];
     it.inactive_groups = inactiveAll.filter(g => !activeKeys.has(canonGroupKey(g)));
+
+    // Per active group: lecture count + first/last lecture date (from `lectures`).
+    // Aligned with it.active_groups order so the UI can show them side-by-side.
+    it.active_groups_meta = (activeMap.get(it.phone) || []).map(a => {
+      const m = groupLectureMeta(a.group_name, a.line);
+      return { group_name: a.group_name, lectures: m.lectures, start_date: m.start_date, end_date: m.end_date };
+    });
 
     // Per-dept (owner's decision): paid months + breakdown are restricted to THIS
     // department's subscriptions. completed_count / last_level_date stay whole-
