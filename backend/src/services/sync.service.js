@@ -898,12 +898,31 @@ function recordScheduleChanges({ line, sessionType, oldRows, newRows }) {
   }
   if (deleted.length === 0 && added.length === 0) return 0;
 
-  const ins = db.prepare(`
+  // De-dup: a deleted lecture's row LINGERS in the DB (partial delete only
+  // removes the (group,date) pairs present in the file), so every later sync
+  // would re-detect the same deletion. Skip a change already in the log
+  // (same type + group + line + session + date + time + new_date).
+  const existsStmt = db.prepare(`
+    SELECT 1 FROM schedule_change_log
+     WHERE change_type = ? AND group_name = ?
+       AND IFNULL(line,'') = IFNULL(?,'') AND IFNULL(session_type,'') = IFNULL(?,'')
+       AND IFNULL(date,'') = IFNULL(?,'') AND IFNULL(time,'') = IFNULL(?,'')
+       AND IFNULL(new_date,'') = IFNULL(?,'')
+     LIMIT 1
+  `);
+  const insStmt = db.prepare(`
     INSERT INTO schedule_change_log
       (change_type, group_name, line, session_type, date, time, trainer, status,
        prev_status, new_date, new_time, new_trainer)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
+  const ins = {
+    run(type, group, ln, st, date, time, trainer, status, prevStatus, newDate, newTime, newTrainer) {
+      if (existsStmt.get(type, group, ln, st, date || null, time || null, newDate || null)) return false;
+      insStmt.run(type, group, ln, st, date, time, trainer, status, prevStatus, newDate, newTime, newTrainer);
+      return true;
+    },
+  };
   // Group deletions/additions by stable key (group+trainer).
   const delByStable = new Map();
   for (const r of deleted) {
@@ -922,21 +941,19 @@ function recordScheduleChanges({ line, sessionType, oldRows, newRows }) {
     const adds = addedByStable.get(k) || [];
     if (dels.length === 1 && adds.length === 1) {
       const o = dels[0], nw = adds[0];
-      if (_isMinorTimeDrift(o, nw)) { consumed.add(o); consumed.add(nw); continue; } // Excel jitter → ignore
-      ins.run('moved', o.group_name, line, sessionType, o.date, o.time, o.trainer,
-        nw.status || null, o.status || null, nw.date, nw.time, nw.trainer);
-      consumed.add(o); consumed.add(nw); n++;
+      consumed.add(o); consumed.add(nw);
+      if (_isMinorTimeDrift(o, nw)) continue; // Excel jitter → ignore
+      if (ins.run('moved', o.group_name, line, sessionType, o.date, o.time, o.trainer,
+        nw.status || null, o.status || null, nw.date, nw.time, nw.trainer)) n++;
     }
   }
   for (const r of deleted) {
     if (consumed.has(r)) continue;
-    ins.run('deleted', r.group_name, line, sessionType, r.date, r.time, r.trainer, r.status || null, r.status || null, null, null, null);
-    n++;
+    if (ins.run('deleted', r.group_name, line, sessionType, r.date, r.time, r.trainer, r.status || null, r.status || null, null, null, null)) n++;
   }
   for (const r of added) {
     if (consumed.has(r)) continue;
-    ins.run('added', r.group_name, line, sessionType, r.date, r.time, r.trainer, r.status || null, null, null, null, null);
-    n++;
+    if (ins.run('added', r.group_name, line, sessionType, r.date, r.time, r.trainer, r.status || null, null, null, null, null)) n++;
   }
   if (n > 0) console.log(`[scheduleChanges] line=${line} ${sessionType}: logged ${n} change(s)`);
   return n;
