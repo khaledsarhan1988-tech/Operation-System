@@ -29,6 +29,15 @@ const STATUSES = ['active', 'churned', 'postponed', 'exit_level', 'refund'];
 
 const stripSpaces = (s) => String(s == null ? '' : s).replace(/\s/g, '');
 
+// Canonical group identity = the code BEFORE the first "(" (drops the
+// "(trainer)" paren AND the trailing coordinator-name suffix), space-stripped.
+// The coordinator suffix can differ between data sources for the SAME group:
+// e.g. batches stores "...General1(Mariam Saad)Zainab" while the Drive level
+// file stores "...General1(Mariam Saad)nasreen" after a coordinator handover.
+// That suffix must NOT be part of the dedup key — otherwise ONE real group
+// shows up in BOTH the active and inactive columns (and double-counts a level).
+const canonGroupKey = (s) => stripSpaces(String(s == null ? '' : s).split('(')[0]);
+
 // Group cells in the level Excel store the group code PLUS a trailing status
 // word (e.g. "May_16_..._Starter3(Esraa Hani)hanaa نشطة" or "...إنتهت"). Strip
 // the status (and take the first line) so the code matches the clean
@@ -289,9 +298,9 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user }) {
   const intensiveSet = buildIntensiveSet();
   const csPlan = require('./csClientPlan.service');
   for (const it of pageItems) {
-    const activeNorm = new Set(it.active_groups.map(stripSpaces));
+    const activeKeys = new Set(it.active_groups.map(canonGroupKey));
     const inactiveAll = [...(inactiveMap.get(it.phone) || [])];
-    it.inactive_groups = inactiveAll.filter(g => !activeNorm.has(stripSpaces(g)));
+    it.inactive_groups = inactiveAll.filter(g => !activeKeys.has(canonGroupKey(g)));
 
     // Per-dept (owner's decision): paid months + breakdown are restricted to THIS
     // department's subscriptions. completed_count / last_level_date stay whole-
