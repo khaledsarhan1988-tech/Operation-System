@@ -183,7 +183,7 @@ export default function DepartmentDeliveries() {
                 <th className="px-3 py-3 font-medium">العضويات</th>
                 <th className="px-3 py-3 font-medium">الحالة</th>
                 <th className="px-3 py-3 font-medium">المجموعات النشطة</th>
-                <th className="px-3 py-3 font-medium">المجموعات غير النشطة</th>
+                <th className="px-3 py-3 font-medium">المجموعات المنتهية</th>
                 <th className="px-3 py-3 font-medium">المستويات المتبقية</th>
                 <th className="px-3 py-3 font-medium">الوقت المتبقي المتوقع</th>
                 <th className="px-3 py-3 font-medium">تاريخ انتهاء الرحلة</th>
