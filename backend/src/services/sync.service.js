@@ -913,13 +913,24 @@ function recordScheduleChanges({ line, sessionType, oldRows, newRows }) {
   const insStmt = db.prepare(`
     INSERT INTO schedule_change_log
       (change_type, group_name, line, session_type, date, time, trainer, status,
-       prev_status, new_date, new_time, new_trainer)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       prev_status, new_date, new_time, new_trainer, flags)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
+  // Suspicion flag computed from the change itself (cross-checks like hidden
+  // absence are computed at query time in the review endpoint).
+  const flagFor = (type, prevStatus) => {
+    if (type === 'deleted') {
+      if (prevStatus === 'مؤكدة')     return 'deleted_confirmed';   // a DELIVERED lecture vanished — high suspicion
+      if (prevStatus === 'غير مؤكدة') return 'deleted_unconfirmed'; // likely hidden absence
+      return 'deleted_scheduled';
+    }
+    if (type === 'added') return 'added_extra';                    // possible free extra
+    return null;                                                   // moved → normal reschedule
+  };
   const ins = {
     run(type, group, ln, st, date, time, trainer, status, prevStatus, newDate, newTime, newTrainer) {
       if (existsStmt.get(type, group, ln, st, date || null, time || null, newDate || null)) return false;
-      insStmt.run(type, group, ln, st, date, time, trainer, status, prevStatus, newDate, newTime, newTrainer);
+      insStmt.run(type, group, ln, st, date, time, trainer, status, prevStatus, newDate, newTime, newTrainer, flagFor(type, prevStatus));
       return true;
     },
   };

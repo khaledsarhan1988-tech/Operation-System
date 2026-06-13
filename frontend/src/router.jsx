@@ -49,6 +49,7 @@ import TrainerWorkHistory from './pages/admin/TrainerWorkHistory';
 import TrainerSalaries from './pages/admin/TrainerSalaries';
 import TrainersPayroll from './pages/admin/TrainersPayroll';
 import LectureReschedules from './pages/admin/LectureReschedules';
+import ScheduleChangeLog from './pages/admin/ScheduleChangeLog';
 import HolidaysManagement from './pages/admin/HolidaysManagement';
 import DashboardDetail from './pages/admin/DashboardDetail';
 import ClientDistribution from './pages/admin/ClientDistribution';
@@ -177,6 +178,7 @@ const router = createBrowserRouter([
       { path: 'reports/trainer-dashboard',      element: <TrainerUtilizationDashboard /> },
       { path: 'reports/trainer-work-history',   element: <TrainerWorkHistory /> },
       { path: 'reschedules',                    element: <LectureReschedules /> },
+      { path: 'schedule-changes',               element: <PrivateRoute superAdmin><ScheduleChangeLog /></PrivateRoute> },
       { path: 'holidays',                       element: <HolidaysManagement /> },
       { path: 'control',                      element: <LeaderDashboard /> },
       { path: 'reports/customer-services',    element: <SystemReports /> },

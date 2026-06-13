@@ -111,6 +111,7 @@ const REPORT_LINKS = [
   { to: '/admin/reports/quality',               label: 'nav.qualityReports',     icon: ShieldCheck,   color: 'green',   management: 'Quality' },
   { to: '/admin/reports/quality-snapshots',     label: 'nav.qualitySnapshots',   icon: Snowflake,     color: 'cyan',    management: 'Quality', sub: true },
   { to: '/admin/reschedules',                    label: 'إعادة جدولة المحاضرات',     icon: CalendarClock, color: 'indigo',  management: 'Quality', sub: true },
+  { to: '/admin/schedule-changes',               label: 'كشف تلاعب الجدول',          icon: AlertTriangle, color: 'rose',    management: 'Quality', sub: true },
   { to: '/admin/holidays',                       label: 'الإجازات الرسمية',          icon: Sparkles,    color: 'cyan',    management: 'Quality', sub: true },
 ];
 

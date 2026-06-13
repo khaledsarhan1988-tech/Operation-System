@@ -1394,4 +1394,71 @@ router.post('/wipe-pending', requireSuperAdmin, express.json(), (req, res) => {
   }
 });
 
+// ═══ SCHEDULE CHANGE LEDGER (كشف التلاعب) ════════════════════════════════════
+// Owner-only review of every detected schedule change (added/deleted/moved).
+
+// GET /change-log/summary?from&to — counts for the page header.
+router.get('/change-log/summary', requireSuperAdmin, (req, res) => {
+  try {
+    const { from, to, line } = req.query;
+    const where = [], params = [];
+    if (/^\d{4}-\d{2}-\d{2}$/.test(from || '')) { where.push('detected_at >= ?'); params.push(from); }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(to   || '')) { where.push("detected_at <= ? || ' 23:59:59'"); params.push(to); }
+    if (line && line !== 'all') { where.push('line = ?'); params.push(line); }
+    const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
+    const byType = db.prepare(`SELECT change_type, COUNT(*) n FROM schedule_change_log ${w} GROUP BY change_type`).all(...params);
+    const byFlag = db.prepare(`SELECT flags, COUNT(*) n FROM schedule_change_log ${w} ${w ? 'AND' : 'WHERE'} flags IS NOT NULL GROUP BY flags`).all(...params);
+    const byReview = db.prepare(`SELECT review_status, COUNT(*) n FROM schedule_change_log ${w} GROUP BY review_status`).all(...params);
+    const total = db.prepare(`SELECT COUNT(*) n FROM schedule_change_log ${w}`).get(...params).n;
+    return res.json({
+      total,
+      by_type:   Object.fromEntries(byType.map(r => [r.change_type, r.n])),
+      by_flag:   Object.fromEntries(byFlag.map(r => [r.flags, r.n])),
+      by_review: Object.fromEntries(byReview.map(r => [r.review_status, r.n])),
+    });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
+// GET /change-log?type&flag&group&trainer&line&from&to&review&limit&offset
+router.get('/change-log', requireSuperAdmin, (req, res) => {
+  try {
+    const { type, flag, group, trainer, line, from, to, review } = req.query;
+    const where = [], params = [];
+    if (type   && type   !== 'all') { where.push('change_type = ?'); params.push(type); }
+    if (flag   && flag   !== 'all') { where.push('flags = ?');       params.push(flag); }
+    if (review && review !== 'all') { where.push('review_status = ?'); params.push(review); }
+    if (line   && line   !== 'all') { where.push('line = ?');        params.push(line); }
+    if (group)   { where.push("REPLACE(group_name,' ','') LIKE ?"); params.push('%' + String(group).replace(/\s+/g, '') + '%'); }
+    if (trainer) { where.push('trainer LIKE ?'); params.push('%' + trainer + '%'); }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(from || '')) { where.push('detected_at >= ?'); params.push(from); }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(to   || '')) { where.push("detected_at <= ? || ' 23:59:59'"); params.push(to); }
+    const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
+    const limit  = Math.min(parseInt(req.query.limit, 10) || 200, 1000);
+    const offset = parseInt(req.query.offset, 10) || 0;
+    const total = db.prepare(`SELECT COUNT(*) n FROM schedule_change_log ${w}`).get(...params).n;
+    const rows = db.prepare(`
+      SELECT * FROM schedule_change_log ${w}
+       ORDER BY detected_at DESC, id DESC LIMIT ? OFFSET ?
+    `).all(...params, limit, offset);
+    return res.json({ total, rows });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
+// PATCH /change-log/:id/review — body: { review_status: 'reviewed_ok'|'violation'|'new' }
+router.patch('/change-log/:id/review', requireSuperAdmin, express.json(), (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const status = String(req.body?.review_status || '');
+  if (!id) return res.status(400).json({ error: 'invalid id' });
+  if (!['new', 'reviewed_ok', 'violation'].includes(status)) return res.status(400).json({ error: 'review_status غير صالح' });
+  try {
+    const r = db.prepare(`
+      UPDATE schedule_change_log
+         SET review_status = ?, reviewed_by = ?, reviewed_at = datetime('now', '+2 hours')
+       WHERE id = ?
+    `).run(status, req.user?.id || null, id);
+    if (r.changes === 0) return res.status(404).json({ error: 'not found' });
+    return res.json(db.prepare(`SELECT * FROM schedule_change_log WHERE id = ?`).get(id));
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
 module.exports = router;
