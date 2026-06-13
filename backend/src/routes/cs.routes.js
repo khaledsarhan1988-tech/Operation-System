@@ -809,12 +809,19 @@ router.get('/deliveries', requireRole('admin', 'leader', 'agent'), (req, res) =>
   try {
     const svc = require('../services/csDeliveries.service');
     const result = svc.getDepartmentDeliveries({
-      dept:     (req.query.dept || '').trim(),
-      q:        (req.query.q || '').trim(),
-      status:   (req.query.status || '').trim(),
-      page:     req.query.page,
-      pageSize: req.query.page_size,
-      user:     req.user,
+      dept:         (req.query.dept || '').trim(),
+      q:            (req.query.q || '').trim(),
+      status:       (req.query.status || '').trim(),
+      coordinator:  (req.query.coordinator || '').trim(),
+      firstFrom:    (req.query.first_from || '').trim(),
+      firstTo:      (req.query.first_to || '').trim(),
+      lastFrom:     (req.query.last_from || '').trim(),
+      lastTo:       (req.query.last_to || '').trim(),
+      remainingMin: req.query.remaining_min,
+      remainingMax: req.query.remaining_max,
+      page:         req.query.page,
+      pageSize:     req.query.page_size,
+      user:         req.user,
     });
     res.json({ ok: true, ...result });
   } catch (e) {

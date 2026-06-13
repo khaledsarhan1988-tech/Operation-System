@@ -52,14 +52,36 @@ export default function DepartmentDeliveries() {
   const [q, setQ] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [coordinator, setCoordinator] = useState('');
+  const [firstFrom, setFirstFrom] = useState('');
+  const [firstTo, setFirstTo] = useState('');
+  const [lastFrom, setLastFrom] = useState('');
+  const [lastTo, setLastTo] = useState('');
+  const [remMin, setRemMin] = useState('');
+  const [remMax, setRemMax] = useState('');
   const [page, setPage] = useState(1);
 
   const meta = DEPT_META[activeDept] || { label: activeDept, color: 'violet' };
 
+  // Any filter change resets to page 1.
+  const onFilter = (setter) => (val) => { setPage(1); setter(val); };
+
+  const clearColumnFilters = () => {
+    setPage(1);
+    setCoordinator(''); setFirstFrom(''); setFirstTo('');
+    setLastFrom(''); setLastTo(''); setRemMin(''); setRemMax('');
+  };
+
   const listQ = useQuery({
-    queryKey: ['cs-deliveries', activeDept, search, statusFilter, page],
+    queryKey: ['cs-deliveries', activeDept, search, statusFilter, coordinator, firstFrom, firstTo, lastFrom, lastTo, remMin, remMax, page],
     queryFn: () => api.get('/cs/deliveries', {
-      params: { dept: activeDept, q: search, status: statusFilter, page, page_size: 25 },
+      params: {
+        dept: activeDept, q: search, status: statusFilter, page, page_size: 25,
+        coordinator,
+        first_from: firstFrom, first_to: firstTo,
+        last_from: lastFrom, last_to: lastTo,
+        remaining_min: remMin, remaining_max: remMax,
+      },
     }).then(r => r.data),
     keepPreviousData: true,
   });
@@ -99,9 +121,13 @@ export default function DepartmentDeliveries() {
   const data = listQ.data || {};
   const items = data.items || [];
   const totalPages = data.total_pages || 1;
+  const coordinators = data.coordinators || [];
 
   const submitSearch = (e) => { e.preventDefault(); setPage(1); setSearch(q.trim()); };
-  const switchTab = (d) => { setActiveDept(d); setPage(1); setSearch(''); setQ(''); setStatusFilter(''); };
+  const switchTab = (d) => {
+    setActiveDept(d); setPage(1); setSearch(''); setQ(''); setStatusFilter('');
+    clearColumnFilters();
+  };
 
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto" dir="rtl">
@@ -168,6 +194,52 @@ export default function DepartmentDeliveries() {
             <option value="">كل الحالات</option>
             {STATUS_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
           </select>
+
+          {/* Coordinator */}
+          <select
+            value={coordinator}
+            onChange={(e) => onFilter(setCoordinator)(e.target.value)}
+            className="py-2 px-3 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-200 max-w-[12rem]"
+          >
+            <option value="">كل المنسقين</option>
+            {coordinators.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+
+          {/* First lecture date range */}
+          <div className="flex items-center gap-1 text-xs text-slate-500">
+            <span className="whitespace-nowrap">أول محاضرة:</span>
+            <input type="date" value={firstFrom} onChange={(e) => onFilter(setFirstFrom)(e.target.value)}
+              className="py-1.5 px-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-200" dir="ltr" />
+            <span>→</span>
+            <input type="date" value={firstTo} onChange={(e) => onFilter(setFirstTo)(e.target.value)}
+              className="py-1.5 px-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-200" dir="ltr" />
+          </div>
+
+          {/* Last lecture date range */}
+          <div className="flex items-center gap-1 text-xs text-slate-500">
+            <span className="whitespace-nowrap">آخر محاضرة:</span>
+            <input type="date" value={lastFrom} onChange={(e) => onFilter(setLastFrom)(e.target.value)}
+              className="py-1.5 px-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-200" dir="ltr" />
+            <span>→</span>
+            <input type="date" value={lastTo} onChange={(e) => onFilter(setLastTo)(e.target.value)}
+              className="py-1.5 px-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-200" dir="ltr" />
+          </div>
+
+          {/* Remaining levels range */}
+          <div className="flex items-center gap-1 text-xs text-slate-500">
+            <span className="whitespace-nowrap">المتبقي:</span>
+            <input type="number" min="0" value={remMin} onChange={(e) => onFilter(setRemMin)(e.target.value)} placeholder="من"
+              className="w-16 py-1.5 px-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-200" />
+            <span>→</span>
+            <input type="number" min="0" value={remMax} onChange={(e) => onFilter(setRemMax)(e.target.value)} placeholder="إلى"
+              className="w-16 py-1.5 px-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-200" />
+          </div>
+
+          {(coordinator || firstFrom || firstTo || lastFrom || lastTo || remMin || remMax) && (
+            <button onClick={clearColumnFilters} className="px-3 py-2 text-xs rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200">
+              مسح الفلاتر
+            </button>
+          )}
 
           <span className="text-xs text-slate-500 mr-auto">
             {listQ.isLoading ? 'جاري التحميل...' : `${data.total || 0} عميل`}

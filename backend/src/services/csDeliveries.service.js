@@ -196,12 +196,24 @@ function buildCoordFallbackMap() {
  *               • leader                          → own department only
  *               • agent (coordinator)             → only clients they coordinate
  */
-function getDepartmentDeliveries({ dept, q, status, page, pageSize, user }) {
+function getDepartmentDeliveries({ dept, q, status, page, pageSize, user,
+  coordinator, firstFrom, firstTo, lastFrom, lastTo, remainingMin, remainingMax }) {
   if (!DEPTS.includes(dept)) throw new Error('Invalid dept (use General | Private | Semi)');
   page = Math.max(1, parseInt(page, 10) || 1);
   pageSize = Math.min(200, Math.max(5, parseInt(pageSize, 10) || 25));
   q = (q || '').trim();
   status = (status || '').trim();
+  // New column filters (all optional).
+  coordinator = (coordinator || '').trim();
+  firstFrom = (firstFrom || '').trim();  firstTo = (firstTo || '').trim();
+  lastFrom  = (lastFrom  || '').trim();  lastTo  = (lastTo  || '').trim();
+  const toIntOrNull = (v) => {
+    if (v === '' || v == null) return null;
+    const n = parseInt(v, 10);
+    return Number.isNaN(n) ? null : n;
+  };
+  remainingMin = toIntOrNull(remainingMin);
+  remainingMax = toIntOrNull(remainingMax);
 
   // ── PER-ROLE SCOPE ──────────────────────────────────────────────────────
   const role = user?.role || null;
@@ -306,22 +318,13 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user }) {
     });
   }
 
-  // Active clients first, then alphabetical by name.
-  items.sort((a, b) =>
-    (Number(b._hasActive) - Number(a._hasActive)) ||
-    String(a.name || '').localeCompare(String(b.name || ''), 'ar'));
-
-  const total = items.length;
-  const start = (page - 1) * pageSize;
-  const pageItems = items.slice(start, start + pageSize);
-
-  // Heavy per-row work (inactive groups + remaining levels + expected time)
-  // only for the current page slice so the report stays responsive on sql.js.
+  // ── Compute the FILTERABLE derived fields for ALL items (cheap: global maps +
+  // lazy-memoized lecture lookups, NO heavy csClientPlan call) so the new column
+  // filters (coordinator / lecture dates / remaining levels) can run BEFORE
+  // pagination. The heavy pacing work stays on the page slice only (below). ────
   const inactiveMap = buildInactiveGroupMap();
-  const intensiveSet = buildIntensiveSet();
   const groupLectureMeta = makeGroupLectureMeta();
-  const csPlan = require('./csClientPlan.service');
-  for (const it of pageItems) {
+  for (const it of items) {
     const activeKeys = new Set(it.active_groups.map(canonGroupKey));
     const inactiveAll = [...(inactiveMap.get(it.phone) || [])];
     it.inactive_groups = inactiveAll.filter(g => !activeKeys.has(canonGroupKey(g)));
@@ -333,20 +336,9 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user }) {
       return { group_name: a.group_name, lectures: m.lectures, start_date: m.start_date, end_date: m.end_date };
     });
 
-    // Per-dept (owner's decision): paid months + breakdown are restricted to THIS
-    // department's subscriptions. completed_count / last_level_date stay whole-
-    // journey (level history is inherently cross-dept and is informational only).
+    // Per-dept (owner's decision): paid months restricted to THIS department.
     it.paid_months = it._pd.months;
     it.months_list = it._pd.list;
-    let lastLevelDate = null, daysSinceLast = null;
-    try {
-      const plan = csPlan.getClientPlan(it.phone);
-      it.completed_count = plan ? plan.summary.completed_count : null;
-      lastLevelDate = plan?.summary?.last_level_date || null;
-      daysSinceLast = plan?.summary?.days_since_last_level ?? null;
-    } catch (_) {
-      it.completed_count = null;
-    }
     delete it._pd;
 
     // Remaining levels = total paid levels (إجمالي العضويات) MINUS the number of
@@ -357,6 +349,64 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user }) {
     it.remaining_levels = (it.paid_months != null)
       ? Math.max(0, it.paid_months - groupsTaken)
       : null;
+  }
+
+  // Distinct coordinators present in this dept — populates the filter dropdown.
+  // Built BEFORE the column filters so every option stays selectable.
+  const coordinatorsList = [...new Set(
+    items.map(it => it.coordinator).filter(c => c && String(c).trim() && String(c).trim() !== '--')
+  )].sort((a, b) => String(a).localeCompare(String(b), 'ar'));
+
+  // ── NEW column filters (match-if-ANY-active-group for the date ranges) ───────
+  const dateInRange = (d, from, to) => {
+    if (!d) return false;
+    if (from && d < from) return false;
+    if (to && d > to) return false;
+    return true;
+  };
+  let filtered = items;
+  if (coordinator) {
+    const want = normName(coordinator).replace(/\s+/g, '');
+    filtered = filtered.filter(it => normName(it.coordinator || '').replace(/\s+/g, '') === want);
+  }
+  if (firstFrom || firstTo) {
+    filtered = filtered.filter(it => (it.active_groups_meta || []).some(m => dateInRange(m.start_date, firstFrom, firstTo)));
+  }
+  if (lastFrom || lastTo) {
+    filtered = filtered.filter(it => (it.active_groups_meta || []).some(m => dateInRange(m.end_date, lastFrom, lastTo)));
+  }
+  if (remainingMin != null || remainingMax != null) {
+    filtered = filtered.filter(it => {
+      if (it.remaining_levels == null) return false;
+      if (remainingMin != null && it.remaining_levels < remainingMin) return false;
+      if (remainingMax != null && it.remaining_levels > remainingMax) return false;
+      return true;
+    });
+  }
+
+  // Active clients first, then alphabetical by name.
+  filtered.sort((a, b) =>
+    (Number(b._hasActive) - Number(a._hasActive)) ||
+    String(a.name || '').localeCompare(String(b.name || ''), 'ar'));
+
+  const total = filtered.length;
+  const start = (page - 1) * pageSize;
+  const pageItems = filtered.slice(start, start + pageSize);
+
+  // Heavy per-row pacing work (completed levels + expected finish + overdue) only
+  // for the current page slice — these are display-only, not filtered on.
+  const intensiveSet = buildIntensiveSet();
+  const csPlan = require('./csClientPlan.service');
+  for (const it of pageItems) {
+    let lastLevelDate = null, daysSinceLast = null;
+    try {
+      const plan = csPlan.getClientPlan(it.phone);
+      it.completed_count = plan ? plan.summary.completed_count : null;
+      lastLevelDate = plan?.summary?.last_level_date || null;
+      daysSinceLast = plan?.summary?.days_since_last_level ?? null;
+    } catch (_) {
+      it.completed_count = null;
+    }
 
     // ── Intensive-aware pacing (2 weeks / level) vs regular (1 month / level) ──
     const isIntensive = intensiveSet.has(it.phone);
@@ -389,6 +439,7 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user }) {
     total,
     total_pages: Math.ceil(total / pageSize) || 1,
     items: pageItems,
+    coordinators: coordinatorsList,   // distinct coordinators in this dept (filter dropdown)
   };
 }
 
