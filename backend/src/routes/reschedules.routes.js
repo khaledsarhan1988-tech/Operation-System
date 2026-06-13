@@ -2,6 +2,7 @@
 const express = require('express');
 const db = require('../config/database');
 const { authenticate } = require('../middleware/auth');
+const { recordScheduleChanges } = require('../services/sync.service');
 
 const router = express.Router();
 router.use(authenticate);
@@ -871,6 +872,16 @@ router.post('/backfill-from-drive', requireSuperAdmin, express.json(), async (re
           holiday: null,
         });
       }
+
+      // PHASE 2: also feed the comprehensive change ledger — captures DELETIONS
+      // and ADDITIONS (not just the reschedule moves above) by diffing the two
+      // Drive snapshots. De-duped, so re-running the scan never double-logs.
+      try {
+        const logged = recordScheduleChanges({
+          line, sessionType: sessionLabel, oldRows: before.rows, newRows: after.rows,
+        });
+        summary.changelog = (summary.changelog || 0) + (logged || 0);
+      } catch (e) { console.error('[backfill→changelog]', e.message); }
     }
   }
 
