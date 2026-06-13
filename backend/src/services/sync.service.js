@@ -1311,4 +1311,63 @@ function regenerateAllLines() {
   });
 }
 
-module.exports = { syncFile, FILE_TYPES, VALID_LINES, regenerateAutoAbsents, regenerateAllLines, dedupeAbsenceTable, recordScheduleChanges, _captureOldForDiff };
+// ── RENAME DETECTION FROM TWO SCHEDULE SNAPSHOTS (Drive backfill) ─────────────
+// The live `syncBatches` already records renames, but the Drive backfill (فحص
+// ذكي) only diffed reschedules — so a TRAINER/coordinator rename that happened
+// inside the scanned window (e.g. `...Con_5_P(Nourhan Samy)magdy` →
+// `...Con_5_P(Mohamed Abdulkhaleq)magdy`) was never written to group_renames,
+// and the reschedule "story" couldn't list the new code. This compares the two
+// boundary snapshots the backfill already loads and records the rename.
+//
+// SAFETY — this is NOT the loose level+trainer merge that wrongly fused unrelated
+// cohorts. The stable identifier keeps the FULL prefix before the first `(`
+// (date + weekday + time + course, e.g. `jun_8_mon_7pm _con_5_p`) and we record
+// a rename ONLY when, for that exact slot, EXACTLY ONE distinct name disappeared
+// and EXACTLY ONE distinct new name appeared. Two concurrent names for the same
+// stable (parallel classes) → ambiguous → skipped. Reverse/duplicate edges are
+// guarded so re-running the scan never pollutes or creates an A↔B cycle.
+function detectRenamesFromSnapshots({ line, oldRows, newRows }) {
+  if (!line || !Array.isArray(oldRows) || !Array.isArray(newRows)) return 0;
+  const collect = (rows) => {
+    const map = new Map();   // stable → Set(distinct group_name)
+    for (const r of rows) {
+      const s = getStableIdentifier(r && r.group_name);
+      if (!s) continue;
+      if (!map.has(s)) map.set(s, new Set());
+      map.get(s).add(String(r.group_name).trim());
+    }
+    return map;
+  };
+  const oldStable = collect(oldRows);
+  const newStable = collect(newRows);
+
+  const insertRename = db.prepare(`
+    INSERT OR IGNORE INTO group_renames
+      (old_group_name, new_group_name, line, renamed_on, detected_by)
+    VALUES (?, ?, ?, DATE('now', '+2 hours'), 'drive-backfill')
+  `);
+  const renameExists = db.prepare(
+    `SELECT 1 FROM group_renames WHERE old_group_name = ? AND new_group_name = ? AND line = ?`
+  );
+  let recorded = 0;
+  const run = db.transaction(() => {
+    for (const [stable, oldSet] of oldStable) {
+      const newSet = newStable.get(stable);
+      if (!newSet) continue;                       // slot vanished entirely → not a rename
+      const disappeared = [...oldSet].filter(n => !newSet.has(n));
+      const appeared    = [...newSet].filter(n => !oldSet.has(n));
+      // CONSERVATIVE 1↔1 ONLY — anything ambiguous is skipped (never guessed).
+      if (disappeared.length !== 1 || appeared.length !== 1) continue;
+      const oldName = disappeared[0];
+      const target  = appeared[0];
+      if (renameExists.get(oldName, target, line)) continue;   // already recorded
+      if (renameExists.get(target, oldName, line)) continue;   // reverse edge exists → first direction wins
+      insertRename.run(oldName, target, line);
+      recorded += 1;
+    }
+  });
+  run();
+  return recorded;
+}
+
+module.exports = { syncFile, FILE_TYPES, VALID_LINES, regenerateAutoAbsents, regenerateAllLines, dedupeAbsenceTable, recordScheduleChanges, _captureOldForDiff, detectRenamesFromSnapshots };

@@ -2,7 +2,7 @@
 const express = require('express');
 const db = require('../config/database');
 const { authenticate } = require('../middleware/auth');
-const { recordScheduleChanges } = require('../services/sync.service');
+const { recordScheduleChanges, detectRenamesFromSnapshots } = require('../services/sync.service');
 
 const router = express.Router();
 router.use(authenticate);
@@ -882,6 +882,16 @@ router.post('/backfill-from-drive', requireSuperAdmin, express.json(), async (re
         });
         summary.changelog = (summary.changelog || 0) + (logged || 0);
       } catch (e) { console.error('[backfill→changelog]', e.message); }
+
+      // Also detect group RENAMES across the two boundary snapshots (trainer or
+      // coordinator code change for the SAME slot) → record into group_renames so
+      // the reschedule "story" lists the new code. Conservative 1↔1 only.
+      try {
+        const renamed = detectRenamesFromSnapshots({
+          line, oldRows: before.rows, newRows: after.rows,
+        });
+        summary.renames_detected = (summary.renames_detected || 0) + (renamed || 0);
+      } catch (e) { console.error('[backfill→renames]', e.message); }
     }
   }
 
