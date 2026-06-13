@@ -978,20 +978,6 @@ router.post('/cleanup-false-positives', requireSuperAdmin, (req, res) => {
 // directions (forward — group was renamed TO X; backward — group was
 // renamed FROM Y). Returns Set<string> of all known aliases (always
 // includes the input).
-// Course base = the LEVEL + trainer core of a group name, with the leading
-// date/day/time prefix AND the trailing coordinator suffix stripped. So
-// "Jun_10_Sun_7Pm_General3_P(Mohamed Abdulkhaleq)magdy" and
-// "Apr_18_Sat_6Pm_ General3_P(Mohamed Abdulkhaleq)doha" both reduce to
-// "general3_p(mohamedabdulkhaleq)" — used to link a group across renames where
-// the date/day/time prefix changed (which group_renames doesn't record).
-function courseBaseOf(g) {
-  let s = String(g || '').trim();
-  const i = s.lastIndexOf(')');
-  if (i >= 0) s = s.slice(0, i + 1);                                  // drop coordinator suffix
-  s = s.replace(/^[A-Za-z]+_\d+_[A-Za-z]+_\s*\d+\s*[APMapm]+_/i, ''); // drop Mon_DD_Day_Time_ prefix
-  return s.replace(/\s+/g, '').toLowerCase();
-}
-
 function resolveGroupAliases(group, line) {
   const aliases = new Set([group]);
   const queue   = [group];
@@ -1019,21 +1005,12 @@ function resolveGroupAliases(group, line) {
       }
     }
   }
-  // ── ALSO link names that share the same COURSE BASE (level + trainer) on the
-  // same line — catches renames where only the date/day/time prefix changed
-  // (group_renames only records coordinator changes). Forensic/display only.
-  try {
-    const targetBase = courseBaseOf(group);
-    if (targetBase && /\(.+\)/.test(targetBase)) {   // must have a (trainer) core
-      const rows = db.prepare(
-        `SELECT group_name FROM lectures ${line ? 'WHERE line = ?' : ''}
-         UNION SELECT group_name FROM batches ${line ? 'WHERE line = ?' : ''}`
-      ).all(...(line ? [line, line] : []));
-      for (const r of rows) {
-        if (courseBaseOf(r.group_name) === targetBase) aliases.add(r.group_name);
-      }
-    }
-  } catch (_) { /* tables missing on first deploy */ }
+  // NOTE: we deliberately DO NOT link by "course base" (same level + trainer).
+  // A trainer teaches the same level to MANY different cohorts (different
+  // students) over time, so base-linking wrongly merged unrelated groups (e.g.
+  // 11 separate Eman Shawky General4 cohorts shown as one). Only true renames —
+  // recorded in group_renames — are linked. Tracing a fuller history (e.g. via
+  // the shared client) is a manual, case-by-case investigation.
   return aliases;
 }
 
