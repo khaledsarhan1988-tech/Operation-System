@@ -1035,6 +1035,54 @@ function resolveGroupAliases(group, line) {
   return aliases;
 }
 
+// Order the alias names OLDEST → CURRENT for display in the story. The story
+// numbers them top-to-bottom, so the original code shows on top and the live
+// code at the bottom (with the "current name" badge). We anchor on the current
+// name and walk BACKWARD through group_renames (newest rename into each name
+// first), skipping already-visited names — this yields the true chain even when
+// the table is polluted with a reverse/cycle edge (e.g. A→B→C→A from a stale
+// old-name resync). Aliases not reachable from the anchor are appended as-is.
+function orderAliasesByRenameChain(aliasArr, currentName, line) {
+  if (aliasArr.length <= 1) return aliasArr.slice();
+  const anchor = (currentName && aliasArr.includes(currentName)) ? currentName : null;
+  if (!anchor) return aliasArr.slice();   // can't anchor → leave untouched
+
+  const ph = aliasArr.map(() => '?').join(',');
+  let edges = [];
+  try {
+    edges = db.prepare(
+      `SELECT old_group_name o, new_group_name n, MIN(renamed_on) d
+         FROM group_renames
+        WHERE old_group_name IN (${ph}) AND new_group_name IN (${ph})
+          ${line ? 'AND line = ?' : ''}
+        GROUP BY old_group_name, new_group_name`
+    ).all(...aliasArr, ...aliasArr, ...(line ? [line] : []));
+  } catch (_) { return aliasArr.slice(); }
+  if (!edges.length) return aliasArr.slice();
+
+  const predsOf = new Map();   // name → [{ prev, d }]  (rename edges INTO name)
+  for (const e of edges) {
+    if (!predsOf.has(e.n)) predsOf.set(e.n, []);
+    predsOf.get(e.n).push({ prev: e.o, d: e.d || '' });
+  }
+
+  const chain = [anchor];
+  const visited = new Set([anchor]);
+  let cur = anchor;
+  while (true) {
+    const preds = (predsOf.get(cur) || [])
+      .filter(p => !visited.has(p.prev))
+      .sort((a, b) => (a.d > b.d ? -1 : a.d < b.d ? 1 : 0));   // latest rename → immediate predecessor
+    if (!preds.length) break;
+    cur = preds[0].prev;
+    chain.push(cur);
+    visited.add(cur);
+  }
+  chain.reverse();   // oldest → … → current
+  for (const a of aliasArr) if (!visited.has(a)) chain.push(a);
+  return chain;
+}
+
 router.get('/verify-source', requireSuperAdmin, (req, res) => {
   const group = String(req.query.group || '').trim();
   const line  = (req.query.line || '').trim();
@@ -1348,7 +1396,7 @@ router.get('/timeline', requireSuperAdmin, (req, res) => {
     return res.json({
       group_query: group,
       line: line || 'all',
-      aliases: aliasArr,
+      aliases: orderAliasesByRenameChain(aliasArr, currentName, line),
       current_name: currentName,
       total_reschedules: reschedRows.length,
       date_range: dateRange,
