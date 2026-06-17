@@ -2433,9 +2433,20 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
                LIMIT 1),
               b.dept_type
             ) AS dept_type,
-            b.coordinators, b.start_date, b.line
+            b.coordinators, b.start_date, b.end_date, b.line
      FROM batches b WHERE status='نشطة'${deptFilter}${empFilter}${lineB}`
   ).all();
+
+  // Dedup active-batch duplicates by (group_name|line): a group with two active
+  // batch rows (rare data issue) would otherwise be validated — and reported —
+  // twice, and double every lecture via the INNER JOIN. Keep one row per group.
+  const _seenBatch = new Set();
+  const batchesDedup = batches.filter(b => {
+    const k = `${b.group_name}|${b.line}`;
+    if (_seenBatch.has(k)) return false;
+    _seenBatch.add(k);
+    return true;
+  });
 
   // ── Approved client-count baselines (group "receiving") ───────────────────
   // Keyed by `group_name|line`. A group is checked ONLY if it has an approval
@@ -2454,7 +2465,7 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
     // Unconfirmed lectures are real lectures — excluding them causes false "missing lectures" errors
     // l.trainer is needed for the "trainer level mismatch" problem type.
     const mainRaw = db.prepare(
-      `SELECT l.group_name, l.date, l.time, l.duration, l.trainer FROM lectures l
+      `SELECT DISTINCT l.group_name, l.date, l.time, l.duration, l.trainer, l.status FROM lectures l
        INNER JOIN batches b ON l.group_name=b.group_name${line ? ' AND b.line = l.line' : ''}
        WHERE b.status='نشطة' AND l.session_type='main'
        ${deptFilter}${empFilter}${lineL} ORDER BY l.group_name, l.date ASC`
@@ -2712,7 +2723,7 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
     // fetch ALL zoom call sessions (regular 15-min) including unconfirmed for zoom-call problem checks
     // l.trainer is needed for the trainer level + schedule checks (zoom).
     const sideRaw = db.prepare(
-      `SELECT l.group_name, l.date, l.time, l.duration, l.trainer FROM lectures l
+      `SELECT DISTINCT l.group_name, l.date, l.time, l.duration, l.trainer, l.status FROM lectures l
        INNER JOIN batches b ON l.group_name=b.group_name${line ? ' AND b.line = l.line' : ''}
        WHERE b.status='نشطة' AND l.session_type='side'
          AND LOWER(COALESCE(l.side_session_category,'regular')) = 'regular'
@@ -2823,16 +2834,42 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
 
     const mainProblems = [], zoomProblems = [];
 
-    for (const batch of batches) {
+    for (const batch of batchesDedup) {
       const gn        = batch.group_name;
       // Skip internal/placeholder buckets (not real teaching groups): they carry
       // junk schedules (e.g. 9 main lectures on one day, trainee_count 319) and
       // would flood the Code-Repair report with unresolvable false problems.
-      if (/free\s*slot|hiring\s*new\s*teacher/i.test(gn)) continue;
+      // Also skip placement/level-test buckets and the "تعويض سيشن" makeup bucket
+      // — none are real 8-session groups, so the 8-lecture / day-pair / date rules
+      // don't apply and would only produce noise.
+      if (/free\s*slot|hiring\s*new\s*teacher|placem|تحديد\s*مستو|تعويض/i.test(gn)) continue;
       const parsed    = parseGroupName(gn);
-      const mainRows  = mainByGroup[gn] || [];
-      const sideRows  = sideByGroup[gn] || [];
-      const mainDates = mainRows.map(r => r.date);
+
+      // ── WINDOW: validate only lectures inside the group's batch window ───────
+      // The lectures table accumulates rows that are no longer in the live sheet:
+      //   • stale CONFIRMED rows (the importer deletes only the dates present in
+      //     the new file, and archivePhantomScheduled spares مؤكدة on purpose), and
+      //   • foreign rows mis-coded under this group's name in a past import.
+      // Both fall OUTSIDE the batch's [start_date, end_date] window. Restricting
+      // the checks to in-window rows fixes the inflated count + the cascading
+      // first/last-date errors. Out-of-window rows are surfaced separately below
+      // (محاضرة خارج فترة المجموعة) instead of corrupting the schedule checks.
+      // No bound is applied when start/end is missing (open or undated group).
+      const winStart = batch.start_date || null;
+      const winEnd   = batch.end_date   || null;
+      const inWin    = d => (!winStart || d >= winStart) && (!winEnd || d <= winEnd);
+      const live     = r => r.status !== 'ملغية';   // ignore cancelled rows entirely
+
+      const mainRowsAll = mainByGroup[gn] || [];
+      const sideRowsAll = sideByGroup[gn] || [];
+      const mainRows  = mainRowsAll.filter(r => live(r) && inWin(r.date));
+      const sideRows  = sideRowsAll.filter(r => live(r) && inWin(r.date));
+      const mainOut   = mainRowsAll.filter(r => live(r) && !inWin(r.date));
+      const sideOut   = sideRowsAll.filter(r => live(r) && !inWin(r.date));
+
+      // Count/validate by DISTINCT calendar date: RENAME / re-import twins share a
+      // date but differ in time/trainer — they are ONE teaching day, not several.
+      const mainDates = [...new Set(mainRows.map(r => r.date))].sort();
       const sideDates = sideRows.map(r => r.date);
       // Unique sorted side slot-dates (multiple sessions per day → deduplicate)
       const sideSlotDates = [...new Set(sideDates)].sort();
@@ -2841,6 +2878,27 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
       // first dates for display
       const firstMainDate = mainDates[0] || null;
       const firstSideDate = sideSlotDates[0] || null;
+
+      // ── GROUP-LEVEL CHECK: محاضرة / زووم كول خارج فترة المجموعة ──────────
+      // Stale/foreign rows whose date is outside [start_date, end_date]. Surfaced
+      // as their own problem type so they no longer distort the count/first/last
+      // checks (which now run on the in-window set only).
+      if (mainOut.length > 0) {
+        const ds = [...new Set(mainOut.map(r => r.date))].sort();
+        addProblem(mainProblems, { ...meta, first_date: firstMainDate,
+          problem_type: 'محاضرة خارج فترة المجموعة',
+          detail: `${ds.length} تاريخ خارج فترة المجموعة (${winStart || '?'} → ${winEnd || 'مفتوحة'}): ${ds.slice(0, 6).join('، ')}${ds.length > 6 ? ' ...' : ''}`,
+          actual: mainOut.length,
+        }, 'main');
+      }
+      if (sideOut.length > 0) {
+        const ds = [...new Set(sideOut.map(r => r.date))].sort();
+        addProblem(zoomProblems, { ...meta, trainee_count: batch.trainee_count, first_date: firstSideDate,
+          problem_type: 'زووم كول خارج فترة المجموعة',
+          detail: `${ds.length} تاريخ خارج فترة المجموعة (${winStart || '?'} → ${winEnd || 'مفتوحة'}): ${ds.slice(0, 6).join('، ')}${ds.length > 6 ? ' ...' : ''}`,
+          actual: sideOut.length,
+        }, 'side');
+      }
 
       // ── GROUP-LEVEL CHECK: مجموعة بدون منسق ──────────────────────
       // Flag only if:
@@ -2982,9 +3040,14 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
       }
 
       // 3. MAIN — last session date mismatch
+      // Compare the RAW calendar date of the last session (NOT effectiveDate):
+      // expectedMainLast is a raw-date cadence, so an 11PM session that merely
+      // ends after midnight is on the CORRECT day — using effectiveDate here added
+      // a phantom +1 and falsely flagged every late-night group. The midnight note
+      // is kept as context only; it no longer flips the verdict.
       if (mainDates.length > 0 && firstMainDate && !groupIsIntensive) {
         const lastMainRow   = mainRows[mainRows.length - 1];
-        const actualLast    = effectiveDate(lastMainRow.date, lastMainRow.time, lastMainRow.duration);
+        const actualLast    = lastMainRow.date;
         const calcLast      = expectedMainLast(firstMainDate);
         if (actualLast !== calcLast) {
           const midnight = effectiveDate(lastMainRow.date, lastMainRow.time, lastMainRow.duration) !== lastMainRow.date;
@@ -2997,9 +3060,11 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
       }
 
       // 4. ZOOM CALL — last session date mismatch
+      // Raw last date (see MAIN note above): a late zoom call that ends past
+      // midnight is still on the correct day; effectiveDate added a false +1.
       if (sideSlotDates.length > 0 && firstSideDate && !groupIsIntensive) {
         const lastSideRow   = sideRows[sideRows.length - 1];
-        const actualSideLast = effectiveDate(lastSideRow.date, lastSideRow.time, lastSideRow.duration);
+        const actualSideLast = lastSideRow.date;
         const calcSideLast   = expectedSideLast(firstSideDate);
         if (actualSideLast !== calcSideLast) {
           const midnight = effectiveDate(lastSideRow.date, lastSideRow.time, lastSideRow.duration) !== lastSideRow.date;
