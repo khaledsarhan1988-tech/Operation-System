@@ -2485,10 +2485,21 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
     // fetch ALL main sessions (including unconfirmed) for count/date validation
     // Unconfirmed lectures are real lectures — excluding them causes false "missing lectures" errors
     // l.trainer is needed for the "trainer level mismatch" problem type.
+    // CURRENT-SHEET ONLY (owner decision 2026-06-18): validate only the lectures
+    // present in the LATEST daily upload of each group — i.e. rows whose
+    // date(synced_at) = the group's most recent sync day. Stale CONFIRMED rows the
+    // importer keeps on purpose (history preservation) carry an OLDER synced_at and
+    // are NOT in today's sheet; flagging them here was noise (they belong to the
+    // «إعادة جدولة المحاضرات» reschedule ledger). The `ls` derived table computes the
+    // latest sync day per (group_name,line) once, then we keep only that day's rows.
     const mainRaw = db.prepare(
       `SELECT DISTINCT l.group_name, l.date, l.time, l.duration, l.trainer, l.status FROM lectures l
        INNER JOIN batches b ON l.group_name=b.group_name${line ? ' AND b.line = l.line' : ''}
+       INNER JOIN (SELECT group_name, line, date(MAX(synced_at)) AS sync_day
+                     FROM lectures WHERE session_type='main' GROUP BY group_name, line) ls
+         ON ls.group_name = l.group_name AND ls.line = l.line
        WHERE b.status='نشطة' AND l.session_type='main'
+         AND date(l.synced_at) = ls.sync_day
        ${deptFilter}${empFilter}${lineL} ORDER BY l.group_name, l.date ASC`
     ).all();
 
@@ -2746,7 +2757,11 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
     const sideRaw = db.prepare(
       `SELECT DISTINCT l.group_name, l.date, l.time, l.duration, l.trainer, l.status FROM lectures l
        INNER JOIN batches b ON l.group_name=b.group_name${line ? ' AND b.line = l.line' : ''}
+       INNER JOIN (SELECT group_name, line, date(MAX(synced_at)) AS sync_day
+                     FROM lectures WHERE session_type='side' GROUP BY group_name, line) ls
+         ON ls.group_name = l.group_name AND ls.line = l.line
        WHERE b.status='نشطة' AND l.session_type='side'
+         AND date(l.synced_at) = ls.sync_day
          AND LOWER(COALESCE(l.side_session_category,'regular')) = 'regular'
        ${deptFilter}${empFilter}${lineL} ORDER BY l.group_name, l.date ASC`
     ).all();
