@@ -94,6 +94,31 @@ function _markExcelSuperseded({ phoneNorm, dept, months, date }) {
   return info.changes;
 }
 
+/**
+ * When an UPGRADE is ingested, the membership the client upgraded FROM is no
+ * longer their plan — supersede the single most-recent prior NON-ignored
+ * subscription in the same (phone, dept) so the deliveries page shows ONE
+ * membership = the upgraded months (owner decision 2026-06-18). Example: a client
+ * on برايفت سينجل (1 mo) who upgrades to سوبر جولد (6 mo) shows 1 membership / 6 mo,
+ * not 2 / 7. Idempotent: the upsert resets is_ignored each run, and transactions
+ * are processed date-ASC so the prior row is already present when the upgrade is
+ * reached. Only the IMMEDIATE prior is marked (no cascade over older history).
+ */
+function _markPriorSupersededByUpgrade({ phoneNorm, dept, beforeDate }) {
+  if (!phoneNorm || !dept || !beforeDate) return 0;
+  const info = db.prepare(`
+    UPDATE cs_subscriptions
+       SET is_ignored = 1, ignore_reason = 'superseded_by_upgrade', updated_at = ?
+     WHERE id = (
+       SELECT id FROM cs_subscriptions
+        WHERE client_phone_norm = ? AND dept = ? AND is_ignored = 0
+          AND subscription_date IS NOT NULL AND subscription_date < ?
+        ORDER BY subscription_date DESC, id DESC LIMIT 1
+     )
+  `).run(nowCairo(), phoneNorm, dept, beforeDate);
+  return info.changes;
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -131,7 +156,7 @@ function runIngestion({ sinceDate = null, dryRun = false, limit = 100_000 } = {}
 
   let inserted = 0, ignored = 0, unparsed = 0,
       matchedClient = 0, unmatchedClient = 0,
-      supersededExcel = 0;
+      supersededExcel = 0, supersededByUpgrade = 0;
   const stmt = _upsertSubStmt();
   const now = nowCairo();
 
@@ -189,6 +214,13 @@ function runIngestion({ sinceDate = null, dryRun = false, limit = 100_000 } = {}
         phoneNorm, dept: parsed.dept, months: parsed.months, date: tx.date,
       });
       supersededExcel += n;
+      // An upgrade replaces the membership it upgraded from (same dept) → supersede
+      // the most-recent prior subscription so the page shows ONE membership.
+      if (tx.type === 'upgrade') {
+        supersededByUpgrade += _markPriorSupersededByUpgrade({
+          phoneNorm, dept: parsed.dept, beforeDate: tx.date,
+        });
+      }
       inserted++;
     }
   }
@@ -204,6 +236,7 @@ function runIngestion({ sinceDate = null, dryRun = false, limit = 100_000 } = {}
     matched_to_client: matchedClient,
     unmatched_to_client: unmatchedClient,
     excel_rows_superseded: supersededExcel,
+    prior_superseded_by_upgrade: supersededByUpgrade,
     since_date: sinceDate,
     dry_run: dryRun,
     duration_ms: Date.now() - t0,
