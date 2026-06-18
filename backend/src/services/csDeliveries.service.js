@@ -59,6 +59,8 @@ const IGNORED_GROUP_PATTERNS = [
   /donot\s*closed/i,
   /grammer/i,                  // "Grammer_Con_G(...)" — grammar sessions, not a level group
   /grammar/i,                  // correct spelling, just in case
+  /comp[ae]ns/i,               // "..._Compensation" / "compensation _ s1_g2" — makeup sessions, not a real level group
+  /تعويض/,                     // "تعويض سيشن" — Arabic compensation/makeup session (owner decision 2026-06-18)
 ];
 const isIgnoredGroup = (name) => {
   const s = String(name == null ? '' : name);
