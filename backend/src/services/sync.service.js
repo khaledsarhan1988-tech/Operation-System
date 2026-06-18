@@ -212,6 +212,8 @@ function syncFile(fileType, buffer, userId, filename, line, options = {}) {
       default: throw new Error(`Unknown file type: ${fileType}`);
     }
     syncEntry.rows_imported = rows;
+    // New data landed → drop cached report results so they reflect it immediately.
+    try { require('../utils/reportCache').bustReportCache(); } catch (_) { /* no-op */ }
   } catch (err) {
     syncEntry.status = 'error';
     syncEntry.error_msg = err.message;

@@ -7,9 +7,28 @@ const { requireRole } = require('../middleware/roles');
 const { lineFilter } = require('../utils/lineFilter');
 const { nameInListInline } = require('../utils/nameMatch');
 const { resolveLeaderDepts, leaderDeptList } = require('../utils/leader-scope');
+const { cacheMiddleware } = require('../utils/reportCache');
 
 const router = express.Router();
 router.use(authenticate, requireRole('agent'));
+
+// ── Server-side cache for the heavy READ-ONLY analytics endpoints ──────────────
+// These were measured at 13–54s each; better-sqlite3 is synchronous so each run
+// freezes the whole server for every user. Caching repeated/concurrent reads
+// (the common case) returns instantly. Keyed per-user (id/role/line) + params,
+// busted on any data sync. NOT applied to interactive endpoints (e.g.
+// /code-problems status editing) or the salary-critical /trainer-utilization*.
+const _CACHEABLE_REPORTS = new Set([
+  '/dashboard', '/absent-list', '/absent-side-list',
+  '/remarks-notes-main', '/remarks-notes-zoom',
+  '/attendance-absence', '/attendance-absence/segments',
+  '/quality-employee', '/quality-employee/details',
+]);
+const _reportCache = cacheMiddleware({ ttlMs: 60 * 1000 });
+router.use((req, res, next) =>
+  (req.method === 'GET' && _CACHEABLE_REPORTS.has(req.path))
+    ? _reportCache(req, res, next)
+    : next());
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 
@@ -2174,17 +2193,18 @@ router.get('/remarks-notes-main', (req, res) => {
                      : has_remark === '0' ? ` AND has_remark = 0` : '';
 
   try {
-    const totalRow = db.prepare(
-      `SELECT COUNT(*) as cnt FROM (${innerQ}) t WHERE 1=1 ${havingFilter}`
-    ).get();
-
+    // Single-pass: COUNT(*) OVER() returns the full match count alongside the page
+    // rows, so the expensive innerQ runs ONCE instead of twice (count + data).
     const rows = db.prepare(
-      `SELECT * FROM (${innerQ}) t WHERE 1=1 ${havingFilter}
+      `SELECT *, COUNT(*) OVER() AS _total FROM (${innerQ}) t WHERE 1=1 ${havingFilter}
        ORDER BY absence_date DESC
        LIMIT ${Number(limit)} OFFSET ${offset}`
     ).all();
+    let total;
+    if (rows.length) { total = rows[0]._total; rows.forEach(r => delete r._total); }
+    else { total = db.prepare(`SELECT COUNT(*) as cnt FROM (${innerQ}) t WHERE 1=1 ${havingFilter}`).get().cnt; }
 
-    return res.json({ total: totalRow.cnt, page: Number(page), limit: Number(limit), rows });
+    return res.json({ total, page: Number(page), limit: Number(limit), rows });
   } catch (err) {
     console.error('[reports] remarks-notes-main error:', err);
     return res.status(500).json({ error: err.message });
@@ -2219,17 +2239,18 @@ router.get('/remarks-notes-zoom', (req, res) => {
                      : has_remark === '0' ? ` AND has_remark = 0` : '';
 
   try {
-    const totalRow = db.prepare(
-      `SELECT COUNT(*) as cnt FROM (${innerQ}) t WHERE 1=1 ${havingFilter}`
-    ).get();
-
+    // Single-pass: COUNT(*) OVER() returns the full match count alongside the page
+    // rows, so the expensive innerQ runs ONCE instead of twice (count + data).
     const rows = db.prepare(
-      `SELECT * FROM (${innerQ}) t WHERE 1=1 ${havingFilter}
+      `SELECT *, COUNT(*) OVER() AS _total FROM (${innerQ}) t WHERE 1=1 ${havingFilter}
        ORDER BY session_date DESC
        LIMIT ${Number(limit)} OFFSET ${offset}`
     ).all();
+    let total;
+    if (rows.length) { total = rows[0]._total; rows.forEach(r => delete r._total); }
+    else { total = db.prepare(`SELECT COUNT(*) as cnt FROM (${innerQ}) t WHERE 1=1 ${havingFilter}`).get().cnt; }
 
-    return res.json({ total: totalRow.cnt, page: Number(page), limit: Number(limit), rows });
+    return res.json({ total, page: Number(page), limit: Number(limit), rows });
   } catch (err) {
     console.error('[reports] remarks-notes-zoom error:', err);
     return res.status(500).json({ error: err.message });
