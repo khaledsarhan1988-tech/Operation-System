@@ -272,9 +272,13 @@ export default function DepartmentDeliveries() {
                     <div className="text-xs text-slate-400 font-mono" dir="ltr">{it.phone}</div>
                   </td>
                   <td className="px-3 py-3">
+                    {it.has_subscription === false ? (
+                      <span className="text-slate-300" title="عميل بلا اشتراك مسجّل">—</span>
+                    ) : (
                     <span className="inline-flex items-center justify-center min-w-7 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 text-xs font-semibold">
                       {it.membership_count}
                     </span>
+                    )}
                     {it.paid_months != null && (
                       <div className="text-[11px] text-slate-400 mt-1">
                         {it.months_list && it.months_list.length > 1

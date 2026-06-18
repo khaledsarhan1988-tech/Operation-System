@@ -275,25 +275,50 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user,
   const statusRows = db.prepare(`SELECT client_phone_norm AS pn, status, note FROM cs_client_delivery_status`).all();
   const statusMap = new Map(statusRows.map(r => [r.pn, { status: r.status, note: r.note }]));
 
+  // Subscription aggregate keyed by phone (for the union loop below).
+  const subByPhone = new Map(subRows.map(r => [r.pn, r]));
+
+  // Client display-name by normalized phone — needed for clients who appear via an
+  // ACTIVE GROUP but have NO subscription row (so the page counts coordinators the
+  // same way فريق العمل / org-chart does: every client in the coordinator's active
+  // groups, subscription or not — owner's decision 2026-06-13).
+  const nameByPhone = new Map();
+  for (const r of db.prepare(`SELECT phone, MAX(name) AS name FROM clients WHERE phone IS NOT NULL AND TRIM(phone) <> '' GROUP BY phone`).all()) {
+    const pn = csPrimaryPhone(r.phone);
+    if (pn && r.name && !nameByPhone.has(pn)) nameByPhone.set(pn, r.name);
+  }
+
+  // Population = phones with a subscription UNION phones with an active group.
+  const allPhones = new Set([...subByPhone.keys(), ...activeMap.keys()]);
+
+  // Resolve a client's primary coordinator for DISPLAY: first active group with a
+  // REAL coordinator — skip the '--' placeholder (a "تعويض سيشن" comp-session group
+  // often sits first with coordinators='--', which used to hide the real coordinator).
+  const realCoordOf = (active, pn) =>
+    (active.find(a => { const c = normName(a.coordinators); return c && c !== '--'; })?.coordinators)
+    || coordFallback.get(pn) || null;
+  // Dept for a client: first active group with a non-null dept_type, else latest sub dept.
+  const deptOf = (active, pn) =>
+    (active.find(a => a.dept_type)?.dept_type) || (active[0]?.dept_type) || (latestDept.get(pn) || null);
+
   const items = [];
-  for (const s of subRows) {
-    const pn = s.pn;
+  for (const pn of allPhones) {
     const active = activeMap.get(pn) || [];
-    const resolvedDept = active.length ? active[0].dept_type : (latestDept.get(pn) || null);
+    const sub = subByPhone.get(pn) || null;
+    const resolvedDept = deptOf(active, pn);
     if (resolvedDept !== dept) continue;
 
     const st = statusMap.get(pn)?.status || 'active';
     if (status && status !== 'all' && st !== status) continue;
 
-    const name = s.name || null;
+    const name = (sub && sub.name) || nameByPhone.get(pn) || null;
     if (q) {
       const ql = q.toLowerCase();
       if (!(String(name || '').toLowerCase().includes(ql) || pn.includes(q))) continue;
     }
 
     const activeGroups = active.map(a => a.group_name);
-    const coordinator = (active.find(a => a.coordinators && String(a.coordinators).trim())?.coordinators)
-                        || coordFallback.get(pn) || null;
+    const coordinator = realCoordOf(active, pn);
 
     // Agent scoping: keep the row only if this coordinator owns it — either via
     // an active group's coordinators field OR the cs_client_coordinator record.
@@ -304,12 +329,14 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user,
     }
 
     const pd = perDeptSub.get(pn) || { months: 0, count: 0, list: [] };
+    const hasSub = !!sub;
     items.push({
       phone: pn,
       name,
-      membership_count: pd.count,        // per-dept (was cross-dept s.membership_count)
-      total_months: pd.months,           // per-dept (was cross-dept s.total_months)
+      membership_count: pd.count,        // per-dept (0 for no-subscription clients)
+      total_months: pd.months,
       _pd: pd,
+      has_subscription: hasSub,
       status: st,
       status_note: statusMap.get(pn)?.note || null,
       active_groups: activeGroups,
@@ -337,8 +364,10 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user,
     });
 
     // Per-dept (owner's decision): paid months restricted to THIS department.
-    it.paid_months = it._pd.months;
-    it.months_list = it._pd.list;
+    // No-subscription clients (present only via an active group) have no membership
+    // data → null so عضويات/شهور/المستويات المتبقية render as '—'.
+    it.paid_months = it.has_subscription ? it._pd.months : null;
+    it.months_list = it.has_subscription ? it._pd.list : [];
     delete it._pd;
 
     // Remaining levels = total paid levels (إجمالي العضويات) MINUS the number of
@@ -351,11 +380,20 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user,
       : null;
   }
 
-  // Distinct coordinators present in this dept — populates the filter dropdown.
-  // Built BEFORE the column filters so every option stays selectable.
-  const coordinatorsList = [...new Set(
-    items.map(it => it.coordinator).filter(c => c && String(c).trim() && String(c).trim() !== '--')
-  )].sort((a, b) => String(a).localeCompare(String(b), 'ar'));
+  // Coordinators for the filter dropdown = EVERY coordinator who runs an active
+  // group of any client in this dept (not just each client's resolved primary) —
+  // so the dropdown matches the "any active group" filter below. Deduped by
+  // compact key, '--' placeholder excluded.
+  const coordDisplay = new Map();
+  for (const it of items) {
+    for (const a of (activeMap.get(it.phone) || [])) {
+      for (const c of String(a.coordinators || '').split(',')) {
+        const t = c.trim(); const k = normName(t);
+        if (k && k !== '--' && !coordDisplay.has(k)) coordDisplay.set(k, t);
+      }
+    }
+  }
+  const coordinatorsList = [...coordDisplay.values()].sort((a, b) => String(a).localeCompare(String(b), 'ar'));
 
   // ── NEW column filters (match-if-ANY-active-group for the date ranges) ───────
   const dateInRange = (d, from, to) => {
@@ -366,8 +404,11 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user,
   };
   let filtered = items;
   if (coordinator) {
-    const want = normName(coordinator).replace(/\s+/g, '');
-    filtered = filtered.filter(it => normName(it.coordinator || '').replace(/\s+/g, '') === want);
+    // Match like فريق العمل / org-chart: a client belongs to coordinator X if ANY
+    // of their active groups is coordinated by X (not just the resolved primary).
+    // A client in two coordinators' groups appears under BOTH — intended.
+    const wantNorm = normName(coordinator);
+    filtered = filtered.filter(it => (activeMap.get(it.phone) || []).some(a => coordStrHasName(a.coordinators, wantNorm)));
   }
   if (firstFrom || firstTo) {
     filtered = filtered.filter(it => (it.active_groups_meta || []).some(m => dateInRange(m.start_date, firstFrom, firstTo)));
