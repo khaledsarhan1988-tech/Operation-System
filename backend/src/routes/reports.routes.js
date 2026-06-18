@@ -2762,15 +2762,39 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
       return (start + parseDurMins(duration)) >= 1440 ? addDays(date, 1) : date;
     };
 
+    // Official-holiday ranges (e.g. Eid) push the WHOLE schedule later, so the
+    // fixed offsets below under-estimate the real last date for any group whose
+    // span crosses a holiday — producing a false "تاريخ آخر ... غلط" (observed:
+    // 31 May-start groups shifted exactly +7 = the 7-day Eid 2026-05-26..06-01).
+    // Extend the expected last by the holiday days that fall inside the span.
+    const _cpHolidays = _holidayRanges();   // [{s,e}] ISO ranges; [] if none/empty
+    const _holDaysWithin = (a, b) => {
+      let days = 0;
+      for (const r of _cpHolidays) {
+        const lo = a > r.s ? a : r.s;
+        const hi = b < r.e ? b : r.e;
+        if (lo <= hi) days += Math.round((new Date(hi + 'T12:00:00') - new Date(lo + 'T12:00:00')) / 86400000) + 1;
+      }
+      return days;
+    };
+    const _extendPastHolidays = (firstDate, baseOffset) => {
+      let last = addDays(firstDate, baseOffset);
+      for (let i = 0; i < 3; i++) {           // iterate: a holiday in the new tail counts too
+        const extended = addDays(firstDate, baseOffset + _holDaysWithin(firstDate, last));
+        if (extended === last) break;
+        last = extended;
+      }
+      return last;
+    };
     // Expected last date for MAIN (8 sessions, 2/week)
     // First day of pair (Sat/Sun/Mon) → +24 days; second day (Tue/Wed/Thu) → +25 days
     const FIRST_IN_PAIR = new Set([6, 0, 1]); // Sat, Sun, Mon
     const expectedMainLast = firstDate => {
       const dow = getDow(firstDate);
-      return addDays(firstDate, FIRST_IN_PAIR.has(dow) ? 24 : 25);
+      return _extendPastHolidays(firstDate, FIRST_IN_PAIR.has(dow) ? 24 : 25);
     };
     // Expected last date for SIDE (7 slot-dates, 2/week) → always +21 days
-    const expectedSideLast = firstDate => addDays(firstDate, 21);
+    const expectedSideLast = firstDate => _extendPastHolidays(firstDate, 21);
 
     // Load all stored statuses into a map for O(1) lookup
     const storedStatuses = db.prepare(`SELECT * FROM code_problem_status WHERE 1=1${lineCps}`).all();
