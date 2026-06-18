@@ -117,6 +117,10 @@ function makeGroupLectureMeta() {
   const stmt = db.prepare(`
     SELECT COUNT(DISTINCT date || '|' || time) AS cnt, MIN(date) AS mn, MAX(date) AS mx
       FROM lectures
+      INNER JOIN (SELECT group_name AS g, line AS l, date(MAX(synced_at)) AS sd
+                    FROM lectures WHERE session_type='main' GROUP BY group_name, line) ls
+        ON ls.g = lectures.group_name AND ls.l = lectures.line
+       AND date(lectures.synced_at) = ls.sd
      WHERE group_name = ? AND line = ?
        AND session_type = 'main' AND status IN ('مؤكدة', 'مجدولة')
   `);
