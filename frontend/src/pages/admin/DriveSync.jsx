@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Cloud, CloudDownload, RefreshCw, CheckCircle, XCircle,
   AlertCircle, FileSpreadsheet, Eye, Play, AlertTriangle, Calendar,
-  FolderPlus, History,
+  FolderPlus, History, Trash2,
 } from 'lucide-react';
 import api from '../../api/axios';
 import { useAuth } from '../../auth/AuthContext';
@@ -241,6 +241,86 @@ function SyncResultsTable({ results, isAr }) {
 }
 
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
+// ── Delete imported data by sync date (admin tool) ───────────────────────────
+const ROLLBACK_LABELS = {
+  lectures: 'المحاضرات', absent_students: 'غياب أساسي', absent_zoom_students: 'غياب زوم',
+  batches: 'المجموعات', clients: 'العملاء', employees: 'الموظفين', remarks: 'الريماركات',
+};
+function ImportByDatePanel({ isAr }) {
+  const [d, setD] = useState('');
+  const [preview, setPreview] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  const doPreview = async () => {
+    if (!d) return;
+    setBusy(true); setMsg(null); setPreview(null);
+    try { setPreview((await api.get('/drive/import-by-date', { params: { date: d } })).data); }
+    catch (e) { setMsg({ err: e.response?.data?.error || e.message }); }
+    setBusy(false);
+  };
+  const doDelete = async () => {
+    if (!d || !preview || !preview.total) return;
+    if (!window.confirm(isAr
+      ? `سيتم حذف ${preview.total} صف اتسجّل من الدرايف يوم ${d} (مع نسخة احتياطية قابلة للتراجع). متأكد؟`
+      : `Delete ${preview.total} rows synced on ${d}? They are backed up (reversible).`)) return;
+    setBusy(true); setMsg(null);
+    try {
+      const r = (await api.post('/drive/import-by-date/delete', { date: d })).data;
+      setMsg({ ok: isAr ? `تم حذف ${r.total_deleted} صف (محفوظين كنسخة احتياطية). ارفع الشيتات الصح من جديد.` : `Deleted ${r.total_deleted} rows (backed up). Now re-upload the correct sheets.` });
+      setPreview(null);
+    } catch (e) { setMsg({ err: e.response?.data?.error || e.message }); }
+    setBusy(false);
+  };
+  const doRestore = async () => {
+    if (!d) return;
+    if (!window.confirm(isAr ? `استرجاع بيانات يوم ${d} من النسخة الاحتياطية؟` : `Restore ${d} from backup?`)) return;
+    setBusy(true); setMsg(null);
+    try {
+      const r = (await api.post('/drive/import-by-date/restore', { date: d })).data;
+      setMsg({ ok: isAr ? `تم استرجاع ${r.restored} صف من النسخة الاحتياطية.` : `Restored ${r.restored} rows from backup.` });
+    } catch (e) { setMsg({ err: e.response?.data?.error || e.message }); }
+    setBusy(false);
+  };
+
+  return (
+    <div className="bg-white rounded-xl shadow p-4 mt-6 border border-rose-200">
+      <h2 className="font-bold text-rose-700 mb-1 flex items-center gap-2">
+        <Trash2 className="w-5 h-5" /> {isAr ? 'حذف بيانات استيراد يوم معيّن' : 'Delete imported data by date'}
+      </h2>
+      <p className="text-xs text-gray-500 mb-3 leading-5">
+        {isAr
+          ? 'لو رفعت شيتات غلط في يوم معيّن: اختر تاريخ اليوم، اعمل «معاينة» لتشوف كام صف دخل، ثم «حذف». كل صف بياخد نسخة احتياطية قبل الحذف (قابل للتراجع بزرار «استرجاع»). بعد الحذف ارفع الشيتات الصح من جديد.'
+          : 'If you uploaded wrong sheets on a day: pick the date, Preview, then Delete. Every row is backed up first (reversible via Restore). Then re-upload the correct sheets.'}
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <input type="date" value={d} onChange={(e) => { setD(e.target.value); setPreview(null); setMsg(null); }}
+          className="border rounded-lg px-3 py-2 text-sm" dir="ltr" />
+        <button onClick={doPreview} disabled={!d || busy}
+          className="px-3 py-2 text-sm rounded-lg bg-slate-700 text-white disabled:opacity-50">{isAr ? 'معاينة' : 'Preview'}</button>
+        {preview && (
+          <button onClick={doDelete} disabled={busy || preview.total === 0}
+            className="px-3 py-2 text-sm rounded-lg bg-rose-600 text-white disabled:opacity-50">{isAr ? `حذف (${preview.total})` : `Delete (${preview.total})`}</button>
+        )}
+        <button onClick={doRestore} disabled={!d || busy}
+          className="px-3 py-2 text-sm rounded-lg bg-amber-100 text-amber-700 disabled:opacity-50">{isAr ? 'استرجاع (تراجع)' : 'Restore'}</button>
+      </div>
+      {preview && (
+        <div className="mt-3 text-sm">
+          <div className="font-semibold mb-1">{isAr ? `إجمالي: ${preview.total} صف` : `Total: ${preview.total} rows`}</div>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(preview.counts).filter(([, v]) => v > 0).map(([k, v]) => (
+              <span key={k} className="px-2 py-0.5 bg-slate-100 rounded text-xs">{(isAr ? (ROLLBACK_LABELS[k] || k) : k)}: {v}</span>
+            ))}
+            {preview.total === 0 && <span className="text-gray-400 text-xs">{isAr ? 'لا توجد بيانات اتسجّلت في هذا اليوم' : 'No data synced on this day'}</span>}
+          </div>
+        </div>
+      )}
+      {msg && <div className={`mt-3 text-sm ${msg.err ? 'text-red-600' : 'text-emerald-600'}`}>{msg.err || msg.ok}</div>}
+    </div>
+  );
+}
+
 export default function DriveSync() {
   const { i18n } = useTranslation();
   const isAr = i18n.language === 'ar';
@@ -705,6 +785,8 @@ export default function DriveSync() {
           <SyncResultsTable results={syncData.results} isAr={isAr} />
         </div>
       )}
+
+      <ImportByDatePanel isAr={isAr} />
     </div>
   );
 }

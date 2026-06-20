@@ -313,4 +313,84 @@ router.post('/run-auto-now', authenticate, requireRole('admin'), express.json(),
   }
 });
 
+// ─── Delete imported data BY SYNC DATE (owner tool 2026-06-20) ────────────────
+// "I uploaded wrong sheets on a given day — wipe everything that came from Drive
+// that day." Operates on the 7 Drive-imported tables via date(synced_at)=date.
+// Because Smart-Sync skips unchanged files, only files actually (re)uploaded that
+// day carry that synced_at, so this targets the day's uploads. Every deleted row
+// is JSON-backed-up first → fully reversible via /restore. Admin only.
+const ROLLBACK_TABLES = ['lectures', 'absent_students', 'absent_zoom_students', 'batches', 'clients', 'employees', 'remarks'];
+const isISODate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
+function ensureRollbackBackup() {
+  db._raw.run(`CREATE TABLE IF NOT EXISTS import_rollback_backup (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_table TEXT, row_json TEXT, rollback_date TEXT, deleted_at TEXT,
+    deleted_by TEXT
+  )`);
+}
+function bustCacheSafe() { try { require('../utils/reportCache').bustReportCache(); } catch (_) {} }
+
+// GET /api/drive/import-by-date?date=YYYY-MM-DD → per-table row counts (preview).
+router.get('/import-by-date', authenticate, requireRole('admin'), (req, res) => {
+  try {
+    const date = String(req.query.date || '').trim();
+    if (!isISODate(date)) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+    const counts = {}; let total = 0;
+    for (const t of ROLLBACK_TABLES) {
+      const c = db.prepare(`SELECT COUNT(*) AS c FROM ${t} WHERE date(synced_at) = ?`).get(date).c;
+      counts[t] = c; total += c;
+    }
+    return res.json({ date, total, counts });
+  } catch (e) { return res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/drive/import-by-date/delete {date} → back up + delete that day's rows.
+router.post('/import-by-date/delete', authenticate, requireRole('admin'), express.json(), (req, res) => {
+  try {
+    const date = String(req.body?.date || '').trim();
+    if (!isISODate(date)) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+    ensureRollbackBackup();
+    const now = new Date().toISOString();
+    const by = req.user?.full_name || req.user?.name || ('user#' + (req.user?.id || '?'));
+    const deleted = {}; let total = 0;
+    const run = db.transaction(() => {
+      const ins = db.prepare(`INSERT INTO import_rollback_backup (source_table, row_json, rollback_date, deleted_at, deleted_by) VALUES (?,?,?,?,?)`);
+      for (const t of ROLLBACK_TABLES) {
+        const rows = db.prepare(`SELECT * FROM ${t} WHERE date(synced_at) = ?`).all(date);
+        for (const r of rows) ins.run(t, JSON.stringify(r), date, now, by);
+        const del = db.prepare(`DELETE FROM ${t} WHERE date(synced_at) = ?`).run(date);
+        deleted[t] = del.changes; total += del.changes;
+      }
+    });
+    run();
+    bustCacheSafe();
+    return res.json({ ok: true, date, total_deleted: total, deleted });
+  } catch (e) { return res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/drive/import-by-date/restore {date} → re-insert that date's backed-up rows.
+router.post('/import-by-date/restore', authenticate, requireRole('admin'), express.json(), (req, res) => {
+  try {
+    const date = String(req.body?.date || '').trim();
+    if (!isISODate(date)) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+    ensureRollbackBackup();
+    const backups = db.prepare(`SELECT id, source_table, row_json FROM import_rollback_backup WHERE rollback_date = ?`).all(date);
+    if (!backups.length) return res.json({ ok: true, date, restored: 0, note: 'no backup for this date' });
+    const byTable = {};
+    const run = db.transaction(() => {
+      for (const b of backups) {
+        const row = JSON.parse(b.row_json);
+        const cols = Object.keys(row);
+        const sql = `INSERT OR IGNORE INTO ${b.source_table} (${cols.map(c => '"' + c + '"').join(',')}) VALUES (${cols.map(() => '?').join(',')})`;
+        db.prepare(sql).run(...cols.map(c => row[c]));
+        byTable[b.source_table] = (byTable[b.source_table] || 0) + 1;
+      }
+      db.prepare(`DELETE FROM import_rollback_backup WHERE rollback_date = ?`).run(date);
+    });
+    run();
+    bustCacheSafe();
+    return res.json({ ok: true, date, restored: backups.length, by_table: byTable });
+  } catch (e) { return res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;
