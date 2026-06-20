@@ -86,6 +86,31 @@ router.post('/seed', (req, res) => {
   }
 });
 
+// ─── PRUNE (bulk delete memberships with no Ahmed Hassan price) ──────────────
+// POST /api/membership-prices/prune-no-ah   body: { keep: ["Refund","Revision"] }
+// Deletes every membership whose price_ahmed_hassan is empty, EXCEPT the codes
+// in `keep`. IMPORTANT: this touches ONLY cs_membership_prices — the operations
+// list (cs_sales_register) is a SEPARATE table and is never affected here.
+router.post('/prune-no-ah', (req, res) => {
+  try {
+    const keep = Array.isArray(req.body?.keep)
+      ? req.body.keep.map(c => String(c).trim()).filter(Boolean)
+      : [];
+    const keepClause = keep.length ? `AND code NOT IN (${keep.map(() => '?').join(',')})` : '';
+    const whereSql = `WHERE (price_ahmed_hassan IS NULL OR price_ahmed_hassan = '') ${keepClause}`;
+
+    const willDelete = db.prepare(`SELECT COUNT(*) c FROM cs_membership_prices ${whereSql}`).get(...keep).c;
+    const info = db.prepare(`DELETE FROM cs_membership_prices ${whereSql}`).run(...keep);
+    saveNow();
+
+    const remaining = db.prepare('SELECT COUNT(*) c FROM cs_membership_prices').get().c;
+    return res.json({ ok: true, deleted: info.changes, willDelete, remaining, kept: keep });
+  } catch (err) {
+    console.error('[membership-prices/prune-no-ah]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── CREATE ──────────────────────────────────────────────────────────────────
 router.post('/', (req, res) => {
   try {

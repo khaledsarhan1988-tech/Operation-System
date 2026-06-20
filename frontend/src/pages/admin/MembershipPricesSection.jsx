@@ -11,6 +11,10 @@ import SectionCard from '../../components/ui/SectionCard';
 // the كشف العملاء page under its own tab, beside «قائمة العمليات».
 
 const EMPTY = { code: '', price_ahmed_hassan: '', price_dardasha: '', months: '', note: '' };
+// Codes to ALWAYS keep when pruning memberships with no Ahmed Hassan price
+// (operations, not real memberships).
+const PRUNE_KEEP = ['Refund', 'Revision'];
+const hasNoAh = (r) => r.price_ahmed_hassan == null || r.price_ahmed_hassan === '';
 
 function fmt(v) {
   if (v == null || v === '') return '—';
@@ -136,6 +140,7 @@ export default function MembershipPricesSection() {
   const [editRow, setEditRow] = useState(null);
   const [deleteRow, setDeleteRow] = useState(null);
   const [seedMsg, setSeedMsg] = useState('');
+  const [pruneOpen, setPruneOpen] = useState(false);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['membership-prices', q],
@@ -144,10 +149,19 @@ export default function MembershipPricesSection() {
   const rows = data?.rows || [];
   const afterMutate = () => qc.invalidateQueries({ queryKey: ['membership-prices'] });
 
+  // How many rows the prune would remove (no AH price, excluding the keep-list).
+  const pruneCount = rows.filter(r => hasNoAh(r) && !PRUNE_KEEP.includes(r.code)).length;
+
   const seed = useMutation({
     mutationFn: () => api.post('/membership-prices/seed').then(r => r.data),
     onSuccess: (d) => { setSeedMsg(`تم: أُضيف ${d.added} عضوية جديدة (الإجمالي ${d.total}).`); afterMutate(); },
     onError: (err) => setSeedMsg(err?.response?.data?.error || 'فشل الملء'),
+  });
+
+  const prune = useMutation({
+    mutationFn: () => api.post('/membership-prices/prune-no-ah', { keep: PRUNE_KEEP }).then(r => r.data),
+    onSuccess: (d) => { setSeedMsg(`تم حذف ${d.deleted} عضوية بدون سعر Ahmed Hassan (المتبقي ${d.remaining}).`); setPruneOpen(false); afterMutate(); },
+    onError: (err) => { setSeedMsg(err?.response?.data?.error || 'فشل الحذف'); setPruneOpen(false); },
   });
 
   return (
@@ -172,6 +186,10 @@ export default function MembershipPricesSection() {
             <button onClick={() => { setEditRow(null); setFormOpen(true); }}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-violet-700 bg-violet-50 hover:bg-violet-100 border border-violet-200 rounded-lg transition">
               <Plus size={14} /> إضافة عضوية
+            </button>
+            <button onClick={() => setPruneOpen(true)} disabled={pruneCount === 0}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition disabled:opacity-40">
+              <Trash2 size={14} /> حذف بدون سعر Ahmed Hassan
             </button>
             <button onClick={() => refetch()}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-gray-600 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg transition">
@@ -227,6 +245,28 @@ export default function MembershipPricesSection() {
 
       <FormModal open={formOpen} row={editRow} onClose={() => setFormOpen(false)} onSaved={afterMutate} />
       <DeleteConfirm row={deleteRow} onClose={() => setDeleteRow(null)} onDeleted={afterMutate} />
+
+      {/* Bulk prune confirm */}
+      {pruneOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setPruneOpen(false)} dir="rtl">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 text-center" onClick={(e) => e.stopPropagation()}>
+            <div className="w-14 h-14 bg-rose-100 rounded-full flex items-center justify-center mx-auto mb-4"><Trash2 className="w-7 h-7 text-rose-600" /></div>
+            <h3 className="text-lg font-black text-gray-800 mb-2">حذف العضويات بدون سعر Ahmed Hassan؟</h3>
+            <p className="text-sm text-gray-600 mb-2">
+              هيتحذف <span className="font-black text-rose-600">{pruneCount}</span> عضوية مالهاش سعر Ahmed Hassan،
+              مع الإبقاء على <span className="font-bold">{PRUNE_KEEP.join('، ')}</span>.
+            </p>
+            <p className="text-xs text-gray-400 mb-5">لا يؤثر إطلاقًا على «قائمة العمليات» — جدول منفصل.</p>
+            <div className="flex justify-center gap-3">
+              <button onClick={() => setPruneOpen(false)} className="px-5 py-2 text-sm font-bold text-gray-600 hover:bg-gray-100 rounded-xl transition">إلغاء</button>
+              <button onClick={() => prune.mutate()} disabled={prune.isPending}
+                className="inline-flex items-center gap-2 px-5 py-2 text-sm font-black text-white bg-rose-600 hover:bg-rose-700 rounded-xl transition disabled:opacity-50">
+                {prune.isPending ? <RefreshCw size={16} className="animate-spin" /> : <Trash2 size={16} />} حذف {pruneCount}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
