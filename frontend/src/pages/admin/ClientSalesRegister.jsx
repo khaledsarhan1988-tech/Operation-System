@@ -218,13 +218,6 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                   {F({ k: 'total_price', label: 'Total Price', type: 'number' })}
                   {F({ k: 'total_paid_same_month', label: 'Total Paid In Same Months', type: 'number' })}
                   {F({ k: 'discount', label: 'Discount' })}
-                  {F({ k: 'offer_individual', label: 'Offer Individual' })}
-                  {F({ k: 'chrismss_discount_ah', label: 'Chrismss Discount Ahmed Hassan', type: 'number' })}
-                  {F({ k: 'chrismss_discount_dar', label: 'Chrismss Discount Dardasha', type: 'number' })}
-                  {F({ k: 'refund_deduction', label: 'Amount Deduction For Refund', type: 'number' })}
-                  {F({ k: 'khaled_deduction', label: 'Dedecutin From Khaled Only', type: 'number' })}
-                  {F({ k: 'new_prices', label: 'New Prices' })}
-                  {F({ k: 'new_courses', label: 'New Courses' })}
                   {F({ k: 'balance', label: 'Balance (الرصيد المتبقي)', type: 'number' })}
                 </div>
               </SectionCard>
