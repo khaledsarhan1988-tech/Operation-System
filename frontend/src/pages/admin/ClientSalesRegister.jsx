@@ -97,11 +97,17 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
       if (!rowData) return; // wait for the fetch
       const s = rowData.sale || {};
       setForm({ ...EMPTY_FORM, ...Object.fromEntries(Object.keys(EMPTY_FORM).map(k => [k, s[k] ?? ''])) });
-      setInstallments((rowData.installments || []).map(i => ({
+      let insts = (rowData.installments || []).map(i => ({
         sales_man: i.sales_man ?? '', department: i.department ?? '', months: i.months ?? '',
         paid_or_not: i.paid_or_not ?? '', amount: i.amount ?? '', pay_date: i.pay_date ?? '',
         note: i.note ?? '',
-      })));
+      }));
+      // Migrated rows kept the payment date on the parent (installment_date) while
+      // the installment's own date was blank → lift it onto the first installment.
+      if (s.installment_date && insts.length && !insts.some(i => i.pay_date)) {
+        insts = insts.map((it, idx) => idx === 0 ? { ...it, pay_date: s.installment_date } : it);
+      }
+      setInstallments(insts);
       // An upgrade row is one whose new-course is filled or noted as "Upgraded".
       setIsUpgrade(!!(s.new_courses && String(s.new_courses).trim()) || (s.noted2 || '') === 'Upgraded');
     } else {
@@ -386,7 +392,6 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                   {F({ k: 'noted1', label: 'Noted #1' })}
                   {F({ k: 'noted2', label: 'Noted #2', list: 'noted' })}
                   {F({ k: 'tamkeen', label: 'Tamkeen', list: 'tamkeen' })}
-                  {F({ k: 'installment_date', label: 'تاريخ القسط (Date)' })}
                   {F({ k: 'note', label: 'Note', span: 4 })}
                 </div>
               </SectionCard>
