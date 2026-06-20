@@ -36,17 +36,32 @@ const EMPTY_INST = { sales_man: '', department: '', months: '', paid_or_not: '',
 const BRANDS = ['Ahmed Hassan', 'Dardasha', 'Go English', 'Work Shop Offline', 'Daradasha AUE'];
 const PAID_STATUSES = ['Paid', 'Not Paid', 'Fake'];
 
-// Totals logic (owner spec): the amount actually paid by the customer is either
-// the sum of installments (when any) or the single cash figure; the remaining
-// balance = membership price − amount paid. Both are auto-derived (read-only).
+// Discount accepts either a percentage ("10%") → computed off the membership
+// price, or a plain amount ("1000"). Returns the discount AMOUNT in pounds.
+function discountAmount(discountStr, price) {
+  const s = String(discountStr ?? '').trim();
+  if (s === '') return 0;
+  if (s.endsWith('%')) {
+    const pct = parseFloat(s.slice(0, -1).trim());
+    return isFinite(pct) ? (Number(price) || 0) * pct / 100 : 0;
+  }
+  const amt = parseFloat(s.replace(/,/g, ''));
+  return isFinite(amt) ? amt : 0;
+}
+
+// Totals logic (owner spec): amount paid = sum of installments (when any) or the
+// single cash figure; remaining balance = (membership price − discount) − paid.
+// All auto-derived (read-only). Discount may be a % of the price or an amount.
 function calcPaidBalance(form, installments) {
   const hasInst = installments.some(i => i.amount !== '' && i.amount != null);
   const instSum = installments.reduce((s, i) => s + (Number(i.amount) || 0), 0);
   const manual = (form.total_paid_same_month === '' || form.total_paid_same_month == null)
     ? null : Number(form.total_paid_same_month);
   const paid = hasInst ? instSum : manual;
-  const balance = (Number(form.price) || 0) - (paid || 0);
-  return { hasInst, instSum, paid, balance };
+  const price = Number(form.price) || 0;
+  const discount = discountAmount(form.discount, price);
+  const balance = (price - discount) - (paid || 0);
+  return { hasInst, instSum, paid, discount, balance };
 }
 
 // ─── FORM MODAL (create / edit) ───────────────────────────────────────────────
@@ -246,8 +261,20 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                       className={`w-full px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none ${totals.hasInst ? 'bg-gray-100 text-gray-600' : 'focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400'}`}
                     />
                   </div>
-                  {F({ k: 'discount', label: 'Discount' })}
-                  {/* Balance — auto = membership price − amount paid (read-only) */}
+                  {/* Discount — accepts a percentage ("10%") or a plain amount */}
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-500 mb-1">
+                      Discount (مبلغ أو %){totals.discount > 0 ? ` — خصم ${totals.discount.toLocaleString('en-US', { maximumFractionDigits: 2 })}` : ''}
+                    </label>
+                    <input
+                      type="text"
+                      value={form.discount ?? ''}
+                      onChange={(e) => set('discount', e.target.value)}
+                      placeholder="مثال: 1000 أو 10%"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none"
+                    />
+                  </div>
+                  {/* Balance — auto = (membership price − discount) − amount paid (read-only) */}
                   <div>
                     <label className="block text-[11px] font-bold text-gray-500 mb-1">Balance (الرصيد المتبقي) — تلقائي</label>
                     <input
