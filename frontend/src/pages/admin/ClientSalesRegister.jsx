@@ -287,16 +287,6 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                 </div>
               </SectionCard>
 
-              <SectionCard title="الحالة والملاحظات" icon={Filter} accent="cyan">
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {F({ k: 'noted1', label: 'Noted #1' })}
-                  {F({ k: 'noted2', label: 'Noted #2', list: 'noted' })}
-                  {F({ k: 'tamkeen', label: 'Tamkeen', list: 'tamkeen' })}
-                  {F({ k: 'installment_date', label: 'تاريخ القسط (Date)' })}
-                  {F({ k: 'note', label: 'Note', span: 4 })}
-                </div>
-              </SectionCard>
-
               {/* Installments */}
               <SectionCard
                 title={`الأقساط (${installments.length})`}
@@ -338,6 +328,16 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                     ))}
                   </div>
                 )}
+              </SectionCard>
+
+              <SectionCard title="الحالة والملاحظات" icon={Filter} accent="cyan">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {F({ k: 'noted1', label: 'Noted #1' })}
+                  {F({ k: 'noted2', label: 'Noted #2', list: 'noted' })}
+                  {F({ k: 'tamkeen', label: 'Tamkeen', list: 'tamkeen' })}
+                  {F({ k: 'installment_date', label: 'تاريخ القسط (Date)' })}
+                  {F({ k: 'note', label: 'Note', span: 4 })}
+                </div>
               </SectionCard>
             </>
           )}
