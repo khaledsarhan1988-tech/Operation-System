@@ -730,6 +730,7 @@ export default function ClientSalesRegister() {
                   <th className="px-3 py-3 text-left">Client</th>
                   <th className="px-3 py-3 text-left">Phone</th>
                   <th className="px-3 py-3 text-left">Course</th>
+                  <th className="px-3 py-3 text-left">New Course</th>
                   <th className="px-3 py-3 text-right">Price</th>
                   <th className="px-3 py-3 text-left">Months</th>
                   <th className="px-3 py-3 text-left">Payment</th>
@@ -747,6 +748,7 @@ export default function ClientSalesRegister() {
                     <td className="px-3 py-2.5 font-bold text-gray-900">{r.client_name || '—'}</td>
                     <td className="px-3 py-2.5 font-mono text-xs text-gray-600">{r.mobile_no || '—'}</td>
                     <td className="px-3 py-2.5 text-gray-700">{r.courses || '—'}</td>
+                    <td className="px-3 py-2.5 text-violet-700 font-bold">{r.new_courses || '—'}</td>
                     <td className="px-3 py-2.5 text-right font-mono font-bold text-emerald-700">{fmtAmount(r.price)}</td>
                     <td className="px-3 py-2.5 text-xs text-gray-600">{r.months || '—'}</td>
                     <td className="px-3 py-2.5 text-xs text-gray-600">{r.payment_way || '—'}</td>
