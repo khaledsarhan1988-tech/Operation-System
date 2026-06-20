@@ -145,6 +145,7 @@ function getAdminLinks(user) {
     // { to: '/admin/control', label: 'nav.controlPanel', icon: LayoutDashboard, color: 'pink' }, // hidden per user request — route /admin/control still works
     { to: '/admin/distribution', label: 'nav.clientDistribution', icon: Shuffle,         color: 'cyan' },
     { to: '/admin/pipeline',     label: 'nav.clientPipeline',     icon: Kanban,          color: 'emerald' },
+    { to: '/admin/sales-register', label: 'كشف العملاء',          icon: Wallet,          color: 'emerald' },
     // ── Collapsible group: تطوير الأداء والمهام (toggle-only header, no own page).
     //    The 4 pages below were moved here from their standalone positions.
     { group: true, key: 'perf-tasks', label: 'تطوير الأداء والمهام', icon: TrendingUp, color: 'violet' },

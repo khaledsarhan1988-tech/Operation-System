@@ -2753,6 +2753,91 @@ initDb().then(db => {
     console.error('enrollment_students migration error:', e.message);
   }
 
+  // ── cs_sales_register: manual "كشف العملاء" sales-register data-entry ──────
+  // Mirrors the academy's standalone "كشف العملاء" Google-sheet tab: one row per
+  // sale/subscription operation. A SEPARATE source from Center App finance
+  // (finance_transactions / cs_subscriptions) — owner-confirmed it does NOT
+  // overlap, so this table never reads/writes those. Admin-only entry.
+  // `raw_json` keeps the original sheet row verbatim so the historical
+  // migration is loss-free even where numeric cells held junk. `source` marks
+  // 'sheet' (migrated history) vs 'system' (entered in-app). Additive table;
+  // no existing data touched. Persisted on the volume DB like everything else.
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS cs_sales_register (
+        id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+        code                   TEXT,                          -- sheet "Code" (manual, e.g. 16101)
+        entry_date             TEXT,                          -- sheet "Data"
+        discount               TEXT,
+        noted1                 TEXT,                          -- sheet "Noted" #1
+        noted2                 TEXT,                          -- sheet "Noted" #2
+        tamkeen                TEXT,
+        groups                 TEXT,
+        shift                  TEXT,                          -- 'No Different'|'Morning'|'Night'
+        pages                  TEXT,                          -- brand: 'Ahmed Hassan'|'Daradasha'|'Go English'...
+        payment_way            TEXT,                          -- 'Cash'|'Installment'
+        paid_status            TEXT,                          -- 'Paid'|'Not Paid'|'Fake'
+        department             TEXT,                          -- 'Sales'|'Operation'
+        client_name            TEXT,
+        mobile_no              TEXT,
+        agent_name             TEXT,
+        courses                TEXT,                          -- course code (3L GAC / BGA / Refund ...)
+        price                  REAL,
+        chrismss_discount_ah   REAL,                          -- "Chrismss Discount Ahmed Hassan"
+        chrismss_discount_dar  REAL,                          -- "Chrismss Discount Dardasha"
+        offer_individual       TEXT,                          -- "Offer Individual"
+        refund_deduction       REAL,                          -- "Amount Deduction For Refund Case"
+        khaled_deduction       REAL,                          -- "Dedecutin From Khaled Only"
+        months                 TEXT,
+        total_price            REAL,
+        total_paid_same_month  REAL,                          -- "Total Paid In Same Months Subscribe"
+        installment_date       TEXT,                          -- sheet "Date"
+        note                   TEXT,
+        new_courses            TEXT,
+        new_prices             TEXT,
+        balance                REAL,                          -- sheet "Balance" = remaining balance of the sale
+        source                 TEXT NOT NULL DEFAULT 'system',-- 'sheet' (migrated) | 'system' (in-app)
+        raw_json               TEXT,                          -- verbatim original sheet row (audit / loss-free migration)
+        created_by             INTEGER,
+        created_by_name        TEXT,
+        created_at             TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        updated_at             TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_sales_code   ON cs_sales_register(code)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_sales_mobile ON cs_sales_register(mobile_no)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_sales_date   ON cs_sales_register(entry_date)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_sales_agent  ON cs_sales_register(agent_name)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_sales_dept   ON cs_sales_register(department)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_sales_course ON cs_sales_register(courses)`);
+
+    // Child table: per-sale installment payments (sheet's 3 repeating payment
+    // blocks → unbounded rows here). ON DELETE CASCADE (foreign_keys=ON) so
+    // removing a sale removes its installments.
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS cs_sales_installments (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        sale_id      INTEGER NOT NULL,
+        seq          INTEGER NOT NULL DEFAULT 1,
+        sales_man    TEXT,
+        department   TEXT,
+        months       TEXT,
+        paid_or_not  TEXT,
+        amount       REAL,
+        pay_date     TEXT,
+        note         TEXT,
+        created_at   TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        updated_at   TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        FOREIGN KEY (sale_id) REFERENCES cs_sales_register(id) ON DELETE CASCADE
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_sales_inst_sale ON cs_sales_installments(sale_id)`);
+    saveNow();
+    console.log('✅ Migration: cs_sales_register + cs_sales_installments tables ready');
+  } catch (e) {
+    console.error('cs_sales_register migration error:', e.message);
+  }
+
   // ── group_renames de-pollution (2026-06-06) ───────────────────────────────
   // The Drive sync used to re-record renames every run (UNIQUE includes
   // renamed_on → re-stamped duplicate rows) and to emit REVERSE edges when a
@@ -2910,6 +2995,7 @@ initDb().then(db => {
   app.use('/api/finance',            require('./routes/finance.routes'));
   app.use('/api/clients-finance',    require('./routes/clients-finance.routes'));
   app.use('/api/cs',                 require('./routes/cs.routes'));
+  app.use('/api/cs-sales-register',  require('./routes/cs-sales-register.routes'));
   // Read-only data export (API-key gated; disabled unless DATA_EXPORT_API_KEY set)
   app.use('/api/data-export',        require('./routes/data-export.routes'));
 

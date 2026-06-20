@@ -161,6 +161,16 @@ node -e "
 - scoping المنسق (role=agent): يطابق `batches.coordinators` بمفتاح مضغوط (مسافات).
 - شرط «Start» في Enrollment = العدد الفعلي من `enrollment_students` (لو في روستر) ≥ 7، لا `num_students` القابل للكتابة.
 
+### سجل العملاء «كشف العملاء» (`cs_sales_register`) — موديول إدخال جديد (2026-06-20)
+- **الغرض:** نقل تاب «كشف العملاء» من Operation Sheets (Google) إلى النظام = إدخال/متابعة عمليات البيع داخل النظام. **مصدر منفصل تمامًا عن Center App** (`finance_transactions`/`cs_subscriptions`) — لا يقرأ/يكتب فيها (قرار Owner). **تحويل كامل (cutover):** بعد رفع التاريخ، كل العملاء الجدد يُدخَلون من النظام والشيت يتوقف (قرار Owner) — مفيش مخالفة لقاعدة keep-old-running لأن الشيت ملف خارجي والـ Owner هو اللي يبطّل يكتب عليه بعد التأكد.
+- **الجداول (في `app.js`، idempotent):** `cs_sales_register` (الأساسي، 29 عمود من الشيت + `balance` + `source`(`sheet`|`system`) + `raw_json` + audit) + `cs_sales_installments` (child، `ON DELETE CASCADE`). الأقساط **غير محدودة** (الشيت له 3 بلوكات أقساط متكررة).
+- **قرارات حاسمة (متحقَّقة على CSV حيّ = 10,008 صف):**
+  - **`code` = كود العميل لا العملية:** كل الأكواد المكررة (1,350) تخص **نفس العميل** بعمليات مختلفة (كورس/Refund/Delay…)، صفر تعارض أسماء. ⇒ **ممنوع فرض تفرّد الكود** في الـ API (لازم يسمح بعمليات متعددة لنفس العميل). (أُزيل حارس 409 المبدئي.)
+  - **`Balance` = الرصيد المتبقي للعملية لا قسط:** عمود 48 خُزِّن على الـ parent. كان 10,002 من 10,970 «قسط» مجرد balance-only noise (غالبًا 0 على الكاش) ⇒ الأقساط الحقيقية **968 فقط** (شرط وجود القسط = أي من sales_man/months/paid_or_not/amount/pay_date/note؛ يستبعد department+balance).
+- **API** (`/api/cs-sales-register`، **admin فقط** `requireRole('admin')`): `GET /list` (pagination + فلاتر + `COUNT(*) OVER()`) · `GET /options` (distinct للقوائم) · `GET /:id` (+الأقساط) · `POST /` · `PUT /:id` (replace-all للأقساط) · `DELETE /:id` (cascade) · **`POST /import`** (رفع CSV multipart، لمرة واحدة، محمي بحارس `source='sheet'` موجود + `wipe=1` لإعادة الرفع).
+- **الهجرة:** منطق موحَّد في `services/salesRegisterImport.service.js` يستخدمه CLI (`scripts/import-sales-register.js`) **و** زر «رفع CSV» في الصفحة. كل صف غير فارغ يُدخَل (10,008)، 206 صف فارغ/فاصل متخطّى، `raw_json` يحفظ الأصل = هجرة أمينة 100%. الترويسة = أول صف فيه `Code`+`Client Name` (السطر الرابع).
+- **الفرونت:** `ClientSalesRegister.jsx` على `/admin/sales-register` (+لينك «كشف العملاء» في السايدبار). فورم بقوائم `datalist` (اختيار موجود أو كتابة جديد) + أقساط ديناميكية + زر رفع CSV (يعرض ملخص + يطلب «استبدال» لو مرفوع قبل كده).
+
 ### أمان
 - أي endpoint يأخذ قيمًا من `req.query`/`req.body` في SQL لازم **parameterized** (`?` + bind). (مثال: ثغرة `GET /api/team` التي أُصلحت.)
 
@@ -237,6 +247,7 @@ node -e "
 | Remarks Monitor `RemarksMonitor.jsx` | `/api/remarks-monitor*` (service: `remarksMonitor.service.js`) |
 | تسليمات الأقسام / Enrollment / التوزيع | `/api/cs*`, `/api/enrollment*`, `/api/distribution*` (services: `csDeliveries`, `csEnrollment`, `csClientPlan`...) |
 | المرتبات / المالية | `/api/trainer-salaries*`, `/api/finance*`, `/api/clients-finance*` |
+| سجل العملاء (كشف العملاء) `ClientSalesRegister.jsx` | `/api/cs-sales-register/{list,options,import,:id}` (service: `salesRegisterImport`) |
 
 ---
 
