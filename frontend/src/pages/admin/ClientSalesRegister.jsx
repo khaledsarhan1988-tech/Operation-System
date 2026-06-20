@@ -49,19 +49,29 @@ function discountAmount(discountStr, price) {
   return isFinite(amt) ? amt : 0;
 }
 
-// Totals logic (owner spec): amount paid = sum of installments (when any) or the
-// single cash figure; remaining balance = (membership price − discount) − paid.
-// All auto-derived (read-only). Discount may be a % of the price or an amount.
-function calcPaidBalance(form, installments) {
+// Totals logic (owner spec).
+//   Subscription: paid = sum of installments (when any) or the manual cash
+//   figure; balance = (membership price − discount) − paid.
+//   Upgrade rows (isUpgrade): the installments are the UPGRADE payments, so the
+//   subscription paid is the manual figure, the upgrade paid = installments sum,
+//   and upgrade balance = new price − (subscription paid + upgrade paid).
+// Discount may be a % of the price or a plain amount.
+function calcPaidBalance(form, installments, isUpgrade = false) {
   const hasInst = installments.some(i => i.amount !== '' && i.amount != null);
   const instSum = installments.reduce((s, i) => s + (Number(i.amount) || 0), 0);
   const manual = (form.total_paid_same_month === '' || form.total_paid_same_month == null)
     ? null : Number(form.total_paid_same_month);
-  const paid = hasInst ? instSum : manual;
   const price = Number(form.price) || 0;
   const discount = discountAmount(form.discount, price);
-  const balance = (price - discount) - (paid || 0);
-  return { hasInst, instSum, paid, discount, balance };
+  const paid = isUpgrade ? (manual || 0) : (hasInst ? instSum : (manual || 0));
+  const balance = (price - discount) - paid;
+  const upgPaid = isUpgrade ? instSum : 0;
+  const newPrice = Number(String(form.new_prices ?? '').replace(/,/g, '')) || 0;
+  // Upgrade discount lives in offer_individual (migrated rows hold it, e.g. "-250").
+  // Magnitude only — a discount always reduces, regardless of stored sign.
+  const upgDiscount = isUpgrade ? Math.abs(discountAmount(form.offer_individual, newPrice)) : 0;
+  const upgBalance = newPrice - upgDiscount - (paid + upgPaid);
+  return { hasInst, instSum, paid, discount, balance, upgPaid, upgDiscount, upgBalance, newPrice };
 }
 
 // ─── FORM MODAL (create / edit) ───────────────────────────────────────────────
@@ -70,6 +80,7 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [installments, setInstallments] = useState([]);
   const [error, setError] = useState('');
+  const [isUpgrade, setIsUpgrade] = useState(false);
 
   // Load the row being edited. (React Query v5 removed onSuccess on useQuery —
   // we read `data` and populate via useEffect below.)
@@ -91,15 +102,17 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
         paid_or_not: i.paid_or_not ?? '', amount: i.amount ?? '', pay_date: i.pay_date ?? '',
         note: i.note ?? '',
       })));
+      // An upgrade row is one whose new-course is filled or noted as "Upgraded".
+      setIsUpgrade(!!(s.new_courses && String(s.new_courses).trim()) || (s.noted2 || '') === 'Upgraded');
     } else {
-      setForm(EMPTY_FORM); setInstallments([]); setError('');
+      setForm(EMPTY_FORM); setInstallments([]); setError(''); setIsUpgrade(false);
     }
   }, [open, isEdit, editId, rowData]);
 
   const save = useMutation({
     mutationFn: () => {
       // Persist the auto-derived paid amount + balance so list/reports match.
-      const { paid, balance } = calcPaidBalance(form, installments);
+      const { paid, balance } = calcPaidBalance(form, installments, isUpgrade);
       const payload = { ...form, total_paid_same_month: paid, balance, installments };
       return isEdit
         ? api.put(`/cs-sales-register/${editId}`, payload).then(r => r.data)
@@ -159,9 +172,18 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
     if (r.apply) next.price = r.value == null ? '' : String(r.value);
     return next;
   });
+  // New (upgrade) course → auto-fill the new price from the membership catalog.
+  const applyNewCourse = (v) => setForm(f => {
+    const next = { ...f, new_courses: v };
+    const r = priceFor(v, f.pages);
+    if (r.apply) next.new_prices = r.value == null ? '' : String(r.value);
+    return next;
+  });
+  const newCourseOptions = (form.new_courses && !membershipCodes.includes(form.new_courses))
+    ? [form.new_courses, ...membershipCodes] : membershipCodes;
 
   // Derived paid amount + remaining balance (read-only display).
-  const totals = calcPaidBalance(form, installments);
+  const totals = calcPaidBalance(form, installments, isUpgrade);
 
   // Field renderer — `list` enables a datalist (pick existing or type new);
   // `select` (a fixed array) renders a hard <select> instead (no free text).
@@ -248,19 +270,25 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
 
               <SectionCard title="الإجماليات والخصومات" icon={DollarSign} accent="amber">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {/* Total Paid From Customer — manual for cash; auto-sum of installments otherwise */}
+                  {/* Total Paid From Customer — manual for cash/upgrade subscription;
+                      auto-sum of installments for a non-upgrade installment plan. */}
+                  {(() => {
+                    const autoPaid = !isUpgrade && totals.hasInst; // installments = the payment plan
+                    return (
                   <div>
                     <label className="block text-[11px] font-bold text-gray-500 mb-1">
-                      المبلغ المدفوع من العميل{totals.hasInst ? ' — مجموع الأقساط (تلقائي)' : ''}
+                      المبلغ المدفوع من العميل{isUpgrade ? ' (للاشتراك)' : ''}{autoPaid ? ' — مجموع الأقساط (تلقائي)' : ''}
                     </label>
                     <input
                       type="number"
-                      value={totals.hasInst ? totals.instSum : (form.total_paid_same_month ?? '')}
+                      value={autoPaid ? totals.instSum : (form.total_paid_same_month ?? '')}
                       onChange={(e) => set('total_paid_same_month', e.target.value)}
-                      readOnly={totals.hasInst}
-                      className={`w-full px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none ${totals.hasInst ? 'bg-gray-100 text-gray-600' : 'focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400'}`}
+                      readOnly={autoPaid}
+                      className={`w-full px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none ${autoPaid ? 'bg-gray-100 text-gray-600' : 'focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400'}`}
                     />
                   </div>
+                    );
+                  })()}
                   {/* Discount — accepts a percentage ("10%") or a plain amount */}
                   <div>
                     <label className="block text-[11px] font-bold text-gray-500 mb-1">
@@ -285,6 +313,66 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                     />
                   </div>
                 </div>
+              </SectionCard>
+
+              {/* Upgrade — shown when the customer upgraded to a higher membership */}
+              <SectionCard
+                title="الترقية (Upgrade)"
+                icon={Tag}
+                accent="violet"
+                actions={
+                  <label className="inline-flex items-center gap-2 text-xs font-bold text-violet-700 cursor-pointer">
+                    <input type="checkbox" checked={isUpgrade} onChange={(e) => setIsUpgrade(e.target.checked)} className="w-4 h-4" />
+                    العميل عمل ترقية
+                  </label>
+                }
+              >
+                {!isUpgrade ? (
+                  <p className="text-center text-sm text-gray-400 py-3">مفيش ترقية — فعّل «العميل عمل ترقية» لو رقّى لباقة أعلى.</p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    {/* New course (membership dropdown → auto new price) */}
+                    <div>
+                      <label className="block text-[11px] font-bold text-gray-500 mb-1">الكورس الجديد (New Courses)</label>
+                      <select
+                        value={form.new_courses ?? ''}
+                        onChange={(e) => applyNewCourse(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-violet-200 focus:border-violet-400 outline-none"
+                      >
+                        <option value="">—</option>
+                        {newCourseOptions.map(v => <option key={v} value={v}>{v}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-gray-500 mb-1">السعر الجديد (New Prices)</label>
+                      <input type="number" value={form.new_prices ?? ''} onChange={(e) => set('new_prices', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-violet-200 focus:border-violet-400 outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-gray-500 mb-1">تاريخ الترقية (Date)</label>
+                      <input type="text" value={form.installment_date ?? ''} onChange={(e) => set('installment_date', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-violet-200 focus:border-violet-400 outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-gray-500 mb-1">المدفوع في الترقية — من الأقساط (تلقائي)</label>
+                      <input type="number" value={totals.upgPaid} readOnly
+                        className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-100 text-gray-600 outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-gray-500 mb-1">
+                        خصم الترقية (مبلغ أو %){totals.upgDiscount > 0 ? ` — خصم ${totals.upgDiscount.toLocaleString('en-US', { maximumFractionDigits: 2 })}` : ''}
+                      </label>
+                      <input type="text" value={form.offer_individual ?? ''} onChange={(e) => set('offer_individual', e.target.value)}
+                        placeholder="مثال: 250 أو 5%"
+                        className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-violet-200 focus:border-violet-400 outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-gray-500 mb-1">رصيد الترقية — تلقائي</label>
+                      <input type="number" value={totals.upgBalance} readOnly
+                        className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-100 text-gray-800 font-bold outline-none" />
+                    </div>
+                  </div>
+                )}
               </SectionCard>
 
               {/* Installments */}
