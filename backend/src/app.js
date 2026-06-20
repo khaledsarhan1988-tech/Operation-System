@@ -1384,6 +1384,40 @@ initDb().then(db => {
     console.log('✅ Migration: lectures_history ready');
   } catch (e) { console.error('lectures_history migration:', e.message); }
 
+  // ── ONE-TIME CLEANUP: zoom calls mis-imported as MAIN lectures ────────────
+  // A wrong/merged Drive file dumped Zoom-Call rows (trainer marked "(Z.C)") into
+  // the main-lecture sheet, so they were stored as session_type='main' and made the
+  // main-lecture absence report flag whole groups as absent (phantom absences).
+  // parseLectures now DROPS such rows on import (guard); this removes the ones
+  // already in the table. Backed up first → fully reversible. Idempotent: with the
+  // guard in place, 0 rows match on later runs. Real main lectures run ~1:30h and
+  // NEVER carry this marker (verified: 0 of the 01:30 main rows do), so a real
+  // lecture is never touched. (owner-approved 2026-06-20)
+  try {
+    const ZOOM = `session_type = 'main' AND (
+      REPLACE(LOWER(trainer), ' ', '') LIKE '%(z.c)%'
+      OR REPLACE(LOWER(trainer), ' ', '') LIKE '%(zc)%'
+    )`;
+    db._raw.run(`CREATE TABLE IF NOT EXISTS lectures_zoom_misclassified_backup (
+      id INTEGER, group_name TEXT, date TEXT, time TEXT, duration TEXT, trainer TEXT,
+      status TEXT, location TEXT, attendance TEXT, session_type TEXT,
+      side_session_category TEXT, line TEXT, synced_at TEXT, backed_up_at TEXT
+    )`);
+    const zn = db.prepare(`SELECT COUNT(*) AS c FROM lectures WHERE ${ZOOM}`).get().c;
+    if (zn > 0) {
+      db._raw.run(`INSERT INTO lectures_zoom_misclassified_backup
+          (id, group_name, date, time, duration, trainer, status, location, attendance,
+           session_type, side_session_category, line, synced_at, backed_up_at)
+        SELECT id, group_name, date, time, duration, trainer, status, location, attendance,
+               session_type, side_session_category, line, synced_at, datetime('now','localtime')
+          FROM lectures WHERE ${ZOOM}`);
+      db._raw.run(`DELETE FROM lectures WHERE ${ZOOM}`);
+      console.log(`✅ Migration: removed ${zn} zoom-call rows mis-imported as main (backed up to lectures_zoom_misclassified_backup)`);
+    } else {
+      console.log('✅ Migration: no zoom-as-main rows to clean');
+    }
+  } catch (e) { console.error('zoom-as-main cleanup migration:', e.message); }
+
   // ── schedule_change_log: append-only ledger of EVERY schedule change ─────
   // Detected LIVE on each lecture sync (DB-old vs incoming-file diff, scoped to
   // the file's groups+date range). Records added / deleted / moved lectures with

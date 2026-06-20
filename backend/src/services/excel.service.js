@@ -308,6 +308,14 @@ function parseRemarks(buffer) {
     });
 }
 
+// A "(Z.C)" / "(z.c)" / "(zc)" marker on the trainer name = a Zoom-Call instructor,
+// so the row is a ZOOM CALL — NOT a main lecture. Real main lectures run ~1:30h with
+// normal trainers and NEVER carry this marker (verified: 0 of the 01:30 main rows
+// have it). When a wrong/merged file dumps zoom calls into the main-lecture sheet,
+// this guard keeps them OUT of session_type='main' (they're still imported correctly
+// as 'side' from the Side-Session sheet). (owner decision 2026-06-20)
+const isZoomCallTrainer = (t) => /\(\s*z\s*\.?\s*c\s*\)/i.test(String(t == null ? '' : t));
+
 /** Lectures.xlsx → lectures (session_type='main') */
 function parseLectures(buffer) {
   const wb = XLSX.read(buffer, { type: 'buffer' });
@@ -327,7 +335,9 @@ function parseLectures(buffer) {
       attendance: r[7] ? String(r[7]).trim() : null,
       session_type: 'main',
       side_session_category: null,
-    }));
+    }))
+    // GUARD: drop zoom-call rows that don't belong in the main-lecture sheet.
+    .filter(r => !isZoomCallTrainer(r.trainer));
 }
 
 // Convert "HH:MM AM/PM" or "HH:MM" or "PM HH:MM" to minutes-since-midnight
