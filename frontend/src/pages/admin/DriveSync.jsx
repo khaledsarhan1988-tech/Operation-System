@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Cloud, CloudDownload, RefreshCw, CheckCircle, XCircle,
   AlertCircle, FileSpreadsheet, Eye, Play, AlertTriangle, Calendar,
-  FolderPlus, History, Trash2,
+  FolderPlus, History, Trash2, Archive, HardDrive,
 } from 'lucide-react';
 import api from '../../api/axios';
 import { useAuth } from '../../auth/AuthContext';
@@ -313,6 +313,147 @@ function ImportByDatePanel({ isAr }) {
               <span key={k} className="px-2 py-0.5 bg-slate-100 rounded text-xs">{(isAr ? (ROLLBACK_LABELS[k] || k) : k)}: {v}</span>
             ))}
             {preview.total === 0 && <span className="text-gray-400 text-xs">{isAr ? 'لا توجد بيانات اتسجّلت في هذا اليوم' : 'No data synced on this day'}</span>}
+          </div>
+        </div>
+      )}
+      {msg && <div className={`mt-3 text-sm ${msg.err ? 'text-red-600' : 'text-emerald-600'}`}>{msg.err || msg.ok}</div>}
+    </div>
+  );
+}
+
+// ── Cold archive to Drive (super-admin tool) ─────────────────────────────────
+const COLD_LABELS = {
+  lectures_history: 'أرشيف المحاضرات الشبح',
+  absent_students_history: 'أرشيف غياب أساسي',
+  absent_zoom_students_history: 'أرشيف غياب زوم',
+  group_renames_backup_20260606: 'باك أب إعادة التسمية',
+};
+function ColdArchivePanel({ isAr }) {
+  const [days, setDays] = useState(30);
+  const [preview, setPreview] = useState(null);
+  const [log, setLog] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  const fmtMb = (b) => `${(Number(b || 0) / 1e6).toFixed(2)} MB`;
+  const loadLog = async () => {
+    try { setLog((await api.get('/cold-archive/log')).data.rows); } catch (_) {}
+  };
+  const doPreview = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      setPreview((await api.get('/cold-archive/preview', { params: { cutoff_days: days } })).data);
+      await loadLog();
+    } catch (e) { setMsg({ err: e.response?.data?.error || e.message }); }
+    setBusy(false);
+  };
+  const totalEligible = preview ? preview.tables.reduce((s, t) => s + (t.eligible_rows || 0), 0) : 0;
+  const doRun = async () => {
+    if (!preview || !totalEligible) return;
+    if (!window.confirm(isAr
+      ? `سيتم رفع ${totalEligible} صف بارد للدرايف، والتحقق منها، ثم حذفها من القاعدة (قابل للاسترجاع). متأكد؟`
+      : `Archive ${totalEligible} cold rows to Drive (verified before delete, reversible)?`)) return;
+    setBusy(true); setMsg(null);
+    try {
+      const r = (await api.post('/cold-archive/run', { cutoff_days: days })).data;
+      const done = r.results.reduce((s, x) => s + (x.archived || 0), 0);
+      const errs = r.results.filter((x) => x.error);
+      setMsg(errs.length
+        ? { err: `${isAr ? 'بعض الجداول فشلت' : 'Some tables failed'}: ${errs.map((e) => `${e.table}: ${e.error}`).join(' | ')}` }
+        : { ok: isAr ? `تم أرشفة ${done} صف للدرايف وحذفها من القاعدة بأمان.` : `Archived ${done} rows to Drive.` });
+      setPreview(null); await loadLog();
+    } catch (e) { setMsg({ err: e.response?.data?.error || e.message }); }
+    setBusy(false);
+  };
+  const doVacuum = async () => {
+    if (!window.confirm(isAr
+      ? 'تشغيل VACUUM لاسترجاع المساحة فعليًا؟ بيجمّد السيرفر بضع ثوانٍ — شغّله في وقت قليل الحركة.'
+      : 'Run VACUUM to reclaim space? Freezes the server for a few seconds — run at low traffic.')) return;
+    setBusy(true); setMsg(null);
+    try {
+      const r = (await api.post('/cold-archive/vacuum', {})).data;
+      setMsg(r.ok
+        ? { ok: isAr ? `تم استرجاع ${r.reclaimed_mb} ميجا (${r.before_mb} → ${r.after_mb} ميجا).` : `Reclaimed ${r.reclaimed_mb} MB (${r.before_mb} → ${r.after_mb}).` }
+        : { err: isAr ? `مساحة غير كافية: محتاج ${r.need_mb} ميجا، المتاح ${r.avail_mb} ميجا — كبّر الـ volume الأول.` : `Insufficient space: need ${r.need_mb}MB, have ${r.avail_mb}MB — resize first.` });
+    } catch (e) { setMsg({ err: e.response?.data?.error || e.message }); }
+    setBusy(false);
+  };
+  const doRestore = async (id) => {
+    if (!window.confirm(isAr ? 'استرجاع هذا الأرشيف من الدرايف للقاعدة؟' : 'Restore this archive from Drive into the DB?')) return;
+    setBusy(true); setMsg(null);
+    try {
+      const r = (await api.post('/cold-archive/restore', { log_id: id })).data;
+      setMsg({ ok: isAr ? `تم استرجاع ${r.restored} صف.` : `Restored ${r.restored} rows.` });
+      await loadLog();
+    } catch (e) { setMsg({ err: e.response?.data?.error || e.message }); }
+    setBusy(false);
+  };
+
+  return (
+    <div className="bg-white rounded-xl shadow p-4 mt-6 border border-indigo-200">
+      <h2 className="font-bold text-indigo-700 mb-1 flex items-center gap-2">
+        <Archive className="w-5 h-5" /> {isAr ? 'أرشفة الجداول الباردة للدرايف' : 'Archive cold tables to Drive'}
+      </h2>
+      <p className="text-xs text-gray-500 mb-3 leading-5">
+        {isAr
+          ? 'تشحن الجداول اللي مفيش تقرير بيقرأها (أرشيف المحاضرات الشبح + الغياب المكرر + باك أب قديم) للدرايف وتحذفها من القاعدة لتقليل المساحة. بيتم التحقق (sha256 + عدد الصفوف) قبل أي حذف، وكل عملية قابلة للاسترجاع. بعد الأرشفة استعمل «استرجاع المساحة (VACUUM)» — في وقت قليل الحركة وبعد تكبير الـ volume.'
+          : 'Ships never-read tables to Drive and deletes them from the DB. Upload is verified before any delete; every action is reversible. Then run VACUUM (low traffic, after resize) to reclaim space.'}
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="text-sm text-gray-600">{isAr ? 'أقدم من (يوم):' : 'Older than (days):'}</label>
+        <input type="number" min="0" value={days} onChange={(e) => { setDays(e.target.value); setPreview(null); setMsg(null); }}
+          className="border rounded-lg px-2 py-2 text-sm w-20" dir="ltr" />
+        <button onClick={doPreview} disabled={busy}
+          className="px-3 py-2 text-sm rounded-lg bg-slate-700 text-white disabled:opacity-50 flex items-center gap-1"><Eye className="w-4 h-4" /> {isAr ? 'معاينة' : 'Preview'}</button>
+        {preview && (
+          <button onClick={doRun} disabled={busy || totalEligible === 0}
+            className="px-3 py-2 text-sm rounded-lg bg-indigo-600 text-white disabled:opacity-50 flex items-center gap-1"><Archive className="w-4 h-4" /> {isAr ? `أرشف (${totalEligible})` : `Archive (${totalEligible})`}</button>
+        )}
+        <button onClick={doVacuum} disabled={busy}
+          className="px-3 py-2 text-sm rounded-lg bg-emerald-100 text-emerald-700 disabled:opacity-50 flex items-center gap-1"><HardDrive className="w-4 h-4" /> {isAr ? 'استرجاع المساحة (VACUUM)' : 'Reclaim (VACUUM)'}</button>
+      </div>
+      {preview && (
+        <div className="mt-3 text-sm">
+          <div className="font-semibold mb-1">{isAr ? `مؤهَّل للأرشفة: ${totalEligible} صف` : `Eligible: ${totalEligible} rows`}</div>
+          <div className="flex flex-wrap gap-2">
+            {preview.tables.filter((t) => t.exists).map((t) => (
+              <span key={t.table} className="px-2 py-0.5 bg-slate-100 rounded text-xs">
+                {(isAr ? (COLD_LABELS[t.table] || t.table) : t.table)}: {t.eligible_rows}/{t.total_rows}
+              </span>
+            ))}
+            {totalEligible === 0 && <span className="text-gray-400 text-xs">{isAr ? 'مفيش صفوف باردة مؤهلة' : 'No eligible cold rows'}</span>}
+          </div>
+        </div>
+      )}
+      {log && log.length > 0 && (
+        <div className="mt-4 text-sm">
+          <div className="font-semibold mb-1 text-gray-600">{isAr ? 'سجل الأرشفة' : 'Archive log'}</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs border-collapse">
+              <thead><tr className="text-gray-500 border-b">
+                <th className="text-start py-1 px-2">{isAr ? 'الجدول' : 'Table'}</th>
+                <th className="text-start py-1 px-2">{isAr ? 'صفوف' : 'Rows'}</th>
+                <th className="text-start py-1 px-2">{isAr ? 'الحجم' : 'Size'}</th>
+                <th className="text-start py-1 px-2">{isAr ? 'التاريخ' : 'Date'}</th>
+                <th className="text-start py-1 px-2">{isAr ? 'الحالة' : 'Status'}</th>
+                <th className="py-1 px-2"></th>
+              </tr></thead>
+              <tbody>
+                {log.map((r) => (
+                  <tr key={r.id} className="border-b last:border-0">
+                    <td className="py-1 px-2">{isAr ? (COLD_LABELS[r.table_name] || r.table_name) : r.table_name}</td>
+                    <td className="py-1 px-2">{r.row_count}</td>
+                    <td className="py-1 px-2">{fmtMb(r.bytes)}</td>
+                    <td className="py-1 px-2" dir="ltr">{r.archived_at}</td>
+                    <td className="py-1 px-2">{r.status === 'restored' ? (isAr ? 'مُسترجَع' : 'restored') : (isAr ? 'مؤرشَف' : 'archived')}</td>
+                    <td className="py-1 px-2">
+                      <button onClick={() => doRestore(r.id)} disabled={busy}
+                        className="px-2 py-0.5 rounded bg-amber-100 text-amber-700 disabled:opacity-50 flex items-center gap-1"><History className="w-3 h-3" /> {isAr ? 'استرجاع' : 'Restore'}</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
@@ -787,6 +928,8 @@ export default function DriveSync() {
       )}
 
       <ImportByDatePanel isAr={isAr} />
+
+      <ColdArchivePanel isAr={isAr} />
     </div>
   );
 }

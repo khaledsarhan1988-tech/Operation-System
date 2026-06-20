@@ -1384,6 +1384,28 @@ initDb().then(db => {
     console.log('✅ Migration: lectures_history ready');
   } catch (e) { console.error('lectures_history migration:', e.message); }
 
+  // ── cold_archive_log: audit trail for the cold-archive-to-Drive tool ──────
+  // Records every dead-weight table shipped to Drive (table, file id, row count,
+  // sha256, bytes) so the operation is auditable and reversible via /restore.
+  try {
+    db._raw.run(`CREATE TABLE IF NOT EXISTS cold_archive_log (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      table_name      TEXT,
+      drive_file_id   TEXT,
+      drive_file_name TEXT,
+      row_count       INTEGER,
+      bytes           INTEGER,
+      sha256          TEXT,
+      cutoff_days     INTEGER,
+      archived_by     TEXT,
+      archived_at     TEXT,
+      status          TEXT,
+      restored_at     TEXT,
+      restored_by     TEXT
+    )`);
+    console.log('✅ Migration: cold_archive_log ready');
+  } catch (e) { console.error('cold_archive_log migration:', e.message); }
+
   // ── ONE-TIME CLEANUP: zoom calls mis-imported as MAIN lectures ────────────
   // A wrong/merged Drive file dumped Zoom-Call rows (trainer marked "(Z.C)") into
   // the main-lecture sheet, so they were stored as session_type='main' and made the
@@ -3027,6 +3049,7 @@ initDb().then(db => {
   app.use('/api/auth',    require('./routes/auth.routes'));
   app.use('/api/upload',  require('./routes/upload.routes'));
   app.use('/api/drive',   require('./routes/drive.routes'));
+  app.use('/api/cold-archive', require('./routes/cold-archive.routes'));
   app.use('/api/agent',   require('./routes/agent.routes'));
   app.use('/api/clients', require('./routes/clients.routes'));
   app.use('/api/remarks', require('./routes/remarks.routes'));

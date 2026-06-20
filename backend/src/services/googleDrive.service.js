@@ -275,6 +275,38 @@ async function prepareDayFolders(line, date) {
 }
 
 /**
+ * Uploads a binary buffer as a NEW file under parentId. Used by the cold-archive
+ * tool to ship dead-weight DB tables to Drive. The Drive scope is already
+ * read-write ('.../auth/drive'), so no extra permission is needed.
+ */
+async function uploadFile(parentId, name, mimeType, buffer) {
+  const drive = getDriveClient();
+  const { Readable } = require('stream');
+  const res = await drive.files.create({
+    requestBody: { name, parents: [parentId] },
+    media: { mimeType: mimeType || 'application/octet-stream', body: Readable.from(buffer) },
+    fields: 'id, name, size',
+    supportsAllDrives: true,
+  });
+  return res.data;
+}
+
+const ARCHIVE_ROOT_NAME = 'System DB Archive';
+
+/**
+ * Returns the id of the archive folder (optionally a named sub-folder under it),
+ * creating the folders if missing. Lives as a sibling of the Line folders under
+ * the same Drive root.
+ */
+async function getOrCreateArchiveFolder(subName) {
+  const rootId = getRootFolderId();
+  const archiveRoot = await getOrCreateFolder(rootId, ARCHIVE_ROOT_NAME);
+  if (!subName) return archiveRoot.id;
+  const sub = await getOrCreateFolder(archiveRoot.id, subName);
+  return sub.id;
+}
+
+/**
  * Verifies Drive connectivity by fetching the root folder's metadata.
  * Throws with a clear message if anything is misconfigured.
  */
@@ -306,5 +338,7 @@ module.exports = {
   getLatestFileInFolder,
   getLatestFilesForDay,
   downloadFile,
+  uploadFile,
+  getOrCreateArchiveFolder,
   verifyConnection,
 };
