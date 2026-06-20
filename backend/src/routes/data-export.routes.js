@@ -181,4 +181,107 @@ router.get('/db', (req, res) => {
   });
 });
 
+// ─── DISK USAGE DIAGNOSTIC (read-only) ───────────────────────────────────────
+// Reports the REAL on-volume footprint so we can decide whether a VACUUM (reclaim
+// DB fragmentation) is worth it vs the data being genuinely large. Pure read-only:
+// stats files on the persistent volume + the SQLite freelist. No data is changed.
+//  - db_file       : live academy.db size on disk (≥ compacted size; gap = fragmentation)
+//  - wal / shm     : WAL sidecar files
+//  - avatars       : user profile pictures (stored as files on the SAME volume)
+//  - freelist      : internal free pages inside the DB (× page_size = VACUUM-reclaimable)
+//  - volume        : total/free/used from statfs (what Railway's "92%" is measured on)
+//  - backup_tables : row counts of one-time *_backup safety nets (drop candidates)
+router.get('/disk-usage', (req, res) => {
+  const fs = require('fs');
+  const path = require('path');
+  const DB_PATH = process.env.DB_PATH ||
+    path.join(__dirname, '../../data/academy.db');
+  const dataDir = path.dirname(DB_PATH);
+
+  const sizeOf = (p) => { try { return fs.statSync(p).size; } catch (_) { return 0; } };
+  const dirUsage = (dir) => {
+    let bytes = 0, files = 0;
+    try {
+      for (const f of fs.readdirSync(dir)) {
+        try { const st = fs.statSync(path.join(dir, f)); if (st.isFile()) { bytes += st.size; files++; } }
+        catch (_) {}
+      }
+    } catch (_) {}
+    return { bytes, files };
+  };
+
+  try {
+    const dbFile = sizeOf(DB_PATH);
+    const wal = sizeOf(DB_PATH + '-wal');
+    const shm = sizeOf(DB_PATH + '-shm');
+    const avatars = dirUsage(path.join(dataDir, 'avatars'));
+
+    // internal free pages = VACUUM-reclaimable space inside the DB file.
+    // The DB wrapper's pragma() ignores { simple } and returns better-sqlite3's
+    // raw shape: [{ page_size: 4096 }]. Normalize to the scalar ourselves.
+    const pv = (name) => {
+      try {
+        const r = db.pragma(name);
+        if (Array.isArray(r)) return Number(Object.values(r[0] || {})[0]) || 0;
+        return Number(r) || 0;
+      } catch (_) { return 0; }
+    };
+    const pageSize  = pv('page_size');
+    const freelist  = pv('freelist_count');
+    const pageCount = pv('page_count');
+    const reclaimable = pageSize * freelist;
+
+    // volume total/free (Linux/Railway). statfsSync may be unavailable on some OSes.
+    let volume = null;
+    try {
+      const s = fs.statfsSync(dataDir);
+      const total = s.blocks * s.bsize, free = s.bfree * s.bsize, avail = s.bavail * s.bsize;
+      volume = {
+        total_mb: +(total / 1e6).toFixed(1),
+        free_mb: +(free / 1e6).toFixed(1),
+        avail_mb: +(avail / 1e6).toFixed(1),
+        used_mb: +((total - free) / 1e6).toFixed(1),
+        used_pct: total ? +(((total - free) / total) * 100).toFixed(1) : null,
+      };
+    } catch (e) { volume = { error: String(e && e.message || e) }; }
+
+    // one-time *_backup safety nets (candidates for cleanup)
+    const backups = {};
+    try {
+      const tbls = db.prepare(
+        `SELECT name FROM sqlite_master WHERE type='table'
+           AND (name LIKE '%backup%' OR name LIKE '%misclassified%' OR name LIKE '%_history')`
+      ).all();
+      for (const { name } of tbls) {
+        try { backups[name] = db.prepare(`SELECT COUNT(*) c FROM "${name}"`).get().c; }
+        catch (_) { backups[name] = null; }
+      }
+    } catch (_) {}
+
+    const mb = (b) => +(b / 1e6).toFixed(1);
+    res.json({
+      generated_at: new Date().toISOString(),
+      db_path: DB_PATH,
+      files: {
+        db_file_mb: mb(dbFile),
+        wal_mb: mb(wal),
+        shm_mb: mb(shm),
+        avatars_mb: mb(avatars.bytes),
+        avatars_files: avatars.files,
+        total_db_footprint_mb: mb(dbFile + wal + shm),
+      },
+      sqlite: {
+        page_size: pageSize,
+        page_count: pageCount,
+        freelist_pages: freelist,
+        reclaimable_by_vacuum_mb: mb(reclaimable),
+      },
+      volume,
+      backup_tables: backups,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;
