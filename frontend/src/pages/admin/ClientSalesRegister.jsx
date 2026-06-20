@@ -79,6 +79,15 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
     onError: (err) => setError(err?.response?.data?.error || 'فشل الحفظ'),
   });
 
+  // Membership catalog — the Courses field is chosen from these, and selecting
+  // one (or changing the brand) auto-fills the price.
+  const { data: membershipData } = useQuery({
+    queryKey: ['membership-prices', 'all'],
+    queryFn: () => api.get('/membership-prices/list').then(r => r.data),
+    enabled: open,
+    staleTime: 5 * 60 * 1000,
+  });
+
   if (!open) return null;
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -88,19 +97,54 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
 
   const opt = (k) => options?.[k] || [];
 
+  // ── Courses dropdown + auto-price from the membership catalog ──────────────
+  const memberships = membershipData?.rows || [];
+  const mmap = {};
+  for (const m of memberships) mmap[m.code] = m;
+  const membershipCodes = memberships.map(m => m.code);
+  // Keep the row's existing course selectable even if it's not a membership
+  // (e.g. an older operation whose code was pruned) — never silently drop it.
+  const courseOptions = (form.courses && !membershipCodes.includes(form.courses))
+    ? [form.courses, ...membershipCodes]
+    : membershipCodes;
+
+  // Price column by brand: Ahmed Hassan → AH; Dardasha & Daradasha AUE → Dardasha.
+  // Other brands (Go English / Work Shop / empty) → manual (apply:false).
+  const priceFor = (code, brand) => {
+    const m = mmap[code];
+    if (!m) return { apply: false };
+    if (brand === 'Ahmed Hassan') return { apply: true, value: m.price_ahmed_hassan };
+    if (brand === 'Dardasha' || brand === 'Daradasha AUE') return { apply: true, value: m.price_dardasha };
+    return { apply: false };
+  };
+  const applyCourse = (v) => setForm(f => {
+    const next = { ...f, courses: v };
+    const r = priceFor(v, f.pages);
+    if (r.apply) next.price = r.value == null ? '' : String(r.value);
+    return next;
+  });
+  const applyPages = (v) => setForm(f => {
+    const next = { ...f, pages: v };
+    const r = priceFor(f.courses, v);
+    if (r.apply) next.price = r.value == null ? '' : String(r.value);
+    return next;
+  });
+
   // Field renderer — `list` enables a datalist (pick existing or type new);
   // `select` (a fixed array) renders a hard <select> instead (no free text).
   // IMPORTANT: call this as a function — {F({...})} — NOT as <F/>. Rendering it
   // as a component would give it a fresh identity each render (it's defined
   // inside SaleFormModal) and remount the input on every keystroke, losing
   // focus. Calling it inlines plain host elements, so focus is preserved.
-  const F = ({ k, label, type = 'text', list, select, span = 1 }) => (
+  const F = ({ k, label, type = 'text', list, select, span = 1, onChange }) => {
+    const handle = onChange || ((v) => set(k, v));
+    return (
     <div className={span === 2 ? 'sm:col-span-2' : span === 4 ? 'sm:col-span-2 lg:col-span-4' : ''}>
       <label className="block text-[11px] font-bold text-gray-500 mb-1">{label}</label>
       {select ? (
         <select
           value={form[k] ?? ''}
-          onChange={(e) => set(k, e.target.value)}
+          onChange={(e) => handle(e.target.value)}
           className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none"
         >
           <option value="">—</option>
@@ -111,7 +155,7 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
           <input
             type={type}
             value={form[k] ?? ''}
-            onChange={(e) => set(k, e.target.value)}
+            onChange={(e) => handle(e.target.value)}
             list={list ? `dl-${k}` : undefined}
             className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none"
           />
@@ -123,7 +167,8 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
         </>
       )}
     </div>
-  );
+    );
+  };
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose} dir="rtl">
@@ -157,12 +202,12 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                   {F({ k: 'mobile_no', label: 'الموبايل' })}
                   {F({ k: 'agent_name', label: 'الموظف (Agent)', list: 'agents' })}
                   {F({ k: 'department', label: 'القسم (Department)', list: 'departments' })}
-                  {F({ k: 'courses', label: 'الكورس (Courses)', list: 'courses' })}
+                  {F({ k: 'courses', label: 'الكورس (Courses)', select: courseOptions, onChange: applyCourse })}
                   {F({ k: 'price', label: 'السعر (Price)', type: 'number' })}
                   {F({ k: 'months', label: 'الشهر (Months)', list: 'months' })}
                   {F({ k: 'payment_way', label: 'طريقة الدفع', list: 'payment_ways' })}
                   {F({ k: 'paid_status', label: 'حالة الدفع', select: PAID_STATUSES })}
-                  {F({ k: 'pages', label: 'البراند (Pages)', select: BRANDS })}
+                  {F({ k: 'pages', label: 'البراند (Pages)', select: BRANDS, onChange: applyPages })}
                   {F({ k: 'shift', label: 'الفترة (Shift)', list: 'shifts' })}
                   {F({ k: 'groups', label: 'المجموعة (Groups)' })}
                 </div>
