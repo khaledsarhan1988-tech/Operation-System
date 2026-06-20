@@ -36,6 +36,19 @@ const EMPTY_INST = { sales_man: '', department: '', months: '', paid_or_not: '',
 const BRANDS = ['Ahmed Hassan', 'Dardasha', 'Go English', 'Work Shop Offline', 'Daradasha AUE'];
 const PAID_STATUSES = ['Paid', 'Not Paid', 'Fake'];
 
+// Totals logic (owner spec): the amount actually paid by the customer is either
+// the sum of installments (when any) or the single cash figure; the remaining
+// balance = membership price − amount paid. Both are auto-derived (read-only).
+function calcPaidBalance(form, installments) {
+  const hasInst = installments.some(i => i.amount !== '' && i.amount != null);
+  const instSum = installments.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+  const manual = (form.total_paid_same_month === '' || form.total_paid_same_month == null)
+    ? null : Number(form.total_paid_same_month);
+  const paid = hasInst ? instSum : manual;
+  const balance = (Number(form.price) || 0) - (paid || 0);
+  return { hasInst, instSum, paid, balance };
+}
+
 // ─── FORM MODAL (create / edit) ───────────────────────────────────────────────
 function SaleFormModal({ open, editId, options, onClose, onSaved }) {
   const isEdit = !!editId;
@@ -70,7 +83,9 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
 
   const save = useMutation({
     mutationFn: () => {
-      const payload = { ...form, installments };
+      // Persist the auto-derived paid amount + balance so list/reports match.
+      const { paid, balance } = calcPaidBalance(form, installments);
+      const payload = { ...form, total_paid_same_month: paid, balance, installments };
       return isEdit
         ? api.put(`/cs-sales-register/${editId}`, payload).then(r => r.data)
         : api.post('/cs-sales-register', payload).then(r => r.data);
@@ -129,6 +144,9 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
     if (r.apply) next.price = r.value == null ? '' : String(r.value);
     return next;
   });
+
+  // Derived paid amount + remaining balance (read-only display).
+  const totals = calcPaidBalance(form, installments);
 
   // Field renderer — `list` enables a datalist (pick existing or type new);
   // `select` (a fixed array) renders a hard <select> instead (no free text).
@@ -215,10 +233,30 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
 
               <SectionCard title="الإجماليات والخصومات" icon={DollarSign} accent="amber">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {F({ k: 'total_price', label: 'Total Price', type: 'number' })}
-                  {F({ k: 'total_paid_same_month', label: 'Total Paid In Same Months', type: 'number' })}
+                  {/* Total Paid From Customer — manual for cash; auto-sum of installments otherwise */}
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-500 mb-1">
+                      المبلغ المدفوع من العميل{totals.hasInst ? ' — مجموع الأقساط (تلقائي)' : ''}
+                    </label>
+                    <input
+                      type="number"
+                      value={totals.hasInst ? totals.instSum : (form.total_paid_same_month ?? '')}
+                      onChange={(e) => set('total_paid_same_month', e.target.value)}
+                      readOnly={totals.hasInst}
+                      className={`w-full px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none ${totals.hasInst ? 'bg-gray-100 text-gray-600' : 'focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400'}`}
+                    />
+                  </div>
                   {F({ k: 'discount', label: 'Discount' })}
-                  {F({ k: 'balance', label: 'Balance (الرصيد المتبقي)', type: 'number' })}
+                  {/* Balance — auto = membership price − amount paid (read-only) */}
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-500 mb-1">Balance (الرصيد المتبقي) — تلقائي</label>
+                    <input
+                      type="number"
+                      value={totals.balance}
+                      readOnly
+                      className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-100 text-gray-800 font-bold outline-none"
+                    />
+                  </div>
                 </div>
               </SectionCard>
 
