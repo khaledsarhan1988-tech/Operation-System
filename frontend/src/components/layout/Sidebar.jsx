@@ -8,7 +8,7 @@ import {
   LogOut, Headphones, GraduationCap, ShieldCheck, AlertTriangle, Activity, Shuffle, Kanban,
   TrendingUp, Target, Settings, Award, Snowflake, Goal, Database, ChevronDown, Sparkles, BarChart3,
   Cloud, History, Network, ListTodo, ClipboardCheck, CalendarClock, KeyRound, Wallet,
-  Link as LinkIcon, GitBranch,
+  Link as LinkIcon, GitBranch, Tag,
 } from 'lucide-react';
 import UserAvatar from '../ui/UserAvatar';
 
@@ -146,6 +146,7 @@ function getAdminLinks(user) {
     { to: '/admin/distribution', label: 'nav.clientDistribution', icon: Shuffle,         color: 'cyan' },
     { to: '/admin/pipeline',     label: 'nav.clientPipeline',     icon: Kanban,          color: 'emerald' },
     { to: '/admin/sales-register', label: 'كشف العملاء',          icon: Wallet,          color: 'emerald' },
+    { to: '/admin/membership-prices', label: 'العضويات وأسعارها',  icon: Tag,             color: 'violet' },
     // ── Collapsible group: تطوير الأداء والمهام (toggle-only header, no own page).
     //    The 4 pages below were moved here from their standalone positions.
     { group: true, key: 'perf-tasks', label: 'تطوير الأداء والمهام', icon: TrendingUp, color: 'violet' },

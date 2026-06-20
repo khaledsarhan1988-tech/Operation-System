@@ -171,7 +171,12 @@ node -e "
   - **`Balance` = الرصيد المتبقي للعملية لا قسط:** عمود 48 خُزِّن على الـ parent. كان 10,002 من 10,970 «قسط» مجرد balance-only noise (غالبًا 0 على الكاش) ⇒ الأقساط الحقيقية **968 فقط** (شرط وجود القسط = أي من sales_man/months/paid_or_not/amount/pay_date/note؛ يستبعد department+balance).
 - **API** (`/api/cs-sales-register`، **admin فقط** `requireRole('admin')`): `GET /list` (pagination + فلاتر + `COUNT(*) OVER()`) · `GET /options` (distinct للقوائم) · `GET /:id` (+الأقساط) · `POST /` · `PUT /:id` (replace-all للأقساط) · `DELETE /:id` (cascade) · **`POST /import`** (رفع CSV multipart، لمرة واحدة، محمي بحارس `source='sheet'` موجود + `wipe=1` لإعادة الرفع).
 - **الهجرة:** منطق موحَّد في `services/salesRegisterImport.service.js` يستخدمه CLI (`scripts/import-sales-register.js`) **و** زر «رفع CSV» في الصفحة. كل صف غير فارغ يُدخَل (10,008)، 206 صف فارغ/فاصل متخطّى، `raw_json` يحفظ الأصل = هجرة أمينة 100%. الترويسة = أول صف فيه `Code`+`Client Name` (السطر الرابع).
-- **الفرونت:** `ClientSalesRegister.jsx` على `/admin/sales-register` (+لينك «كشف العملاء» في السايدبار). فورم بقوائم `datalist` (اختيار موجود أو كتابة جديد) + أقساط ديناميكية + زر رفع CSV (يعرض ملخص + يطلب «استبدال» لو مرفوع قبل كده).
+- **الفرونت:** `ClientSalesRegister.jsx` على `/admin/sales-register` (+لينك «كشف العملاء» في السايدبار). فورم بقوائم `datalist` (اختيار موجود أو كتابة جديد) + أقساط ديناميكية + زر رفع CSV (يعرض ملخص + يطلب «استبدال» لو مرفوع قبل كده). **مهم (React Query v5):** الـ`onSuccess`/`onError` اتشالوا من `useQuery` — فورم التعديل يُملأ من `useEffect` على `data` مش `onSuccess` (الكولباك ده شغّال على `useMutation` بس). + مولّد الحقول `F` **يُنادى كدالة `{F({...})}` لا `<F/>`** (تعريفه جوه الكومبوننت، فـ`<F/>` بيعمل remount + فقدان focus كل ضغطة).
+- **تنظيف القيم + قوائم ثابتة (2026-06-20):** توحيد البراند وحالة الدفع (قرار Owner): (1) **migration لمرة واحدة idempotent** في `app.js`: `pages` `Daradasha`+`daradasha`→**`Dardasha`** (370؛ **`Daradasha AUE` براند منفصل يفضل**)، و`paid_status`→ 3 قيم بس **`Paid`** (9,987) / **`Not Paid`** (21) / **`Fake`** (5) (الـ2 الفاضيين يفضلوا)؛ (2) **قوائم `<select>` ثابتة** في الفرونت للبراند (`BRANDS`) وحالة الدفع (`PAID_STATUSES`) — فورم + فلاتر — تمنع إدخال variant جديد؛ (3) **normalizer دفاعي** في الـ backend (`normPages`/`normPaid` في `saleValues`) عند POST/PUT. متحقَّق على snapshot حيّ.
+
+### العضويات وأسعارها (`cs_membership_prices`) — تسعير يدوي per-brand (2026-06-20)
+- صفحة أدمن جديدة `/admin/membership-prices` (لينك «العضويات وأسعارها» جنب «كشف العملاء»). **سعران منفصلان لكل عضوية**: `price_ahmed_hassan` + `price_dardasha` (أسعار Ahmed Hassan تختلف عن Dardasha — قرار Owner). جدول `cs_membership_prices` (`code` UNIQUE) في `app.js`.
+- API `/api/membership-prices` (**admin فقط**): `GET /list?q` · `POST /` (409 لو الكود مكرر) · `PUT /:id` · `DELETE /:id` · **`POST /seed`** (يملأ من `DISTINCT courses` في `cs_sales_register` بـ `INSERT OR IGNORE` = يضيف الجديد بس، فحذف عضوية وإعادة الـ seed ما يرجّعهاش). متحقَّق حيّ: seed=198، إعادة seed=0، CRUD+dup-guard تمام. `MembershipPrices.jsx`. الأسعار إدخال يدوي (أساس للربط التلقائي بالكود لاحقًا).
 
 ### أمان
 - أي endpoint يأخذ قيمًا من `req.query`/`req.body` في SQL لازم **parameterized** (`?` + bind). (مثال: ثغرة `GET /api/team` التي أُصلحت.)
@@ -250,6 +255,7 @@ node -e "
 | تسليمات الأقسام / Enrollment / التوزيع | `/api/cs*`, `/api/enrollment*`, `/api/distribution*` (services: `csDeliveries`, `csEnrollment`, `csClientPlan`...) |
 | المرتبات / المالية | `/api/trainer-salaries*`, `/api/finance*`, `/api/clients-finance*` |
 | سجل العملاء (كشف العملاء) `ClientSalesRegister.jsx` | `/api/cs-sales-register/{list,options,import,:id}` (service: `salesRegisterImport`) |
+| العضويات وأسعارها `MembershipPrices.jsx` | `/api/membership-prices/{list,seed,:id}` |
 
 ---
 

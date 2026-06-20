@@ -79,9 +79,39 @@ const NUMERIC_FIELDS = new Set([
   'khaled_deduction', 'total_price', 'total_paid_same_month', 'balance',
 ]);
 
+// Canonical fixed lists (mirror the frontend <select>s). We normalize on save
+// so a stray API value can never re-introduce the case/spacing variants we
+// cleaned up (Daradasha/daradasha → Dardasha; paid/Paid → Paid; …).
+// NOTE: "Daradasha AUE" is intentionally a DISTINCT brand (owner decision).
+const BRANDS = ['Ahmed Hassan', 'Dardasha', 'Go English', 'Work Shop Offline', 'Daradasha AUE'];
+const PAID_STATUSES = ['Paid', 'Not Paid', 'Fake'];
+
+function normPages(v) {
+  const s = str(v);
+  if (s === null) return null;
+  const low = s.toLowerCase();
+  if (low === 'daradasha aue' || low === 'dardasha aue') return 'Daradasha AUE';
+  if (low === 'daradasha' || low === 'dardasha') return 'Dardasha';
+  const hit = BRANDS.find(b => b.toLowerCase() === low);
+  return hit || s; // unknown brand kept as-is (admin may add a new one)
+}
+function normPaid(v) {
+  const s = str(v);
+  if (s === null) return null;
+  const low = s.toLowerCase();
+  if (low === 'paid') return 'Paid';
+  if (low === 'not paid') return 'Not Paid';
+  if (low === 'fake') return 'Fake';
+  return s;
+}
+
 // Build the bind values for SALE_FIELDS from a request body.
 function saleValues(body) {
-  return SALE_FIELDS.map(f => (NUMERIC_FIELDS.has(f) ? num(body[f]) : str(body[f])));
+  return SALE_FIELDS.map(f => {
+    if (f === 'pages')       return normPages(body[f]);
+    if (f === 'paid_status') return normPaid(body[f]);
+    return NUMERIC_FIELDS.has(f) ? num(body[f]) : str(body[f]);
+  });
 }
 
 // Normalize one installment object from the request body. (Balance lives on the

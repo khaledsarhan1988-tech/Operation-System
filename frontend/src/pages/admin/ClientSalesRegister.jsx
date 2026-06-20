@@ -29,6 +29,12 @@ const EMPTY_FORM = {
 };
 const EMPTY_INST = { sales_man: '', department: '', months: '', paid_or_not: '', amount: '', pay_date: '', note: '' };
 
+// Fixed controlled vocabularies (mirror the backend normalizer). Using <select>
+// for these two makes it impossible to re-introduce spelling/case variants.
+// "Daradasha AUE" is a DISTINCT brand from "Dardasha" (owner decision).
+const BRANDS = ['Ahmed Hassan', 'Dardasha', 'Go English', 'Work Shop Offline', 'Daradasha AUE'];
+const PAID_STATUSES = ['Paid', 'Not Paid', 'Fake'];
+
 // ─── FORM MODAL (create / edit) ───────────────────────────────────────────────
 function SaleFormModal({ open, editId, options, onClose, onSaved }) {
   const isEdit = !!editId;
@@ -81,25 +87,39 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
 
   const opt = (k) => options?.[k] || [];
 
-  // Field renderer — `list` enables a datalist (pick existing or type new).
+  // Field renderer — `list` enables a datalist (pick existing or type new);
+  // `select` (a fixed array) renders a hard <select> instead (no free text).
   // IMPORTANT: call this as a function — {F({...})} — NOT as <F/>. Rendering it
   // as a component would give it a fresh identity each render (it's defined
   // inside SaleFormModal) and remount the input on every keystroke, losing
   // focus. Calling it inlines plain host elements, so focus is preserved.
-  const F = ({ k, label, type = 'text', list, span = 1 }) => (
+  const F = ({ k, label, type = 'text', list, select, span = 1 }) => (
     <div className={span === 2 ? 'sm:col-span-2' : span === 4 ? 'sm:col-span-2 lg:col-span-4' : ''}>
       <label className="block text-[11px] font-bold text-gray-500 mb-1">{label}</label>
-      <input
-        type={type}
-        value={form[k] ?? ''}
-        onChange={(e) => set(k, e.target.value)}
-        list={list ? `dl-${k}` : undefined}
-        className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none"
-      />
-      {list && (
-        <datalist id={`dl-${k}`}>
-          {opt(list).map(v => <option key={v} value={v} />)}
-        </datalist>
+      {select ? (
+        <select
+          value={form[k] ?? ''}
+          onChange={(e) => set(k, e.target.value)}
+          className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none"
+        >
+          <option value="">—</option>
+          {select.map(v => <option key={v} value={v}>{v}</option>)}
+        </select>
+      ) : (
+        <>
+          <input
+            type={type}
+            value={form[k] ?? ''}
+            onChange={(e) => set(k, e.target.value)}
+            list={list ? `dl-${k}` : undefined}
+            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none"
+          />
+          {list && (
+            <datalist id={`dl-${k}`}>
+              {opt(list).map(v => <option key={v} value={v} />)}
+            </datalist>
+          )}
+        </>
       )}
     </div>
   );
@@ -140,8 +160,8 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                   {F({ k: 'price', label: 'السعر (Price)', type: 'number' })}
                   {F({ k: 'months', label: 'الشهر (Months)', list: 'months' })}
                   {F({ k: 'payment_way', label: 'طريقة الدفع', list: 'payment_ways' })}
-                  {F({ k: 'paid_status', label: 'حالة الدفع', list: 'paid_statuses' })}
-                  {F({ k: 'pages', label: 'البراند (Pages)', list: 'pages' })}
+                  {F({ k: 'paid_status', label: 'حالة الدفع', select: PAID_STATUSES })}
+                  {F({ k: 'pages', label: 'البراند (Pages)', select: BRANDS })}
                   {F({ k: 'shift', label: 'الفترة (Shift)', list: 'shifts' })}
                   {F({ k: 'groups', label: 'المجموعة (Groups)' })}
                 </div>
@@ -473,16 +493,16 @@ export default function ClientSalesRegister() {
           {[
             ['department', 'كل الأقسام', 'departments'],
             ['payment_way', 'كل طرق الدفع', 'payment_ways'],
-            ['paid_status', 'كل حالات الدفع', 'paid_statuses'],
-            ['pages', 'كل البراندات', 'pages'],
+            ['paid_status', 'كل حالات الدفع', null, PAID_STATUSES],
+            ['pages', 'كل البراندات', null, BRANDS],
             ['courses', 'كل الكورسات', 'courses'],
             ['agent', 'كل الموظفين', 'agents'],
             ['source', 'كل المصادر', 'sources'],
-          ].map(([k, ph, optKey]) => (
+          ].map(([k, ph, optKey, fixed]) => (
             <select key={k} value={filters[k]} onChange={(e) => update(k, e.target.value)}
               className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none">
               <option value="">{ph}</option>
-              {(options?.[optKey] || []).map(v => <option key={v} value={v}>{v}</option>)}
+              {(fixed || options?.[optKey] || []).map(v => <option key={v} value={v}>{v}</option>)}
             </select>
           ))}
           <div className="relative">

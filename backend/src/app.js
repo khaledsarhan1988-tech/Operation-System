@@ -2866,8 +2866,34 @@ initDb().then(db => {
       )
     `);
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_sales_inst_sale ON cs_sales_installments(sale_id)`);
+
+    // ── one-time value normalization (idempotent — re-running matches nothing) ─
+    // Brand (pages): merge the two Dardasha spellings → "Dardasha" (the system
+    // Line name). "Daradasha AUE" is a DISTINCT brand and is left untouched.
+    db._raw.run(`UPDATE cs_sales_register SET pages='Dardasha' WHERE pages IN ('Daradasha','daradasha')`);
+    // Paid status → exactly 3 canonical values (case/spacing variants merged).
+    db._raw.run(`UPDATE cs_sales_register SET paid_status='Paid'     WHERE paid_status IN ('paid','Paid')`);
+    db._raw.run(`UPDATE cs_sales_register SET paid_status='Not Paid' WHERE paid_status IN ('Not Paid','Not paid','not paid','NOT PAID')`);
+    db._raw.run(`UPDATE cs_sales_register SET paid_status='Fake'     WHERE paid_status IN ('Fake','fake','FAKE')`);
+
+    // ── cs_membership_prices: «العضويات وأسعارها» — manual per-brand pricing ───
+    // Two prices per membership (Ahmed Hassan vs Dardasha differ). `code` is the
+    // course/membership code (seeded from distinct cs_sales_register.courses).
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS cs_membership_prices (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        code                 TEXT NOT NULL UNIQUE,
+        price_ahmed_hassan   REAL,
+        price_dardasha       REAL,
+        months               TEXT,
+        note                 TEXT,
+        created_at           TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        updated_at           TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+      )
+    `);
+
     saveNow();
-    console.log('✅ Migration: cs_sales_register + cs_sales_installments tables ready');
+    console.log('✅ Migration: cs_sales_register + cs_sales_installments + cs_membership_prices tables ready');
   } catch (e) {
     console.error('cs_sales_register migration error:', e.message);
   }
@@ -3030,6 +3056,7 @@ initDb().then(db => {
   app.use('/api/clients-finance',    require('./routes/clients-finance.routes'));
   app.use('/api/cs',                 require('./routes/cs.routes'));
   app.use('/api/cs-sales-register',  require('./routes/cs-sales-register.routes'));
+  app.use('/api/membership-prices',  require('./routes/membership-prices.routes'));
   // Read-only data export (API-key gated; disabled unless DATA_EXPORT_API_KEY set)
   app.use('/api/data-export',        require('./routes/data-export.routes'));
 
