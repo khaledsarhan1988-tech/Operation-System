@@ -50,28 +50,28 @@ function discountAmount(discountStr, price) {
 }
 
 // Totals logic (owner spec).
-//   Subscription: paid = sum of installments (when any) or the manual cash
-//   figure; balance = (membership price − discount) − paid.
-//   Upgrade rows (isUpgrade): the installments are the UPGRADE payments, so the
-//   subscription paid is the manual figure, the upgrade paid = installments sum,
-//   and upgrade balance = new price − (subscription paid + upgrade paid).
-// Discount may be a % of the price or a plain amount.
+//   The membership is whatever the customer ended up on: a normal row uses
+//   `courses`/`price`; an UPGRADE row uses the NEW membership (`new_courses`/
+//   `new_prices`) — the original course is just kept as "started with".
+//   ALL the customer's money counts toward that final membership:
+//     normal  → paid = sum of installments (when any) or the manual figure
+//     upgrade → paid = manual subscription payment + the upgrade installments
+//   balance = (effective price − discount) − total paid.
+//   Discount is offer_individual on upgrades (e.g. migrated "-250"), else the
+//   `discount` field; either may be a % of the price or a plain amount; only
+//   its magnitude matters.
 function calcPaidBalance(form, installments, isUpgrade = false) {
   const hasInst = installments.some(i => i.amount !== '' && i.amount != null);
   const instSum = installments.reduce((s, i) => s + (Number(i.amount) || 0), 0);
   const manual = (form.total_paid_same_month === '' || form.total_paid_same_month == null)
     ? null : Number(form.total_paid_same_month);
-  const price = Number(form.price) || 0;
-  const discount = discountAmount(form.discount, price);
-  const paid = isUpgrade ? (manual || 0) : (hasInst ? instSum : (manual || 0));
-  const balance = (price - discount) - paid;
-  const upgPaid = isUpgrade ? instSum : 0;
+  const subPrice = Number(form.price) || 0;
   const newPrice = Number(String(form.new_prices ?? '').replace(/,/g, '')) || 0;
-  // Upgrade discount lives in offer_individual (migrated rows hold it, e.g. "-250").
-  // Magnitude only — a discount always reduces, regardless of stored sign.
-  const upgDiscount = isUpgrade ? Math.abs(discountAmount(form.offer_individual, newPrice)) : 0;
-  const upgBalance = newPrice - upgDiscount - (paid + upgPaid);
-  return { hasInst, instSum, paid, discount, balance, upgPaid, upgDiscount, upgBalance, newPrice };
+  const effPrice = isUpgrade ? newPrice : subPrice;
+  const discount = Math.abs(discountAmount(isUpgrade ? form.offer_individual : form.discount, effPrice));
+  const totalPaid = isUpgrade ? ((manual || 0) + instSum) : (hasInst ? instSum : (manual || 0));
+  const balance = (effPrice - discount) - totalPaid;
+  return { hasInst, instSum, manual: manual || 0, effPrice, discount, totalPaid, balance };
 }
 
 // ─── FORM MODAL (create / edit) ───────────────────────────────────────────────
@@ -249,7 +249,17 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                 </div>
               )}
 
-              <SectionCard title="بيانات العملية" icon={CreditCard} accent="emerald">
+              <SectionCard
+                title="بيانات العملية"
+                icon={CreditCard}
+                accent="emerald"
+                actions={
+                  <label className="inline-flex items-center gap-2 text-xs font-bold text-violet-700 cursor-pointer">
+                    <input type="checkbox" checked={isUpgrade} onChange={(e) => setIsUpgrade(e.target.checked)} className="w-4 h-4" />
+                    العميل عمل ترقية (Upgrade)
+                  </label>
+                }
+              >
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                   {F({ k: 'code', label: 'الكود (Code)' })}
                   {F({ k: 'entry_date', label: 'التاريخ (Data)' })}
@@ -257,8 +267,13 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                   {F({ k: 'mobile_no', label: 'الموبايل' })}
                   {F({ k: 'agent_name', label: 'الموظف (Agent)', list: 'agents' })}
                   {F({ k: 'department', label: 'القسم (Department)', list: 'departments' })}
-                  {F({ k: 'courses', label: 'الكورس (Courses)', select: courseOptions, onChange: applyCourse })}
-                  {F({ k: 'price', label: 'السعر (Price)', type: 'number' })}
+                  {isUpgrade
+                    ? F({ k: 'new_courses', label: 'العضوية الحالية (Courses)', select: newCourseOptions, onChange: applyNewCourse })
+                    : F({ k: 'courses', label: 'الكورس (Courses)', select: courseOptions, onChange: applyCourse })}
+                  {isUpgrade
+                    ? F({ k: 'new_prices', label: 'السعر (Price)', type: 'number' })
+                    : F({ k: 'price', label: 'السعر (Price)', type: 'number' })}
+                  {isUpgrade && F({ k: 'courses', label: 'بدأ بـ (الكورس الأصلي)', select: courseOptions, onChange: applyCourse })}
                   {F({ k: 'months', label: 'الشهر (Months)', list: 'months' })}
                   {F({ k: 'payment_way', label: 'طريقة الدفع', list: 'payment_ways' })}
                   {F({ k: 'paid_status', label: 'حالة الدفع', select: PAID_STATUSES })}
@@ -270,14 +285,14 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
 
               <SectionCard title="الإجماليات والخصومات" icon={DollarSign} accent="amber">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {/* Total Paid From Customer — manual for cash/upgrade subscription;
-                      auto-sum of installments for a non-upgrade installment plan. */}
+                  {/* Amount paid: for an upgrade this is the first/subscription payment;
+                      for a non-upgrade installment plan it auto-sums the installments. */}
                   {(() => {
-                    const autoPaid = !isUpgrade && totals.hasInst; // installments = the payment plan
+                    const autoPaid = !isUpgrade && totals.hasInst;
                     return (
                   <div>
                     <label className="block text-[11px] font-bold text-gray-500 mb-1">
-                      المبلغ المدفوع من العميل{isUpgrade ? ' (للاشتراك)' : ''}{autoPaid ? ' — مجموع الأقساط (تلقائي)' : ''}
+                      {isUpgrade ? 'المدفوع (الدفعة الأولى)' : 'المبلغ المدفوع من العميل'}{autoPaid ? ' — مجموع الأقساط (تلقائي)' : ''}
                     </label>
                     <input
                       type="number"
@@ -289,20 +304,28 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                   </div>
                     );
                   })()}
-                  {/* Discount — accepts a percentage ("10%") or a plain amount */}
+                  {/* Total paid (read-only) — shown when there are extra payments / installments */}
+                  {(isUpgrade || totals.hasInst) && (
+                    <div>
+                      <label className="block text-[11px] font-bold text-gray-500 mb-1">إجمالي المدفوع — تلقائي</label>
+                      <input type="number" value={totals.totalPaid} readOnly
+                        className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-100 text-gray-700 outline-none" />
+                    </div>
+                  )}
+                  {/* Discount — offer_individual on an upgrade, else the discount field; % or amount */}
                   <div>
                     <label className="block text-[11px] font-bold text-gray-500 mb-1">
                       Discount (مبلغ أو %){totals.discount > 0 ? ` — خصم ${totals.discount.toLocaleString('en-US', { maximumFractionDigits: 2 })}` : ''}
                     </label>
                     <input
                       type="text"
-                      value={form.discount ?? ''}
-                      onChange={(e) => set('discount', e.target.value)}
+                      value={(isUpgrade ? form.offer_individual : form.discount) ?? ''}
+                      onChange={(e) => set(isUpgrade ? 'offer_individual' : 'discount', e.target.value)}
                       placeholder="مثال: 1000 أو 10%"
                       className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none"
                     />
                   </div>
-                  {/* Balance — auto = (membership price − discount) − amount paid (read-only) */}
+                  {/* Balance — auto = (effective price − discount) − total paid (read-only) */}
                   <div>
                     <label className="block text-[11px] font-bold text-gray-500 mb-1">Balance (الرصيد المتبقي) — تلقائي</label>
                     <input
@@ -313,66 +336,6 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                     />
                   </div>
                 </div>
-              </SectionCard>
-
-              {/* Upgrade — shown when the customer upgraded to a higher membership */}
-              <SectionCard
-                title="الترقية (Upgrade)"
-                icon={Tag}
-                accent="violet"
-                actions={
-                  <label className="inline-flex items-center gap-2 text-xs font-bold text-violet-700 cursor-pointer">
-                    <input type="checkbox" checked={isUpgrade} onChange={(e) => setIsUpgrade(e.target.checked)} className="w-4 h-4" />
-                    العميل عمل ترقية
-                  </label>
-                }
-              >
-                {!isUpgrade ? (
-                  <p className="text-center text-sm text-gray-400 py-3">مفيش ترقية — فعّل «العميل عمل ترقية» لو رقّى لباقة أعلى.</p>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                    {/* New course (membership dropdown → auto new price) */}
-                    <div>
-                      <label className="block text-[11px] font-bold text-gray-500 mb-1">الكورس الجديد (New Courses)</label>
-                      <select
-                        value={form.new_courses ?? ''}
-                        onChange={(e) => applyNewCourse(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-violet-200 focus:border-violet-400 outline-none"
-                      >
-                        <option value="">—</option>
-                        {newCourseOptions.map(v => <option key={v} value={v}>{v}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-gray-500 mb-1">السعر الجديد (New Prices)</label>
-                      <input type="number" value={form.new_prices ?? ''} onChange={(e) => set('new_prices', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-violet-200 focus:border-violet-400 outline-none" />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-gray-500 mb-1">تاريخ الترقية (Date)</label>
-                      <input type="text" value={form.installment_date ?? ''} onChange={(e) => set('installment_date', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-violet-200 focus:border-violet-400 outline-none" />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-gray-500 mb-1">المدفوع في الترقية — من الأقساط (تلقائي)</label>
-                      <input type="number" value={totals.upgPaid} readOnly
-                        className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-100 text-gray-600 outline-none" />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-gray-500 mb-1">
-                        خصم الترقية (مبلغ أو %){totals.upgDiscount > 0 ? ` — خصم ${totals.upgDiscount.toLocaleString('en-US', { maximumFractionDigits: 2 })}` : ''}
-                      </label>
-                      <input type="text" value={form.offer_individual ?? ''} onChange={(e) => set('offer_individual', e.target.value)}
-                        placeholder="مثال: 250 أو 5%"
-                        className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-violet-200 focus:border-violet-400 outline-none" />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-gray-500 mb-1">رصيد الترقية — تلقائي</label>
-                      <input type="number" value={totals.upgBalance} readOnly
-                        className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-100 text-gray-800 font-bold outline-none" />
-                    </div>
-                  </div>
-                )}
               </SectionCard>
 
               {/* Installments */}
