@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Users, Search, Calendar, Filter, X, ChevronLeft, ChevronRight,
@@ -36,26 +36,30 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
   const [installments, setInstallments] = useState([]);
   const [error, setError] = useState('');
 
-  // Load the row being edited.
-  const { isLoading: loadingRow } = useQuery({
+  // Load the row being edited. (React Query v5 removed onSuccess on useQuery —
+  // we read `data` and populate via useEffect below.)
+  const { data: rowData, isLoading: loadingRow } = useQuery({
     queryKey: ['cs-sales', 'one', editId],
     queryFn: () => api.get(`/cs-sales-register/${editId}`).then(r => r.data),
     enabled: open && isEdit,
-    onSuccess: (data) => {
-      const s = data.sale || {};
+  });
+
+  // Populate the form: edit → from the fetched row once it arrives; add → blank.
+  useEffect(() => {
+    if (!open) return;
+    if (isEdit) {
+      if (!rowData) return; // wait for the fetch
+      const s = rowData.sale || {};
       setForm({ ...EMPTY_FORM, ...Object.fromEntries(Object.keys(EMPTY_FORM).map(k => [k, s[k] ?? ''])) });
-      setInstallments((data.installments || []).map(i => ({
+      setInstallments((rowData.installments || []).map(i => ({
         sales_man: i.sales_man ?? '', department: i.department ?? '', months: i.months ?? '',
         paid_or_not: i.paid_or_not ?? '', amount: i.amount ?? '', pay_date: i.pay_date ?? '',
         note: i.note ?? '',
       })));
-    },
-  });
-
-  // Reset when opening a fresh "add".
-  useMemo(() => {
-    if (open && !isEdit) { setForm(EMPTY_FORM); setInstallments([]); setError(''); }
-  }, [open, isEdit]);
+    } else {
+      setForm(EMPTY_FORM); setInstallments([]); setError('');
+    }
+  }, [open, isEdit, editId, rowData]);
 
   const save = useMutation({
     mutationFn: () => {
@@ -78,6 +82,10 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
   const opt = (k) => options?.[k] || [];
 
   // Field renderer — `list` enables a datalist (pick existing or type new).
+  // IMPORTANT: call this as a function — {F({...})} — NOT as <F/>. Rendering it
+  // as a component would give it a fresh identity each render (it's defined
+  // inside SaleFormModal) and remount the input on every keystroke, losing
+  // focus. Calling it inlines plain host elements, so focus is preserved.
   const F = ({ k, label, type = 'text', list, span = 1 }) => (
     <div className={span === 2 ? 'sm:col-span-2' : span === 4 ? 'sm:col-span-2 lg:col-span-4' : ''}>
       <label className="block text-[11px] font-bold text-gray-500 mb-1">{label}</label>
@@ -122,46 +130,46 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
 
               <SectionCard title="بيانات العملية" icon={CreditCard} accent="emerald">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  <F k="code" label="الكود (Code)" />
-                  <F k="entry_date" label="التاريخ (Data)" />
-                  <F k="client_name" label="اسم العميل" span={2} />
-                  <F k="mobile_no" label="الموبايل" />
-                  <F k="agent_name" label="الموظف (Agent)" list="agents" />
-                  <F k="department" label="القسم (Department)" list="departments" />
-                  <F k="courses" label="الكورس (Courses)" list="courses" />
-                  <F k="price" label="السعر (Price)" type="number" />
-                  <F k="months" label="الشهر (Months)" list="months" />
-                  <F k="payment_way" label="طريقة الدفع" list="payment_ways" />
-                  <F k="paid_status" label="حالة الدفع" list="paid_statuses" />
-                  <F k="pages" label="البراند (Pages)" list="pages" />
-                  <F k="shift" label="الفترة (Shift)" list="shifts" />
-                  <F k="groups" label="المجموعة (Groups)" />
+                  {F({ k: 'code', label: 'الكود (Code)' })}
+                  {F({ k: 'entry_date', label: 'التاريخ (Data)' })}
+                  {F({ k: 'client_name', label: 'اسم العميل', span: 2 })}
+                  {F({ k: 'mobile_no', label: 'الموبايل' })}
+                  {F({ k: 'agent_name', label: 'الموظف (Agent)', list: 'agents' })}
+                  {F({ k: 'department', label: 'القسم (Department)', list: 'departments' })}
+                  {F({ k: 'courses', label: 'الكورس (Courses)', list: 'courses' })}
+                  {F({ k: 'price', label: 'السعر (Price)', type: 'number' })}
+                  {F({ k: 'months', label: 'الشهر (Months)', list: 'months' })}
+                  {F({ k: 'payment_way', label: 'طريقة الدفع', list: 'payment_ways' })}
+                  {F({ k: 'paid_status', label: 'حالة الدفع', list: 'paid_statuses' })}
+                  {F({ k: 'pages', label: 'البراند (Pages)', list: 'pages' })}
+                  {F({ k: 'shift', label: 'الفترة (Shift)', list: 'shifts' })}
+                  {F({ k: 'groups', label: 'المجموعة (Groups)' })}
                 </div>
               </SectionCard>
 
               <SectionCard title="الإجماليات والخصومات" icon={DollarSign} accent="amber">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  <F k="total_price" label="Total Price" type="number" />
-                  <F k="total_paid_same_month" label="Total Paid In Same Months" type="number" />
-                  <F k="discount" label="Discount" />
-                  <F k="offer_individual" label="Offer Individual" />
-                  <F k="chrismss_discount_ah" label="Chrismss Discount Ahmed Hassan" type="number" />
-                  <F k="chrismss_discount_dar" label="Chrismss Discount Dardasha" type="number" />
-                  <F k="refund_deduction" label="Amount Deduction For Refund" type="number" />
-                  <F k="khaled_deduction" label="Dedecutin From Khaled Only" type="number" />
-                  <F k="new_prices" label="New Prices" />
-                  <F k="new_courses" label="New Courses" />
-                  <F k="balance" label="Balance (الرصيد المتبقي)" type="number" />
+                  {F({ k: 'total_price', label: 'Total Price', type: 'number' })}
+                  {F({ k: 'total_paid_same_month', label: 'Total Paid In Same Months', type: 'number' })}
+                  {F({ k: 'discount', label: 'Discount' })}
+                  {F({ k: 'offer_individual', label: 'Offer Individual' })}
+                  {F({ k: 'chrismss_discount_ah', label: 'Chrismss Discount Ahmed Hassan', type: 'number' })}
+                  {F({ k: 'chrismss_discount_dar', label: 'Chrismss Discount Dardasha', type: 'number' })}
+                  {F({ k: 'refund_deduction', label: 'Amount Deduction For Refund', type: 'number' })}
+                  {F({ k: 'khaled_deduction', label: 'Dedecutin From Khaled Only', type: 'number' })}
+                  {F({ k: 'new_prices', label: 'New Prices' })}
+                  {F({ k: 'new_courses', label: 'New Courses' })}
+                  {F({ k: 'balance', label: 'Balance (الرصيد المتبقي)', type: 'number' })}
                 </div>
               </SectionCard>
 
               <SectionCard title="الحالة والملاحظات" icon={Filter} accent="cyan">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  <F k="noted1" label="Noted #1" />
-                  <F k="noted2" label="Noted #2" list="noted" />
-                  <F k="tamkeen" label="Tamkeen" list="tamkeen" />
-                  <F k="installment_date" label="تاريخ القسط (Date)" />
-                  <F k="note" label="Note" span={4} />
+                  {F({ k: 'noted1', label: 'Noted #1' })}
+                  {F({ k: 'noted2', label: 'Noted #2', list: 'noted' })}
+                  {F({ k: 'tamkeen', label: 'Tamkeen', list: 'tamkeen' })}
+                  {F({ k: 'installment_date', label: 'تاريخ القسط (Date)' })}
+                  {F({ k: 'note', label: 'Note', span: 4 })}
                 </div>
               </SectionCard>
 
