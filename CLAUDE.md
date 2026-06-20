@@ -175,8 +175,9 @@ node -e "
 - **تنظيف القيم + قوائم ثابتة (2026-06-20):** توحيد البراند وحالة الدفع (قرار Owner): (1) **migration لمرة واحدة idempotent** في `app.js`: `pages` `Daradasha`+`daradasha`→**`Dardasha`** (370؛ **`Daradasha AUE` براند منفصل يفضل**)، و`paid_status`→ 3 قيم بس **`Paid`** (9,987) / **`Not Paid`** (21) / **`Fake`** (5) (الـ2 الفاضيين يفضلوا)؛ (2) **قوائم `<select>` ثابتة** في الفرونت للبراند (`BRANDS`) وحالة الدفع (`PAID_STATUSES`) — فورم + فلاتر — تمنع إدخال variant جديد؛ (3) **normalizer دفاعي** في الـ backend (`normPages`/`normPaid` في `saleValues`) عند POST/PUT. متحقَّق على snapshot حيّ.
 
 ### العضويات وأسعارها (`cs_membership_prices`) — تسعير يدوي per-brand (2026-06-20)
-- صفحة أدمن جديدة `/admin/membership-prices` (لينك «العضويات وأسعارها» جنب «كشف العملاء»). **سعران منفصلان لكل عضوية**: `price_ahmed_hassan` + `price_dardasha` (أسعار Ahmed Hassan تختلف عن Dardasha — قرار Owner). جدول `cs_membership_prices` (`code` UNIQUE) في `app.js`.
-- API `/api/membership-prices` (**admin فقط**): `GET /list?q` · `POST /` (409 لو الكود مكرر) · `PUT /:id` · `DELETE /:id` · **`POST /seed`** (يملأ من `DISTINCT courses` في `cs_sales_register` بـ `INSERT OR IGNORE` = يضيف الجديد بس، فحذف عضوية وإعادة الـ seed ما يرجّعهاش). متحقَّق حيّ: seed=198، إعادة seed=0، CRUD+dup-guard تمام. `MembershipPrices.jsx`. الأسعار إدخال يدوي (أساس للربط التلقائي بالكود لاحقًا).
+- **تبويب جوه صفحة «كشف العملاء» (مش صفحة منفصلة) — قرار Owner صريح:** المستخدم طلبها «بجانب قائمة العمليات» داخل نفس الصفحة. الـ`ClientSalesRegister.jsx` فيه `view` toggle: تبويبان «قائمة العمليات» / «العضويات وأسعارها». المحتوى = `MembershipPricesSection.jsx` (section بلا PageHero). **لا يوجد لينك سايدبار ولا route مستقل** (اتشالوا بعد ما اتعملوا بالغلط أول مرة). [[feedback_no_changes_without_approval]] — اتنفّذ بالظبط زي ما اتوصف.
+- **سعران منفصلان لكل عضوية**: `price_ahmed_hassan` + `price_dardasha` (أسعار Ahmed Hassan تختلف عن Dardasha — قرار Owner). جدول `cs_membership_prices` (`code` UNIQUE) في `app.js`.
+- API `/api/membership-prices` (**admin فقط**): `GET /list?q` · `POST /` (409 لو الكود مكرر) · `PUT /:id` · `DELETE /:id` · **`POST /seed`** (يملأ من `DISTINCT courses` في `cs_sales_register` بـ `INSERT OR IGNORE` = يضيف الجديد بس، فحذف عضوية وإعادة الـ seed ما يرجّعهاش). متحقَّق حيّ: seed=198، إعادة seed=0، CRUD+dup-guard تمام. الأسعار إدخال يدوي (أساس للربط التلقائي بالكود لاحقًا).
 
 ### أمان
 - أي endpoint يأخذ قيمًا من `req.query`/`req.body` في SQL لازم **parameterized** (`?` + bind). (مثال: ثغرة `GET /api/team` التي أُصلحت.)
@@ -255,7 +256,7 @@ node -e "
 | تسليمات الأقسام / Enrollment / التوزيع | `/api/cs*`, `/api/enrollment*`, `/api/distribution*` (services: `csDeliveries`, `csEnrollment`, `csClientPlan`...) |
 | المرتبات / المالية | `/api/trainer-salaries*`, `/api/finance*`, `/api/clients-finance*` |
 | سجل العملاء (كشف العملاء) `ClientSalesRegister.jsx` | `/api/cs-sales-register/{list,options,import,:id}` (service: `salesRegisterImport`) |
-| العضويات وأسعارها `MembershipPrices.jsx` | `/api/membership-prices/{list,seed,:id}` |
+| العضويات وأسعارها (تبويب جوه كشف العملاء) `MembershipPricesSection.jsx` | `/api/membership-prices/{list,seed,:id}` |
 
 ---
 

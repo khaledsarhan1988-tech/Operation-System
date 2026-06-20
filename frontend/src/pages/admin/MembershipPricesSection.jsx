@@ -5,8 +5,10 @@ import {
   Download, DollarSign,
 } from 'lucide-react';
 import api from '../../api/axios';
-import PageHero from '../../components/ui/PageHero';
 import SectionCard from '../../components/ui/SectionCard';
+
+// «العضويات وأسعارها» as an embeddable SECTION (no PageHero) — rendered inside
+// the كشف العملاء page under its own tab, beside «قائمة العمليات».
 
 const EMPTY = { code: '', price_ahmed_hassan: '', price_dardasha: '', months: '', note: '' };
 
@@ -22,7 +24,6 @@ function FormModal({ open, row, onClose, onSaved }) {
   const [form, setForm] = useState(EMPTY);
   const [error, setError] = useState('');
 
-  // Sync local form whenever the modal target changes.
   const key = open ? (row?.id ?? 'new') : 'closed';
   const [syncedKey, setSyncedKey] = useState(null);
   if (open && syncedKey !== key) {
@@ -127,8 +128,8 @@ function DeleteConfirm({ row, onClose, onDeleted }) {
   );
 }
 
-// ─── PAGE ─────────────────────────────────────────────────────────────────────
-export default function MembershipPrices() {
+// ─── SECTION ──────────────────────────────────────────────────────────────────
+export default function MembershipPricesSection() {
   const qc = useQueryClient();
   const [q, setQ] = useState('');
   const [formOpen, setFormOpen] = useState(false);
@@ -141,7 +142,6 @@ export default function MembershipPrices() {
     queryFn: () => api.get('/membership-prices/list', { params: { q } }).then(r => r.data),
   });
   const rows = data?.rows || [];
-
   const afterMutate = () => qc.invalidateQueries({ queryKey: ['membership-prices'] });
 
   const seed = useMutation({
@@ -151,27 +151,7 @@ export default function MembershipPrices() {
   });
 
   return (
-    <div className="space-y-5" dir="rtl">
-      <PageHero
-        title="العضويات وأسعارها"
-        subtitle="أسعار يدوية لكل عضوية — سعر مستقل لكل من Ahmed Hassan و Dardasha"
-        icon={Tag}
-        gradient="violet"
-        actions={
-          <>
-            <button onClick={() => seed.mutate()} disabled={seed.isPending}
-              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-black text-fuchsia-700 bg-white hover:bg-fuchsia-50 rounded-xl transition shadow-sm disabled:opacity-50">
-              {seed.isPending ? <RefreshCw size={18} className="animate-spin" /> : <Download size={18} />} ملء من الأكواد
-            </button>
-            <button onClick={() => { setEditRow(null); setFormOpen(true); }}
-              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-black text-violet-700 bg-white hover:bg-violet-50 rounded-xl transition shadow-sm">
-              <Plus size={18} /> إضافة عضوية
-            </button>
-          </>
-        }
-        stats={[{ label: 'عدد العضويات', value: rows.length, icon: Tag }]}
-      />
-
+    <div className="space-y-4" dir="rtl">
       {seedMsg && (
         <div className="bg-fuchsia-50 border border-fuchsia-200 rounded-2xl p-3 flex items-center justify-between text-sm font-bold text-fuchsia-800">
           <span>{seedMsg}</span>
@@ -179,16 +159,33 @@ export default function MembershipPrices() {
         </div>
       )}
 
-      <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-4">
-        <div className="relative max-w-sm">
+      <SectionCard
+        title={`العضويات وأسعارها (${rows.length})`}
+        icon={Tag}
+        accent="violet"
+        actions={
+          <div className="flex items-center gap-2">
+            <button onClick={() => seed.mutate()} disabled={seed.isPending}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-fuchsia-700 bg-fuchsia-50 hover:bg-fuchsia-100 border border-fuchsia-200 rounded-lg transition disabled:opacity-50">
+              {seed.isPending ? <RefreshCw size={14} className="animate-spin" /> : <Download size={14} />} ملء من الأكواد
+            </button>
+            <button onClick={() => { setEditRow(null); setFormOpen(true); }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-violet-700 bg-violet-50 hover:bg-violet-100 border border-violet-200 rounded-lg transition">
+              <Plus size={14} /> إضافة عضوية
+            </button>
+            <button onClick={() => refetch()}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-gray-600 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg transition">
+              <RefreshCw size={14} /> تحديث
+            </button>
+          </div>
+        }
+      >
+        <div className="relative max-w-sm mb-4">
           <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
           <input type="text" placeholder="بحث بالكود..." value={q} onChange={(e) => setQ(e.target.value)}
             className="w-full pl-3 pr-9 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-violet-200 focus:border-violet-400 outline-none" />
         </div>
-      </div>
 
-      <SectionCard title="قائمة العضويات" icon={DollarSign} accent="violet"
-        actions={<button onClick={() => refetch()} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-violet-700 bg-violet-50 hover:bg-violet-100 border border-violet-200 rounded-lg transition"><RefreshCw size={14} /> تحديث</button>}>
         {isLoading ? (
           <div className="text-center py-10"><RefreshCw className="w-8 h-8 text-violet-500 animate-spin mx-auto" /></div>
         ) : rows.length === 0 ? (

@@ -64,7 +64,6 @@ import FinanceMatching from './pages/admin/FinanceMatching';
 import FinanceLifecycle from './pages/admin/FinanceLifecycle';
 import Clients from './pages/admin/Clients';
 import ClientSalesRegister from './pages/admin/ClientSalesRegister';
-import MembershipPrices from './pages/admin/MembershipPrices';
 
 // Subscription Tracker (cs_*) — standalone subsystem
 import CsMyClients from './pages/subscriptions/CsMyClients';
@@ -203,7 +202,6 @@ const router = createBrowserRouter([
       { path: 'finance/lifecycle',             element: <PrivateRoute superAdmin><FinanceLifecycle /></PrivateRoute> },
       { path: 'clients',                       element: <Clients /> },
       { path: 'sales-register',                element: <ClientSalesRegister /> },
-      { path: 'membership-prices',             element: <MembershipPrices /> },
     ],
   },
 

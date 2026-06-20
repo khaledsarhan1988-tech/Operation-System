@@ -3,11 +3,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Users, Search, Calendar, Filter, X, ChevronLeft, ChevronRight,
   Eye, RefreshCw, Plus, Pencil, Trash2, Save, CreditCard, Hash,
-  AlertTriangle, DollarSign, Upload, CheckCircle,
+  AlertTriangle, DollarSign, Upload, CheckCircle, Tag,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import SectionCard from '../../components/ui/SectionCard';
+import MembershipPricesSection from './MembershipPricesSection';
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 function fmtAmount(amount) {
@@ -421,6 +422,7 @@ export default function ClientSalesRegister() {
   const [editId, setEditId] = useState(null);
   const [deleteRow, setDeleteRow] = useState(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [view, setView] = useState('operations'); // 'operations' | 'memberships'
 
   const params = useMemo(() => {
     const p = { page: filters.page, limit: filters.limit };
@@ -466,7 +468,7 @@ export default function ClientSalesRegister() {
         subtitle="سجل مبيعات العملاء — إدخال ومتابعة العمليات داخل النظام"
         icon={Users}
         gradient="emerald"
-        actions={
+        actions={view === 'operations' ? (
           <>
             <button onClick={() => setImportOpen(true)}
               className="inline-flex items-center gap-2 px-4 py-2 text-sm font-black text-sky-700 bg-white hover:bg-sky-50 rounded-xl transition shadow-sm">
@@ -477,10 +479,27 @@ export default function ClientSalesRegister() {
               <Plus size={18} /> إضافة عملية
             </button>
           </>
-        }
+        ) : null}
         stats={[{ label: 'إجمالي العمليات', value: total, icon: Hash }]}
       />
 
+      {/* Tabs — switch between the operations list and the membership prices */}
+      <div className="flex items-center gap-2 bg-white rounded-2xl border border-gray-100 shadow-sm p-1.5 w-fit">
+        {[
+          ['operations', 'قائمة العمليات', CreditCard],
+          ['memberships', 'العضويات وأسعارها', Tag],
+        ].map(([key, label, Icon]) => (
+          <button key={key} onClick={() => setView(key)}
+            className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-black rounded-xl transition ${
+              view === key ? 'bg-emerald-600 text-white shadow' : 'text-gray-600 hover:bg-gray-100'
+            }`}>
+            <Icon size={16} /> {label}
+          </button>
+        ))}
+      </div>
+
+      {view === 'memberships' ? <MembershipPricesSection /> : (
+      <>
       {/* Filters */}
       <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-4 space-y-3">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -588,6 +607,8 @@ export default function ClientSalesRegister() {
       </SectionCard>
 
       <Pagination page={filters.page} pages={pages} total={total} onPageChange={(p) => setFilters(f => ({ ...f, page: p }))} />
+      </>
+      )}
 
       <SaleFormModal
         open={formOpen}
