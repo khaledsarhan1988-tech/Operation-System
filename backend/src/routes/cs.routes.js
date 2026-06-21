@@ -864,10 +864,14 @@ router.get('/enr-groups', requireRole('admin'), (req, res) => {
   try {
     const svc = require('../services/csEnrGroups.service');
     const result = svc.getEnrGroups({
-      dept:     (req.query.dept || '').trim(),
-      q:        (req.query.q || '').trim(),
-      page:     req.query.page,
-      pageSize: req.query.page_size,
+      dept:      (req.query.dept || '').trim(),
+      q:         (req.query.q || '').trim(),
+      firstFrom: (req.query.first_from || '').trim(),
+      firstTo:   (req.query.first_to || '').trim(),
+      lastFrom:  (req.query.last_from || '').trim(),
+      lastTo:    (req.query.last_to || '').trim(),
+      page:      req.query.page,
+      pageSize:  req.query.page_size,
     });
     res.json({ ok: true, ...result });
   } catch (e) {

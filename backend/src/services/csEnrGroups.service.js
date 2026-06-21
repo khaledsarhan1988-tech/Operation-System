@@ -118,13 +118,17 @@ function buildClientsByGroup() {
  *
  *   dept: 'General' | 'Private' | 'Semi'
  *   q:    free-text search on group code or coordinator
+ *   firstFrom/firstTo: filter on start_date (first lecture) range
+ *   lastFrom/lastTo:   filter on end_date (last lecture) range
  *   page, pageSize: pagination
  */
-function getEnrGroups({ dept, q, page, pageSize }) {
+function getEnrGroups({ dept, q, firstFrom, firstTo, lastFrom, lastTo, page, pageSize }) {
   if (!DEPTS.includes(dept)) throw new Error('Invalid dept (use General | Private | Semi)');
   page = Math.max(1, parseInt(page, 10) || 1);
   pageSize = Math.min(200, Math.max(5, parseInt(pageSize, 10) || 25));
   q = (q || '').trim();
+  firstFrom = (firstFrom || '').trim();  firstTo = (firstTo || '').trim();
+  lastFrom  = (lastFrom  || '').trim();  lastTo  = (lastTo  || '').trim();
 
   // Active groups in this dept, deduped by canonical key + line, placeholders out.
   const rows = db.prepare(`
@@ -172,6 +176,17 @@ function getEnrGroups({ dept, q, page, pageSize }) {
       String(it.coordinator || '').toLowerCase().includes(ql)
     );
   }
+
+  // Date-range filters (same dateInRange logic as csDeliveries). Each group has a
+  // single start_date / end_date, so a plain in-range check is enough.
+  const dateInRange = (d, from, to) => {
+    if (!d) return false;
+    if (from && d < from) return false;
+    if (to && d > to) return false;
+    return true;
+  };
+  if (firstFrom || firstTo) items = items.filter(it => dateInRange(it.start_date, firstFrom, firstTo));
+  if (lastFrom  || lastTo)  items = items.filter(it => dateInRange(it.end_date,   lastFrom,  lastTo));
 
   // Newest-started first, then by group code.
   items.sort((a, b) =>
