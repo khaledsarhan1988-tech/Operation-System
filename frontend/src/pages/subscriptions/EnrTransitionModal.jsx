@@ -36,8 +36,8 @@ export default function EnrTransitionModal({ group, onClose }) {
   const [nextName, nextLine] = nextGroup ? nextGroup.split('|') : ['', ''];
 
   const optionsQ = useQuery({
-    queryKey: ['enr-next-options', dept],
-    queryFn: () => api.get('/cs/enr-groups/next-options', { params: { dept } }).then(r => r.data),
+    queryKey: ['enr-next-options', dept, group.line],
+    queryFn: () => api.get('/cs/enr-groups/next-options', { params: { dept, line: group.line } }).then(r => r.data),
   });
   const txQ = useQuery({
     queryKey: ['enr-transition', group.group_name, group.line],

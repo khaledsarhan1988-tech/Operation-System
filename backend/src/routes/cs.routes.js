@@ -886,7 +886,7 @@ const enrTx = () => require('../services/csEnrTransition.service');
 
 /** Next-group options = active groups that haven't started (optionally per dept). */
 router.get('/enr-groups/next-options', requireRole('admin'), (req, res) => {
-  try { res.json({ ok: true, ...enrTx().getNextGroupOptions({ dept: req.query.dept }) }); }
+  try { res.json({ ok: true, ...enrTx().getNextGroupOptions({ dept: req.query.dept, line: req.query.line }) }); }
   catch (e) { console.error('GET /cs/enr-groups/next-options:', e.message); res.status(400).json({ ok: false, error: e.message }); }
 });
 

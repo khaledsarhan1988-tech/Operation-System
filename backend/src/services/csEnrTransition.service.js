@@ -57,16 +57,21 @@ const lectureCountStmt = () => db.prepare(`
 `);
 
 /**
- * Next-group options = ACTIVE groups (optionally in a dept) that have NOT started
- * (0 registered main lectures). Deduped, placeholders excluded.
+ * Next-group options = ACTIVE groups (optionally scoped to a dept AND a line) that
+ * have NOT started (0 registered main lectures). Deduped, placeholders excluded.
+ * Line scope keeps an Ahmed Hassan group's list to Ahmed Hassan groups (and same
+ * for Dardasha) — owner's decision 2026-06-21.
  */
-function getNextGroupOptions({ dept }) {
+function getNextGroupOptions({ dept, line }) {
   dept = (dept || '').trim();
-  const where = dept && DEPTS.includes(dept) ? `AND dept_type = ?` : '';
-  const args = dept && DEPTS.includes(dept) ? [dept] : [];
+  line = (line || '').trim();
+  const conds = [`status = 'نشطة'`];
+  const args = [];
+  if (dept && DEPTS.includes(dept)) { conds.push(`dept_type = ?`); args.push(dept); }
+  if (line) { conds.push(`line = ?`); args.push(line); }
   const rows = db.prepare(`
     SELECT group_name, line, dept_type, coordinators, start_date
-      FROM batches WHERE status = 'نشطة' ${where}
+      FROM batches WHERE ${conds.join(' AND ')}
   `).all(...args);
 
   const seen = new Map();
