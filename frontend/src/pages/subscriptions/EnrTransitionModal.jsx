@@ -24,6 +24,11 @@ const DISP_META = {
   unsuccessful: { label: 'غير ناجح',  cls: 'bg-rose-50 text-rose-700 border-rose-200' },
 };
 
+const NEXT_STATUS_LABEL = {
+  waiting_lectures: 'بانتظار المحاضرات',
+  waiting_trainees: 'بانتظار المتدربين',
+};
+
 export default function EnrTransitionModal({ group, onClose }) {
   const qc = useQueryClient();
   const dept = group.dept_type;
@@ -122,7 +127,7 @@ export default function EnrTransitionModal({ group, onClose }) {
             <option value="">— اختر مجموعة لسه ماابتدتش —</option>
             {options.map((o) => (
               <option key={`${o.group_name}|${o.line}`} value={`${o.group_name}|${o.line}`}>
-                {o.group_name}{o.line ? ` (${o.line})` : ''}{o.start_date ? ` — ${o.start_date}` : ''}
+                {o.group_name}{o.line ? ` (${o.line})` : ''}{o.start_date ? ` — ${o.start_date}` : ''}{NEXT_STATUS_LABEL[o.status] ? ` · ${NEXT_STATUS_LABEL[o.status]}` : ''}
               </option>
             ))}
           </select>

@@ -6,10 +6,11 @@
  * inside it plus the group's start/end dates and a STATUS.
  *
  *   - "active"  = batches.status = 'نشطة'  (placeholder groups excluded)
- *   - status (owner's decision 2026-06-21):
- *       • started          = ≥1 registered MAIN lecture (مؤكدة OR مجدولة)
- *       • waiting_lectures = 0 lectures but HAS trainees → بانتظار تسجيل المحاضرات
- *       • waiting_trainees = 0 lectures AND 0 trainees   → بانتظار تسجيل المتدربين
+ *   - status = the REAL batches.status (same values as the SystemReports waiting
+ *     pages — NOT computed from lecture counts):
+ *       • نشطة                    → started
+ *       • بانتظار تسجيل المحاضرات → waiting_lectures
+ *       • بانتظار تسجيل المتدربين → waiting_trainees
  *   - start_date / end_date:
  *       • started groups → MIN/MAX lecture date from the `lectures` table directly
  *         (NOT batches), MAIN only, current sheet only (latest synced_at per group),
@@ -26,6 +27,13 @@
 const db = require('../config/database');
 
 const DEPTS = ['General', 'Private', 'Semi'];
+
+// Real batches.status → the page's status key (same statuses as SystemReports).
+const STATUS_MAP = {
+  'نشطة': 'started',
+  'بانتظار تسجيل المحاضرات': 'waiting_lectures',
+  'بانتظار تسجيل المتدربين': 'waiting_trainees',
+};
 
 const stripSpaces = (s) => String(s == null ? '' : s).replace(/\s/g, '');
 
@@ -139,11 +147,14 @@ function getEnrGroups({ dept, q, status, firstFrom, firstTo, lastFrom, lastTo, p
   firstFrom = (firstFrom || '').trim();  firstTo = (firstTo || '').trim();
   lastFrom  = (lastFrom  || '').trim();  lastTo  = (lastTo  || '').trim();
 
-  // Active groups in this dept, deduped by canonical key + line, placeholders out.
+  // Active + waiting groups in this dept, deduped by canonical key + line,
+  // placeholders out. Status comes from the REAL batches.status (same values the
+  // SystemReports waiting pages use), NOT computed from lecture counts.
   const rows = db.prepare(`
-    SELECT group_name, line, dept_type, coordinators, start_date
+    SELECT group_name, line, dept_type, coordinators, start_date, status
       FROM batches
-     WHERE status = 'نشطة' AND dept_type = ?
+     WHERE status IN ('نشطة', 'بانتظار تسجيل المتدربين', 'بانتظار تسجيل المحاضرات')
+       AND dept_type = ?
   `).all(dept);
 
   const seen = new Map();
@@ -161,17 +172,17 @@ function getEnrGroups({ dept, q, status, firstFrom, firstTo, lastFrom, lastTo, p
     const meta = lectureMeta(r.group_name, r.line);
     const students = clientsByGroup.get(String(r.group_name) + '|' + String(r.line || '')) || [];
 
-    // Status (owner's decision): lectures → started; else has-trainees →
-    // waiting_lectures; else (no trainees, no lectures) → waiting_trainees.
-    let rowStatus, startDate, endDate;
+    // Status = the real batches.status (matches the SystemReports waiting pages).
+    const rowStatus = STATUS_MAP[r.status] || 'started';
+    // Dates: from lectures when the group has any; otherwise the group's stored
+    // start date (= the date encoded in its name). No lectures → no end date.
+    let startDate, endDate;
     if (meta.lectures > 0) {
-      rowStatus = 'started';
       startDate = meta.start_date;        // first lecture date
       endDate   = meta.end_date;          // last lecture date
     } else {
-      rowStatus = students.length > 0 ? 'waiting_lectures' : 'waiting_trainees';
-      startDate = r.start_date || null;   // group's stored start date (= name date)
-      endDate   = null;                   // no last lecture yet
+      startDate = r.start_date || null;   // batches.start_date
+      endDate   = null;
     }
 
     items.push({

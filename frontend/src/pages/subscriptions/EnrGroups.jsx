@@ -25,7 +25,7 @@ const DEPT_META = {
 };
 
 const STATUS_OPTIONS = [
-  { value: 'started',          label: 'بدأت',                    cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  { value: 'started',          label: 'نشطة',                    cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
   { value: 'waiting_lectures', label: 'بانتظار تسجيل المحاضرات', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
   { value: 'waiting_trainees', label: 'بانتظار تسجيل المتدربين', cls: 'bg-sky-50 text-sky-700 border-sky-200' },
 ];

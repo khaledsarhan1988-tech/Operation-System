@@ -43,34 +43,27 @@ function realCoordinator(coordStr) {
   return null;
 }
 
-// Main-lecture count for a group (current sheet only) — same query shape as
-// csEnrGroups.makeGroupLectureMeta. Returns the DISTINCT date|time count.
-const lectureCountStmt = () => db.prepare(`
-  SELECT COUNT(DISTINCT date || '|' || time) AS cnt
-    FROM lectures
-    INNER JOIN (SELECT group_name AS g, line AS l, date(MAX(synced_at)) AS sd
-                  FROM lectures WHERE session_type='main' GROUP BY group_name, line) ls
-      ON ls.g = lectures.group_name AND ls.l = lectures.line
-     AND date(lectures.synced_at) = ls.sd
-   WHERE group_name = ? AND line = ?
-     AND session_type = 'main' AND status IN ('مؤكدة', 'مجدولة')
-`);
+// Real batches.status → status key (matches csEnrGroups / SystemReports).
+const STATUS_MAP = {
+  'بانتظار تسجيل المحاضرات': 'waiting_lectures',
+  'بانتظار تسجيل المتدربين': 'waiting_trainees',
+};
 
 /**
- * Next-group options = ACTIVE groups (optionally scoped to a dept AND a line) that
- * have NOT started (0 registered main lectures). Deduped, placeholders excluded.
- * Line scope keeps an Ahmed Hassan group's list to Ahmed Hassan groups (and same
- * for Dardasha) — owner's decision 2026-06-21.
+ * Next-group options = groups whose REAL batches.status is one of the two
+ * "waiting" states (بانتظار تسجيل المتدربين / المحاضرات) — i.e. groups that
+ * haven't started yet — scoped to the source group's dept AND line. Deduped,
+ * placeholders excluded. (Same definition as the SystemReports waiting pages.)
  */
 function getNextGroupOptions({ dept, line }) {
   dept = (dept || '').trim();
   line = (line || '').trim();
-  const conds = [`status = 'نشطة'`];
+  const conds = [`status IN ('بانتظار تسجيل المتدربين', 'بانتظار تسجيل المحاضرات')`];
   const args = [];
   if (dept && DEPTS.includes(dept)) { conds.push(`dept_type = ?`); args.push(dept); }
   if (line) { conds.push(`line = ?`); args.push(line); }
   const rows = db.prepare(`
-    SELECT group_name, line, dept_type, coordinators, start_date
+    SELECT group_name, line, dept_type, coordinators, start_date, status
       FROM batches WHERE ${conds.join(' AND ')}
   `).all(...args);
 
@@ -80,18 +73,14 @@ function getNextGroupOptions({ dept, line }) {
     const key = canonGroupKey(r.group_name) + '|' + String(r.line || '');
     if (!seen.has(key)) seen.set(key, r);
   }
-  const lc = lectureCountStmt();
-  const out = [];
-  for (const r of seen.values()) {
-    if ((lc.get(r.group_name, r.line).cnt || 0) > 0) continue;   // started → not a "next" group
-    out.push({
-      group_name: r.group_name,
-      line: r.line,
-      dept_type: r.dept_type,
-      coordinator: realCoordinator(r.coordinators),
-      start_date: r.start_date || null,
-    });
-  }
+  const out = [...seen.values()].map(r => ({
+    group_name: r.group_name,
+    line: r.line,
+    dept_type: r.dept_type,
+    coordinator: realCoordinator(r.coordinators),
+    start_date: r.start_date || null,
+    status: STATUS_MAP[r.status] || null,
+  }));
   out.sort((a, b) => String(a.group_name).localeCompare(String(b.group_name), 'ar'));
   return { items: out };
 }
