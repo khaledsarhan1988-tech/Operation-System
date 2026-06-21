@@ -165,6 +165,14 @@ node -e "
 - scoping المنسق (role=agent): يطابق `batches.coordinators` بمفتاح مضغوط (مسافات).
 - شرط «Start» في Enrollment = العدد الفعلي من `enrollment_students` (لو في روستر) ≥ 7، لا `num_students` القابل للكتابة.
 
+### Enr Groups (مجموعات الـ Enrollment) — عرض group-oriented (2026-06-21، `csEnrGroups.service.js`)
+- **الغرض:** صفحة جديدة **أدمن-فقط** تحت Enrollment في السايدبار (`/subscriptions/enr-groups`) = عكس صفحة التسليمات: **صف لكل مجموعة** بدل صف لكل عميل. تعرض كل مجموعة **نشطة ابتديت** والعملاء بداخلها وتواريخ أول/آخر محاضرة. **إضافية بالكامل** (لا تلمس route/جدول/خدمة موجودة).
+- **التعريفات (قرار Owner):** «نشطة» = `batches.status='نشطة'` (مع استبعاد المجموعات الوهمية بنفس `IGNORED_GROUP_PATTERNS`: Free Slots/Grammar/تعويض، ودمج التكرار بـ `canonGroupKey+line`). «ابتديت» = عندها **≥1 محاضرة أساسية مسجّلة** (`status IN ('مؤكدة','مجدولة')`) — أي محاضرة مسجّلة، مش بس مؤكدة.
+- **تواريخ البداية/النهاية = أول/آخر محاضرة** من جدول `lectures` مباشرة (لا `batches`)، main فقط، **الشيت الحالي فقط** (أحدث `synced_at` للمجموعة)، `COUNT(DISTINCT date||'|'||time)` لطيّ توائم RENAME — **نفس منطق `csDeliveries.makeGroupLectureMeta` بالظبط** فالأرقام تتطابق.
+- **الأعمدة:** كود المجموعة (+تاج line) · المنسق (من `batches.coordinators` يتخطّى `--`) · الطلاب (اسم+تليفون من `clients` بمطابقة group_name+line، dedup بالتليفون) · عدد الطلاب · تاريخ البداية · تاريخ النهاية · عدد المحاضرات. تبويب بالقسم (dept_type: General/Semi/Private) + بحث (كود/منسق) + pagination. الترتيب: الأحدث بداية أولًا.
+- **الـ API:** `GET /api/cs/enr-groups?dept=&q=&page=&page_size=` (`requireRole('admin')`) في `cs.routes.js`. الفرونت `EnrGroups.jsx` + route متلفّف `<PrivateRoute allowedRoles={['admin']}>` + لينك أدمن-فقط في `getAdminLinks`.
+- **متحقَّق على snapshot حيّ:** الإجمالي 540 مجموعة ابتديت (جينرال 62 · سيمي 229 · برايفت 249). ملاحظة: 317/540 لها منسق حقيقي في `batches`؛ 223 منسقها `--` (مجموعات لسه ماتسندتش) تظهر «—»، منها 188 لها اسم في لاحقة اسم المجموعة بعد آخر `)` (fallback مؤجَّل لقرار الـ Owner). [نُشر — commit c6b4445.]
+
 ### سجل العملاء «كشف العملاء» (`cs_sales_register`) — موديول إدخال جديد (2026-06-20)
 - **الغرض:** نقل تاب «كشف العملاء» من Operation Sheets (Google) إلى النظام = إدخال/متابعة عمليات البيع داخل النظام. **مصدر منفصل تمامًا عن Center App** (`finance_transactions`/`cs_subscriptions`) — لا يقرأ/يكتب فيها (قرار Owner). **تحويل كامل (cutover):** بعد رفع التاريخ، كل العملاء الجدد يُدخَلون من النظام والشيت يتوقف (قرار Owner) — مفيش مخالفة لقاعدة keep-old-running لأن الشيت ملف خارجي والـ Owner هو اللي يبطّل يكتب عليه بعد التأكد.
 - **الجداول (في `app.js`، idempotent):** `cs_sales_register` (الأساسي، 29 عمود من الشيت + `balance` + `source`(`sheet`|`system`) + `raw_json` + audit) + `cs_sales_installments` (child، `ON DELETE CASCADE`). الأقساط **غير محدودة** (الشيت له 3 بلوكات أقساط متكررة).
@@ -259,6 +267,7 @@ node -e "
 | الفريق والهيكل `TeamPage.jsx`/`OrgChart.jsx` | `/api/team*`, `/api/org-chart*` |
 | Remarks Monitor `RemarksMonitor.jsx` | `/api/remarks-monitor*` (service: `remarksMonitor.service.js`) |
 | تسليمات الأقسام / Enrollment / التوزيع | `/api/cs*`, `/api/enrollment*`, `/api/distribution*` (services: `csDeliveries`, `csEnrollment`, `csClientPlan`...) |
+| Enr Groups (مجموعات الـ Enrollment، أدمن) `EnrGroups.jsx` | `/api/cs/enr-groups` (service: `csEnrGroups`) |
 | المرتبات / المالية | `/api/trainer-salaries*`, `/api/finance*`, `/api/clients-finance*` |
 | سجل العملاء (كشف العملاء) `ClientSalesRegister.jsx` | `/api/cs-sales-register/{list,options,import,:id}` (service: `salesRegisterImport`) |
 | العضويات وأسعارها (تبويب جوه كشف العملاء) `MembershipPricesSection.jsx` | `/api/membership-prices/{list,seed,:id}` |
