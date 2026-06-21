@@ -2809,6 +2809,68 @@ initDb().then(db => {
     console.error('enrollment_students migration error:', e.message);
   }
 
+  // ── enr_next_members: clients moved from a CURRENT group into a NEXT (not-yet-
+  // started) group, on the Enr Groups page transition screen. In-app overlay —
+  // does NOT touch Drive-sourced clients/batches. Members come either from the
+  // current group's client list (added_from='current') or from كشف العملاء /
+  // cs_sales_register (added_from='sales_register'). Additive table.
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS enr_next_members (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        next_group_name   TEXT NOT NULL,
+        next_line         TEXT,
+        client_name       TEXT,
+        client_phone      TEXT,
+        source_group_name TEXT,                          -- where the client came from (nullable for brand-new)
+        source_line       TEXT,
+        added_from        TEXT NOT NULL DEFAULT 'current',-- 'current' | 'sales_register'
+        created_by        INTEGER,
+        created_by_name   TEXT,
+        created_at        TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        UNIQUE(next_group_name, next_line, client_phone)
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_enr_next_grp  ON enr_next_members(next_group_name, next_line)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_enr_next_src  ON enr_next_members(source_group_name, source_line)`);
+    saveNow();
+    console.log('✅ Migration: enr_next_members table ready');
+  } catch (e) {
+    console.error('enr_next_members migration error:', e.message);
+  }
+
+  // ── enr_dispositions: disposition for a CURRENT-group client who was NOT moved
+  // to the next group — postponed (with follow-up date/method/notes), no_answer,
+  // or unsuccessful. One row per (source group, client). Additive table.
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS enr_dispositions (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_group_name TEXT NOT NULL,
+        source_line       TEXT,
+        dept              TEXT,
+        client_name       TEXT,
+        client_phone      TEXT,
+        disposition       TEXT NOT NULL,                 -- 'postponed' | 'no_answer' | 'unsuccessful'
+        followup_date     TEXT,                          -- postponed only: YYYY-MM-DD
+        followup_time     TEXT,                          -- postponed only: HH:MM
+        followup_method   TEXT,                          -- postponed only: 'call'|'whatsapp'|'visit'
+        notes             TEXT,
+        created_by        INTEGER,
+        created_by_name   TEXT,
+        created_at        TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        updated_at        TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        UNIQUE(source_group_name, source_line, client_phone)
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_enr_disp_src  ON enr_dispositions(source_group_name, source_line)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_enr_disp_type ON enr_dispositions(disposition)`);
+    saveNow();
+    console.log('✅ Migration: enr_dispositions table ready');
+  } catch (e) {
+    console.error('enr_dispositions migration error:', e.message);
+  }
+
   // ── cs_sales_register: manual "كشف العملاء" sales-register data-entry ──────
   // Mirrors the academy's standalone "كشف العملاء" Google-sheet tab: one row per
   // sale/subscription operation. A SEPARATE source from Center App finance

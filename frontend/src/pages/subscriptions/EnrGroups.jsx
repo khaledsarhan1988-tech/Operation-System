@@ -1,15 +1,17 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { GraduationCap, Search, Users } from 'lucide-react';
+import { GraduationCap, Search, Users, ListChecks } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import SectionCard from '../../components/ui/SectionCard';
+import EnrTransitionModal from './EnrTransitionModal';
 
 /**
  * Enr Groups (مجموعات الـ Enrollment) — group-oriented view, one tab per
- * department (جينرال / سيمي برايفت / برايفت). Each row is an ACTIVE group that
- * has STARTED (≥1 registered main lecture); it lists the clients inside it and
- * the group's start/end dates (first/last lecture date). Admin only.
+ * department (جينرال / سيمي برايفت / برايفت). Each row is an ACTIVE group with a
+ * STATUS (started / waiting lectures / waiting trainees); clicking a row opens
+ * the transition screen (move clients to a next group + record dispositions).
+ * A second top tab shows the disposition lists. Admin only.
  *
  * URL: /subscriptions/enr-groups
  */
@@ -29,7 +31,128 @@ const STATUS_OPTIONS = [
 ];
 const STATUS_META = Object.fromEntries(STATUS_OPTIONS.map(s => [s.value, s]));
 
+const DISP_TABS = [
+  { value: 'postponed',    label: 'التأجيلات',     cls: 'border-amber-500 text-amber-700 bg-amber-50' },
+  { value: 'no_answer',    label: 'عدم الرد',      cls: 'border-purple-500 text-purple-700 bg-purple-50' },
+  { value: 'unsuccessful', label: 'غير الناجحين',  cls: 'border-rose-500 text-rose-700 bg-rose-50' },
+];
+const METHOD_LABEL = { call: 'مكالمة', whatsapp: 'واتساب', visit: 'زيارة' };
+
+// ─── Disposition lists view (التأجيلات / عدم الرد / غير الناجحين) ──────────────
+function DispositionsView() {
+  const [type, setType] = useState('postponed');
+  const [q, setQ] = useState('');
+  const [search, setSearch] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [page, setPage] = useState(1);
+
+  const listQ = useQuery({
+    queryKey: ['enr-dispositions', type, search, from, to, page],
+    queryFn: () => api.get('/cs/enr-groups/dispositions', {
+      params: { type, q: search, from, to, page, page_size: 25 },
+    }).then(r => r.data),
+    keepPreviousData: true,
+  });
+  const data = listQ.data || {};
+  const items = data.items || [];
+  const totalPages = data.total_pages || 1;
+  const isPostponed = type === 'postponed';
+
+  const switchType = (t) => { setType(t); setPage(1); setQ(''); setSearch(''); setFrom(''); setTo(''); };
+
+  return (
+    <SectionCard title="قوائم المتابعة" icon={ListChecks} className="mt-4">
+      {/* disposition sub-tabs */}
+      <div className="px-3 pt-3 flex flex-wrap gap-1 border-b border-slate-100">
+        {DISP_TABS.map(t => (
+          <button key={t.value} onClick={() => switchType(t.value)}
+            className={`px-4 py-2 text-sm font-medium rounded-t-lg -mb-px border-b-2 transition-colors ${
+              type === t.value ? t.cls : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+            }`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* filters */}
+      <div className="p-3 flex flex-wrap items-center gap-2 border-b border-slate-100">
+        <form onSubmit={(e) => { e.preventDefault(); setPage(1); setSearch(q.trim()); }} className="flex items-center gap-2">
+          <div className="relative">
+            <Search className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ابحث باسم/موبايل/مجموعة..."
+              className="pr-8 pl-3 py-2 text-sm border border-slate-200 rounded-lg w-64 focus:outline-none focus:ring-2 focus:ring-violet-200" />
+          </div>
+          <button type="submit" className="px-3 py-2 text-sm rounded-lg bg-violet-600 text-white hover:bg-violet-700">بحث</button>
+        </form>
+        <div className="flex items-center gap-1 text-xs text-slate-500">
+          <span className="whitespace-nowrap">{isPostponed ? 'تاريخ المتابعة:' : 'التاريخ:'}</span>
+          <input type="date" value={from} onChange={(e) => { setPage(1); setFrom(e.target.value); }}
+            className="py-1.5 px-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-200" dir="ltr" />
+          <span>→</span>
+          <input type="date" value={to} onChange={(e) => { setPage(1); setTo(e.target.value); }}
+            className="py-1.5 px-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-200" dir="ltr" />
+        </div>
+        <span className="text-xs text-slate-500 mr-auto">
+          {listQ.isLoading ? 'جاري التحميل...' : `${data.total || 0} عميل`}
+        </span>
+      </div>
+
+      {/* table */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm text-right">
+          <thead>
+            <tr className="text-slate-500 border-b border-slate-100">
+              <th className="px-3 py-3 font-medium">العميل</th>
+              <th className="px-3 py-3 font-medium">المجموعة</th>
+              <th className="px-3 py-3 font-medium">القسم</th>
+              {isPostponed && <th className="px-3 py-3 font-medium">موعد المتابعة</th>}
+              {isPostponed && <th className="px-3 py-3 font-medium">طريقة المتابعة</th>}
+              <th className="px-3 py-3 font-medium">ملاحظات</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((it) => (
+              <tr key={it.id} className="border-b border-slate-50 hover:bg-slate-50/60 align-top">
+                <td className="px-3 py-3">
+                  <div className="text-slate-800">{it.client_name || '—'}</div>
+                  <div className="text-xs text-slate-400 font-mono" dir="ltr">{it.client_phone || ''}</div>
+                </td>
+                <td className="px-3 py-3 font-mono text-xs text-slate-600 break-all max-w-xs">{it.source_group_name || '—'}</td>
+                <td className="px-3 py-3 text-slate-600">{DEPT_META[it.dept]?.label || it.dept || '—'}</td>
+                {isPostponed && (
+                  <td className="px-3 py-3 whitespace-nowrap font-mono text-xs text-slate-700" dir="ltr">
+                    {it.followup_date ? `${it.followup_date}${it.followup_time ? ' ' + it.followup_time : ''}` : '—'}
+                  </td>
+                )}
+                {isPostponed && (
+                  <td className="px-3 py-3 text-slate-600">{METHOD_LABEL[it.followup_method] || '—'}</td>
+                )}
+                <td className="px-3 py-3 text-slate-600 max-w-xs break-words">{it.notes || <span className="text-slate-300">—</span>}</td>
+              </tr>
+            ))}
+            {!listQ.isLoading && items.length === 0 && (
+              <tr><td colSpan={isPostponed ? 6 : 4} className="px-3 py-10 text-center text-slate-400">لا يوجد عملاء في هذه القائمة</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {totalPages > 1 && (
+        <div className="p-3 flex items-center justify-center gap-2 border-t border-slate-100">
+          <button disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}
+            className="px-3 py-1.5 text-sm rounded-lg border border-slate-200 disabled:opacity-40 hover:bg-slate-50">السابق</button>
+          <span className="text-sm text-slate-500">صفحة {page} من {totalPages}</span>
+          <button disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+            className="px-3 py-1.5 text-sm rounded-lg border border-slate-200 disabled:opacity-40 hover:bg-slate-50">التالي</button>
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
 export default function EnrGroups() {
+  const [view, setView] = useState('groups');         // 'groups' | 'lists'
   const [activeDept, setActiveDept] = useState('General');
   const [q, setQ] = useState('');
   const [search, setSearch] = useState('');
@@ -39,6 +162,7 @@ export default function EnrGroups() {
   const [lastFrom, setLastFrom] = useState('');
   const [lastTo, setLastTo] = useState('');
   const [page, setPage] = useState(1);
+  const [selectedGroup, setSelectedGroup] = useState(null);   // row → transition modal
 
   const meta = DEPT_META[activeDept] || { label: activeDept, color: 'violet' };
 
@@ -51,6 +175,7 @@ export default function EnrGroups() {
 
   const listQ = useQuery({
     queryKey: ['enr-groups', activeDept, search, statusFilter, firstFrom, firstTo, lastFrom, lastTo, page],
+    enabled: view === 'groups',
     queryFn: () => api.get('/cs/enr-groups', {
       params: {
         dept: activeDept, q: search, status: statusFilter, page, page_size: 25,
@@ -74,11 +199,31 @@ export default function EnrGroups() {
     <div className="p-4 md:p-6 max-w-7xl mx-auto" dir="rtl">
       <PageHero
         title="Enr Groups — مجموعات الـ Enrollment"
-        subtitle="كل المجموعات النشطة التي بدأت، والعملاء بداخلها وتاريخ أول وآخر محاضرة"
+        subtitle="المجموعات النشطة وحالتها، نقل العملاء للمجموعة القادمة، وقوائم المتابعة"
         icon={GraduationCap}
         color={meta.color}
       />
 
+      {/* View tabs: groups vs disposition lists */}
+      <div className="mt-4 flex flex-wrap gap-1 border-b border-slate-200">
+        <button onClick={() => setView('groups')}
+          className={`px-5 py-2.5 text-sm font-medium rounded-t-lg -mb-px border-b-2 transition-colors ${
+            view === 'groups' ? 'border-violet-600 text-violet-700 bg-violet-50' : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+          }`}>
+          <span className="inline-flex items-center gap-1.5"><Users className="w-4 h-4" /> المجموعات</span>
+        </button>
+        <button onClick={() => setView('lists')}
+          className={`px-5 py-2.5 text-sm font-medium rounded-t-lg -mb-px border-b-2 transition-colors ${
+            view === 'lists' ? 'border-violet-600 text-violet-700 bg-violet-50' : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+          }`}>
+          <span className="inline-flex items-center gap-1.5"><ListChecks className="w-4 h-4" /> قوائم المتابعة</span>
+        </button>
+      </div>
+
+      {view === 'lists' ? (
+        <DispositionsView />
+      ) : (
+      <>
       {/* Department tabs */}
       <div className="mt-4 flex flex-wrap gap-1 border-b border-slate-200">
         {ALL_DEPTS.map(d => (
@@ -172,7 +317,9 @@ export default function EnrGroups() {
             </thead>
             <tbody>
               {items.map((it, idx) => (
-                <tr key={`${it.group_name}|${it.line}|${idx}`} className="border-b border-slate-50 hover:bg-slate-50/60 align-top">
+                <tr key={`${it.group_name}|${it.line}|${idx}`}
+                  onClick={() => setSelectedGroup(it)}
+                  className="border-b border-slate-50 hover:bg-violet-50/50 align-top cursor-pointer">
                   <td className="px-3 py-3">
                     <div className="font-mono text-xs text-slate-800 break-all">{it.group_name}</div>
                     {it.line && (
@@ -245,6 +392,12 @@ export default function EnrGroups() {
           </div>
         )}
       </SectionCard>
+      </>
+      )}
+
+      {selectedGroup && (
+        <EnrTransitionModal group={selectedGroup} onClose={() => setSelectedGroup(null)} />
+      )}
     </div>
   );
 }

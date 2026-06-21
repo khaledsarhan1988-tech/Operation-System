@@ -881,6 +881,77 @@ router.get('/enr-groups', requireRole('admin'), (req, res) => {
   }
 });
 
+// ─── ENR GROUPS — transition (next group + dispositions), admin only ──────────
+const enrTx = () => require('../services/csEnrTransition.service');
+
+/** Next-group options = active groups that haven't started (optionally per dept). */
+router.get('/enr-groups/next-options', requireRole('admin'), (req, res) => {
+  try { res.json({ ok: true, ...enrTx().getNextGroupOptions({ dept: req.query.dept }) }); }
+  catch (e) { console.error('GET /cs/enr-groups/next-options:', e.message); res.status(400).json({ ok: false, error: e.message }); }
+});
+
+/** Transition context for one current group: clients + moved/disposition status. */
+router.get('/enr-groups/transition', requireRole('admin'), (req, res) => {
+  try { res.json({ ok: true, ...enrTx().getTransition({ group: req.query.group, line: req.query.line }) }); }
+  catch (e) { console.error('GET /cs/enr-groups/transition:', e.message); res.status(400).json({ ok: false, error: e.message }); }
+});
+
+/** Search كشف العملاء (cs_sales_register) to add brand-new members. */
+router.get('/enr-groups/sales-search', requireRole('admin'), (req, res) => {
+  try { res.json({ ok: true, ...enrTx().searchSalesRegister({ q: req.query.q, limit: req.query.limit }) }); }
+  catch (e) { console.error('GET /cs/enr-groups/sales-search:', e.message); res.status(400).json({ ok: false, error: e.message }); }
+});
+
+/** Roster of a next group. */
+router.get('/enr-groups/next-roster', requireRole('admin'), (req, res) => {
+  try { res.json({ ok: true, ...enrTx().getNextRoster({ nextGroup: req.query.next_group, nextLine: req.query.next_line }) }); }
+  catch (e) { console.error('GET /cs/enr-groups/next-roster:', e.message); res.status(400).json({ ok: false, error: e.message }); }
+});
+
+/** Add members to a next group's roster. */
+router.post('/enr-groups/next-members', requireRole('admin'), (req, res) => {
+  try {
+    res.json({ ok: true, ...enrTx().addNextMembers({
+      nextGroup: req.body?.next_group, nextLine: req.body?.next_line,
+      sourceGroup: req.body?.source_group, sourceLine: req.body?.source_line,
+      members: req.body?.members, addedFrom: req.body?.added_from, user: req.user,
+    }) });
+  } catch (e) { console.error('POST /cs/enr-groups/next-members:', e.message); res.status(400).json({ ok: false, error: e.message }); }
+});
+
+router.delete('/enr-groups/next-members/:id', requireRole('admin'), (req, res) => {
+  try { res.json({ ok: true, ...enrTx().removeNextMember({ id: req.params.id }) }); }
+  catch (e) { console.error('DELETE /cs/enr-groups/next-members:', e.message); res.status(400).json({ ok: false, error: e.message }); }
+});
+
+/** Upsert a disposition for a not-moved client. */
+router.post('/enr-groups/disposition', requireRole('admin'), (req, res) => {
+  try {
+    res.json({ ok: true, ...enrTx().setDisposition({
+      sourceGroup: req.body?.source_group, sourceLine: req.body?.source_line, dept: req.body?.dept,
+      clientName: req.body?.client_name, clientPhone: req.body?.client_phone,
+      disposition: req.body?.disposition,
+      followupDate: req.body?.followup_date, followupTime: req.body?.followup_time,
+      followupMethod: req.body?.followup_method, notes: req.body?.notes, user: req.user,
+    }) });
+  } catch (e) { console.error('POST /cs/enr-groups/disposition:', e.message); res.status(400).json({ ok: false, error: e.message }); }
+});
+
+router.delete('/enr-groups/disposition/:id', requireRole('admin'), (req, res) => {
+  try { res.json({ ok: true, ...enrTx().clearDisposition({ id: req.params.id }) }); }
+  catch (e) { console.error('DELETE /cs/enr-groups/disposition:', e.message); res.status(400).json({ ok: false, error: e.message }); }
+});
+
+/** The three disposition lists (postponed/no_answer/unsuccessful) for the tabs. */
+router.get('/enr-groups/dispositions', requireRole('admin'), (req, res) => {
+  try {
+    res.json({ ok: true, ...enrTx().getDispositions({
+      type: req.query.type, q: req.query.q, dept: req.query.dept,
+      from: req.query.from, to: req.query.to, page: req.query.page, pageSize: req.query.page_size,
+    }) });
+  } catch (e) { console.error('GET /cs/enr-groups/dispositions:', e.message); res.status(400).json({ ok: false, error: e.message }); }
+});
+
 // ─── ENROLLMENT (manual data-entry grid) ──────────────────────────────────────
 
 /** GET /api/cs/enrollment?dept=General — rows for the department grid. */
