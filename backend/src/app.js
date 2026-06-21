@@ -2871,6 +2871,71 @@ initDb().then(db => {
     console.error('enr_dispositions migration error:', e.message);
   }
 
+  // ── enr_disposition_entries: a thread of follow-up/note entries per disposition.
+  // Postpone → each entry is a full follow-up (date/time/method + note); no_answer
+  // / unsuccessful → each entry is a plain note. Each entry records its author +
+  // time. Legacy single notes on enr_dispositions are migrated in as first entries.
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS enr_disposition_entries (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        disposition_id  INTEGER NOT NULL,
+        followup_date   TEXT,
+        followup_time   TEXT,
+        followup_method TEXT,
+        note            TEXT,
+        created_by      INTEGER,
+        created_by_name TEXT,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        FOREIGN KEY (disposition_id) REFERENCES enr_dispositions(id) ON DELETE CASCADE
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_enr_disp_entry ON enr_disposition_entries(disposition_id)`);
+    // One-time idempotent migration: copy each existing disposition's legacy
+    // followup/notes into a first entry (only when it has no entries yet).
+    db._raw.run(`
+      INSERT INTO enr_disposition_entries
+        (disposition_id, followup_date, followup_time, followup_method, note, created_by, created_by_name, created_at)
+      SELECT d.id, d.followup_date, d.followup_time, d.followup_method, d.notes, d.created_by, d.created_by_name, d.created_at
+        FROM enr_dispositions d
+       WHERE (d.followup_date IS NOT NULL OR d.followup_time IS NOT NULL OR d.followup_method IS NOT NULL
+              OR (d.notes IS NOT NULL AND TRIM(d.notes) <> ''))
+         AND NOT EXISTS (SELECT 1 FROM enr_disposition_entries e WHERE e.disposition_id = d.id)
+    `);
+    saveNow();
+    console.log('✅ Migration: enr_disposition_entries table ready');
+  } catch (e) {
+    console.error('enr_disposition_entries migration error:', e.message);
+  }
+
+  // ── enr_activity_log: append-only audit of every Enr Groups action (move in/out,
+  // disposition set/cleared, entry added/removed, new client added) + the employee
+  // who did it + when. Read in the Enr Groups "السجل" tab + per-group log.
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS enr_activity_log (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        action            TEXT NOT NULL,                 -- move_in|move_out|disposition_set|disposition_cleared|entry_added|entry_removed
+        source_group_name TEXT,
+        source_line       TEXT,
+        next_group_name   TEXT,
+        client_name       TEXT,
+        client_phone      TEXT,
+        detail            TEXT,                          -- human-readable extra (e.g. disposition type, note text)
+        actor_id          INTEGER,
+        actor_name        TEXT,
+        created_at        TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_enr_act_grp     ON enr_activity_log(source_group_name, source_line)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_enr_act_actor   ON enr_activity_log(actor_name)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_enr_act_created ON enr_activity_log(created_at)`);
+    saveNow();
+    console.log('✅ Migration: enr_activity_log table ready');
+  } catch (e) {
+    console.error('enr_activity_log migration error:', e.message);
+  }
+
   // ── cs_sales_register: manual "كشف العملاء" sales-register data-entry ──────
   // Mirrors the academy's standalone "كشف العملاء" Google-sheet tab: one row per
   // sale/subscription operation. A SEPARATE source from Center App finance

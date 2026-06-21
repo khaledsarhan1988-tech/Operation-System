@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { GraduationCap, Search, Users, ListChecks } from 'lucide-react';
+import { GraduationCap, Search, Users, ListChecks, History } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import SectionCard from '../../components/ui/SectionCard';
@@ -37,6 +37,17 @@ const DISP_TABS = [
   { value: 'unsuccessful', label: 'غير الناجحين',  cls: 'border-rose-500 text-rose-700 bg-rose-50' },
 ];
 const METHOD_LABEL = { call: 'مكالمة', whatsapp: 'واتساب', visit: 'زيارة' };
+
+const ACTION_OPTIONS = [
+  { value: 'move_in',             label: 'نقل إلى مجموعة' },
+  { value: 'move_out',           label: 'إزالة من مجموعة' },
+  { value: 'disposition_set',    label: 'تحديد مصير' },
+  { value: 'disposition_cleared',label: 'مسح مصير' },
+  { value: 'entry_added',        label: 'إضافة ملاحظة/متابعة' },
+  { value: 'entry_removed',      label: 'حذف ملاحظة' },
+];
+const ACTION_LABEL = Object.fromEntries(ACTION_OPTIONS.map(a => [a.value, a.label]));
+const fmtDT = (s) => s ? String(s).replace('T', ' ').slice(0, 16) : '';
 
 // ─── Disposition lists view (التأجيلات / عدم الرد / غير الناجحين) ──────────────
 function DispositionsView() {
@@ -106,9 +117,9 @@ function DispositionsView() {
               <th className="px-3 py-3 font-medium">العميل</th>
               <th className="px-3 py-3 font-medium">المجموعة</th>
               <th className="px-3 py-3 font-medium">القسم</th>
-              {isPostponed && <th className="px-3 py-3 font-medium">موعد المتابعة</th>}
-              {isPostponed && <th className="px-3 py-3 font-medium">طريقة المتابعة</th>}
-              <th className="px-3 py-3 font-medium">ملاحظات</th>
+              {isPostponed && <th className="px-3 py-3 font-medium">آخر متابعة</th>}
+              <th className="px-3 py-3 font-medium">العدد</th>
+              <th className="px-3 py-3 font-medium">آخر ملاحظة</th>
             </tr>
           </thead>
           <tbody>
@@ -122,17 +133,118 @@ function DispositionsView() {
                 <td className="px-3 py-3 text-slate-600">{DEPT_META[it.dept]?.label || it.dept || '—'}</td>
                 {isPostponed && (
                   <td className="px-3 py-3 whitespace-nowrap font-mono text-xs text-slate-700" dir="ltr">
-                    {it.followup_date ? `${it.followup_date}${it.followup_time ? ' ' + it.followup_time : ''}` : '—'}
+                    {it.last_entry?.followup_date
+                      ? `${it.last_entry.followup_date}${it.last_entry.followup_time ? ' ' + it.last_entry.followup_time : ''}${it.last_entry.followup_method ? ' · ' + (METHOD_LABEL[it.last_entry.followup_method] || '') : ''}`
+                      : '—'}
                   </td>
                 )}
-                {isPostponed && (
-                  <td className="px-3 py-3 text-slate-600">{METHOD_LABEL[it.followup_method] || '—'}</td>
-                )}
-                <td className="px-3 py-3 text-slate-600 max-w-xs break-words">{it.notes || <span className="text-slate-300">—</span>}</td>
+                <td className="px-3 py-3 text-center">
+                  <span className="inline-flex items-center justify-center min-w-7 px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs font-semibold">{it.entries_count || 0}</span>
+                </td>
+                <td className="px-3 py-3 text-slate-600 max-w-xs break-words">{it.last_entry?.note || <span className="text-slate-300">—</span>}</td>
               </tr>
             ))}
             {!listQ.isLoading && items.length === 0 && (
-              <tr><td colSpan={isPostponed ? 6 : 4} className="px-3 py-10 text-center text-slate-400">لا يوجد عملاء في هذه القائمة</td></tr>
+              <tr><td colSpan={isPostponed ? 6 : 5} className="px-3 py-10 text-center text-slate-400">لا يوجد عملاء في هذه القائمة</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {totalPages > 1 && (
+        <div className="p-3 flex items-center justify-center gap-2 border-t border-slate-100">
+          <button disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}
+            className="px-3 py-1.5 text-sm rounded-lg border border-slate-200 disabled:opacity-40 hover:bg-slate-50">السابق</button>
+          <span className="text-sm text-slate-500">صفحة {page} من {totalPages}</span>
+          <button disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+            className="px-3 py-1.5 text-sm rounded-lg border border-slate-200 disabled:opacity-40 hover:bg-slate-50">التالي</button>
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
+// ─── Activity log view (السجل) ───────────────────────────────────────────────
+function ActivityLogView() {
+  const [q, setQ] = useState('');
+  const [search, setSearch] = useState('');
+  const [actor, setActor] = useState('');
+  const [actorSearch, setActorSearch] = useState('');
+  const [action, setAction] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [page, setPage] = useState(1);
+
+  const listQ = useQuery({
+    queryKey: ['enr-activity-all', search, actorSearch, action, from, to, page],
+    queryFn: () => api.get('/cs/enr-groups/activity', {
+      params: { q: search, actor: actorSearch, action, from, to, page, page_size: 30 },
+    }).then(r => r.data),
+    keepPreviousData: true,
+  });
+  const data = listQ.data || {};
+  const items = data.items || [];
+  const totalPages = data.total_pages || 1;
+
+  return (
+    <SectionCard title="سجل الحركات" icon={History} className="mt-4">
+      <div className="p-3 flex flex-wrap items-center gap-2 border-b border-slate-100">
+        <form onSubmit={(e) => { e.preventDefault(); setPage(1); setSearch(q.trim()); setActorSearch(actor.trim()); }} className="flex flex-wrap items-center gap-2">
+          <div className="relative">
+            <Search className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="عميل / موبايل / مجموعة..."
+              className="pr-8 pl-3 py-2 text-sm border border-slate-200 rounded-lg w-56 focus:outline-none focus:ring-2 focus:ring-violet-200" />
+          </div>
+          <input value={actor} onChange={(e) => setActor(e.target.value)} placeholder="الموظف"
+            className="py-2 px-3 text-sm border border-slate-200 rounded-lg w-40 focus:outline-none focus:ring-2 focus:ring-violet-200" />
+          <button type="submit" className="px-3 py-2 text-sm rounded-lg bg-violet-600 text-white hover:bg-violet-700">بحث</button>
+        </form>
+        <select value={action} onChange={(e) => { setPage(1); setAction(e.target.value); }}
+          className="py-2 px-3 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-200">
+          <option value="">كل الحركات</option>
+          {ACTION_OPTIONS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
+        </select>
+        <div className="flex items-center gap-1 text-xs text-slate-500">
+          <span>التاريخ:</span>
+          <input type="date" value={from} onChange={(e) => { setPage(1); setFrom(e.target.value); }}
+            className="py-1.5 px-2 border border-slate-200 rounded-lg" dir="ltr" />
+          <span>→</span>
+          <input type="date" value={to} onChange={(e) => { setPage(1); setTo(e.target.value); }}
+            className="py-1.5 px-2 border border-slate-200 rounded-lg" dir="ltr" />
+        </div>
+        <span className="text-xs text-slate-500 mr-auto">{listQ.isLoading ? 'جاري التحميل...' : `${data.total || 0} حركة`}</span>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm text-right">
+          <thead>
+            <tr className="text-slate-500 border-b border-slate-100">
+              <th className="px-3 py-3 font-medium">الحركة</th>
+              <th className="px-3 py-3 font-medium">العميل</th>
+              <th className="px-3 py-3 font-medium">المجموعة</th>
+              <th className="px-3 py-3 font-medium">التفاصيل</th>
+              <th className="px-3 py-3 font-medium">الموظف</th>
+              <th className="px-3 py-3 font-medium">الوقت</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((it) => (
+              <tr key={it.id} className="border-b border-slate-50 hover:bg-slate-50/60 align-top">
+                <td className="px-3 py-3 whitespace-nowrap text-slate-700">{ACTION_LABEL[it.action] || it.action}</td>
+                <td className="px-3 py-3">
+                  <div className="text-slate-800">{it.client_name || '—'}</div>
+                  <div className="text-xs text-slate-400 font-mono" dir="ltr">{it.client_phone || ''}</div>
+                </td>
+                <td className="px-3 py-3 font-mono text-xs text-slate-600 break-all max-w-xs">
+                  {it.source_group_name || '—'}{it.next_group_name ? ` → ${it.next_group_name}` : ''}
+                </td>
+                <td className="px-3 py-3 text-slate-600 max-w-xs break-words">{it.detail || <span className="text-slate-300">—</span>}</td>
+                <td className="px-3 py-3 text-violet-700">{it.actor_name || '—'}</td>
+                <td className="px-3 py-3 whitespace-nowrap font-mono text-xs text-slate-500" dir="ltr">{fmtDT(it.created_at)}</td>
+              </tr>
+            ))}
+            {!listQ.isLoading && items.length === 0 && (
+              <tr><td colSpan={6} className="px-3 py-10 text-center text-slate-400">لا توجد حركات</td></tr>
             )}
           </tbody>
         </table>
@@ -152,7 +264,7 @@ function DispositionsView() {
 }
 
 export default function EnrGroups() {
-  const [view, setView] = useState('groups');         // 'groups' | 'lists'
+  const [view, setView] = useState('groups');         // 'groups' | 'lists' | 'log'
   const [activeDept, setActiveDept] = useState('General');
   const [q, setQ] = useState('');
   const [search, setSearch] = useState('');
@@ -218,9 +330,17 @@ export default function EnrGroups() {
           }`}>
           <span className="inline-flex items-center gap-1.5"><ListChecks className="w-4 h-4" /> قوائم المتابعة</span>
         </button>
+        <button onClick={() => setView('log')}
+          className={`px-5 py-2.5 text-sm font-medium rounded-t-lg -mb-px border-b-2 transition-colors ${
+            view === 'log' ? 'border-violet-600 text-violet-700 bg-violet-50' : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+          }`}>
+          <span className="inline-flex items-center gap-1.5"><History className="w-4 h-4" /> السجل</span>
+        </button>
       </div>
 
-      {view === 'lists' ? (
+      {view === 'log' ? (
+        <ActivityLogView />
+      ) : view === 'lists' ? (
         <DispositionsView />
       ) : (
       <>

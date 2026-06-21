@@ -920,25 +920,42 @@ router.post('/enr-groups/next-members', requireRole('admin'), (req, res) => {
 });
 
 router.delete('/enr-groups/next-members/:id', requireRole('admin'), (req, res) => {
-  try { res.json({ ok: true, ...enrTx().removeNextMember({ id: req.params.id }) }); }
+  try { res.json({ ok: true, ...enrTx().removeNextMember({ id: req.params.id, user: req.user }) }); }
   catch (e) { console.error('DELETE /cs/enr-groups/next-members:', e.message); res.status(400).json({ ok: false, error: e.message }); }
 });
 
-/** Upsert a disposition for a not-moved client. */
+/** Set a disposition for a not-moved client (optional first follow-up/note entry). */
 router.post('/enr-groups/disposition', requireRole('admin'), (req, res) => {
   try {
+    const b = req.body || {};
+    const entry = (b.followup_date || b.followup_time || b.followup_method || b.note) ? {
+      followupDate: b.followup_date, followupTime: b.followup_time, followupMethod: b.followup_method, note: b.note,
+    } : null;
     res.json({ ok: true, ...enrTx().setDisposition({
-      sourceGroup: req.body?.source_group, sourceLine: req.body?.source_line, dept: req.body?.dept,
-      clientName: req.body?.client_name, clientPhone: req.body?.client_phone,
-      disposition: req.body?.disposition,
-      followupDate: req.body?.followup_date, followupTime: req.body?.followup_time,
-      followupMethod: req.body?.followup_method, notes: req.body?.notes, user: req.user,
+      sourceGroup: b.source_group, sourceLine: b.source_line, dept: b.dept,
+      clientName: b.client_name, clientPhone: b.client_phone, disposition: b.disposition, entry, user: req.user,
     }) });
   } catch (e) { console.error('POST /cs/enr-groups/disposition:', e.message); res.status(400).json({ ok: false, error: e.message }); }
 });
 
+/** Add a follow-up/note entry to an existing disposition. */
+router.post('/enr-groups/disposition/:id/entry', requireRole('admin'), (req, res) => {
+  try {
+    const b = req.body || {};
+    res.json({ ok: true, ...enrTx().addDispositionEntry({
+      dispositionId: req.params.id,
+      followupDate: b.followup_date, followupTime: b.followup_time, followupMethod: b.followup_method, note: b.note, user: req.user,
+    }) });
+  } catch (e) { console.error('POST /cs/enr-groups/disposition/:id/entry:', e.message); res.status(400).json({ ok: false, error: e.message }); }
+});
+
+router.delete('/enr-groups/disposition/entry/:entryId', requireRole('admin'), (req, res) => {
+  try { res.json({ ok: true, ...enrTx().removeDispositionEntry({ entryId: req.params.entryId, user: req.user }) }); }
+  catch (e) { console.error('DELETE /cs/enr-groups/disposition/entry:', e.message); res.status(400).json({ ok: false, error: e.message }); }
+});
+
 router.delete('/enr-groups/disposition/:id', requireRole('admin'), (req, res) => {
-  try { res.json({ ok: true, ...enrTx().clearDisposition({ id: req.params.id }) }); }
+  try { res.json({ ok: true, ...enrTx().clearDisposition({ id: req.params.id, user: req.user }) }); }
   catch (e) { console.error('DELETE /cs/enr-groups/disposition:', e.message); res.status(400).json({ ok: false, error: e.message }); }
 });
 
@@ -950,6 +967,17 @@ router.get('/enr-groups/dispositions', requireRole('admin'), (req, res) => {
       from: req.query.from, to: req.query.to, page: req.query.page, pageSize: req.query.page_size,
     }) });
   } catch (e) { console.error('GET /cs/enr-groups/dispositions:', e.message); res.status(400).json({ ok: false, error: e.message }); }
+});
+
+/** Activity log (audit) for Enr Groups — global or per-group. */
+router.get('/enr-groups/activity', requireRole('admin'), (req, res) => {
+  try {
+    res.json({ ok: true, ...enrTx().getActivityLog({
+      group: req.query.group, line: req.query.line, q: req.query.q,
+      actor: req.query.actor, action: req.query.action,
+      from: req.query.from, to: req.query.to, page: req.query.page, pageSize: req.query.page_size,
+    }) });
+  } catch (e) { console.error('GET /cs/enr-groups/activity:', e.message); res.status(400).json({ ok: false, error: e.message }); }
 });
 
 // ─── ENROLLMENT (manual data-entry grid) ──────────────────────────────────────

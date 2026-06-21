@@ -21,6 +21,18 @@ const { csPrimaryPhone } = require('../utils/csPhoneNormalize');
 const DEPTS = ['General', 'Private', 'Semi'];
 const DISPOSITIONS = ['postponed', 'no_answer', 'unsuccessful'];
 const FOLLOWUP_METHODS = ['call', 'whatsapp', 'visit'];
+const DISP_LABEL = (d) => ({ postponed: 'تأجيل', no_answer: 'عدم الرد', unsuccessful: 'غير ناجح' }[d] || d);
+
+// Append a row to the Enr Groups activity log (who did what, when).
+function logActivity({ action, sourceGroup, sourceLine, nextGroup, clientName, clientPhone, detail, user }) {
+  db.prepare(`
+    INSERT INTO enr_activity_log
+      (action, source_group_name, source_line, next_group_name, client_name, client_phone, detail, actor_id, actor_name)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(action, sourceGroup || null, sourceLine || null, nextGroup || null,
+    clientName || null, clientPhone || null, detail || null,
+    user?.id || null, user?.full_name || user?.name || null);
+}
 
 const stripSpaces = (s) => String(s == null ? '' : s).replace(/\s/g, '');
 const canonGroupKey = (s) => stripSpaces(String(s == null ? '' : s).split('(')[0]);
@@ -132,6 +144,19 @@ function getTransition({ group, line }) {
     dispByPhone.set(key, d);
   }
 
+  // Entries (follow-up/note thread) for all this group's dispositions.
+  const entriesByDisp = new Map();
+  const dispIds = disps.map(d => d.id);
+  if (dispIds.length) {
+    const rows = db.prepare(
+      `SELECT * FROM enr_disposition_entries WHERE disposition_id IN (${dispIds.map(() => '?').join(',')}) ORDER BY id ASC`
+    ).all(...dispIds);
+    for (const e of rows) {
+      if (!entriesByDisp.has(e.disposition_id)) entriesByDisp.set(e.disposition_id, []);
+      entriesByDisp.get(e.disposition_id).push(e);
+    }
+  }
+
   const items = clients.map(c => {
     const key = csPrimaryPhone(c.phone) || c.phone || ('n:' + (c.name || ''));
     const mv = movedByPhone.get(key) || null;
@@ -141,8 +166,7 @@ function getTransition({ group, line }) {
       moved_to: mv ? { id: mv.id, next_group_name: mv.next_group_name, next_line: mv.next_line } : null,
       disposition: dp ? {
         id: dp.id, disposition: dp.disposition,
-        followup_date: dp.followup_date, followup_time: dp.followup_time,
-        followup_method: dp.followup_method, notes: dp.notes,
+        entries: entriesByDisp.get(dp.id) || [],
       } : null,
     };
   });
@@ -196,6 +220,7 @@ function addNextMembers({ nextGroup, nextLine, sourceGroup, sourceLine, members,
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const delDisp = db.prepare(`DELETE FROM enr_dispositions WHERE source_group_name = ? AND source_line = ? AND client_phone = ?`);
+  const delEntries = db.prepare(`DELETE FROM enr_disposition_entries WHERE disposition_id IN (SELECT id FROM enr_dispositions WHERE source_group_name = ? AND source_line = ? AND client_phone = ?)`);
   const tx = db.transaction(() => {
     let added = 0;
     for (const m of members) {
@@ -204,8 +229,16 @@ function addNextMembers({ nextGroup, nextLine, sourceGroup, sourceLine, members,
       const r = ins.run(nextGroup, nextLine, name, phone || null,
         (sourceGroup || '').trim() || null, (sourceLine || '').trim() || null,
         addedFrom, user?.id || null, user?.full_name || user?.name || null);
-      if (r.changes) added++;
-      if (sourceGroup && phone) delDisp.run((sourceGroup || '').trim(), (sourceLine || '').trim(), phone);
+      if (r.changes) {
+        added++;
+        logActivity({ action: 'move_in', sourceGroup, sourceLine, nextGroup, clientName: name, clientPhone: phone,
+          detail: addedFrom === 'sales_register' ? 'من كشف العملاء' : null, user });
+      }
+      // Moving a client out of "not moved" → drop any disposition they had.
+      if (sourceGroup && phone) {
+        delEntries.run((sourceGroup || '').trim(), (sourceLine || '').trim(), phone);
+        delDisp.run((sourceGroup || '').trim(), (sourceLine || '').trim(), phone);
+      }
     }
     return added;
   });
@@ -214,10 +247,16 @@ function addNextMembers({ nextGroup, nextLine, sourceGroup, sourceLine, members,
   return { added };
 }
 
-function removeNextMember({ id }) {
+function removeNextMember({ id, user }) {
   id = parseInt(id, 10);
   if (!id) throw new Error('id is required');
-  db.prepare(`DELETE FROM enr_next_members WHERE id = ?`).run(id);
+  const row = db.prepare(`SELECT * FROM enr_next_members WHERE id = ?`).get(id);
+  const tx = db.transaction(() => {
+    db.prepare(`DELETE FROM enr_next_members WHERE id = ?`).run(id);
+    if (row) logActivity({ action: 'move_out', sourceGroup: row.source_group_name, sourceLine: row.source_line,
+      nextGroup: row.next_group_name, clientName: row.client_name, clientPhone: row.client_phone, user });
+  });
+  tx();
   saveNow();
   return { ok: true };
 }
@@ -235,43 +274,67 @@ function getNextRoster({ nextGroup, nextLine }) {
   return { next_group_name: nextGroup, next_line: nextLine, count: items.length, items };
 }
 
+// Insert one entry (follow-up for postpone / plain note otherwise) + log it.
+// Runs inside an existing transaction. Returns the new entry id.
+function _insertEntry(disp, { followupDate, followupTime, followupMethod, note }, user) {
+  const fDate = disp.disposition === 'postponed' ? (followupDate || null) : null;
+  const fTime = disp.disposition === 'postponed' ? (followupTime || null) : null;
+  const fMethod = (disp.disposition === 'postponed' && FOLLOWUP_METHODS.includes(followupMethod)) ? followupMethod : null;
+  const r = db.prepare(`
+    INSERT INTO enr_disposition_entries
+      (disposition_id, followup_date, followup_time, followup_method, note, created_by, created_by_name)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(disp.id, fDate, fTime, fMethod, note || null, user?.id || null, user?.full_name || user?.name || null);
+  logActivity({
+    action: 'entry_added', sourceGroup: disp.source_group_name, sourceLine: disp.source_line,
+    clientName: disp.client_name, clientPhone: disp.client_phone,
+    detail: (fDate ? `متابعة ${fDate}${fTime ? ' ' + fTime : ''}${fMethod ? ' (' + fMethod + ')' : ''}` : 'ملاحظة') + (note ? ': ' + note : ''),
+    user,
+  });
+  return r.lastInsertRowid;
+}
+
 /**
- * Upsert a disposition for a current-group client who is NOT being moved.
- * Removing them from the next-group roster if they were there (mutually exclusive).
+ * Set a disposition for a current-group client who is NOT being moved (creates the
+ * header if missing). An optional first entry (follow-up/note) may be included.
+ * Removes the client from the next-group roster (mutually exclusive).
  */
-function setDisposition({ sourceGroup, sourceLine, dept, clientName, clientPhone,
-  disposition, followupDate, followupTime, followupMethod, notes, user }) {
+function setDisposition({ sourceGroup, sourceLine, dept, clientName, clientPhone, disposition, entry, user }) {
   sourceGroup = (sourceGroup || '').trim();
   sourceLine = (sourceLine || '').trim();
   clientPhone = (clientPhone || '').trim();
   if (!sourceGroup) throw new Error('sourceGroup is required');
   if (!clientPhone && !clientName) throw new Error('client identity is required');
   if (!DISPOSITIONS.includes(disposition)) throw new Error('Invalid disposition');
-  // Follow-up fields apply to "postponed" only.
-  const fDate = disposition === 'postponed' ? (followupDate || null) : null;
-  const fTime = disposition === 'postponed' ? (followupTime || null) : null;
-  const fMethod = (disposition === 'postponed' && FOLLOWUP_METHODS.includes(followupMethod)) ? followupMethod : null;
 
   const existing = db.prepare(`
-    SELECT id FROM enr_dispositions WHERE source_group_name = ? AND source_line = ? AND client_phone = ?
+    SELECT id, disposition FROM enr_dispositions WHERE source_group_name = ? AND source_line = ? AND client_phone = ?
   `).get(sourceGroup, sourceLine, clientPhone);
 
+  let dispId;
   const tx = db.transaction(() => {
     if (existing) {
       db.prepare(`
-        UPDATE enr_dispositions
-           SET dept = ?, client_name = ?, disposition = ?, followup_date = ?, followup_time = ?,
-               followup_method = ?, notes = ?, updated_at = datetime('now', '+2 hours')
+        UPDATE enr_dispositions SET dept = ?, client_name = ?, disposition = ?, updated_at = datetime('now', '+2 hours')
          WHERE id = ?
-      `).run(dept || null, clientName || null, disposition, fDate, fTime, fMethod, notes || null, existing.id);
+      `).run(dept || null, clientName || null, disposition, existing.id);
+      dispId = existing.id;
+      if (existing.disposition !== disposition) {
+        logActivity({ action: 'disposition_set', sourceGroup, sourceLine, clientName, clientPhone, detail: DISP_LABEL(disposition), user });
+      }
     } else {
-      db.prepare(`
+      const r = db.prepare(`
         INSERT INTO enr_dispositions
-          (source_group_name, source_line, dept, client_name, client_phone, disposition,
-           followup_date, followup_time, followup_method, notes, created_by, created_by_name)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (source_group_name, source_line, dept, client_name, client_phone, disposition, created_by, created_by_name)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).run(sourceGroup, sourceLine, dept || null, clientName || null, clientPhone || null, disposition,
-        fDate, fTime, fMethod, notes || null, user?.id || null, user?.full_name || user?.name || null);
+        user?.id || null, user?.full_name || user?.name || null);
+      dispId = r.lastInsertRowid;
+      logActivity({ action: 'disposition_set', sourceGroup, sourceLine, clientName, clientPhone, detail: DISP_LABEL(disposition), user });
+    }
+    // Optional first entry.
+    if (entry && (entry.note || entry.followupDate || entry.followupTime || entry.followupMethod)) {
+      _insertEntry({ id: dispId, disposition, source_group_name: sourceGroup, source_line: sourceLine, client_name: clientName, client_phone: clientPhone }, entry, user);
     }
     // A client with a disposition is NOT moved → drop them from this source's next-roster.
     if (clientPhone) {
@@ -281,13 +344,52 @@ function setDisposition({ sourceGroup, sourceLine, dept, clientName, clientPhone
   });
   tx();
   saveNow();
+  return { ok: true, id: dispId };
+}
+
+/** Add a follow-up/note entry to an existing disposition. */
+function addDispositionEntry({ dispositionId, followupDate, followupTime, followupMethod, note, user }) {
+  dispositionId = parseInt(dispositionId, 10);
+  if (!dispositionId) throw new Error('dispositionId is required');
+  const disp = db.prepare(`SELECT * FROM enr_dispositions WHERE id = ?`).get(dispositionId);
+  if (!disp) throw new Error('disposition not found');
+  if (!(note || followupDate || followupTime || followupMethod)) throw new Error('empty entry');
+  const tx = db.transaction(() => { _insertEntry(disp, { followupDate, followupTime, followupMethod, note }, user); });
+  tx();
+  saveNow();
   return { ok: true };
 }
 
-function clearDisposition({ id }) {
+/** Remove a single entry. */
+function removeDispositionEntry({ entryId, user }) {
+  entryId = parseInt(entryId, 10);
+  if (!entryId) throw new Error('entryId is required');
+  const e = db.prepare(`
+    SELECT e.id, d.source_group_name, d.source_line, d.client_name, d.client_phone
+      FROM enr_disposition_entries e JOIN enr_dispositions d ON d.id = e.disposition_id
+     WHERE e.id = ?
+  `).get(entryId);
+  const tx = db.transaction(() => {
+    db.prepare(`DELETE FROM enr_disposition_entries WHERE id = ?`).run(entryId);
+    if (e) logActivity({ action: 'entry_removed', sourceGroup: e.source_group_name, sourceLine: e.source_line,
+      clientName: e.client_name, clientPhone: e.client_phone, user });
+  });
+  tx();
+  saveNow();
+  return { ok: true };
+}
+
+function clearDisposition({ id, user }) {
   id = parseInt(id, 10);
   if (!id) throw new Error('id is required');
-  db.prepare(`DELETE FROM enr_dispositions WHERE id = ?`).run(id);
+  const d = db.prepare(`SELECT * FROM enr_dispositions WHERE id = ?`).get(id);
+  const tx = db.transaction(() => {
+    db.prepare(`DELETE FROM enr_disposition_entries WHERE disposition_id = ?`).run(id);
+    db.prepare(`DELETE FROM enr_dispositions WHERE id = ?`).run(id);
+    if (d) logActivity({ action: 'disposition_cleared', sourceGroup: d.source_group_name, sourceLine: d.source_line,
+      clientName: d.client_name, clientPhone: d.client_phone, detail: DISP_LABEL(d.disposition), user });
+  });
+  tx();
   saveNow();
   return { ok: true };
 }
@@ -314,17 +416,38 @@ function getDispositions({ type, q, dept, from, to, page, pageSize }) {
     where.push(`(client_name LIKE ? OR client_phone LIKE ? OR source_group_name LIKE ?)`);
     const like = '%' + q + '%'; args.push(like, like, like);
   }
-  // Date range: follow-up date for postponed, else created date.
-  if (from) { where.push(`date(COALESCE(followup_date, created_at)) >= ?`); args.push(from); }
-  if (to)   { where.push(`date(COALESCE(followup_date, created_at)) <= ?`); args.push(to); }
+  // Date range: match if ANY follow-up entry falls in range, else the disposition's
+  // own created date (covers postpone follow-ups + plain dispositions).
+  const entryDateExists = `EXISTS (SELECT 1 FROM enr_disposition_entries e WHERE e.disposition_id = enr_dispositions.id AND date(COALESCE(e.followup_date, e.created_at)) `;
+  if (from) { where.push(`(${entryDateExists}>= ?) OR date(created_at) >= ?)`); args.push(from, from); }
+  if (to)   { where.push(`(${entryDateExists}<= ?) OR date(created_at) <= ?)`); args.push(to, to); }
   const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
   const total = db.prepare(`SELECT COUNT(*) AS c FROM enr_dispositions ${whereSql}`).get(...args).c;
   const items = db.prepare(`
     SELECT * FROM enr_dispositions ${whereSql}
-     ORDER BY COALESCE(followup_date, date(created_at)) DESC, id DESC
+     ORDER BY date(created_at) DESC, id DESC
      LIMIT ? OFFSET ?
   `).all(...args, pageSize, (page - 1) * pageSize);
+
+  // Attach the entries thread (+ latest entry) to each row.
+  const ids = items.map(i => i.id);
+  const entriesByDisp = new Map();
+  if (ids.length) {
+    const rows = db.prepare(
+      `SELECT * FROM enr_disposition_entries WHERE disposition_id IN (${ids.map(() => '?').join(',')}) ORDER BY id ASC`
+    ).all(...ids);
+    for (const e of rows) {
+      if (!entriesByDisp.has(e.disposition_id)) entriesByDisp.set(e.disposition_id, []);
+      entriesByDisp.get(e.disposition_id).push(e);
+    }
+  }
+  for (const it of items) {
+    const es = entriesByDisp.get(it.id) || [];
+    it.entries = es;
+    it.entries_count = es.length;
+    it.last_entry = es.length ? es[es.length - 1] : null;
+  }
 
   return {
     type, page, page_size: pageSize, total,
@@ -333,9 +456,49 @@ function getDispositions({ type, q, dept, from, to, page, pageSize }) {
   };
 }
 
+/**
+ * Enr Groups activity log (audit). Filters: group(+line), q (name/phone/group),
+ * actor (employee name), action, from/to (created date). Paginated.
+ */
+function getActivityLog({ group, line, q, actor, action, from, to, page, pageSize }) {
+  group = (group || '').trim();
+  line = (line || '').trim();
+  q = (q || '').trim();
+  actor = (actor || '').trim();
+  action = (action || '').trim();
+  from = (from || '').trim();
+  to = (to || '').trim();
+  page = Math.max(1, parseInt(page, 10) || 1);
+  pageSize = Math.min(200, Math.max(5, parseInt(pageSize, 10) || 25));
+
+  const where = [];
+  const args = [];
+  if (group) { where.push(`(source_group_name = ? OR next_group_name = ?)`); args.push(group, group); }
+  if (line)  { where.push(`(source_line = ? OR source_line IS NULL)`); args.push(line); }
+  if (actor) { where.push(`actor_name LIKE ?`); args.push('%' + actor + '%'); }
+  if (action) { where.push(`action = ?`); args.push(action); }
+  if (q) {
+    where.push(`(client_name LIKE ? OR client_phone LIKE ? OR source_group_name LIKE ? OR next_group_name LIKE ?)`);
+    const like = '%' + q + '%'; args.push(like, like, like, like);
+  }
+  if (from) { where.push(`date(created_at) >= ?`); args.push(from); }
+  if (to)   { where.push(`date(created_at) <= ?`); args.push(to); }
+  const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+
+  const total = db.prepare(`SELECT COUNT(*) AS c FROM enr_activity_log ${whereSql}`).get(...args).c;
+  const items = db.prepare(`
+    SELECT * FROM enr_activity_log ${whereSql}
+     ORDER BY id DESC
+     LIMIT ? OFFSET ?
+  `).all(...args, pageSize, (page - 1) * pageSize);
+
+  return { page, page_size: pageSize, total, total_pages: Math.ceil(total / pageSize) || 1, items };
+}
+
 module.exports = {
   getNextGroupOptions, getTransition, searchSalesRegister,
   addNextMembers, removeNextMember, getNextRoster,
-  setDisposition, clearDisposition, getDispositions,
+  setDisposition, addDispositionEntry, removeDispositionEntry, clearDisposition,
+  getDispositions, getActivityLog,
   DEPTS, DISPOSITIONS, FOLLOWUP_METHODS,
 };
