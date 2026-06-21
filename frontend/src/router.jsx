@@ -71,6 +71,7 @@ import CsClientProfile from './pages/subscriptions/CsClientProfile';
 import CsDashboard from './pages/subscriptions/CsDashboard';
 import DepartmentDeliveries from './pages/subscriptions/DepartmentDeliveries';
 import Enrollment from './pages/subscriptions/Enrollment';
+import EnrGroups from './pages/subscriptions/EnrGroups';
 
 import TeamProgression from './pages/leader/TeamProgression';
 import EvaluateGoals from './pages/leader/EvaluateGoals';
@@ -218,6 +219,7 @@ const router = createBrowserRouter([
       { path: 'cs-department',      element: <DepartmentDeliveries /> },
       { path: 'deliveries/:dept',   element: <DepartmentDeliveries /> },
       { path: 'enrollment',         element: <Enrollment /> },
+      { path: 'enr-groups',         element: <PrivateRoute allowedRoles={['admin']}><EnrGroups /></PrivateRoute> },
     ],
   },
 

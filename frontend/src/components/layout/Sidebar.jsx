@@ -202,7 +202,12 @@ function getAdminLinks(user) {
     { to: '/admin/salaries/trainers',        label: 'مرتبات المدربين',      icon: Wallet, color: 'amber' },
   ] : [];
 
-  return [...base, ...reports, ...monitoring, ...financeSection, ...employeeSalaries, ...DELIVERIES_LINKS];
+  // Enr Groups — admin-only, group-oriented view sitting right under Enrollment.
+  const enrGroupsLink = [
+    { to: '/subscriptions/enr-groups', label: 'Enr Groups', icon: GraduationCap, color: 'emerald' },
+  ];
+
+  return [...base, ...reports, ...monitoring, ...financeSection, ...employeeSalaries, ...DELIVERIES_LINKS, ...enrGroupsLink];
 }
 
 // Avatar visuals are owned by the shared UserAvatar component now.

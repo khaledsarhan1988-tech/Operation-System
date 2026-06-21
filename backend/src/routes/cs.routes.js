@@ -852,6 +852,30 @@ router.patch('/deliveries/:phone/status', requireRole('admin', 'leader', 'agent'
   }
 });
 
+// ─── ENR GROUPS (مجموعات الـ Enrollment) ──────────────────────────────────────
+
+/**
+ * GET /api/cs/enr-groups?dept=General|Private|Semi&q=&page=&page_size=
+ * Group-oriented view: every ACTIVE group that has STARTED (≥1 registered main
+ * lecture), with the clients inside it and the group's first/last lecture dates.
+ * Admin only.
+ */
+router.get('/enr-groups', requireRole('admin'), (req, res) => {
+  try {
+    const svc = require('../services/csEnrGroups.service');
+    const result = svc.getEnrGroups({
+      dept:     (req.query.dept || '').trim(),
+      q:        (req.query.q || '').trim(),
+      page:     req.query.page,
+      pageSize: req.query.page_size,
+    });
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    console.error('GET /cs/enr-groups error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
 // ─── ENROLLMENT (manual data-entry grid) ──────────────────────────────────────
 
 /** GET /api/cs/enrollment?dept=General — rows for the department grid. */
