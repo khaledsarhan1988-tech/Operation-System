@@ -22,10 +22,18 @@ const DEPT_META = {
   Private: { label: 'برايفت',      color: 'violet'  },
 };
 
+const STATUS_OPTIONS = [
+  { value: 'started',          label: 'بدأت',                    cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  { value: 'waiting_lectures', label: 'بانتظار تسجيل المحاضرات', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
+  { value: 'waiting_trainees', label: 'بانتظار تسجيل المتدربين', cls: 'bg-sky-50 text-sky-700 border-sky-200' },
+];
+const STATUS_META = Object.fromEntries(STATUS_OPTIONS.map(s => [s.value, s]));
+
 export default function EnrGroups() {
   const [activeDept, setActiveDept] = useState('General');
   const [q, setQ] = useState('');
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
   const [firstFrom, setFirstFrom] = useState('');
   const [firstTo, setFirstTo] = useState('');
   const [lastFrom, setLastFrom] = useState('');
@@ -42,10 +50,10 @@ export default function EnrGroups() {
   };
 
   const listQ = useQuery({
-    queryKey: ['enr-groups', activeDept, search, firstFrom, firstTo, lastFrom, lastTo, page],
+    queryKey: ['enr-groups', activeDept, search, statusFilter, firstFrom, firstTo, lastFrom, lastTo, page],
     queryFn: () => api.get('/cs/enr-groups', {
       params: {
-        dept: activeDept, q: search, page, page_size: 25,
+        dept: activeDept, q: search, status: statusFilter, page, page_size: 25,
         first_from: firstFrom, first_to: firstTo,
         last_from: lastFrom, last_to: lastTo,
       },
@@ -59,7 +67,7 @@ export default function EnrGroups() {
 
   const submitSearch = (e) => { e.preventDefault(); setPage(1); setSearch(q.trim()); };
   const switchTab = (d) => {
-    setActiveDept(d); setPage(1); setSearch(''); setQ(''); clearDateFilters();
+    setActiveDept(d); setPage(1); setSearch(''); setQ(''); setStatusFilter(''); clearDateFilters();
   };
 
   return (
@@ -106,6 +114,16 @@ export default function EnrGroups() {
             </button>
           </form>
 
+          {/* Status filter */}
+          <select
+            value={statusFilter}
+            onChange={(e) => { setPage(1); setStatusFilter(e.target.value); }}
+            className="py-2 px-3 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-200"
+          >
+            <option value="">كل الحالات</option>
+            {STATUS_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+          </select>
+
           {/* First lecture date range */}
           <div className="flex items-center gap-1 text-xs text-slate-500">
             <span className="whitespace-nowrap">أول محاضرة:</span>
@@ -143,6 +161,7 @@ export default function EnrGroups() {
             <thead>
               <tr className="text-slate-500 border-b border-slate-100">
                 <th className="px-3 py-3 font-medium">المجموعة</th>
+                <th className="px-3 py-3 font-medium">الحالة</th>
                 <th className="px-3 py-3 font-medium">المنسق</th>
                 <th className="px-3 py-3 font-medium">الطلاب</th>
                 <th className="px-3 py-3 font-medium">عدد الطلاب</th>
@@ -159,6 +178,13 @@ export default function EnrGroups() {
                     {it.line && (
                       <span className="inline-block mt-1 text-[10px] bg-slate-100 text-slate-500 rounded px-1.5 py-0.5">{it.line}</span>
                     )}
+                  </td>
+                  <td className="px-3 py-3 whitespace-nowrap">
+                    {STATUS_META[it.status] ? (
+                      <span className={`inline-block text-[11px] rounded-full border px-2 py-0.5 ${STATUS_META[it.status].cls}`}>
+                        {STATUS_META[it.status].label}
+                      </span>
+                    ) : <span className="text-slate-300">—</span>}
                   </td>
                   <td className="px-3 py-3 text-slate-700">{it.coordinator || <span className="text-slate-300">—</span>}</td>
                   <td className="px-3 py-3">
@@ -196,7 +222,7 @@ export default function EnrGroups() {
                 </tr>
               ))}
               {!listQ.isLoading && items.length === 0 && (
-                <tr><td colSpan={7} className="px-3 py-10 text-center text-slate-400">لا توجد مجموعات مطابقة</td></tr>
+                <tr><td colSpan={8} className="px-3 py-10 text-center text-slate-400">لا توجد مجموعات مطابقة</td></tr>
               )}
             </tbody>
           </table>

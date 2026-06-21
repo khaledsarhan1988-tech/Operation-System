@@ -2,17 +2,22 @@
 
 /**
  * Enr Groups (مجموعات الـ Enrollment) — a GROUP-oriented view (the inverse of the
- * client-oriented تسليمات الأقسام page). For each ACTIVE group that has STARTED it
- * lists the clients inside it plus the group's start/end dates.
+ * client-oriented تسليمات الأقسام page). For each ACTIVE group it lists the clients
+ * inside it plus the group's start/end dates and a STATUS.
  *
  *   - "active"  = batches.status = 'نشطة'  (placeholder groups excluded)
- *   - "started" = the group has at least ONE registered MAIN lecture
- *                 (status مؤكدة OR مجدولة) — owner's decision 2026-06-21.
- *   - start_date / end_date = MIN/MAX lecture date taken from the `lectures`
- *                 table directly (NOT batches), MAIN sessions only, current sheet
- *                 only (latest synced_at per group), COUNT(DISTINCT date|time) to
- *                 collapse the ~40% rename twins. This mirrors csDeliveries'
- *                 makeGroupLectureMeta exactly so the numbers agree.
+ *   - status (owner's decision 2026-06-21):
+ *       • started          = ≥1 registered MAIN lecture (مؤكدة OR مجدولة)
+ *       • waiting_lectures = 0 lectures but HAS trainees → بانتظار تسجيل المحاضرات
+ *       • waiting_trainees = 0 lectures AND 0 trainees   → بانتظار تسجيل المتدربين
+ *   - start_date / end_date:
+ *       • started groups → MIN/MAX lecture date from the `lectures` table directly
+ *         (NOT batches), MAIN only, current sheet only (latest synced_at per group),
+ *         COUNT(DISTINCT date|time) to collapse the ~40% rename twins — mirrors
+ *         csDeliveries.makeGroupLectureMeta exactly so the numbers agree.
+ *       • groups with NO lectures → start_date = batches.start_date (the group's
+ *         stored start date = the date encoded in its name, year resolved by the
+ *         system; owner's decision). No last lecture → end_date null.
  *
  * Read-only. Additive — touches no existing route/table/service. Admin only
  * (enforced at the route).
@@ -118,21 +123,25 @@ function buildClientsByGroup() {
  *
  *   dept: 'General' | 'Private' | 'Semi'
  *   q:    free-text search on group code or coordinator
- *   firstFrom/firstTo: filter on start_date (first lecture) range
- *   lastFrom/lastTo:   filter on end_date (last lecture) range
+ *   status: '' (all) | 'started' | 'waiting_lectures' | 'waiting_trainees'
+ *   firstFrom/firstTo: filter on start_date range
+ *   lastFrom/lastTo:   filter on end_date range
  *   page, pageSize: pagination
  */
-function getEnrGroups({ dept, q, firstFrom, firstTo, lastFrom, lastTo, page, pageSize }) {
+const STATUSES = ['started', 'waiting_lectures', 'waiting_trainees'];
+
+function getEnrGroups({ dept, q, status, firstFrom, firstTo, lastFrom, lastTo, page, pageSize }) {
   if (!DEPTS.includes(dept)) throw new Error('Invalid dept (use General | Private | Semi)');
   page = Math.max(1, parseInt(page, 10) || 1);
   pageSize = Math.min(200, Math.max(5, parseInt(pageSize, 10) || 25));
   q = (q || '').trim();
+  status = (status || '').trim();
   firstFrom = (firstFrom || '').trim();  firstTo = (firstTo || '').trim();
   lastFrom  = (lastFrom  || '').trim();  lastTo  = (lastTo  || '').trim();
 
   // Active groups in this dept, deduped by canonical key + line, placeholders out.
   const rows = db.prepare(`
-    SELECT group_name, line, dept_type, coordinators
+    SELECT group_name, line, dept_type, coordinators, start_date
       FROM batches
      WHERE status = 'نشطة' AND dept_type = ?
   `).all(dept);
@@ -150,21 +159,38 @@ function getEnrGroups({ dept, q, firstFrom, firstTo, lastFrom, lastTo, page, pag
   let items = [];
   for (const r of seen.values()) {
     const meta = lectureMeta(r.group_name, r.line);
-    // "Started" = at least one registered main lecture (owner's decision).
-    if (!meta.lectures) continue;
-
     const students = clientsByGroup.get(String(r.group_name) + '|' + String(r.line || '')) || [];
+
+    // Status (owner's decision): lectures → started; else has-trainees →
+    // waiting_lectures; else (no trainees, no lectures) → waiting_trainees.
+    let rowStatus, startDate, endDate;
+    if (meta.lectures > 0) {
+      rowStatus = 'started';
+      startDate = meta.start_date;        // first lecture date
+      endDate   = meta.end_date;          // last lecture date
+    } else {
+      rowStatus = students.length > 0 ? 'waiting_lectures' : 'waiting_trainees';
+      startDate = r.start_date || null;   // group's stored start date (= name date)
+      endDate   = null;                   // no last lecture yet
+    }
+
     items.push({
       group_name:    r.group_name,
       line:          r.line,
       dept_type:     r.dept_type,
       coordinator:   realCoordinator(r.coordinators),
+      status:        rowStatus,
       students,
       student_count: students.length,
-      start_date:    meta.start_date,
-      end_date:      meta.end_date,
+      start_date:    startDate,
+      end_date:      endDate,
       lectures:      meta.lectures,
     });
+  }
+
+  // Status filter.
+  if (status && STATUSES.includes(status)) {
+    items = items.filter(it => it.status === status);
   }
 
   // Search on group code or coordinator (space-insensitive for the code).

@@ -866,6 +866,7 @@ router.get('/enr-groups', requireRole('admin'), (req, res) => {
     const result = svc.getEnrGroups({
       dept:      (req.query.dept || '').trim(),
       q:         (req.query.q || '').trim(),
+      status:    (req.query.status || '').trim(),
       firstFrom: (req.query.first_from || '').trim(),
       firstTo:   (req.query.first_to || '').trim(),
       lastFrom:  (req.query.last_from || '').trim(),
