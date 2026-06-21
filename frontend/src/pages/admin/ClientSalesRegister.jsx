@@ -53,9 +53,10 @@ function discountAmount(discountStr, price) {
 //   The membership is whatever the customer ended up on: a normal row uses
 //   `courses`/`price`; an UPGRADE row uses the NEW membership (`new_courses`/
 //   `new_prices`) — the original course is just kept as "started with".
-//   ALL the customer's money counts toward that final membership:
-//     normal  → paid = sum of installments (when any) or the manual figure
-//     upgrade → paid = manual subscription payment + the upgrade installments
+//   ALL the customer's money counts toward the membership:
+//     total paid = first payment (total_paid_same_month) + every installment.
+//   The first/same-month payment is ALWAYS separate from the installment blocks
+//   (the sheet stores it in its own column), so it must be ADDED, not replaced.
 //   balance = (effective price − discount) − total paid.
 //   Discount is offer_individual on upgrades (e.g. migrated "-250"), else the
 //   `discount` field; either may be a % of the price or a plain amount; only
@@ -69,7 +70,7 @@ function calcPaidBalance(form, installments, isUpgrade = false) {
   const newPrice = Number(String(form.new_prices ?? '').replace(/,/g, '')) || 0;
   const effPrice = isUpgrade ? newPrice : subPrice;
   const discount = Math.abs(discountAmount(isUpgrade ? form.offer_individual : form.discount, effPrice));
-  const totalPaid = isUpgrade ? ((manual || 0) + instSum) : (hasInst ? instSum : (manual || 0));
+  const totalPaid = (manual || 0) + instSum;
   const balance = (effPrice - discount) - totalPaid;
   return { hasInst, instSum, manual: manual || 0, effPrice, discount, totalPaid, balance };
 }
@@ -291,31 +292,25 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
 
               <SectionCard title="الإجماليات والخصومات" icon={DollarSign} accent="amber">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {/* Amount paid: for an upgrade this is the first/subscription payment;
-                      for a non-upgrade installment plan it auto-sums the installments. */}
-                  {(() => {
-                    const autoPaid = !isUpgrade && totals.hasInst;
-                    return (
+                  {/* First/cash payment (always editable). It is SEPARATE from the
+                      installments — total paid = this + the installments. */}
                   <div>
                     <label className="block text-[11px] font-bold text-gray-500 mb-1">
-                      {isUpgrade ? 'المدفوع (الدفعة الأولى)' : 'المبلغ المدفوع من العميل'}{autoPaid ? ' — مجموع الأقساط (تلقائي)' : ''}
+                      {totals.hasInst ? 'المدفوع (الدفعة الأولى)' : 'المبلغ المدفوع من العميل'}
                     </label>
                     <input
                       type="number"
-                      value={autoPaid ? totals.instSum : (form.total_paid_same_month ?? '')}
+                      value={form.total_paid_same_month ?? ''}
                       onChange={(e) => set('total_paid_same_month', e.target.value)}
-                      readOnly={autoPaid}
-                      className={`w-full px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none ${autoPaid ? 'bg-gray-100 text-gray-600' : 'focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400'}`}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400"
                     />
                   </div>
-                    );
-                  })()}
-                  {/* Total paid (read-only) — shown when there are extra payments / installments */}
-                  {(isUpgrade || totals.hasInst) && (
+                  {/* Total paid (read-only) = first payment + installments — shown when there are installments */}
+                  {totals.hasInst && (
                     <div>
-                      <label className="block text-[11px] font-bold text-gray-500 mb-1">إجمالي المدفوع — تلقائي</label>
+                      <label className="block text-[11px] font-bold text-gray-500 mb-1">إجمالي المدفوع (الدفعة الأولى + الأقساط) — تلقائي</label>
                       <input type="number" value={totals.totalPaid} readOnly
-                        className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-100 text-gray-700 outline-none" />
+                        className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-100 text-gray-700 font-bold outline-none" />
                     </div>
                   )}
                   {/* Discount — offer_individual on an upgrade, else the discount field; % or amount */}
