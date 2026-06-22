@@ -190,6 +190,79 @@ function buildCoordFallbackMap() {
   return map;
 }
 
+// ─── Client Sales Register (كشف العملاء) = the membership source ───────────────
+// (owner decision 2026-06-20) Memberships + months on the deliveries page now come
+// from cs_sales_register, clients from 2025-01-01 on. The course code encodes BOTH
+// the track and the level count: "[N]L G…"=General, "[N]L P…"=Private, "…2P/3P"=Semi,
+// "Z P [N] L A"=Private; the N before "L" = months. Non-membership codes (Refund,
+// Delay, Book, Shipping, Deposite, Session*, Bussines*, Conversation*, Topic, Your
+// American, Z P 6 L K, Back Extral) are dropped. A client is treated as REFUNDED
+// (left) on a track when their LATEST membership there is refunded — signalled by
+// noted1/noted2~"refund" OR a Refund row (courses~"refund"/price<0) — and is then
+// hidden from that track's tab. (verified classification: 0 unknown codes.)
+const SALES_NON_MEMBERSHIP = /REFUND|DELAY|BOOK|SHIPPING|DEPOSIT|BACK\s*EXTRAL|SESSION|BUSSINES|BUSINESS|CONVERSATION|TOPIC|YOUR\s*AMERICAN|Z\s*P\s*6\s*L\s*K/i;
+function salesYear(s) { const m = String(s == null ? '' : s).match(/(\d{4})/g); return m ? parseInt(m[m.length - 1], 10) : 0; }
+function salesDateKey(s) {              // "M/D/YYYY" → sortable YYYYMMDD (0 if unparseable)
+  const m = String(s == null ? '' : s).match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  return m ? (parseInt(m[3], 10) * 10000 + parseInt(m[1], 10) * 100 + parseInt(m[2], 10)) : 0;
+}
+const salesIsRefundRow  = (r) => /refund/i.test(String(r.courses || '')) || (r.price != null && Number(r.price) < 0);
+const salesNotedRefunded = (r) => /refund/i.test(String(r.noted1 || '')) || /refund/i.test(String(r.noted2 || ''));
+function classifySalesCourse(raw) {     // → { include, track, months }
+  const u = String(raw == null ? '' : raw).toUpperCase();
+  if (!u.trim() || SALES_NON_MEMBERSHIP.test(u)) return { include: false };
+  const lm = u.match(/(\d+)\s*L(?:EVEL)?\b/);
+  const months = lm ? parseInt(lm[1], 10) : null;
+  let track = null;
+  if (/[23]P/.test(u.replace(/\s/g, '')))            track = 'Semi';      // 2P / 3P = persons → Semi
+  else if (/^Z\s*P\b/.test(u))                        track = 'Private';  // "Z P …" = zoom private
+  else if (u.replace(/[0-9]+\s*P\b/, '').includes('P')) track = 'Private';
+  else if (u.includes('G'))                           track = 'General';
+  return { include: !!(months && track), track, months };
+}
+// phone → { name, byTrack: { <track>: { count, months, list, excludedRefund } } }
+function buildSalesMembershipMap() {
+  const rows = db.prepare(`
+    SELECT mobile_no AS m, client_name AS name, courses AS c, entry_date AS d, noted1, noted2, price
+      FROM cs_sales_register
+     WHERE mobile_no IS NOT NULL AND TRIM(mobile_no) <> ''
+  `).all();
+  const scratch = new Map();   // pn -> { name, mems:[{track,months,key,refunded}], lastRefundKey }
+  for (const r of rows) {
+    if (salesYear(r.d) < 2025) continue;
+    const pn = csPrimaryPhone(r.m);
+    if (!pn) continue;
+    let s = scratch.get(pn);
+    if (!s) { s = { name: r.name || null, mems: [], lastRefundKey: 0 }; scratch.set(pn, s); }
+    if (!s.name && r.name) s.name = r.name;
+    if (salesIsRefundRow(r)) { s.lastRefundKey = Math.max(s.lastRefundKey, salesDateKey(r.d)); continue; }
+    const cl = classifySalesCourse(r.c);
+    if (!cl.include) continue;
+    s.mems.push({ track: cl.track, months: cl.months, key: salesDateKey(r.d), refunded: salesNotedRefunded(r) });
+  }
+  const map = new Map();
+  for (const [pn, s] of scratch) {
+    const overallLatest = s.mems.reduce((mx, m) => Math.max(mx, m.key), 0);
+    const byTrack = {};
+    for (const t of DEPTS) {
+      const mems = s.mems.filter(m => m.track === t);
+      if (!mems.length) continue;
+      const latest = mems.reduce((a, b) => (b.key >= a.key ? b : a), mems[0]);
+      const latestRefunded = latest.refunded
+        || (s.lastRefundKey > 0 && latest.key === overallLatest && s.lastRefundKey >= latest.key);
+      const live = mems.filter(m => !m.refunded);
+      byTrack[t] = {
+        count: live.length,
+        months: live.reduce((sum, m) => sum + (m.months || 0), 0),
+        list: live.map(m => m.months),
+        excludedRefund: latestRefunded,
+      };
+    }
+    map.set(pn, { name: s.name, byTrack });
+  }
+  return map;
+}
+
 /**
  * Build the deliveries table for one department.
  *
@@ -237,87 +310,42 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user,
   // Agent is scoped to the clients they coordinate.
   const agentNorm = isAgent ? normName(user?.full_name) : null;
 
-  // Per-phone subscription aggregate (non-ignored rows only).
-  const subRows = db.prepare(`
-    SELECT client_phone_norm AS pn,
-           MAX(client_name_raw) AS name,
-           COUNT(*)             AS membership_count,
-           SUM(COALESCE(months, 0)) AS total_months
-      FROM cs_subscriptions
-     WHERE is_ignored = 0 AND client_phone_norm IS NOT NULL AND client_phone_norm != ''
-     GROUP BY client_phone_norm
-  `).all();
-
-  // Per-dept subscription months (owner's decision: a delivery page shows the
-  // months/levels paid IN THAT department, not the client's cross-dept total).
-  // Keyed by phone → {months, count, list} restricted to THIS page's dept.
-  const perDeptSub = new Map();
-  for (const r of db.prepare(`
-        SELECT client_phone_norm AS pn, COALESCE(months,0) AS months
-          FROM cs_subscriptions
-         WHERE is_ignored = 0 AND dept = ?
-           AND client_phone_norm IS NOT NULL AND client_phone_norm != ''
-         ORDER BY COALESCE(subscription_date,'') ASC, id ASC
-      `).all(dept)) {
-    const e = perDeptSub.get(r.pn) || { months: 0, count: 0, list: [] };
-    e.months += (r.months || 0); e.count += 1;
-    if (r.months != null) e.list.push(r.months);
-    perDeptSub.set(r.pn, e);
-  }
-
-  // Most-recent subscription dept per phone (fallback when no active group).
-  const deptRows = db.prepare(`
-    SELECT client_phone_norm AS pn, dept
-      FROM cs_subscriptions
-     WHERE is_ignored = 0 AND dept IS NOT NULL
-     ORDER BY COALESCE(subscription_date, '') ASC, id ASC
-  `).all();
-  const latestDept = new Map();
-  for (const r of deptRows) latestDept.set(r.pn, r.dept);   // last write wins = latest
-
   const activeMap     = buildActiveGroupMap();
   const coordFallback = buildCoordFallbackMap();
+  const salesMap      = buildSalesMembershipMap();   // كشف العملاء (2025+) = membership source
 
   const statusRows = db.prepare(`SELECT client_phone_norm AS pn, status, note FROM cs_client_delivery_status`).all();
   const statusMap = new Map(statusRows.map(r => [r.pn, { status: r.status, note: r.note }]));
 
-  // Subscription aggregate keyed by phone (for the union loop below).
-  const subByPhone = new Map(subRows.map(r => [r.pn, r]));
-
-  // Client display-name by normalized phone — needed for clients who appear via an
-  // ACTIVE GROUP but have NO subscription row (so the page counts coordinators the
-  // same way فريق العمل / org-chart does: every client in the coordinator's active
-  // groups, subscription or not — owner's decision 2026-06-13).
+  // Client display-name fallback by normalized phone (when the sales row has no name).
   const nameByPhone = new Map();
   for (const r of db.prepare(`SELECT phone, MAX(name) AS name FROM clients WHERE phone IS NOT NULL AND TRIM(phone) <> '' GROUP BY phone`).all()) {
     const pn = csPrimaryPhone(r.phone);
     if (pn && r.name && !nameByPhone.has(pn)) nameByPhone.set(pn, r.name);
   }
 
-  // Population = phones with a subscription UNION phones with an active group.
-  const allPhones = new Set([...subByPhone.keys(), ...activeMap.keys()]);
+  // Population = clients who have a 2025+ membership in كشف العملاء.
+  const allPhones = new Set(salesMap.keys());
 
-  // Resolve a client's primary coordinator for DISPLAY: first active group with a
-  // REAL coordinator — skip the '--' placeholder (a "تعويض سيشن" comp-session group
-  // often sits first with coordinators='--', which used to hide the real coordinator).
+  // Primary coordinator for DISPLAY: first active group with a REAL coordinator
+  // (skip the '--' placeholder), else the cs_client_coordinator fallback.
   const realCoordOf = (active, pn) =>
     (active.find(a => { const c = normName(a.coordinators); return c && c !== '--'; })?.coordinators)
     || coordFallback.get(pn) || null;
-  // Dept for a client: first active group with a non-null dept_type, else latest sub dept.
-  const deptOf = (active, pn) =>
-    (active.find(a => a.dept_type)?.dept_type) || (active[0]?.dept_type) || (latestDept.get(pn) || null);
 
   const items = [];
   for (const pn of allPhones) {
+    const sales = salesMap.get(pn);
+    const tm = sales && sales.byTrack[dept];
+    if (!tm) continue;                  // no membership in THIS track
+    if (tm.excludedRefund) continue;    // latest membership in this track refunded → hidden
+
     const active = activeMap.get(pn) || [];
-    const sub = subByPhone.get(pn) || null;
-    const resolvedDept = deptOf(active, pn);
-    if (resolvedDept !== dept) continue;
 
     const st = statusMap.get(pn)?.status || 'active';
     if (status && status !== 'all' && st !== status) continue;
 
-    const name = (sub && sub.name) || nameByPhone.get(pn) || null;
+    const name = sales.name || nameByPhone.get(pn) || null;
     if (q) {
       const ql = q.toLowerCase();
       if (!(String(name || '').toLowerCase().includes(ql) || pn.includes(q))) continue;
@@ -334,15 +362,13 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user,
       if (!ownsViaGroup && !ownsViaCs) continue;
     }
 
-    const pd = perDeptSub.get(pn) || { months: 0, count: 0, list: [] };
-    const hasSub = !!sub;
     items.push({
       phone: pn,
       name,
-      membership_count: pd.count,        // per-dept (0 for no-subscription clients)
-      total_months: pd.months,
-      _pd: pd,
-      has_subscription: hasSub,
+      membership_count: tm.count,        // from كشف العملاء, this track
+      total_months: tm.months,
+      _pd: { months: tm.months, list: tm.list },
+      has_subscription: true,
       status: st,
       status_note: statusMap.get(pn)?.note || null,
       active_groups: activeGroups,
