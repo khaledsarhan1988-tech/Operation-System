@@ -384,7 +384,7 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                             // keep an existing value selectable even if not in the list
                             const selOpts = sel ? (cur && !sel.includes(cur) ? [cur, ...sel] : sel) : null;
                             return (
-                              <div key={k}>
+                              <div key={k} className={k === 'note' ? 'col-span-2 sm:col-span-4' : ''}>
                                 <label className="block text-[10px] font-bold text-gray-500 mb-0.5">{lbl}</label>
                                 {selOpts ? (
                                   <select
@@ -395,6 +395,14 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                                     <option value="">—</option>
                                     {selOpts.map(v => <option key={v} value={v}>{v}</option>)}
                                   </select>
+                                ) : k === 'note' ? (
+                                  <textarea
+                                    rows={1}
+                                    value={cur}
+                                    ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; } }}
+                                    onChange={(e) => { setInst(idx, k, e.target.value); e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px'; }}
+                                    className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs resize-none overflow-hidden focus:ring-2 focus:ring-violet-200 outline-none"
+                                  />
                                 ) : (
                                   <input
                                     type={typ || 'text'}
