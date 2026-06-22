@@ -153,15 +153,20 @@ function buildInactiveGroupMap() {
   return map;
 }
 
-// Set of phones whose subscriptions include an INTENSIVE course ("مكثفة").
+// Set of phones whose كشف-العملاء memberships include an INTENSIVE course.
 // Intensive levels run at a faster pace (2 weeks each) vs 1 month for regular.
+// Intensive = the "Z P [N] L A" zoom-intensive codes (owner's list 2026-06-22:
+// Z P 1/2/3/6/9 L A). "Z P 6 L K" is NOT a membership (already excluded).
 function buildIntensiveSet() {
-  const rows = db.prepare(`
-    SELECT DISTINCT client_phone_norm AS pn
-      FROM cs_subscriptions
-     WHERE is_ignored = 0 AND product_name_raw LIKE '%مكثف%'
-  `).all();
-  return new Set(rows.map(r => r.pn).filter(Boolean));
+  const set = new Set();
+  for (const r of db.prepare(`SELECT mobile_no AS m, courses AS c, entry_date AS d FROM cs_sales_register WHERE mobile_no IS NOT NULL AND TRIM(mobile_no) <> ''`).all()) {
+    if (salesYear(r.d) < 2025) continue;
+    if (/^\s*Z\s*P\b/i.test(String(r.c || '')) && classifySalesCourse(r.c).include) {
+      const pn = csPrimaryPhone(r.m);
+      if (pn) set.add(pn);
+    }
+  }
+  return set;
 }
 
 // Pace (days per level): intensive = 2 weeks, regular = 1 month.
