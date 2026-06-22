@@ -35,6 +35,18 @@ function parseLevels(code) {
   const m = String(code ?? '').match(/(\d+)\s*L\b/i);
   return m ? Number(m[1]) : 0;
 }
+// Dates are stored as "M/D/YYYY" (the sheet format). A <input type="date"> needs
+// ISO "YYYY-MM-DD" — convert both ways so the stored format stays unchanged.
+function toISODate(s) {
+  const v = String(s ?? '').trim();
+  const m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) return `${m[3]}-${String(m[1]).padStart(2, '0')}-${String(m[2]).padStart(2, '0')}`;
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : '';
+}
+function fromISODate(iso) {
+  const m = String(iso ?? '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${Number(m[2])}/${Number(m[3])}/${m[1]}` : (iso || '');
+}
 const EMPTY_INST = { sales_man: '', department: '', months: '', paid_or_not: '', amount: '', pay_date: '', note: '' };
 
 // Fixed controlled vocabularies (mirror the backend normalizer). Using <select>
@@ -291,12 +303,19 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
   // as a component would give it a fresh identity each render (it's defined
   // inside SaleFormModal) and remount the input on every keystroke, losing
   // focus. Calling it inlines plain host elements, so focus is preserved.
-  const F = ({ k, label, type = 'text', list, select, span = 1, onChange }) => {
+  const F = ({ k, label, type = 'text', list, select, span = 1, onChange, date }) => {
     const handle = onChange || ((v) => set(k, v));
     return (
     <div className={span === 2 ? 'sm:col-span-2' : span === 4 ? 'sm:col-span-2 lg:col-span-4' : ''}>
       <label className="block text-[11px] font-bold text-gray-500 mb-1">{label}</label>
-      {select ? (
+      {date ? (
+        <input
+          type="date"
+          value={toISODate(form[k])}
+          onChange={(e) => handle(e.target.value ? fromISODate(e.target.value) : '')}
+          className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none"
+        />
+      ) : select ? (
         <select
           value={form[k] ?? ''}
           onChange={(e) => handle(e.target.value)}
@@ -398,7 +417,7 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                       </div>
                     )}
                   </div>
-                  {F({ k: 'entry_date', label: 'التاريخ (Data)' })}
+                  {F({ k: 'entry_date', label: 'التاريخ (Data)', date: true })}
                   {F({ k: 'client_name', label: 'اسم العميل', span: 2 })}
                   {F({ k: 'mobile_no', label: 'الموبايل' })}
                   {F({ k: 'agent_name', label: 'الموظف (Agent)', list: 'agents' })}
@@ -420,7 +439,7 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                       ? F({ k: 'courses', label: 'بدأ بـ (الكورس الأصلي)', select: courseOptions, onChange: applyCourse })
                       : null}
                   {isTransfer && F({ k: 'price', label: 'المدفوع في القديمة', type: 'number', onChange: (v) => setTr({ price: v }) })}
-                  {isTransfer && F({ k: 'installment_date', label: 'تاريخ التحويل (Date)' })}
+                  {isTransfer && F({ k: 'installment_date', label: 'تاريخ التحويل (Date)', date: true })}
                   {F({ k: 'months', label: 'الشهر (Months)', list: 'months' })}
                   {F({ k: 'payment_way', label: 'طريقة الدفع', list: 'payment_ways' })}
                   {F({ k: 'paid_status', label: 'حالة الدفع', select: PAID_STATUSES })}
@@ -578,6 +597,13 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                                     ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; } }}
                                     onChange={(e) => { setInst(idx, k, e.target.value); e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px'; }}
                                     className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs resize-none overflow-hidden focus:ring-2 focus:ring-violet-200 outline-none"
+                                  />
+                                ) : k === 'pay_date' ? (
+                                  <input
+                                    type="date"
+                                    value={toISODate(cur)}
+                                    onChange={(e) => setInst(idx, k, e.target.value ? fromISODate(e.target.value) : '')}
+                                    className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs bg-white focus:ring-2 focus:ring-violet-200 outline-none"
                                   />
                                 ) : (
                                   <input
