@@ -890,6 +890,12 @@ router.get('/enr-groups/next-options', requireRole('admin'), (req, res) => {
   catch (e) { console.error('GET /cs/enr-groups/next-options:', e.message); res.status(400).json({ ok: false, error: e.message }); }
 });
 
+/** Ended/historical groups (left batches but have transition activity). */
+router.get('/enr-groups/ended', requireRole('admin'), (req, res) => {
+  try { res.json({ ok: true, ...enrTx().getEndedGroups({ q: req.query.q }) }); }
+  catch (e) { console.error('GET /cs/enr-groups/ended:', e.message); res.status(400).json({ ok: false, error: e.message }); }
+});
+
 /** Transition context for one current group: clients + moved/disposition status. */
 router.get('/enr-groups/transition', requireRole('admin'), (req, res) => {
   try { res.json({ ok: true, ...enrTx().getTransition({ group: req.query.group, line: req.query.line }) }); }

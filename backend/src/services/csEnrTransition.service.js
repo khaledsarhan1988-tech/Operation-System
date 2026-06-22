@@ -123,8 +123,6 @@ function getTransition({ group, line }) {
   line = (line || '').trim();
   if (!group) throw new Error('group is required');
 
-  const clients = currentGroupClients(group, line);
-
   const moved = db.prepare(`
     SELECT id, client_phone, client_name, next_group_name, next_line
       FROM enr_next_members WHERE source_group_name = ? AND source_line = ?
@@ -143,6 +141,20 @@ function getTransition({ group, line }) {
     const key = csPrimaryPhone(d.client_phone) || d.client_phone || ('n:' + (d.client_name || ''));
     dispByPhone.set(key, d);
   }
+
+  // Client list = UNION of the Drive members + clients moved out + dispositioned
+  // clients. The union recovers an ENDED group's clients (gone from `clients` once
+  // the group leaves batches) so its transition screen still lists everyone.
+  const byKey = new Map();
+  const addClient = (name, phone) => {
+    const key = csPrimaryPhone(phone) || phone || ('n:' + (name || ''));
+    if (!byKey.has(key)) byKey.set(key, { name: name || null, phone: phone || null });
+    else if (!byKey.get(key).name && name) byKey.get(key).name = name;
+  };
+  for (const c of currentGroupClients(group, line)) addClient(c.name, c.phone);
+  for (const m of moved) addClient(m.client_name, m.client_phone);
+  for (const d of disps) addClient(d.client_name, d.client_phone);
+  const clients = [...byKey.values()];
 
   // Entries (follow-up/note thread) for all this group's dispositions.
   const entriesByDisp = new Map();
@@ -495,8 +507,54 @@ function getActivityLog({ group, line, q, actor, action, from, to, page, pageSiz
   return { page, page_size: pageSize, total, total_pages: Math.ceil(total / pageSize) || 1, items };
 }
 
+/**
+ * Ended/historical groups = source groups that have transition activity (moves /
+ * dispositions / log) but are NO LONGER in batches as active/waiting (they ended
+ * or were renamed). Lets the user re-open a finished group and see its clients +
+ * dispositions even after it left batches.
+ */
+function getEndedGroups({ q }) {
+  q = (q || '').trim();
+  const srcRows = db.prepare(`
+    SELECT source_group_name AS g, source_line AS l FROM enr_next_members      WHERE source_group_name IS NOT NULL AND TRIM(source_group_name) <> ''
+    UNION SELECT source_group_name AS g, source_line AS l FROM enr_dispositions WHERE source_group_name IS NOT NULL AND TRIM(source_group_name) <> ''
+    UNION SELECT source_group_name AS g, source_line AS l FROM enr_activity_log WHERE source_group_name IS NOT NULL AND TRIM(source_group_name) <> ''
+  `).all();
+  const activeKeys = new Set(db.prepare(`
+    SELECT group_name || '|' || COALESCE(line, '') AS k
+      FROM batches WHERE status IN ('نشطة', 'بانتظار تسجيل المتدربين', 'بانتظار تسجيل المحاضرات')
+  `).all().map(r => r.k));
+
+  const seen = new Map();
+  for (const r of srcRows) {
+    const key = String(r.g) + '|' + String(r.l || '');
+    if (activeKeys.has(key)) continue;          // still active/waiting → not "ended"
+    if (!seen.has(key)) seen.set(key, { group_name: r.g, line: r.l || '' });
+  }
+
+  const movedCnt = db.prepare(`SELECT COUNT(*) c FROM enr_next_members WHERE source_group_name = ? AND source_line = ?`);
+  const dispCnt  = db.prepare(`SELECT COUNT(*) c FROM enr_dispositions WHERE source_group_name = ? AND source_line = ?`);
+  const deptStmt = db.prepare(`SELECT dept FROM enr_dispositions WHERE source_group_name = ? AND source_line = ? AND dept IS NOT NULL LIMIT 1`);
+  const lastAct  = db.prepare(`SELECT MAX(created_at) m FROM enr_activity_log WHERE source_group_name = ? AND source_line = ?`);
+
+  let items = [...seen.values()].map(g => ({
+    group_name: g.group_name,
+    line: g.line,
+    dept_type: deptStmt.get(g.group_name, g.line)?.dept || null,
+    moved_count: movedCnt.get(g.group_name, g.line).c || 0,
+    disposition_count: dispCnt.get(g.group_name, g.line).c || 0,
+    last_activity: lastAct.get(g.group_name, g.line).m || null,
+  }));
+  if (q) {
+    const qc = stripSpaces(q.toLowerCase());
+    items = items.filter(it => stripSpaces(String(it.group_name || '').toLowerCase()).includes(qc));
+  }
+  items.sort((a, b) => String(b.last_activity || '').localeCompare(String(a.last_activity || '')));
+  return { count: items.length, items };
+}
+
 module.exports = {
-  getNextGroupOptions, getTransition, searchSalesRegister,
+  getNextGroupOptions, getTransition, searchSalesRegister, getEndedGroups,
   addNextMembers, removeNextMember, getNextRoster,
   setDisposition, addDispositionEntry, removeDispositionEntry, clearDisposition,
   getDispositions, getActivityLog,
