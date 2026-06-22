@@ -228,7 +228,8 @@ function classifySalesCourse(raw) {     // → { include, track, months }
 // phone → { name, byTrack: { <track>: { count, months, list, excludedRefund } } }
 function buildSalesMembershipMap() {
   const rows = db.prepare(`
-    SELECT mobile_no AS m, client_name AS name, courses AS c, entry_date AS d, noted1, noted2, price
+    SELECT mobile_no AS m, client_name AS name, courses AS c, entry_date AS d, noted1, noted2, price,
+           op_type, new_courses, transfer_consumed_levels
       FROM cs_sales_register
      WHERE mobile_no IS NOT NULL AND TRIM(mobile_no) <> ''
   `).all();
@@ -241,9 +242,21 @@ function buildSalesMembershipMap() {
     if (!s) { s = { name: r.name || null, mems: [], lastRefundKey: 0 }; scratch.set(pn, s); }
     if (!s.name && r.name) s.name = r.name;
     if (salesIsRefundRow(r)) { s.lastRefundKey = Math.max(s.lastRefundKey, salesDateKey(r.d)); continue; }
+    const key = salesDateKey(r.d);
+    const refunded = salesNotedRefunded(r);
+    // TRANSFER: the old track keeps only the CONSUMED levels; the new membership
+    // (new_courses) lands on the new track. So the client shows on both depts.
+    if (String(r.op_type || '').toLowerCase() === 'transfer') {
+      const oldCl = classifySalesCourse(r.c);
+      const consumed = Number(r.transfer_consumed_levels) || 0;
+      if (oldCl.track && consumed > 0) s.mems.push({ track: oldCl.track, months: consumed, key, refunded });
+      const newCl = classifySalesCourse(r.new_courses);
+      if (newCl.include) s.mems.push({ track: newCl.track, months: newCl.months, key, refunded });
+      continue;
+    }
     const cl = classifySalesCourse(r.c);
     if (!cl.include) continue;
-    s.mems.push({ track: cl.track, months: cl.months, key: salesDateKey(r.d), refunded: salesNotedRefunded(r) });
+    s.mems.push({ track: cl.track, months: cl.months, key, refunded });
   }
   const map = new Map();
   for (const [pn, s] of scratch) {
