@@ -28,14 +28,20 @@ function str(v) {
 router.get('/list', (req, res) => {
   try {
     const q = (req.query.q || '').trim();
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const offset = (page - 1) * limit;
     const where = q ? 'WHERE code LIKE ? OR client_name LIKE ? OR mobile_no LIKE ?' : '';
     const params = q ? [`%${q}%`, `%${q}%`, `%${q}%`] : [];
     const rows = db.prepare(`
-      SELECT * FROM cs_client_codes
+      SELECT *, COUNT(*) OVER() AS _total FROM cs_client_codes
       ${where}
       ORDER BY CAST(code AS INTEGER) DESC, code DESC
-    `).all(...params);
-    return res.json({ rows, total: rows.length });
+      LIMIT ? OFFSET ?
+    `).all(...params, limit, offset);
+    const total = rows.length ? rows[0]._total : 0;
+    rows.forEach(r => { delete r._total; });
+    return res.json({ rows, total, page, pages: Math.max(1, Math.ceil(total / limit)) });
   } catch (err) {
     console.error('[client-codes/list]', err);
     return res.status(500).json({ error: err.message });

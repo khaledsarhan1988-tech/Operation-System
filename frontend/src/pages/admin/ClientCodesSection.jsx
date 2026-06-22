@@ -138,16 +138,20 @@ function DeleteConfirm({ row, onClose, onDeleted }) {
 export default function ClientCodesSection() {
   const qc = useQueryClient();
   const [q, setQ] = useState('');
+  const [page, setPage] = useState(1);
   const [formOpen, setFormOpen] = useState(false);
   const [editRow, setEditRow] = useState(null);
   const [deleteRow, setDeleteRow] = useState(null);
   const [msg, setMsg] = useState('');
 
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ['client-codes', 'list', q],
-    queryFn: () => api.get('/client-codes/list', { params: { q } }).then(r => r.data),
+    queryKey: ['client-codes', 'list', q, page],
+    queryFn: () => api.get('/client-codes/list', { params: { q, page, limit: 50 } }).then(r => r.data),
+    keepPreviousData: true,
   });
   const rows = data?.rows || [];
+  const total = data?.total || 0;
+  const pages = data?.pages || 1;
   const afterMutate = () => qc.invalidateQueries({ queryKey: ['client-codes'] });
 
   const seed = useMutation({
@@ -165,7 +169,7 @@ export default function ClientCodesSection() {
         </div>
       )}
       <SectionCard
-        title={`Clients Codes (${rows.length})`}
+        title={`Clients Codes (${total.toLocaleString('en-US')})`}
         icon={Hash}
         accent="cyan"
         actions={
@@ -187,7 +191,7 @@ export default function ClientCodesSection() {
       >
         <div className="relative max-w-sm mb-4">
           <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-          <input type="text" placeholder="بحث بالكود / الاسم / الموبايل..." value={q} onChange={(e) => setQ(e.target.value)}
+          <input type="text" placeholder="بحث بالكود / الاسم / الموبايل..." value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }}
             className="w-full pl-3 pr-9 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-sky-200 focus:border-sky-400 outline-none" />
         </div>
         {isLoading ? (
@@ -223,6 +227,15 @@ export default function ClientCodesSection() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+        {pages > 1 && (
+          <div className="flex items-center justify-center gap-3 pt-4 text-sm">
+            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
+              className="px-3 py-1.5 font-bold text-gray-600 bg-gray-50 hover:bg-gray-100 rounded-lg transition disabled:opacity-40">السابق</button>
+            <span className="font-bold text-gray-600">صفحة {page} من {pages}</span>
+            <button onClick={() => setPage(p => Math.min(pages, p + 1))} disabled={page >= pages}
+              className="px-3 py-1.5 font-bold text-gray-600 bg-gray-50 hover:bg-gray-100 rounded-lg transition disabled:opacity-40">التالي</button>
           </div>
         )}
       </SectionCard>
