@@ -181,7 +181,11 @@ router.get('/list', (req, res) => {
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const rows = db.prepare(`
-      SELECT *, COUNT(*) OVER() AS _total
+      SELECT *,
+        (IFNULL(total_paid_same_month, 0) +
+         (SELECT IFNULL(SUM(amount), 0) FROM cs_sales_installments WHERE sale_id = cs_sales_register.id)
+        ) AS total_paid_calc,
+        COUNT(*) OVER() AS _total
       FROM cs_sales_register
       ${whereSql}
       ORDER BY id DESC

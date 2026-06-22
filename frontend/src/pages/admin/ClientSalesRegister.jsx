@@ -631,8 +631,10 @@ export default function ClientSalesRegister() {
     courses: '', agent: '', source: '', from: '', to: '', page: 1, limit: 50,
   });
   const afterMutate = () => {
-    qc.invalidateQueries({ queryKey: ['cs-sales', 'list'] });
-    qc.invalidateQueries({ queryKey: ['cs-sales', 'options'] });
+    // Invalidate the WHOLE cs-sales cache (list, options, AND the single-row
+    // query ['cs-sales','one',id]) so reopening a row shows the freshly saved
+    // values — not a stale cached copy.
+    qc.invalidateQueries({ queryKey: ['cs-sales'] });
   };
 
   const openAdd  = () => { setEditId(null); setFormOpen(true); };
@@ -751,6 +753,7 @@ export default function ClientSalesRegister() {
                   <th className="px-3 py-3 text-left">Course</th>
                   <th className="px-3 py-3 text-left">New Course</th>
                   <th className="px-3 py-3 text-right">Price</th>
+                  <th className="px-3 py-3 text-right">Total Paid</th>
                   <th className="px-3 py-3 text-left">Months</th>
                   <th className="px-3 py-3 text-left">Payment</th>
                   <th className="px-3 py-3 text-left">Paid</th>
@@ -769,6 +772,7 @@ export default function ClientSalesRegister() {
                     <td className="px-3 py-2.5 text-gray-700">{r.courses || '—'}</td>
                     <td className="px-3 py-2.5 text-violet-700 font-bold">{r.new_courses || '—'}</td>
                     <td className="px-3 py-2.5 text-right font-mono font-bold text-emerald-700">{fmtAmount((r.new_courses && String(r.new_courses).trim()) ? r.new_prices : r.price)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono font-bold text-sky-700">{fmtAmount(r.total_paid_calc)}</td>
                     <td className="px-3 py-2.5 text-xs text-gray-600">{r.months || '—'}</td>
                     <td className="px-3 py-2.5 text-xs text-gray-600">{r.payment_way || '—'}</td>
                     <td className="px-3 py-2.5 text-xs text-gray-600">{r.paid_status || '—'}</td>
