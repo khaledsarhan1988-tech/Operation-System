@@ -186,8 +186,6 @@ router.get('/list', (req, res) => {
       SELECT *,
         (IFNULL(total_paid_same_month, 0)
          + (SELECT IFNULL(SUM(amount), 0) FROM cs_sales_installments WHERE sale_id = cs_sales_register.id)
-         -- transfers: the client also paid `price` on the old membership, so the
-         -- total cash they paid = old paid + transfer difference + installments.
          + (CASE WHEN op_type = 'transfer' THEN IFNULL(price, 0) ELSE 0 END)
         ) AS total_paid_calc,
         COUNT(*) OVER() AS _total
