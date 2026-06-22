@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Users, Search, Calendar, Filter, X, ChevronLeft, ChevronRight,
@@ -84,19 +84,26 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
   const [error, setError] = useState('');
   const [isUpgrade, setIsUpgrade] = useState(false);
 
-  // Load the row being edited. (React Query v5 removed onSuccess on useQuery —
-  // we read `data` and populate via useEffect below.)
+  // Load the row being edited. refetchOnWindowFocus is OFF so switching windows
+  // (e.g. to screenshot) does NOT refetch and clobber in-progress edits.
   const { data: rowData, isLoading: loadingRow } = useQuery({
     queryKey: ['cs-sales', 'one', editId],
     queryFn: () => api.get(`/cs-sales-register/${editId}`).then(r => r.data),
     enabled: open && isEdit,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
-  // Populate the form: edit → from the fetched row once it arrives; add → blank.
+  // Populate the form EXACTLY ONCE per open (per editId). Critical: a background
+  // refetch must never overwrite what the user is typing — so once we've seeded
+  // the form from the server we never re-seed it until the modal is reopened.
+  const seededFor = useRef(null);
   useEffect(() => {
-    if (!open) return;
+    if (!open) { seededFor.current = null; return; } // reset when modal closes
+    const target = isEdit ? editId : 'new';
+    if (seededFor.current === target) return;          // already seeded this open
     if (isEdit) {
-      if (!rowData) return; // wait for the fetch
+      if (!rowData) return; // wait for the first fetch
       const s = rowData.sale || {};
       setForm({ ...EMPTY_FORM, ...Object.fromEntries(Object.keys(EMPTY_FORM).map(k => [k, s[k] ?? ''])) });
       let insts = (rowData.installments || []).map(i => ({
@@ -110,10 +117,11 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
         insts = insts.map((it, idx) => idx === 0 ? { ...it, pay_date: s.installment_date } : it);
       }
       setInstallments(insts);
-      // An upgrade row is one whose new-course is filled or noted as "Upgraded".
       setIsUpgrade(!!(s.new_courses && String(s.new_courses).trim()) || (s.noted2 || '') === 'Upgraded');
+      seededFor.current = target;
     } else {
       setForm(EMPTY_FORM); setInstallments([]); setError(''); setIsUpgrade(false);
+      seededFor.current = target;
     }
   }, [open, isEdit, editId, rowData]);
 
