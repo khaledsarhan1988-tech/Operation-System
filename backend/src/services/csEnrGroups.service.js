@@ -126,6 +126,26 @@ function buildClientsByGroup() {
   return map;
 }
 
+// (next_group_name|line) → [{ name, phone, source_group_name, added_from }] for
+// clients moved INTO that group via the transition screen (enr_next_members).
+function buildNextMembersByGroup() {
+  const map = new Map();
+  let rows = [];
+  try {
+    rows = db.prepare(`
+      SELECT next_group_name AS g, next_line AS l, client_name AS name, client_phone AS phone,
+             source_group_name AS src, added_from
+        FROM enr_next_members
+    `).all();
+  } catch (_) { return map; }   // table may not exist yet on a fresh DB
+  for (const r of rows) {
+    const key = String(r.g) + '|' + String(r.l || '');
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push({ name: r.name || null, phone: r.phone || null, source_group_name: r.src || null, added_from: r.added_from });
+  }
+  return map;
+}
+
 /**
  * Build the Enr Groups table for one department.
  *
@@ -166,11 +186,14 @@ function getEnrGroups({ dept, q, status, firstFrom, firstTo, lastFrom, lastTo, p
 
   const lectureMeta = makeGroupLectureMeta();
   const clientsByGroup = buildClientsByGroup();
+  const nextMembersByGroup = buildNextMembersByGroup();
 
   let items = [];
   for (const r of seen.values()) {
     const meta = lectureMeta(r.group_name, r.line);
-    const students = clientsByGroup.get(String(r.group_name) + '|' + String(r.line || '')) || [];
+    const gkey = String(r.group_name) + '|' + String(r.line || '');
+    const students = clientsByGroup.get(gkey) || [];
+    const movedIn = nextMembersByGroup.get(gkey) || [];
 
     // Status = the real batches.status (matches the SystemReports waiting pages).
     const rowStatus = STATUS_MAP[r.status] || 'started';
@@ -193,6 +216,8 @@ function getEnrGroups({ dept, q, status, firstFrom, firstTo, lastFrom, lastTo, p
       status:        rowStatus,
       students,
       student_count: students.length,
+      moved_in:      movedIn,
+      moved_in_count: movedIn.length,
       start_date:    startDate,
       end_date:      endDate,
       lectures:      meta.lectures,

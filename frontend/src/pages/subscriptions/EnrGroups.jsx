@@ -430,6 +430,7 @@ export default function EnrGroups() {
                 <th className="px-3 py-3 font-medium">المنسق</th>
                 <th className="px-3 py-3 font-medium">الطلاب</th>
                 <th className="px-3 py-3 font-medium">عدد الطلاب</th>
+                <th className="px-3 py-3 font-medium">العملاء المنقولين إليها</th>
                 <th className="px-3 py-3 font-medium">تاريخ البداية</th>
                 <th className="px-3 py-3 font-medium">تاريخ النهاية</th>
                 <th className="px-3 py-3 font-medium">عدد المحاضرات</th>
@@ -471,6 +472,18 @@ export default function EnrGroups() {
                       {it.student_count}
                     </span>
                   </td>
+                  <td className="px-3 py-3">
+                    {it.moved_in?.length ? (
+                      <div className="flex flex-col gap-1 max-w-xs">
+                        {it.moved_in.map((s, i) => (
+                          <div key={i} className="flex items-center justify-between gap-2 text-xs bg-emerald-50/60 rounded px-1.5 py-0.5">
+                            <span className="text-emerald-800 truncate">{s.name || '—'}</span>
+                            <span className="text-emerald-500 font-mono whitespace-nowrap" dir="ltr">{s.phone || ''}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : <span className="text-slate-300">—</span>}
+                  </td>
                   <td className="px-3 py-3 text-center whitespace-nowrap">
                     {it.start_date
                       ? <span className="text-xs font-mono text-slate-700" dir="ltr">{it.start_date}</span>
@@ -489,7 +502,7 @@ export default function EnrGroups() {
                 </tr>
               ))}
               {!listQ.isLoading && items.length === 0 && (
-                <tr><td colSpan={8} className="px-3 py-10 text-center text-slate-400">لا توجد مجموعات مطابقة</td></tr>
+                <tr><td colSpan={9} className="px-3 py-10 text-center text-slate-400">لا توجد مجموعات مطابقة</td></tr>
               )}
             </tbody>
           </table>
