@@ -194,6 +194,17 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
     staleTime: 5 * 60 * 1000,
   });
 
+  // Code autocomplete: search the Clients Codes registry by code/name/phone so
+  // the user never has to remember a code (and can't mistype one).
+  const [codeFocus, setCodeFocus] = useState(false);
+  const { data: codeSug } = useQuery({
+    queryKey: ['client-codes', 'search', form.code],
+    queryFn: () => api.get('/client-codes/list', { params: { q: form.code, limit: 8 } }).then(r => r.data),
+    enabled: open && String(form.code || '').trim().length >= 1,
+    keepPreviousData: true,
+  });
+  const codeMatches = codeSug?.rows || [];
+
   if (!open) return null;
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -354,7 +365,39 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                 }
               >
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {F({ k: 'code', label: 'الكود (Code)' })}
+                  {/* Code field with live autocomplete from the Clients Codes registry */}
+                  <div className="relative">
+                    <label className="block text-[11px] font-bold text-gray-500 mb-1">الكود (Code) — ابحث بالكود/الاسم/الموبايل</label>
+                    <input
+                      type="text"
+                      value={form.code ?? ''}
+                      onChange={(e) => set('code', e.target.value)}
+                      onFocus={() => setCodeFocus(true)}
+                      onBlur={() => setTimeout(() => setCodeFocus(false), 150)}
+                      autoComplete="off"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none"
+                    />
+                    {codeFocus && codeMatches.length > 0 && (
+                      <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-lg max-h-52 overflow-auto">
+                        {codeMatches.map((c) => (
+                          <button
+                            type="button"
+                            key={c.id}
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => {
+                              setForm((f) => ({ ...f, code: c.code, client_name: c.client_name || f.client_name, mobile_no: c.mobile_no || f.mobile_no }));
+                              setCodeFocus(false);
+                            }}
+                            className="block w-full text-right px-3 py-2 hover:bg-sky-50 text-sm border-b border-gray-50 last:border-0"
+                          >
+                            <span className="font-black text-gray-800 font-mono">{c.code}</span>
+                            <span className="text-gray-600"> — {c.client_name || '—'}</span>
+                            {c.mobile_no ? <span className="text-gray-400 text-xs"> · {c.mobile_no}</span> : null}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   {F({ k: 'entry_date', label: 'التاريخ (Data)' })}
                   {F({ k: 'client_name', label: 'اسم العميل', span: 2 })}
                   {F({ k: 'mobile_no', label: 'الموبايل' })}
