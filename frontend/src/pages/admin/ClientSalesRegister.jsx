@@ -152,7 +152,9 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
       }));
       // Migrated rows kept the payment date on the parent (installment_date) while
       // the installment's own date was blank → lift it onto the first installment.
-      if (s.installment_date && insts.length && !insts.some(i => i.pay_date)) {
+      // (Skip for transfers — there installment_date IS the transfer date.)
+      if ((s.op_type || '').toLowerCase() !== 'transfer'
+          && s.installment_date && insts.length && !insts.some(i => i.pay_date)) {
         insts = insts.map((it, idx) => idx === 0 ? { ...it, pay_date: s.installment_date } : it);
       }
       setInstallments(insts);
@@ -375,6 +377,7 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                       ? F({ k: 'courses', label: 'بدأ بـ (الكورس الأصلي)', select: courseOptions, onChange: applyCourse })
                       : null}
                   {isTransfer && F({ k: 'price', label: 'المدفوع في القديمة', type: 'number', onChange: (v) => setTr({ price: v }) })}
+                  {isTransfer && F({ k: 'installment_date', label: 'تاريخ التحويل (Date)' })}
                   {F({ k: 'months', label: 'الشهر (Months)', list: 'months' })}
                   {F({ k: 'payment_way', label: 'طريقة الدفع', list: 'payment_ways' })}
                   {F({ k: 'paid_status', label: 'حالة الدفع', select: PAID_STATUSES })}
