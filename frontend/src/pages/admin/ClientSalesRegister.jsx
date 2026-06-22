@@ -19,11 +19,13 @@ function fmtAmount(amount) {
   return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
 }
 
-// Empty form — keys MUST match backend SALE_FIELDS.
+// Empty form — keys MUST match backend SALE_FIELDS. Some fields carry common
+// DEFAULTS for new operations (the user can change them from the dropdown);
+// these defaults are NOT applied on edit (edit shows the row's actual values).
 const EMPTY_FORM = {
   code: '', entry_date: '', client_name: '', mobile_no: '', agent_name: '',
-  department: '', courses: '', price: '', months: '', payment_way: '',
-  paid_status: '', pages: '', shift: '', groups: '', total_price: '',
+  department: 'Sales', courses: '', price: '', months: '', payment_way: 'Cash',
+  paid_status: 'Paid', pages: 'Ahmed Hassan', shift: 'No Different', groups: 'Groups', total_price: '',
   total_paid_same_month: '', discount: '', chrismss_discount_ah: '',
   chrismss_discount_dar: '', offer_individual: '', refund_deduction: '',
   khaled_deduction: '', new_prices: '', new_courses: '', balance: '', noted1: '',
