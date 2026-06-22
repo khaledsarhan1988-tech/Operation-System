@@ -119,9 +119,10 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
 
   const save = useMutation({
     mutationFn: () => {
-      // Persist the auto-derived paid amount + balance so list/reports match.
-      const { paid, balance } = calcPaidBalance(form, installments, isUpgrade);
-      const payload = { ...form, total_paid_same_month: paid, balance, installments };
+      // total_paid_same_month is the first/cash payment exactly as typed — keep it
+      // as-is (do NOT overwrite). Only the derived balance is persisted.
+      const { balance } = calcPaidBalance(form, installments, isUpgrade);
+      const payload = { ...form, balance, installments };
       return isEdit
         ? api.put(`/cs-sales-register/${editId}`, payload).then(r => r.data)
         : api.post('/cs-sales-register', payload).then(r => r.data);
