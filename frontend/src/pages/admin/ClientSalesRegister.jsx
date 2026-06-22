@@ -258,6 +258,14 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
     if (r.apply) next.price = r.value == null ? '' : String(r.value);
     return next;
   });
+  // Picking the operation date auto-fills "الشهر (Months)" as YY-Mon (e.g. 26-Jun).
+  const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const applyEntryDate = (v) => setForm(f => {
+    const next = { ...f, entry_date: v };
+    const m = String(v || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (m) next.months = `${String(m[3]).slice(-2)}-${MONTH_ABBR[Number(m[1]) - 1]}`;
+    return next;
+  });
   // New (upgrade) course → auto-fill the new price from the membership catalog.
   const applyNewCourse = (v) => setForm(f => {
     const next = { ...f, new_courses: v };
@@ -417,7 +425,7 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                       </div>
                     )}
                   </div>
-                  {F({ k: 'entry_date', label: 'التاريخ (Data)', date: true })}
+                  {F({ k: 'entry_date', label: 'التاريخ (Data)', date: true, onChange: applyEntryDate })}
                   {F({ k: 'client_name', label: 'اسم العميل', span: 2 })}
                   {F({ k: 'mobile_no', label: 'الموبايل' })}
                   {F({ k: 'agent_name', label: 'الموظف (Agent)', list: 'agents' })}
