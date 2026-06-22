@@ -74,6 +74,17 @@ router.post('/seed', (req, res) => {
   }
 });
 
+// Find an existing client code with the same phone (leading zeros ignored, so
+// 01097… == 1097…). Optionally exclude a row id (for updates).
+function phoneClash(mobile, excludeId) {
+  const m = str(mobile);
+  if (!m) return null;
+  const sql = `SELECT code, client_name FROM cs_client_codes
+               WHERE TRIM(IFNULL(mobile_no,'')) <> '' AND LTRIM(mobile_no,'0') = LTRIM(?,'0')
+               ${excludeId ? 'AND id <> ?' : ''} LIMIT 1`;
+  return excludeId ? db.prepare(sql).get(m, excludeId) : db.prepare(sql).get(m);
+}
+
 // ─── CREATE ──────────────────────────────────────────────────────────────────
 router.post('/', (req, res) => {
   try {
@@ -81,6 +92,16 @@ router.post('/', (req, res) => {
     if (!code) return res.status(400).json({ error: 'الكود مطلوب' });
     const dup = db.prepare('SELECT id FROM cs_client_codes WHERE code = ?').get(code);
     if (dup) return res.status(409).json({ error: `الكود «${code}» موجود بالفعل` });
+    // Warn (not block) on a duplicate phone unless the caller confirms (force).
+    const force = req.body?.force === true || req.body?.force === 'true';
+    if (!force) {
+      const ph = phoneClash(req.body?.mobile_no);
+      if (ph) return res.status(409).json({
+        code: 'DUP_PHONE',
+        existingCode: ph.code, existingName: ph.client_name,
+        error: `الموبايل ده موجود بالفعل في كود ${ph.code}${ph.client_name ? ' (' + ph.client_name + ')' : ''}`,
+      });
+    }
     const ts = nowTs();
     const info = db.prepare(`
       INSERT INTO cs_client_codes (code, client_name, mobile_no, note, created_at, updated_at)
@@ -103,6 +124,15 @@ router.put('/:id', (req, res) => {
     const code = str(req.body?.code) || existing.code;
     const clash = db.prepare('SELECT id FROM cs_client_codes WHERE code = ? AND id <> ?').get(code, id);
     if (clash) return res.status(409).json({ error: `الكود «${code}» مستخدم في صف آخر` });
+    const force = req.body?.force === true || req.body?.force === 'true';
+    if (!force) {
+      const ph = phoneClash(req.body?.mobile_no, id);
+      if (ph) return res.status(409).json({
+        code: 'DUP_PHONE',
+        existingCode: ph.code, existingName: ph.client_name,
+        error: `الموبايل ده موجود بالفعل في كود ${ph.code}${ph.client_name ? ' (' + ph.client_name + ')' : ''}`,
+      });
+    }
     db.prepare(`
       UPDATE cs_client_codes SET code = ?, client_name = ?, mobile_no = ?, note = ?, updated_at = ?
       WHERE id = ?

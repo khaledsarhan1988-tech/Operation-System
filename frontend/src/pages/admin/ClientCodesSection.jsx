@@ -13,6 +13,7 @@ function FormModal({ open, row, onClose, onSaved }) {
   const isEdit = !!row;
   const [form, setForm] = useState(EMPTY);
   const [error, setError] = useState('');
+  const [phoneWarn, setPhoneWarn] = useState('');
   const [syncedKey, setSyncedKey] = useState(null);
 
   // Suggest the next code (max+1) when adding a new one.
@@ -28,16 +29,23 @@ function FormModal({ open, row, onClose, onSaved }) {
     setForm(isEdit
       ? { code: row.code ?? '', client_name: row.client_name ?? '', mobile_no: row.mobile_no ?? '', note: row.note ?? '' }
       : { ...EMPTY, code: nextData?.next ?? '' });
-    setError('');
+    setError(''); setPhoneWarn('');
     setSyncedKey(key);
   }
 
   const save = useMutation({
-    mutationFn: () => isEdit
-      ? api.put(`/client-codes/${row.id}`, form).then(r => r.data)
-      : api.post('/client-codes', form).then(r => r.data),
+    mutationFn: (force) => {
+      const body = { ...form, force };
+      return isEdit
+        ? api.put(`/client-codes/${row.id}`, body).then(r => r.data)
+        : api.post('/client-codes', body).then(r => r.data);
+    },
     onSuccess: () => { onSaved(); onClose(); },
-    onError: (err) => setError(err?.response?.data?.error || 'فشل الحفظ'),
+    onError: (err) => {
+      const d = err?.response?.data;
+      if (d?.code === 'DUP_PHONE') setPhoneWarn(d.error || 'الموبايل موجود بالفعل');
+      else setError(d?.error || 'فشل الحفظ');
+    },
   });
 
   if (!open) return null;
@@ -57,6 +65,15 @@ function FormModal({ open, row, onClose, onSaved }) {
           {error && (
             <div className="bg-rose-50 border-2 border-rose-200 rounded-2xl p-3 flex items-center gap-2 text-sm font-bold text-rose-700">
               <AlertTriangle size={16} /> {error}
+            </div>
+          )}
+          {phoneWarn && (
+            <div className="bg-amber-50 border-2 border-amber-200 rounded-2xl p-3 text-sm font-bold text-amber-800">
+              <div className="flex items-center gap-2 mb-2"><AlertTriangle size={16} /> {phoneWarn}</div>
+              <button onClick={() => save.mutate(true)} disabled={save.isPending}
+                className="inline-flex items-center gap-2 px-4 py-1.5 text-xs font-black text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition disabled:opacity-50">
+                {save.isPending ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />} تأكيد الإضافة رغم التكرار
+              </button>
             </div>
           )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -83,7 +100,7 @@ function FormModal({ open, row, onClose, onSaved }) {
           </div>
           <div className="flex justify-end gap-3 pt-1">
             <button onClick={onClose} className="px-4 py-2 text-sm font-bold text-gray-600 hover:bg-gray-100 rounded-xl transition">إلغاء</button>
-            <button onClick={() => { setError(''); save.mutate(); }} disabled={!form.code.trim() || save.isPending}
+            <button onClick={() => { setError(''); setPhoneWarn(''); save.mutate(false); }} disabled={!form.code.trim() || save.isPending}
               className="inline-flex items-center gap-2 px-5 py-2 text-sm font-black text-white bg-sky-600 hover:bg-sky-700 rounded-xl transition disabled:opacity-50">
               {save.isPending ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />} حفظ
             </button>
