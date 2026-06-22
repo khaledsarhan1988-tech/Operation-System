@@ -3041,8 +3041,22 @@ initDb().then(db => {
       )
     `);
 
+    // ── cs_client_codes: «Clients Codes» — registry of client codes ───────────
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS cs_client_codes (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        code         TEXT NOT NULL UNIQUE,
+        client_name  TEXT,
+        mobile_no    TEXT,
+        note         TEXT,
+        created_at   TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        updated_at   TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_client_codes_code ON cs_client_codes(code)`);
+
     saveNow();
-    console.log('✅ Migration: cs_sales_register + cs_sales_installments + cs_membership_prices tables ready');
+    console.log('✅ Migration: cs_sales_register + cs_sales_installments + cs_membership_prices + cs_client_codes tables ready');
   } catch (e) {
     console.error('cs_sales_register migration error:', e.message);
   }
@@ -3207,6 +3221,7 @@ initDb().then(db => {
   app.use('/api/cs',                 require('./routes/cs.routes'));
   app.use('/api/cs-sales-register',  require('./routes/cs-sales-register.routes'));
   app.use('/api/membership-prices',  require('./routes/membership-prices.routes'));
+  app.use('/api/client-codes',       require('./routes/client-codes.routes'));
   // Read-only data export (API-key gated; disabled unless DATA_EXPORT_API_KEY set)
   app.use('/api/data-export',        require('./routes/data-export.routes'));
 

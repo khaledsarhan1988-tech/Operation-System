@@ -9,6 +9,7 @@ import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import SectionCard from '../../components/ui/SectionCard';
 import MembershipPricesSection from './MembershipPricesSection';
+import ClientCodesSection from './ClientCodesSection';
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 function fmtAmount(amount) {
@@ -642,6 +643,7 @@ export default function ClientSalesRegister() {
         {[
           ['operations', 'قائمة العمليات', CreditCard],
           ['memberships', 'العضويات وأسعارها', Tag],
+          ['codes', 'Clients Codes', Hash],
         ].map(([key, label, Icon]) => (
           <button key={key} onClick={() => setView(key)}
             className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-black rounded-xl transition ${
@@ -652,7 +654,7 @@ export default function ClientSalesRegister() {
         ))}
       </div>
 
-      {view === 'memberships' ? <MembershipPricesSection /> : (
+      {view === 'memberships' ? <MembershipPricesSection /> : view === 'codes' ? <ClientCodesSection /> : (
       <>
       {/* Filters */}
       <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-4 space-y-3">
