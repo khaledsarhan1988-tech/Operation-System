@@ -363,19 +363,40 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                         </div>
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                           {[
-                            ['sales_man', 'Sales Man'], ['department', 'Department'], ['months', 'Months'],
-                            ['paid_or_not', 'Paid or Not Paid'], ['amount', 'Amount'], ['pay_date', 'Date'],
-                            ['note', 'Note'],
-                          ].map(([k, lbl]) => (
-                            <div key={k}>
-                              <label className="block text-[10px] font-bold text-gray-500 mb-0.5">{lbl}</label>
-                              <input
-                                value={ins[k] ?? ''}
-                                onChange={(e) => setInst(idx, k, e.target.value)}
-                                className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-violet-200 outline-none"
-                              />
-                            </div>
-                          ))}
+                            ['sales_man', 'Sales Man', opt('agents')],
+                            ['department', 'Department', ['Sales', 'Operation']],
+                            ['months', 'Months', opt('months')],
+                            ['paid_or_not', 'Paid or Not Paid', ['Paid', 'Not Paid', 'Fake']],
+                            ['amount', 'Amount', null, 'number'],
+                            ['pay_date', 'Date', null],
+                            ['note', 'Note', null],
+                          ].map(([k, lbl, sel, typ]) => {
+                            const cur = ins[k] ?? '';
+                            // keep an existing value selectable even if not in the list
+                            const selOpts = sel ? (cur && !sel.includes(cur) ? [cur, ...sel] : sel) : null;
+                            return (
+                              <div key={k}>
+                                <label className="block text-[10px] font-bold text-gray-500 mb-0.5">{lbl}</label>
+                                {selOpts ? (
+                                  <select
+                                    value={cur}
+                                    onChange={(e) => setInst(idx, k, e.target.value)}
+                                    className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs bg-white focus:ring-2 focus:ring-violet-200 outline-none"
+                                  >
+                                    <option value="">—</option>
+                                    {selOpts.map(v => <option key={v} value={v}>{v}</option>)}
+                                  </select>
+                                ) : (
+                                  <input
+                                    type={typ || 'text'}
+                                    value={cur}
+                                    onChange={(e) => setInst(idx, k, e.target.value)}
+                                    className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-violet-200 outline-none"
+                                  />
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     ))}
