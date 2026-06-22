@@ -73,10 +73,12 @@ const SALE_FIELDS = [
   'chrismss_discount_dar', 'offer_individual', 'refund_deduction',
   'khaled_deduction', 'months', 'total_price', 'total_paid_same_month',
   'installment_date', 'note', 'new_courses', 'new_prices', 'balance',
+  'op_type', 'transfer_consumed_levels', 'transfer_total_levels',
 ];
 const NUMERIC_FIELDS = new Set([
   'price', 'chrismss_discount_ah', 'chrismss_discount_dar', 'refund_deduction',
   'khaled_deduction', 'total_price', 'total_paid_same_month', 'balance',
+  'transfer_consumed_levels', 'transfer_total_levels',
 ]);
 
 // Canonical fixed lists (mirror the frontend <select>s). We normalize on save

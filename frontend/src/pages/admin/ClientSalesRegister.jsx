@@ -28,7 +28,13 @@ const EMPTY_FORM = {
   chrismss_discount_dar: '', offer_individual: '', refund_deduction: '',
   khaled_deduction: '', new_prices: '', new_courses: '', balance: '', noted1: '',
   noted2: '', tamkeen: '', installment_date: '', note: '',
+  op_type: '', transfer_consumed_levels: '', transfer_total_levels: '',
 };
+// Parse the level count from a course code: "6L GAC" → 6, "3L PAC 2P" → 3.
+function parseLevels(code) {
+  const m = String(code ?? '').match(/(\d+)\s*L\b/i);
+  return m ? Number(m[1]) : 0;
+}
 const EMPTY_INST = { sales_man: '', department: '', months: '', paid_or_not: '', amount: '', pay_date: '', note: '' };
 
 // Fixed controlled vocabularies (mirror the backend normalizer). Using <select>
@@ -62,18 +68,49 @@ function discountAmount(discountStr, price) {
 //   Discount is offer_individual on upgrades (e.g. migrated "-250"), else the
 //   `discount` field; either may be a % of the price or a plain amount; only
 //   its magnitude matters.
-function calcPaidBalance(form, installments, isUpgrade = false) {
+// mode: 'normal' | 'upgrade' | 'transfer'.
+//   transfer = membership swap with credit for the UNUSED part of the old one:
+//     consumed value = old paid × (consumed levels / total levels)
+//     credit         = old paid − consumed value
+//     required diff  = new price − credit
+//     balance        = required diff − (paid + installments)   (0 when fully paid)
+function calcPaidBalance(form, installments, mode = 'normal') {
+  const isUpgrade = mode === 'upgrade';
+  const isTransfer = mode === 'transfer';
   const hasInst = installments.some(i => i.amount !== '' && i.amount != null);
   const instSum = installments.reduce((s, i) => s + (Number(i.amount) || 0), 0);
   const manual = (form.total_paid_same_month === '' || form.total_paid_same_month == null)
     ? null : Number(form.total_paid_same_month);
   const subPrice = Number(form.price) || 0;
   const newPrice = Number(String(form.new_prices ?? '').replace(/,/g, '')) || 0;
+  const totalPaid = (manual || 0) + instSum;
+
+  if (isTransfer) {
+    const oldPaid = subPrice;
+    const totalLevels = Number(form.transfer_total_levels) || 0;
+    const consumedLevels = Number(form.transfer_consumed_levels) || 0;
+    const consumedValue = totalLevels > 0 ? (oldPaid * consumedLevels / totalLevels) : 0;
+    const credit = oldPaid - consumedValue;
+    const required = newPrice - credit;
+    const balance = required - totalPaid;
+    return { hasInst, instSum, manual: manual || 0, effPrice: newPrice, discount: 0,
+             consumedValue, credit, required, totalPaid, balance };
+  }
+
   const effPrice = isUpgrade ? newPrice : subPrice;
   const discount = Math.abs(discountAmount(isUpgrade ? form.offer_individual : form.discount, effPrice));
-  const totalPaid = (manual || 0) + instSum;
   const balance = (effPrice - discount) - totalPaid;
   return { hasInst, instSum, manual: manual || 0, effPrice, discount, totalPaid, balance };
+}
+
+// Required transfer difference for a given form state (new price − credit).
+function transferRequired(form) {
+  const oldPaid = Number(form.price) || 0;
+  const totalLevels = Number(form.transfer_total_levels) || 0;
+  const consumedLevels = Number(form.transfer_consumed_levels) || 0;
+  const consumedValue = totalLevels > 0 ? (oldPaid * consumedLevels / totalLevels) : 0;
+  const newPrice = Number(String(form.new_prices ?? '').replace(/,/g, '')) || 0;
+  return Math.round((newPrice - (oldPaid - consumedValue)) * 100) / 100;
 }
 
 // ─── FORM MODAL (create / edit) ───────────────────────────────────────────────
@@ -82,7 +119,9 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [installments, setInstallments] = useState([]);
   const [error, setError] = useState('');
-  const [isUpgrade, setIsUpgrade] = useState(false);
+  const [mode, setMode] = useState('normal'); // 'normal' | 'upgrade' | 'transfer'
+  const isUpgrade = mode === 'upgrade';
+  const isTransfer = mode === 'transfer';
 
   // Load the row being edited. refetchOnWindowFocus is OFF so switching windows
   // (e.g. to screenshot) does NOT refetch and clobber in-progress edits.
@@ -117,10 +156,15 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
         insts = insts.map((it, idx) => idx === 0 ? { ...it, pay_date: s.installment_date } : it);
       }
       setInstallments(insts);
-      setIsUpgrade(!!(s.new_courses && String(s.new_courses).trim()) || (s.noted2 || '') === 'Upgraded');
+      // Determine mode: op_type wins; else infer upgrade from new_courses/noted2.
+      const op = (s.op_type || '').toLowerCase();
+      if (op === 'transfer') setMode('transfer');
+      else if (op === 'upgrade') setMode('upgrade');
+      else if ((s.new_courses && String(s.new_courses).trim()) || (s.noted2 || '') === 'Upgraded') setMode('upgrade');
+      else setMode('normal');
       seededFor.current = target;
     } else {
-      setForm(EMPTY_FORM); setInstallments([]); setError(''); setIsUpgrade(false);
+      setForm(EMPTY_FORM); setInstallments([]); setError(''); setMode('normal');
       seededFor.current = target;
     }
   }, [open, isEdit, editId, rowData]);
@@ -128,9 +172,9 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
   const save = useMutation({
     mutationFn: () => {
       // total_paid_same_month is the first/cash payment exactly as typed — keep it
-      // as-is (do NOT overwrite). Only the derived balance is persisted.
-      const { balance } = calcPaidBalance(form, installments, isUpgrade);
-      const payload = { ...form, balance, installments };
+      // as-is (do NOT overwrite). Only the derived balance + op_type are added.
+      const { balance } = calcPaidBalance(form, installments, mode);
+      const payload = { ...form, balance, op_type: mode === 'normal' ? '' : mode, installments };
       return isEdit
         ? api.put(`/cs-sales-register/${editId}`, payload).then(r => r.data)
         : api.post('/cs-sales-register', payload).then(r => r.data);
@@ -199,8 +243,34 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
   const newCourseOptions = (form.new_courses && !membershipCodes.includes(form.new_courses))
     ? [form.new_courses, ...membershipCodes] : membershipCodes;
 
+  // ── Transfer helpers: any change to a transfer input recomputes the required
+  // difference and auto-fills "فرق التحويل المدفوع" so the balance lands on 0.
+  const setTr = (patch) => setForm(f => {
+    const next = { ...f, ...patch };
+    next.total_paid_same_month = String(transferRequired(next));
+    return next;
+  });
+  // New membership (transfer): set new_courses + auto new_prices from catalog, recalc.
+  const applyTransferNewCourse = (v) => setForm(f => {
+    const next = { ...f, new_courses: v };
+    const r = priceFor(v, f.pages);
+    if (r.apply) next.new_prices = r.value == null ? '' : String(r.value);
+    next.total_paid_same_month = String(transferRequired(next));
+    return next;
+  });
+  // Old membership (transfer): set courses + total levels parsed from the code, recalc.
+  const applyTransferOldCourse = (v) => setForm(f => {
+    const next = { ...f, courses: v };
+    const lv = parseLevels(v);
+    if (lv) next.transfer_total_levels = String(lv);
+    const r = priceFor(v, f.pages);
+    if (r.apply) next.price = r.value == null ? '' : String(r.value);
+    next.total_paid_same_month = String(transferRequired(next));
+    return next;
+  });
+
   // Derived paid amount + remaining balance (read-only display).
-  const totals = calcPaidBalance(form, installments, isUpgrade);
+  const totals = calcPaidBalance(form, installments, mode);
 
   // Field renderer — `list` enables a datalist (pick existing or type new);
   // `select` (a fixed array) renders a hard <select> instead (no free text).
@@ -271,10 +341,14 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                 icon={CreditCard}
                 accent="emerald"
                 actions={
-                  <label className="inline-flex items-center gap-2 text-xs font-bold text-violet-700 cursor-pointer">
-                    <input type="checkbox" checked={isUpgrade} onChange={(e) => setIsUpgrade(e.target.checked)} className="w-4 h-4" />
-                    العميل عمل ترقية (Upgrade)
-                  </label>
+                  <div className="flex items-center gap-1 bg-gray-100 rounded-xl p-1">
+                    {[['normal', 'عادي'], ['upgrade', 'ترقية'], ['transfer', 'تحويل']].map(([m, lbl]) => (
+                      <button key={m} type="button" onClick={() => setMode(m)}
+                        className={`px-3 py-1 text-xs font-black rounded-lg transition ${mode === m ? 'bg-emerald-600 text-white shadow' : 'text-gray-600 hover:bg-gray-200'}`}>
+                        {lbl}
+                      </button>
+                    ))}
+                  </div>
                 }
               >
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -284,13 +358,23 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                   {F({ k: 'mobile_no', label: 'الموبايل' })}
                   {F({ k: 'agent_name', label: 'الموظف (Agent)', list: 'agents' })}
                   {F({ k: 'department', label: 'القسم (Department)', list: 'departments' })}
-                  {isUpgrade
-                    ? F({ k: 'new_courses', label: 'العضوية الحالية (Courses)', select: newCourseOptions, onChange: applyNewCourse })
-                    : F({ k: 'courses', label: 'الكورس (Courses)', select: courseOptions, onChange: applyCourse })}
-                  {isUpgrade
-                    ? F({ k: 'new_prices', label: 'السعر (Price)', type: 'number' })
-                    : F({ k: 'price', label: 'السعر (Price)', type: 'number' })}
-                  {isUpgrade && F({ k: 'courses', label: 'بدأ بـ (الكورس الأصلي)', select: courseOptions, onChange: applyCourse })}
+                  {/* Main course/price: transfer & upgrade use the NEW membership */}
+                  {isTransfer
+                    ? F({ k: 'new_courses', label: 'العضوية الجديدة (Courses)', select: newCourseOptions, onChange: applyTransferNewCourse })
+                    : isUpgrade
+                      ? F({ k: 'new_courses', label: 'العضوية الحالية (Courses)', select: newCourseOptions, onChange: applyNewCourse })
+                      : F({ k: 'courses', label: 'الكورس (Courses)', select: courseOptions, onChange: applyCourse })}
+                  {isTransfer
+                    ? F({ k: 'new_prices', label: 'السعر الجديد (Price)', type: 'number', onChange: (v) => setTr({ new_prices: v }) })
+                    : isUpgrade
+                      ? F({ k: 'new_prices', label: 'السعر (Price)', type: 'number' })
+                      : F({ k: 'price', label: 'السعر (Price)', type: 'number' })}
+                  {isTransfer
+                    ? F({ k: 'courses', label: 'محوّل من (العضوية القديمة)', select: courseOptions, onChange: applyTransferOldCourse })
+                    : isUpgrade
+                      ? F({ k: 'courses', label: 'بدأ بـ (الكورس الأصلي)', select: courseOptions, onChange: applyCourse })
+                      : null}
+                  {isTransfer && F({ k: 'price', label: 'المدفوع في القديمة', type: 'number', onChange: (v) => setTr({ price: v }) })}
                   {F({ k: 'months', label: 'الشهر (Months)', list: 'months' })}
                   {F({ k: 'payment_way', label: 'طريقة الدفع', list: 'payment_ways' })}
                   {F({ k: 'paid_status', label: 'حالة الدفع', select: PAID_STATUSES })}
@@ -302,6 +386,50 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
 
               <SectionCard title="الإجماليات والخصومات" icon={DollarSign} accent="amber">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {isTransfer ? (
+                    <>
+                      {/* Transfer: levels consumed + auto credit/required/balance */}
+                      <div>
+                        <label className="block text-[11px] font-bold text-gray-500 mb-1">عدد الليفلات المستهلكة</label>
+                        <input type="number" value={form.transfer_consumed_levels ?? ''}
+                          onChange={(e) => setTr({ transfer_consumed_levels: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-gray-500 mb-1">إجمالي ليفلات القديمة (تلقائي من الكود)</label>
+                        <input type="number" value={form.transfer_total_levels ?? ''}
+                          onChange={(e) => setTr({ transfer_total_levels: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-gray-500 mb-1">قيمة المستهلَك — تلقائي</label>
+                        <input type="number" readOnly value={Math.round((totals.consumedValue || 0) * 100) / 100}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-100 text-gray-600 outline-none" />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-gray-500 mb-1">الرصيد المحوّل — تلقائي</label>
+                        <input type="number" readOnly value={Math.round((totals.credit || 0) * 100) / 100}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-100 text-gray-700 font-bold outline-none" />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-gray-500 mb-1">فرق التحويل المطلوب — تلقائي</label>
+                        <input type="number" readOnly value={Math.round((totals.required || 0) * 100) / 100}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-100 text-gray-700 font-bold outline-none" />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-gray-500 mb-1">فرق التحويل المدفوع</label>
+                        <input type="number" value={form.total_paid_same_month ?? ''}
+                          onChange={(e) => set('total_paid_same_month', e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] font-bold text-gray-500 mb-1">الرصيد المتبقي — تلقائي</label>
+                        <input type="number" readOnly value={Math.round((totals.balance || 0) * 100) / 100}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-100 text-gray-800 font-bold outline-none" />
+                      </div>
+                    </>
+                  ) : (
+                    <>
                   {/* First/cash payment (always editable). It is SEPARATE from the
                       installments — total paid = this + the installments. */}
                   <div>
@@ -346,6 +474,8 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                       className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-100 text-gray-800 font-bold outline-none"
                     />
                   </div>
+                    </>
+                  )}
                 </div>
               </SectionCard>
 

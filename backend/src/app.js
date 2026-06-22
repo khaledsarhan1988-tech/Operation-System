@@ -3055,6 +3055,17 @@ initDb().then(db => {
     `);
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_client_codes_code ON cs_client_codes(code)`);
 
+    // ── op_type + transfer columns on cs_sales_register (add-if-missing) ───────
+    // op_type: NULL/normal | 'upgrade' | 'transfer'. Transfer = membership change
+    // with a credit for the unused portion of the old membership.
+    {
+      const cols = db._raw.prepare(`PRAGMA table_info(cs_sales_register)`).all().map(c => c.name);
+      const addCol = (name, type) => { if (!cols.includes(name)) db._raw.run(`ALTER TABLE cs_sales_register ADD COLUMN ${name} ${type}`); };
+      addCol('op_type', 'TEXT');
+      addCol('transfer_consumed_levels', 'REAL');
+      addCol('transfer_total_levels', 'REAL');
+    }
+
     saveNow();
     console.log('✅ Migration: cs_sales_register + cs_sales_installments + cs_membership_prices + cs_client_codes tables ready');
   } catch (e) {
