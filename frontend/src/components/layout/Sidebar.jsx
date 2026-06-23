@@ -106,6 +106,7 @@ const REPORT_LINKS = [
       { to: '/admin/reports/find-available-trainer', label: 'nav.findAvailableTrainer', icon: Sparkles,  color: 'cyan'   },
       { to: '/admin/reports/trainer-dashboard',      label: 'nav.trainerDashboard',     icon: BarChart3, color: 'indigo' },
       { to: '/admin/reports/trainer-work-history',   label: 'سجل عمل المدربين',          icon: History,   color: 'violet' },
+      { to: '/admin/reports/trainer-details',        label: 'تفاصيل المدربين',           icon: Users,     color: 'amber'  },
     ],
   },
   { to: '/admin/reports/quality',               label: 'nav.qualityReports',     icon: ShieldCheck,   color: 'green',   management: 'Quality' },
@@ -249,6 +250,7 @@ export default function Sidebar({ mobile, onClose }) {
         { to: '/reports/find-available-trainer', label: 'nav.findAvailableTrainer', icon: Sparkles,  color: 'cyan'   },
         { to: '/reports/trainer-dashboard',      label: 'nav.trainerDashboard',     icon: BarChart3, color: 'indigo' },
         { to: '/reports/trainer-work-history',   label: 'سجل عمل المدربين',          icon: History,   color: 'violet' },
+        { to: '/reports/trainer-details',        label: 'تفاصيل المدربين',           icon: Users,     color: 'amber'  },
       );
     }
     // تسليمات الأقسام grants — the two CS pages live on the role-neutral

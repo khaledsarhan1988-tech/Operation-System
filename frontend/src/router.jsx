@@ -46,6 +46,7 @@ import TrainerUtilization from './pages/admin/TrainerUtilization';
 import TrainerAvailabilityFinder from './pages/admin/TrainerAvailabilityFinder';
 import TrainerUtilizationDashboard from './pages/admin/TrainerUtilizationDashboard';
 import TrainerWorkHistory from './pages/admin/TrainerWorkHistory';
+import TrainerDetails from './pages/admin/TrainerDetails';
 import TrainerSalaries from './pages/admin/TrainerSalaries';
 import TrainersPayroll from './pages/admin/TrainersPayroll';
 import LectureReschedules from './pages/admin/LectureReschedules';
@@ -124,6 +125,7 @@ const router = createBrowserRouter([
       { path: 'trainer-dashboard',      element: <PrivateRoute requirePage="occupancy-trainers"><TrainerUtilizationDashboard /></PrivateRoute> },
       { path: 'find-available-trainer', element: <PrivateRoute requirePage="occupancy-trainers"><TrainerAvailabilityFinder /></PrivateRoute> },
       { path: 'trainer-work-history',   element: <PrivateRoute requirePage="occupancy-trainers"><TrainerWorkHistory /></PrivateRoute> },
+      { path: 'trainer-details',        element: <PrivateRoute requirePage="occupancy-trainers"><TrainerDetails /></PrivateRoute> },
     ],
   },
 
@@ -179,6 +181,7 @@ const router = createBrowserRouter([
       { path: 'reports/find-available-trainer', element: <TrainerAvailabilityFinder /> },
       { path: 'reports/trainer-dashboard',      element: <TrainerUtilizationDashboard /> },
       { path: 'reports/trainer-work-history',   element: <TrainerWorkHistory /> },
+      { path: 'reports/trainer-details',        element: <TrainerDetails /> },
       { path: 'reschedules',                    element: <LectureReschedules /> },
       { path: 'schedule-changes',               element: <PrivateRoute superAdmin><ScheduleChangeLog /></PrivateRoute> },
       { path: 'holidays',                       element: <HolidaysManagement /> },
