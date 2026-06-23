@@ -3,15 +3,20 @@
  * HARD checks (pass/fail):
  *  1. rate consistency: *_absent_rate == round(absent/expected*100)
  *  2. sanity: counts >= 0, absent <= expected
+ *  3. cross-report: quality absent == /attendance-absence absent, per coordinator
+ *     (constitution 2026-06-08: «الرقمان متطابقان لكل منسق»).
  *
- * INFORMATIONAL (not a failure): quality vs /attendance-absence per coordinator.
- *  An old constitution note (2026-06-08) said the two should be EQUAL, but live
- *  data shows they use DIFFERENT scopes (quality's *_expected is far smaller than
- *  attendance's — e.g. Amira quality main_expected 134 vs attendance 2048). So a
- *  raw "must be equal" assertion is a FALSE POSITIVE. We surface the comparison
- *  for the owner to judge (intended scope difference vs a real divergence) rather
- *  than fail the audit. Verified the mismatch is scope (expected differs), not a
- *  count bug, before downgrading to informational.
+ * IMPORTANT — same-window comparison: /attendance-absence reads from_date/to_date
+ * (NOT from/to). Passing from/to silently drops its date filter so it runs
+ * ALL-TIME, which earlier produced a PHANTOM "scope difference" (e.g. Amira
+ * all-time main_expected 2048 vs May 63) that was wrongly logged as an intended
+ * scope diff. Verified live (May 2026): with matching params the two reports agree
+ * EXACTLY for every active coordinator (0 mismatches) — so this is a hard check.
+ *
+ * Coverage note (NOT a failure): quality lists active agent-users only; attendance
+ * also seeds inactive/ended coordinators, so attendance has extra rows quality
+ * doesn't. The per-coordinator equality is checked only for coordinators present
+ * in BOTH (the constitution rule's scope).
  */
 const compact = s => String(s || '').toLowerCase().replace(/\s+/g, '');
 
@@ -21,7 +26,9 @@ module.exports = async function quality({ call, window }) {
   const add = (name, fails) => checks.push({ name, pass: fails.length === 0, fails: fails.slice(0, 20), count: fails.length });
 
   const q = (await call(`/reports/quality-employee?from=${from}&to=${to}`)).json;
-  const a = (await call(`/reports/attendance-absence?from=${from}&to=${to}`)).json;
+  // attendance-absence reads from_date/to_date (NOT from/to) — must match the
+  // quality window or it runs all-time and the cross-report check is meaningless.
+  const a = (await call(`/reports/attendance-absence?from_date=${from}&to_date=${to}`)).json;
   const qrows = (q && q.rows) || [];
   const arows = Array.isArray(a) ? a : ((a && (a.rows || a.data)) || []);
 
@@ -51,19 +58,14 @@ module.exports = async function quality({ call, window }) {
   }
   add('absent-rate == round(absent/expected)', rateFails);
   add('sanity (no negative, absent<=expected)', sanityFails);
-
-  // informational only — quality vs attendance differ by SCOPE (different expected),
-  // so this is NOT a pass/fail; it's surfaced for the owner to review.
-  const info = [];
-  if (crossFails.length) {
-    info.push(`quality ≠ attendance-absence لـ ${crossFails.length / 2 | 0}+ منسق (نطاق مختلف — المتوقع مختلف، مش خطأ عدّ). للمراجعة:`);
-    info.push(...crossFails.slice(0, 8));
-  }
+  // constitution 2026-06-08: quality absence == attendance-absence per coordinator
+  // (main + zoom). A real failure here means one report's absence calc drifted
+  // from the other — fix both, never just one.
+  add('quality absent == attendance-absence (per coordinator)', crossFails);
 
   return {
     area: 'quality',
     meta: `quality rows=${qrows.length} matched=${matched}${unmatched.length ? ` unmatched=${unmatched.length}` : ''}`,
     checks,
-    info,
   };
 };
