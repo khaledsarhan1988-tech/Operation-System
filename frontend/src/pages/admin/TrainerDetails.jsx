@@ -66,7 +66,7 @@ export default function TrainerDetails() {
   const [from, setFrom] = useState(fmtISO(today));
   const [to, setTo] = useState(fmtISO(addDays(today, 30)));
 
-  const validRange = from && to && from <= to;
+  const validRange = !!(from && to && from <= to);
   const { data, isLoading } = useQuery({
     queryKey: ['trainer-details', from, to, section],
     queryFn: () => api.get('/reports/trainer-utilization', {
