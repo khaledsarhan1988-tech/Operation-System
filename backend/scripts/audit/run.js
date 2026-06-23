@@ -10,6 +10,7 @@ const { downloadSnapshot, bootServer } = require('./harness');
 const MODULES = {
   smoke: require('./checks/smoke'),
   occupancy: require('./checks/occupancy'),
+  quality: require('./checks/quality'),
 };
 
 function arg(name, def) { const a = process.argv.find(x => x.startsWith(`--${name}=`)); return a ? a.split('=')[1] : def; }
@@ -18,8 +19,9 @@ function arg(name, def) { const a = process.argv.find(x => x.startsWith(`--${nam
   const area = (process.argv[2] && !process.argv[2].startsWith('--')) ? process.argv[2] : 'all';
   const force = process.argv.includes('--force');
   const today = new Date();
-  const fromDef = today.toISOString().slice(0, 10);
-  const toDef = new Date(today.getTime() + 30 * 86400000).toISOString().slice(0, 10);
+  // Default window = last 30 days (past), so absence/quality reports have real data.
+  const toDef = today.toISOString().slice(0, 10);
+  const fromDef = new Date(today.getTime() - 30 * 86400000).toISOString().slice(0, 10);
   const window = { from: arg('from', process.env.AUDIT_FROM || fromDef), to: arg('to', process.env.AUDIT_TO || toDef) };
 
   await downloadSnapshot({ force });
@@ -39,6 +41,7 @@ function arg(name, def) { const a = process.argv.find(x => x.startsWith(`--${nam
       console.log(`   ${c.pass ? '✅' : '❌'} ${c.name}${c.pass ? '' : `  — ${c.count} fail(s)`}`);
       if (!c.pass) { c.fails.forEach(f => console.log(`        • ${f}`)); totalFails += c.count; }
     }
+    if (res.info && res.info.length) { console.log('   ℹ️  للمراجعة (مش فشل):'); res.info.forEach(f => console.log(`        • ${f}`)); }
     console.log('');
   }
   ctx.close();
