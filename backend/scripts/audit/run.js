@@ -11,6 +11,7 @@ const MODULES = {
   smoke: require('./checks/smoke'),
   occupancy: require('./checks/occupancy'),
   quality: require('./checks/quality'),
+  attendance: require('./checks/attendance'),
 };
 
 function arg(name, def) { const a = process.argv.find(x => x.startsWith(`--${name}=`)); return a ? a.split('=')[1] : def; }
