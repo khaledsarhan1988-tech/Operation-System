@@ -272,6 +272,7 @@ node -e "
 | الحضور والغياب `AttendanceAbsenceReport.jsx` | `/attendance-absence`, `/attendance-absence/segments` |
 | تقارير الجودة `QualityReports.jsx` | `/quality-employee`, `/quality-employee/details`, `/quality-snapshot*` |
 | إشغال المدربين `TrainerUtilizationDashboard.jsx` / `TrainerUtilization.jsx` | `/trainer-utilization`, `/trainer-utilization-summary` |
+| تفاصيل المدربين `TrainerDetails.jsx` (per-trainer day-by-day متاح/محجوز + محاضرات؛ صفحة جديدة 2026-06-23 commit 77bfa3e) | `/trainer-utilization` (يعيد استخدامه — بلا endpoint جديد) |
 | ابحث عن مدرب `TrainerAvailabilityFinder.jsx` | `/find-available-trainer` |
 | سجل عمل المدربين `TrainerWorkHistory.jsx` | `/trainer-work-history` |
 | الفريق والهيكل `TeamPage.jsx`/`OrgChart.jsx` | `/api/team*`, `/api/org-chart*` |
