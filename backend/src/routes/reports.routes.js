@@ -2545,6 +2545,24 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
         teamMap[k] = { ...teamMap[k], shifts_json: JSON.stringify(merged) };
       }
     }
+    // One-off extra hours (team_member_extra_shifts) keyed by stripped-lowercase
+    // trainer name. These are paid hours a trainer works AFTER/OUTSIDE their
+    // regular shift (entered via the team-edit modal); they feed utilization but
+    // were previously INVISIBLE to the schedule check below — so a lecture
+    // covered by an extra hour was wrongly flagged "خارج وقت عمل المدرب".
+    // A trainer may exist as several records (same name) → gather all their ids.
+    const extraShiftRows = db.prepare(
+      `SELECT es.team_member_id, es.date, es.start_time, es.end_time, tm.name
+         FROM team_member_extra_shifts es
+         JOIN team_members tm ON tm.id = es.team_member_id
+        WHERE tm.department='education'`
+    ).all();
+    const extraShiftsByName = {};
+    for (const e of extraShiftRows) {
+      const k = _stripParens(e.name).toLowerCase();
+      if (!k) continue;
+      (extraShiftsByName[k] = extraShiftsByName[k] || []).push(e);
+    }
     // Parse course strings from the Batches sheet:
     //   "Private General 4" / "P General 2" / "General 4"  → general
     //   "P STARTER 3" / "Private starter 2"                → starter
@@ -2668,6 +2686,23 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
       const SHIFT_END_TOLERANCE_MIN = 10;
       const REST_OVERLAP_TOLERANCE_MIN = 10;
 
+      // One-off extra hours: a valid way to cover a session after/outside the
+      // regular shift. If an extra-shift entry on THIS lecture's date covers its
+      // time window, the lecture is in work-time. An entry with no start/end
+      // time (duration-only) → day-level coverage (we have no time to compare).
+      const exList = extraShiftsByName[_stripParens(teamRow.name).toLowerCase()];
+      if (exList && exList.length) {
+        for (const e of exList) {
+          if (e.date !== lec.date) continue;
+          const exStart = parseHHMMToMin(e.start_time);
+          const exEnd   = parseShiftEndMin(e.end_time); // "00:00" → 1440
+          if (exStart == null || exEnd == null) return { ok: true, reason: null };
+          if (exStart <= lecStartMin && lecEndMin <= exEnd + SHIFT_END_TOLERANCE_MIN) {
+            return { ok: true, reason: null };
+          }
+        }
+      }
+
       // Per-shift pattern check (day + time + no rest/voice-note conflict).
       // Does NOT consider date range. Returns null if the pattern matches.
       function patternConflict(sh) {
@@ -2724,7 +2759,7 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
           if (pc === null) {
             return { ok: true, reason: null }; // fully covered
           }
-          activeReasons.push(pc.reason);
+          activeReasons.push(pc); // keep {kind, reason} so we can pick the most informative
         } else if (isEnded) {
           // Shift ended — check if its pattern would have matched
           if (patternConflict(sh) === null) {
@@ -2738,12 +2773,27 @@ function computeCodeProblems({ department, employee, line, user, showResolved = 
         // a between-shifts gap could land here — keep generic for those.
       }
 
-      // Decision tree
+      // Decision tree.
+      // PRIORITY: if the trainer has an ACTIVE (in-range) shift on this date that
+      // merely doesn't fit the lecture (wrong day/time, or during a rest/voice
+      // note), report THAT — the trainer hasn't left, so "انتهى عمل المدرب" would
+      // be misleading. The "ended" wording is reserved for when NO shift is
+      // active on the date (a shift whose pattern fit it has since ended).
+      if (activeReasons.length > 0) {
+        // When several active shifts conflict, prefer the most INFORMATIVE
+        // reason: a same-day conflict (during a break, or wrong time) tells the
+        // owner more than "wrong work-day" — because the day IS a work-day on
+        // another of the trainer's shifts, just at a different time. Order:
+        // block-overlap (in a break) > time-outside (day fits, time wrong) >
+        // day-mismatch (day wrong).
+        const KIND_RANK = { 'block-overlap': 0, 'time-outside': 1, 'day-mismatch': 2 };
+        const best = activeReasons
+          .slice()
+          .sort((a, b) => (KIND_RANK[a.kind] ?? 9) - (KIND_RANK[b.kind] ?? 9))[0];
+        return { ok: false, reason: best.reason };
+      }
       if (endedPatternMatchDate) {
         return { ok: false, reason: `انتهى عمل المدرب في ${endedPatternMatchDate}` };
-      }
-      if (activeReasons.length > 0) {
-        return { ok: false, reason: activeReasons[0] };
       }
       if (anyEndedAndAllOutOfRange && endedDates.length > 0) {
         const latestEnd = endedDates.sort().reverse()[0];
