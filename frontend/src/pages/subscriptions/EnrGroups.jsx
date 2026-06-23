@@ -358,7 +358,7 @@ function RenewalsView() {
           <option value="">كل الأقسام</option>
           {ALL_DEPTS.map(d => <option key={d} value={d}>{DEPT_META[d]?.label || d}</option>)}
         </select>
-        <span className="text-xs text-slate-400">العملاء اللي متبقّي في عضويتهم ≤ مستوى واحد — للتجديد الاستباقي.</span>
+        <span className="text-xs text-slate-400">العملاء اللي متبقّي في عضويتهم مستوى واحد أو أقل — للتجديد الاستباقي.</span>
         <span className="text-xs text-slate-500 mr-auto">{listQ.isLoading ? 'جاري التحميل...' : `${listQ.data?.count || 0} عميل`}</span>
       </div>
       <div className="overflow-x-auto">
@@ -607,7 +607,7 @@ export default function EnrGroups() {
                       )}
                       {it.renewal_count > 0 && (
                         <span className="inline-block text-[10px] bg-rose-50 text-rose-700 border border-rose-200 rounded px-1.5 py-0.5"
-                          title="عملاء عضويتهم قربت تخلص (متبقّي ≤ 1)">
+                          title="عملاء عضويتهم قربت تخلص (متبقّي 1 أو أقل)">
                           ⚠ {it.renewal_count} تجديد
                         </span>
                       )}
