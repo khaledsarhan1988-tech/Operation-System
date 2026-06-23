@@ -39,6 +39,22 @@ const fmt12 = m => {
   let h12 = h % 12; if (h12 === 0) h12 = 12;
   return `${String(h12).padStart(2, '0')}:${String(mm).padStart(2, '0')} ${ap}`;
 };
+// recurring free-slot counting: a "معاد" = one bookable slot of the section's
+// group duration (عام = 90د، خاص/شبه خاص = 60د) inside a pair-pattern free range.
+const slotDurFor = sec => (sec === 'general' ? 90 : 60);
+const rangeMin = str => {
+  const p = String(str).split('→').map(x => x.trim());
+  let s = parseTime12(p[0]), e = parseTime12(p[1]);
+  if (e <= s) e += 1440;   // crosses midnight (e.g. → 12:00 AM)
+  return Math.max(0, e - s);
+};
+const countMeaad = (pairPatterns, sec) => {
+  const dur = slotDurFor(sec);
+  let n = 0;
+  for (const pp of (pairPatterns || [])) for (const sl of (pp.slots || [])) n += Math.floor(rangeMin(sl) / dur);
+  return n;
+};
+
 // short group label from a lecture group_name (strip date/day/time prefix noise)
 const shortGroup = g => {
   if (!g) return '';
@@ -82,6 +98,31 @@ export default function TrainerDetails() {
     [data]
   );
 
+  // Recurring free slots over 4 consecutive weeks (day-pair patterns) — reuses
+  // /find-available-trainer no-window mode (the system's agreed recurring logic).
+  const { data: faData } = useQuery({
+    queryKey: ['trainer-details-recurring', from, section],
+    queryFn: () => api.get('/reports/find-available-trainer', {
+      params: { section, days: 'saturday,sunday,monday,tuesday,wednesday,thursday', weeks_count: 4, start_date: from },
+    }).then(r => r.data),
+    enabled: validRange,
+    staleTime: 60 * 1000,
+  });
+  // map: stripped-name → { count, pairs:[{label, slots:[]}] }
+  const recurringByName = useMemo(() => {
+    const m = {};
+    for (const r of (faData?.results || [])) {
+      const key = String(r.name || '').replace(/\([^)]*\)/g, '').trim().toLowerCase();
+      const pairs = (r.pair_patterns || []).filter(pp => (pp.slots || []).length);
+      m[key] = { count: countMeaad(r.pair_patterns, r.section), pairs };
+    }
+    return m;
+  }, [faData]);
+  const sectionTotal = useMemo(
+    () => trainers.reduce((s, t) => s + (recurringByName[String(t.name || '').replace(/\([^)]*\)/g, '').trim().toLowerCase()]?.count || 0), 0),
+    [trainers, recurringByName]
+  );
+
   return (
     <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
       <PageHero
@@ -118,6 +159,23 @@ export default function TrainerDetails() {
         </div>
       </div>
 
+      {/* ── Section recurring-availability summary ── */}
+      {validRange && trainers.length > 0 && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl px-5 py-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-emerald-800">
+            <CalendarDays size={18} className="text-emerald-600" />
+            <span className="font-bold text-sm">مواعيد القسم الفاضية المتكررة — تقبل مجموعة جديدة 4 أسابيع متتالية</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-2xl font-black text-emerald-700">{sectionTotal}</span>
+            <span className="text-sm text-emerald-700 font-semibold">معاد فاضي</span>
+            <span className="text-[11px] text-emerald-600">
+              (أزواج الأيام · عام=ساعة ونص، خاص/شبه خاص=ساعة · 4 أسابيع من {fmtArDate(from)})
+            </span>
+          </div>
+        </div>
+      )}
+
       {!validRange && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800">حدّد فترة صحيحة (من ≤ إلى).</div>
       )}
@@ -133,7 +191,12 @@ export default function TrainerDetails() {
       {/* ── Per-trainer cards ── */}
       <div className="space-y-5">
         {trainers.map(t => (
-          <TrainerCard key={`${t.id}-${t.section}`} trainer={t} dates={dates} />
+          <TrainerCard
+            key={`${t.id}-${t.section}`}
+            trainer={t}
+            dates={dates}
+            recurring={recurringByName[String(t.name || '').replace(/\([^)]*\)/g, '').trim().toLowerCase()]}
+          />
         ))}
       </div>
     </div>
@@ -141,7 +204,7 @@ export default function TrainerDetails() {
 }
 
 // ─── one trainer card ──────────────────────────────────────────────────────────
-function TrainerCard({ trainer: t, dates }) {
+function TrainerCard({ trainer: t, dates, recurring }) {
   const tot = t.totals || {};
   const stats = [
     { label: 'إجمالي العمل', value: fmtMins(tot.available_min), tone: 'text-gray-900' },
@@ -170,7 +233,23 @@ function TrainerCard({ trainer: t, dates }) {
           </div>
           <div className="text-[11px] text-gray-500">{t.shift_summary || '—'}</div>
         </div>
+        {/* recurring free slots (4 consecutive weeks, day-pairs) */}
+        <div className="text-center px-3 py-1.5 rounded-xl border bg-emerald-50 border-emerald-200 min-w-[120px]">
+          <div className="text-xl font-black text-emerald-700 leading-none">{recurring?.count ?? 0}</div>
+          <div className="text-[10px] text-emerald-700 mt-0.5">معاد فاضي · 4 أسابيع</div>
+        </div>
       </div>
+      {/* recurring slot details (which day-pair + time) */}
+      {recurring?.pairs?.length > 0 && (
+        <div className="px-5 py-2 border-b border-gray-100 bg-emerald-50/30 flex flex-wrap gap-x-4 gap-y-1">
+          {recurring.pairs.map((pp, i) => (
+            <span key={i} className="text-[11px] text-emerald-800">
+              <span className="font-semibold">{pp.label}:</span>{' '}
+              <span dir="ltr">{pp.slots.join('، ')}</span>
+            </span>
+          ))}
+        </div>
+      )}
       {/* stats */}
       <div className="px-5 py-3 grid grid-cols-2 sm:grid-cols-5 gap-2 border-b border-gray-100">
         {stats.map(s => (
