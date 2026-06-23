@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { GraduationCap, Search, Users, ListChecks, History, Archive } from 'lucide-react';
+import { GraduationCap, Search, Users, ListChecks, History, Archive, AlertTriangle } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import SectionCard from '../../components/ui/SectionCard';
@@ -30,6 +30,17 @@ const STATUS_OPTIONS = [
   { value: 'waiting_trainees', label: 'بانتظار تسجيل المتدربين', cls: 'bg-sky-50 text-sky-700 border-sky-200' },
 ];
 const STATUS_META = Object.fromEntries(STATUS_OPTIONS.map(s => [s.value, s]));
+
+// Membership level-balance styling (same states as the transition modal).
+const BAL_DOT = {
+  ok:         'bg-emerald-100 text-emerald-700',
+  last_level: 'bg-amber-100 text-amber-700',
+  exhausted:  'bg-rose-100 text-rose-700',
+};
+const RENEW_STATE = {
+  exhausted:  { label: 'العضوية خلصت',    cls: 'bg-rose-50 text-rose-700 border-rose-200' },
+  last_level: { label: 'آخر مستوى مدفوع', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
+};
 
 const DISP_TABS = [
   { value: 'postponed',    label: 'التأجيلات',     cls: 'border-amber-500 text-amber-700 bg-amber-50' },
@@ -329,6 +340,71 @@ function EndedGroupsView({ onOpen }) {
   );
 }
 
+// ─── Renewals view (محتاج تجديد) — clients whose membership remaining ≤ 1 ──────
+function RenewalsView() {
+  const [dept, setDept] = useState('');
+  const listQ = useQuery({
+    queryKey: ['enr-renewals', dept],
+    queryFn: () => api.get('/cs/enr-groups/renewals', { params: { dept } }).then(r => r.data),
+    keepPreviousData: true,
+  });
+  const items = listQ.data?.items || [];
+
+  return (
+    <SectionCard title="محتاج تجديد" icon={AlertTriangle} className="mt-4">
+      <div className="p-3 flex flex-wrap items-center gap-2 border-b border-slate-100">
+        <select value={dept} onChange={(e) => setDept(e.target.value)}
+          className="py-2 px-3 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-200">
+          <option value="">كل الأقسام</option>
+          {ALL_DEPTS.map(d => <option key={d} value={d}>{DEPT_META[d]?.label || d}</option>)}
+        </select>
+        <span className="text-xs text-slate-400">العملاء اللي متبقّي في عضويتهم ≤ مستوى واحد — للتجديد الاستباقي.</span>
+        <span className="text-xs text-slate-500 mr-auto">{listQ.isLoading ? 'جاري التحميل...' : `${listQ.data?.count || 0} عميل`}</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm text-right">
+          <thead>
+            <tr className="text-slate-500 border-b border-slate-100">
+              <th className="px-3 py-3 font-medium">العميل</th>
+              <th className="px-3 py-3 font-medium">القسم</th>
+              <th className="px-3 py-3 font-medium">المجموعة الحالية</th>
+              <th className="px-3 py-3 font-medium">المنسق</th>
+              <th className="px-3 py-3 font-medium">الحالة</th>
+              <th className="px-3 py-3 font-medium">المتبقّي</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((it, i) => (
+              <tr key={`${it.phone || i}|${it.dept}`} className="border-b border-slate-50 hover:bg-slate-50/60 align-top">
+                <td className="px-3 py-3">
+                  <div className="text-slate-800">{it.name || '—'}</div>
+                  <div className="text-xs text-slate-400 font-mono" dir="ltr">{it.phone || ''}</div>
+                </td>
+                <td className="px-3 py-3 text-slate-600">{DEPT_META[it.dept]?.label || it.dept || '—'}</td>
+                <td className="px-3 py-3 font-mono text-xs text-slate-600 break-all max-w-xs">{it.group_name || '—'}</td>
+                <td className="px-3 py-3 text-slate-700">{it.coordinator || <span className="text-slate-300">—</span>}</td>
+                <td className="px-3 py-3 whitespace-nowrap">
+                  <span className={`inline-block text-[11px] rounded-full border px-2 py-0.5 ${RENEW_STATE[it.state]?.cls || ''}`}>
+                    {RENEW_STATE[it.state]?.label || it.state}
+                  </span>
+                </td>
+                <td className="px-3 py-3 text-center">
+                  <span className={`inline-flex items-center justify-center min-w-7 px-2 py-0.5 rounded-full text-xs font-semibold ${BAL_DOT[it.state] || 'bg-slate-100 text-slate-600'}`}>
+                    {it.remaining}
+                  </span>
+                </td>
+              </tr>
+            ))}
+            {!listQ.isLoading && items.length === 0 && (
+              <tr><td colSpan={6} className="px-3 py-10 text-center text-slate-400">لا يوجد عملاء محتاجين تجديد</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </SectionCard>
+  );
+}
+
 export default function EnrGroups() {
   const [view, setView] = useState('groups');         // 'groups' | 'lists' | 'log' | 'ended'
   const [activeDept, setActiveDept] = useState('General');
@@ -396,6 +472,12 @@ export default function EnrGroups() {
           }`}>
           <span className="inline-flex items-center gap-1.5"><ListChecks className="w-4 h-4" /> قوائم المتابعة</span>
         </button>
+        <button onClick={() => setView('renewals')}
+          className={`px-5 py-2.5 text-sm font-medium rounded-t-lg -mb-px border-b-2 transition-colors ${
+            view === 'renewals' ? 'border-violet-600 text-violet-700 bg-violet-50' : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+          }`}>
+          <span className="inline-flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" /> محتاج تجديد</span>
+        </button>
         <button onClick={() => setView('ended')}
           className={`px-5 py-2.5 text-sm font-medium rounded-t-lg -mb-px border-b-2 transition-colors ${
             view === 'ended' ? 'border-violet-600 text-violet-700 bg-violet-50' : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
@@ -414,6 +496,8 @@ export default function EnrGroups() {
         <ActivityLogView />
       ) : view === 'ended' ? (
         <EndedGroupsView onOpen={setSelectedGroup} />
+      ) : view === 'renewals' ? (
+        <RenewalsView />
       ) : view === 'lists' ? (
         <DispositionsView />
       ) : (
@@ -517,9 +601,17 @@ export default function EnrGroups() {
                   className="border-b border-slate-50 hover:bg-violet-50/50 align-top cursor-pointer">
                   <td className="px-3 py-3">
                     <div className="font-mono text-xs text-slate-800 break-all">{it.group_name}</div>
-                    {it.line && (
-                      <span className="inline-block mt-1 text-[10px] bg-slate-100 text-slate-500 rounded px-1.5 py-0.5">{it.line}</span>
-                    )}
+                    <div className="flex flex-wrap items-center gap-1 mt-1">
+                      {it.line && (
+                        <span className="inline-block text-[10px] bg-slate-100 text-slate-500 rounded px-1.5 py-0.5">{it.line}</span>
+                      )}
+                      {it.renewal_count > 0 && (
+                        <span className="inline-block text-[10px] bg-rose-50 text-rose-700 border border-rose-200 rounded px-1.5 py-0.5"
+                          title="عملاء عضويتهم قربت تخلص (متبقّي ≤ 1)">
+                          ⚠ {it.renewal_count} تجديد
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-3 py-3 whitespace-nowrap">
                     {STATUS_META[it.status] ? (
@@ -534,7 +626,15 @@ export default function EnrGroups() {
                       <div className="flex flex-col gap-1 max-w-xs">
                         {it.students.map((s, i) => (
                           <div key={i} className="flex items-center justify-between gap-2 text-xs">
-                            <span className="text-slate-700 truncate">{s.name || '—'}</span>
+                            <span className="text-slate-700 truncate flex items-center gap-1 min-w-0">
+                              {s.balance && s.balance.state !== 'unknown' && (
+                                <span className={`text-[9px] rounded px-1 leading-tight flex-shrink-0 ${BAL_DOT[s.balance.state] || ''}`}
+                                  title={`متبقّي ${s.balance.remaining}${s.balance.remaining_after_move != null ? ` · بعد النقل ${s.balance.remaining_after_move}` : ''}`}>
+                                  {s.balance.remaining}
+                                </span>
+                              )}
+                              <span className="truncate">{s.name || '—'}</span>
+                            </span>
                             <span className="text-slate-400 font-mono whitespace-nowrap" dir="ltr">{s.phone || ''}</span>
                           </div>
                         ))}

@@ -118,10 +118,17 @@ function currentGroupClients(group, line) {
  * Transition context for one CURRENT group: its clients, each annotated with
  * whether they were already moved (and to which next group) and their disposition.
  */
-function getTransition({ group, line }) {
+function getTransition({ group, line, dept }) {
   group = (group || '').trim();
   line = (line || '').trim();
+  dept = (dept || '').trim();
   if (!group) throw new Error('group is required');
+  // Membership balance is per-dept = the SOURCE group's track. Prefer the caller's
+  // dept (the EnrGroups tab); fall back to the group's batches.dept_type.
+  if (!dept) {
+    const b = db.prepare(`SELECT dept_type FROM batches WHERE group_name = ? AND line = ? LIMIT 1`).get(group, line);
+    dept = (b && b.dept_type) || '';
+  }
 
   const moved = db.prepare(`
     SELECT id, client_phone, client_name, next_group_name, next_line
@@ -169,6 +176,12 @@ function getTransition({ group, line }) {
     }
   }
 
+  // Membership level-balance per client (SAME number as the deliveries page) + the
+  // projection after this move. Built once for the group; lazy-required to avoid
+  // any module load-order cycle.
+  let csBal = null, balCtx = null;
+  if (dept) { csBal = require('./csDeliveries.service'); balCtx = csBal.buildBalanceContext(); }
+
   const items = clients.map(c => {
     const key = csPrimaryPhone(c.phone) || c.phone || ('n:' + (c.name || ''));
     const mv = movedByPhone.get(key) || null;
@@ -180,9 +193,10 @@ function getTransition({ group, line }) {
         id: dp.id, disposition: dp.disposition,
         entries: entriesByDisp.get(dp.id) || [],
       } : null,
+      balance: balCtx ? csBal.membershipBalance(balCtx, c.phone, dept) : null,
     };
   });
-  return { group, line, count: items.length, items };
+  return { group, line, dept: dept || null, count: items.length, items };
 }
 
 /**

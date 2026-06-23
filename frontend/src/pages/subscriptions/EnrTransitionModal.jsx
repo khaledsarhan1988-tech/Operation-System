@@ -31,6 +31,26 @@ const NEXT_STATUS_LABEL = {
   waiting_trainees: 'بانتظار المتدربين',
 };
 
+// Membership level-balance badge — the SAME «المستويات المتبقية» the deliveries
+// page shows (متبقّي = شهور العضوية − المجموعات اللي دخلها).
+const BAL_META = {
+  ok:         'bg-emerald-50 text-emerald-700 border-emerald-200',
+  last_level: 'bg-amber-50 text-amber-700 border-amber-200',
+  exhausted:  'bg-rose-50 text-rose-700 border-rose-200',
+  unknown:    'bg-slate-50 text-slate-400 border-slate-200',
+};
+function BalanceBadge({ bal }) {
+  if (!bal) return null;
+  const label = bal.state === 'unknown' ? 'عضوية —'
+    : bal.state === 'exhausted' ? 'العضوية خلصت'
+    : bal.state === 'last_level' ? 'آخر مستوى مدفوع'
+    : `متبقّي ${bal.remaining} مستوى`;
+  const title = bal.paid_months != null
+    ? `عضوية ${bal.paid_months} مستوى · مستهلك ${bal.groups_taken} · بعد النقل ${bal.remaining_after_move}`
+    : 'لا توجد عضوية في هذا القسم بكشف العملاء';
+  return <span className={`inline-block text-[10px] rounded-full px-2 py-0.5 border ${BAL_META[bal.state] || BAL_META.unknown}`} title={title}>{label}</span>;
+}
+
 const ACTION_LABEL = {
   move_in: 'نقل إلى مجموعة', move_out: 'إزالة من مجموعة',
   disposition_set: 'تحديد مصير', disposition_cleared: 'مسح مصير',
@@ -147,7 +167,7 @@ export default function EnrTransitionModal({ group, onClose }) {
   });
   const txQ = useQuery({
     queryKey: ['enr-transition', group.group_name, group.line],
-    queryFn: () => api.get('/cs/enr-groups/transition', { params: { group: group.group_name, line: group.line } }).then(r => r.data),
+    queryFn: () => api.get('/cs/enr-groups/transition', { params: { group: group.group_name, line: group.line, dept } }).then(r => r.data),
   });
   const rosterQ = useQuery({
     queryKey: ['enr-next-roster', nextName, nextLine],
@@ -204,6 +224,11 @@ export default function EnrTransitionModal({ group, onClose }) {
 
   const move = (c, added_from = 'current') => {
     if (!nextName) { alert('اختر المجموعة القادمة أولاً'); return; }
+    // Control: warn before moving a client whose membership is exhausted — the next
+    // group is a level they haven't paid for. Soft confirm (not a hard block).
+    if (added_from === 'current' && c.balance && c.balance.state === 'exhausted') {
+      if (!window.confirm(`⚠️ «${c.name || c.phone}» عضويته خلصت (متبقّي 0).\nالنقل للمجموعة القادمة = مستوى مدفعش عليه — يُفضّل تجديد العضوية أولاً.\nمتأكد تنقله؟`)) return;
+    }
     moveMut.mutate({ name: c.name, phone: c.phone, added_from });
   };
   const setDisp = (c, disposition, extra = {}) =>
@@ -261,6 +286,14 @@ export default function EnrTransitionModal({ group, onClose }) {
                     <div className="min-w-0">
                       <div className="text-sm text-slate-800 truncate">{c.name || '—'}</div>
                       <div className="text-xs text-slate-400 font-mono" dir="ltr">{c.phone || ''}</div>
+                      {c.balance && (
+                        <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                          <BalanceBadge bal={c.balance} />
+                          {c.balance.state !== 'unknown' && !c.moved_to && !c.disposition && (
+                            <span className="text-[10px] text-slate-400 whitespace-nowrap">→ بعد النقل {c.balance.remaining_after_move}</span>
+                          )}
+                        </div>
+                      )}
                     </div>
                     {c.moved_to ? (
                       <div className="flex items-center gap-1">

@@ -281,6 +281,93 @@ function buildSalesMembershipMap() {
   return map;
 }
 
+// ─── MEMBERSHIP LEVEL-BALANCE (shared) ─────────────────────────────────────────
+// Reusable layer so the Enr Groups transition screen (and the renewal list) show
+// the SAME "remaining levels" as the deliveries page — built from the SAME maps,
+// NOT a second formula. Plus the "simulate next transfer" projection.
+
+// Build the three source maps ONCE; pass the context to membershipBalance() so a
+// caller iterating many clients doesn't rebuild them per row.
+function buildBalanceContext() {
+  return {
+    salesMap: buildSalesMembershipMap(),   // كشف العملاء (2025+) → per-dept paid months
+    activeMap: buildActiveGroupMap(),       // clients ∩ batches(نشطة)
+    inactiveMap: buildInactiveGroupMap(),   // cs_completed_levels (past groups)
+  };
+}
+
+// Per-client membership balance in ONE department, computed EXACTLY like
+// getDepartmentDeliveries (paid_months − groups_taken), PLUS the projection after
+// moving the client into one more (next) group. MUST stay identical to the
+// deliveries formula above — the audit asserts balance.remaining == the deliveries
+// remaining_levels. Returns state 'unknown' (render '—') when the client has no
+// live membership in this dept.
+//   ctx:   from buildBalanceContext()
+//   phone: raw phone (normalized inside)
+//   dept:  'General' | 'Private' | 'Semi'  (the group's dept_type)
+function membershipBalance(ctx, phone, dept) {
+  const UNKNOWN = { paid_months: null, groups_taken: null, remaining: null, remaining_after_move: null, state: 'unknown' };
+  const pn = csPrimaryPhone(phone);
+  if (!pn || !DEPTS.includes(dept)) return UNKNOWN;
+  const sales = ctx.salesMap.get(pn);
+  const tm = sales && sales.byTrack[dept];
+  if (!tm || tm.excludedRefund) return UNKNOWN;   // no / refunded membership in this dept → '—'
+
+  // groups_taken mirrors deliveries EXACTLY: every active group + every inactive
+  // (past) group not already counted as active (canonical-key dedup). Each = 1 level.
+  const activeGroups = (ctx.activeMap.get(pn) || []).map(a => a.group_name);
+  const activeKeys = new Set(activeGroups.map(canonGroupKey));
+  const inactiveGroups = [...(ctx.inactiveMap.get(pn) || [])].filter(g => !activeKeys.has(canonGroupKey(g)));
+  const groupsTaken = activeGroups.length + inactiveGroups.length;
+
+  const paid = tm.months;
+  const remaining = Math.max(0, paid - groupsTaken);
+  const remainingAfter = Math.max(0, paid - (groupsTaken + 1));   // simulate +1 group (the next transfer)
+  // exhausted = no paid level left (a further move is unpaid); last_level = exactly
+  // one left (the next move IS the last paid one); ok = 2+ left.
+  const state = remaining <= 0 ? 'exhausted' : (remaining === 1 ? 'last_level' : 'ok');
+  return { paid_months: paid, groups_taken: groupsTaken, remaining, remaining_after_move: remainingAfter, state };
+}
+
+// Clients whose membership is at/near its end (remaining ≤ 1) in their CURRENT
+// active group's dept — the proactive "محتاج تجديد" pipeline. Keyed by (phone,dept):
+// a client active in two depts can surface for each. Optional dept filter.
+function getRenewalNeeded({ dept } = {}) {
+  dept = (dept || '').trim();
+  const ctx = buildBalanceContext();
+  const firstRealCoord = (s) => {
+    for (const c of String(s || '').split(',')) { const t = c.trim(); if (t && normName(t) !== '--') return t; }
+    return null;
+  };
+  const rows = new Map();
+  for (const [pn, groups] of ctx.activeMap) {
+    for (const g of groups) {
+      const d = g.dept_type;
+      if (!DEPTS.includes(d)) continue;
+      if (dept && DEPTS.includes(dept) && d !== dept) continue;
+      const bal = membershipBalance(ctx, pn, d);
+      if (bal.state === 'unknown' || bal.remaining == null || bal.remaining > 1) continue;
+      const key = pn + '|' + d;
+      if (rows.has(key)) continue;
+      rows.set(key, {
+        phone: pn,
+        name: ctx.salesMap.get(pn)?.name || null,
+        dept: d,
+        group_name: g.group_name,
+        coordinator: firstRealCoord(g.coordinators),
+        paid_months: bal.paid_months,
+        groups_taken: bal.groups_taken,
+        remaining: bal.remaining,
+        state: bal.state,
+      });
+    }
+  }
+  const items = [...rows.values()].sort((a, b) =>
+    (a.remaining - b.remaining) ||   // exhausted (0) before last_level (1)
+    String(a.name || '').localeCompare(String(b.name || ''), 'ar'));
+  return { count: items.length, items };
+}
+
 /**
  * Build the deliveries table for one department.
  *
@@ -561,4 +648,7 @@ function setDeliveryStatus({ phone, status, note, userId, userName }) {
   return { phone: pn, status, note: note || null };
 }
 
-module.exports = { getDepartmentDeliveries, setDeliveryStatus, DEPTS, STATUSES };
+module.exports = {
+  getDepartmentDeliveries, setDeliveryStatus, DEPTS, STATUSES,
+  buildBalanceContext, membershipBalance, getRenewalNeeded,
+};

@@ -188,11 +188,19 @@ function getEnrGroups({ dept, q, status, firstFrom, firstTo, lastFrom, lastTo, p
   const clientsByGroup = buildClientsByGroup();
   const nextMembersByGroup = buildNextMembersByGroup();
 
+  // Membership level-balance per client (the SAME number as the deliveries page) so
+  // the group table can flag clients at/near the end of their membership. One ctx
+  // for the whole page; lazy-required to avoid any module load-order cycle.
+  const csBal = require('./csDeliveries.service');
+  const balCtx = csBal.buildBalanceContext();
+
   let items = [];
   for (const r of seen.values()) {
     const meta = lectureMeta(r.group_name, r.line);
     const gkey = String(r.group_name) + '|' + String(r.line || '');
-    const students = clientsByGroup.get(gkey) || [];
+    const students = (clientsByGroup.get(gkey) || []).map(s => ({
+      ...s, balance: csBal.membershipBalance(balCtx, s.phone, dept),
+    }));
     const movedIn = nextMembersByGroup.get(gkey) || [];
 
     // Status = the real batches.status (matches the SystemReports waiting pages).
@@ -216,6 +224,7 @@ function getEnrGroups({ dept, q, status, firstFrom, firstTo, lastFrom, lastTo, p
       status:        rowStatus,
       students,
       student_count: students.length,
+      renewal_count: students.filter(s => s.balance && (s.balance.state === 'exhausted' || s.balance.state === 'last_level')).length,
       moved_in:      movedIn,
       moved_in_count: movedIn.length,
       start_date:    startDate,

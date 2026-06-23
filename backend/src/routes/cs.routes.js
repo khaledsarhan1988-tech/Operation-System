@@ -898,8 +898,14 @@ router.get('/enr-groups/ended', requireRole('admin'), (req, res) => {
 
 /** Transition context for one current group: clients + moved/disposition status. */
 router.get('/enr-groups/transition', requireRole('admin'), (req, res) => {
-  try { res.json({ ok: true, ...enrTx().getTransition({ group: req.query.group, line: req.query.line }) }); }
+  try { res.json({ ok: true, ...enrTx().getTransition({ group: req.query.group, line: req.query.line, dept: req.query.dept }) }); }
   catch (e) { console.error('GET /cs/enr-groups/transition:', e.message); res.status(400).json({ ok: false, error: e.message }); }
+});
+
+/** «محتاج تجديد» — clients whose membership is at/near its end (remaining ≤ 1). */
+router.get('/enr-groups/renewals', requireRole('admin'), (req, res) => {
+  try { res.json({ ok: true, ...require('../services/csDeliveries.service').getRenewalNeeded({ dept: req.query.dept }) }); }
+  catch (e) { console.error('GET /cs/enr-groups/renewals:', e.message); res.status(400).json({ ok: false, error: e.message }); }
 });
 
 /** Search كشف العملاء (cs_sales_register) to add brand-new members. */
