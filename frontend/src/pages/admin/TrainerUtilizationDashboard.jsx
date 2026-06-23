@@ -120,7 +120,7 @@ export default function TrainerUtilizationDashboard() {
   // ── CSV Export ──────────────────────────────────────────────────────────────
   const exportCsv = () => {
     if (!trainers.length) return;
-    const headers = ['الاسم', 'القسم', 'الشيفت', 'الإشغال %', 'المتاح (ساعة)', 'المحجوز (ساعة)', 'الفاضي (ساعة)', 'الحالة'];
+    const headers = ['الاسم', 'القسم', 'الشيفت', 'الإشغال %', 'المتاح (ساعة)', 'المحجوز (ساعة)', 'الفاضي (ساعة)', 'خارج الشيفت (ساعة)', 'الحالة'];
     const rows = trainers.map(t => [
       t.name,
       SECTIONS[t.section] || t.section,
@@ -129,6 +129,7 @@ export default function TrainerUtilizationDashboard() {
       t.available_hours,
       t.booked_hours,
       t.free_hours,
+      t.out_of_shift_hours || 0,
       STATUS_BADGE[t.status]?.label || t.status,
     ]);
     const csv = [headers, ...rows]
@@ -560,6 +561,7 @@ export default function TrainerUtilizationDashboard() {
                         <th className="text-center px-3 py-2 font-bold text-gray-600">المتاح</th>
                         <th className="text-center px-3 py-2 font-bold text-gray-600">المحجوز</th>
                         <th className="text-center px-3 py-2 font-bold text-gray-600">الفاضي</th>
+                        <th className="text-center px-3 py-2 font-bold text-amber-600" title="محاضرات وقعت خارج أيام/ساعات شيفت المدرّب (والساعات الإضافية) — لا تُحتسب في نسبة الإشغال">خارج الشيفت</th>
                         <th className="text-center px-3 py-2 font-bold text-gray-600">الحالة</th>
                       </tr>
                     </thead>
@@ -613,6 +615,11 @@ export default function TrainerUtilizationDashboard() {
                           <td className="text-center px-3 py-2.5 text-gray-800 font-bold">{t.available_hours}س</td>
                           <td className="text-center px-3 py-2.5 text-gray-600 font-semibold">{t.booked_hours}س</td>
                           <td className="text-center px-3 py-2.5 text-gray-600 font-semibold">{t.free_hours}س</td>
+                          <td className="text-center px-3 py-2.5">
+                            {t.out_of_shift_hours > 0
+                              ? <span className="inline-block text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-50 text-amber-700 border border-amber-200" title="محاضرات خارج الشيفت — منفصلة، غير محتسبة في النسبة">{t.out_of_shift_hours}س</span>
+                              : <span className="text-gray-300">—</span>}
+                          </td>
                           <td className="text-center px-3 py-2.5">
                             <span className={`inline-block text-[10px] px-2 py-0.5 rounded-full font-bold border ${STATUS_BADGE[t.status]?.cls || 'bg-slate-100 text-slate-600 border-slate-200'}`}>
                               {STATUS_BADGE[t.status]?.label || t.status}

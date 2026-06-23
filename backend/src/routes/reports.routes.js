@@ -4137,6 +4137,12 @@ router.get('/trainer-utilization-summary', (req, res) => {
     // endpoint. Lectures taught during those hours are already in booked (no
     // shift-day restriction), so this only tops up available.
     const extraByMemberDay = {};
+    // Time BLOCKS of one-off extra hours, per (member,date) → used to decide
+    // whether an out-of-shift lecture actually falls inside registered extra
+    // hours (then it counts in-section, not as "out of shift"). Entries with no
+    // start/end time still add to `extraByMemberDay` (capacity) but can't place
+    // a specific lecture in time.
+    const extraBlocksByMemberDay = {};
     try {
       db.prepare(
         `SELECT team_member_id, date, SUM(duration_min) AS mins
@@ -4145,6 +4151,16 @@ router.get('/trainer-utilization-summary', (req, res) => {
           GROUP BY team_member_id, date`
       ).all(prevStart, currEnd).forEach(r => {
         extraByMemberDay[`${r.team_member_id}|${r.date}`] = r.mins || 0;
+      });
+      db.prepare(
+        `SELECT team_member_id, date, start_time, end_time
+           FROM team_member_extra_shifts
+          WHERE date BETWEEN ? AND ?`
+      ).all(prevStart, currEnd).forEach(r => {
+        const a = HHMM(r.start_time), b = HHMM_END(r.end_time);
+        if (a == null || b == null || b <= a) return;
+        const k = `${r.team_member_id}|${r.date}`;
+        (extraBlocksByMemberDay[k] = extraBlocksByMemberDay[k] || []).push([a, b]);
       });
     } catch (_) { /* table may not exist on older DBs */ }
 
@@ -4183,11 +4199,21 @@ router.get('/trainer-utilization-summary', (req, res) => {
 
     // Per-SECTION totals: split a trainer's available/booked by the section each
     // shift belongs to (per-shift `section`, date-aware). Available for a day
-    // goes to each covering shift's section; booked (lectures+voice) goes to
-    // that day's section (the one the trainer worked that day), falling back to
-    // the trainer's main section when they worked outside any shift.
+    // goes to each covering shift's section.
+    //
+    // BOOKED is attributed PER-LECTURE by day+HOURS (owner rule 2026-06-23): each
+    // lecture goes to the section of the shift whose work-day AND hour-window
+    // contain it; if no regular shift matches, it's still in-section when it
+    // falls inside a registered EXTRA-hours block that day. A lecture matching
+    // NOTHING (day or hour outside every shift AND every extra block) is NOT
+    // counted in any section — it goes to a separate `out_of_shift_min` bucket
+    // shown apart, so it never inflates a section's utilization. Team-leader
+    // records are already excluded upstream, so coverage = the مدرّب record's
+    // shifts only (a Saturday that exists only on a T.L record does NOT cover).
+    // Returns { sections: {sec:{available_min,booked_min}}, out_of_shift_min }.
     function totalsBySectionForRange(trainer, shifts, dates) {
       const map = {};
+      let outOfShiftMin = 0;
       const tKey = stripParens(trainer.name).toLowerCase();
       const clampStart = trainerCountStart(trainer, shifts);
       const clampEnd   = trainerCountEnd(trainer, shifts);
@@ -4198,18 +4224,43 @@ router.get('/trainer-utilization-summary', (req, res) => {
       for (const date of dates) {
         if (holidaySet.has(date)) continue;
         if (clampStart && date < clampStart) continue;
+        // Available: each covering shift's minutes → its section.
         let daySection = null;
+        const coveringShifts = [];           // shifts whose work-day covers this date
         for (const sh of shifts) {
           const m = shiftMinsForDate(sh, date);
-          if (m > 0) { const sec = shiftSection(sh, trainer); add(sec, m, 0); if (!daySection) daySection = sec; }
+          if (m > 0) { const sec = shiftSection(sh, trainer); add(sec, m, 0); coveringShifts.push({ sh, sec }); if (!daySection) daySection = sec; }
         }
         const extra = extraByMemberDay[`${trainer.id}|${date}`] || 0;
         if (extra > 0) { const sec = daySection || (trainer.section || 'all'); add(sec, extra, 0); if (!daySection) daySection = sec; }
+        const extraBlocks = extraBlocksByMemberDay[`${trainer.id}|${date}`] || [];
+        // Booked: classify each lecture by its start hour.
         const lectures = dropPhantom(lectureMap[`${tKey}|${date}`] || [], clampEnd, date);
-        const bookedDay = bookedOccupiedForDate(lectures, shifts, date);
-        if (bookedDay > 0) { const sec = daySection || (trainer.section || 'all'); add(sec, 0, bookedDay); }
+        const secIv = {};                    // section → [intervals], out → [intervals]
+        const outIv = [];
+        for (const l of lectures) {
+          const st = parseTime12(l.time), du = parseDur(l.duration);
+          if (st < 0 || du <= 0) continue;
+          const iv = [st, st + du];
+          let sec = null;
+          for (const cs of coveringShifts) {                          // 1) regular shift by day+hours
+            if (st >= cs.sh.startMin && st < cs.sh.endMin) { sec = cs.sec; break; }
+          }
+          if (sec == null && extraBlocks.some(([a, b]) => st >= a && st < b)) {  // 2) extra-hours block
+            sec = daySection || (trainer.section || 'all');
+          }
+          if (sec != null) (secIv[sec] = secIv[sec] || []).push(iv);
+          else outIv.push(iv);                                        // 3) out of shift
+        }
+        // Voice notes count as booked in their own shift's section (day-scoped).
+        for (const cs of coveringShifts) {
+          const vn = voiceNoteIntervalsForDate([cs.sh], date);
+          if (vn.length) (secIv[cs.sec] = secIv[cs.sec] || []).push(...vn);
+        }
+        for (const sec of Object.keys(secIv)) add(sec, 0, mergeIntervalsMinutes(secIv[sec]));
+        outOfShiftMin += mergeIntervalsMinutes(outIv);
       }
-      return map;
+      return { sections: map, out_of_shift_min: outOfShiftMin };
     }
 
     // Active section filter ('all' → null = every section).
@@ -4219,10 +4270,10 @@ router.get('/trainer-utilization-summary', (req, res) => {
     function periodTotals(dates) {
       let A = 0, B = 0;
       for (const t of trainers) {
-        const bySec = totalsBySectionForRange(t, parseTeamShifts(t), dates);
-        for (const sec of Object.keys(bySec)) {
+        const { sections } = totalsBySectionForRange(t, parseTeamShifts(t), dates);
+        for (const sec of Object.keys(sections)) {
           if (activeSection && sec !== activeSection) continue;
-          A += bySec[sec].available_min; B += bySec[sec].booked_min;
+          A += sections[sec].available_min; B += sections[sec].booked_min;
         }
       }
       return { available_min: A, booked_min: B };
@@ -4251,11 +4302,18 @@ router.get('/trainer-utilization-summary', (req, res) => {
     const trainersOut = [];
     for (const t of trainers) {
       const shifts = parseTeamShifts(t);
-      const currBySec = totalsBySectionForRange(t, shifts, currDates);
-      const prevBySec = totalsBySectionForRange(t, shifts, prevDates);
+      const currRes = totalsBySectionForRange(t, shifts, currDates);
+      const prevRes = totalsBySectionForRange(t, shifts, prevDates);
+      const currBySec = currRes.sections, prevBySec = prevRes.sections;
       const shiftSummary = shifts
         .map(sh => `${SHIFT_AR[sh.label] || sh.label} ${fmt12(sh.startMin)}-${fmt12(sh.endMin)}${sh.section ? ' [' + (SECTION_AR[sh.section] || sh.section) + ']' : ''}`)
         .join(' + ');
+      // "خارج الشيفت" is a per-TRAINER figure (lectures outside every shift +
+      // extra block). Attach it to this trainer's FIRST emitted row only, so
+      // sums across the per-section rows never double-count it. Suppressed under
+      // a section filter (it belongs to no section).
+      let outAttached = false;
+      const outMin = currRes.out_of_shift_min || 0;
       for (const sec of Object.keys(currBySec)) {
         const tot = currBySec[sec];
         if ((tot.available_min || 0) <= 0 && (tot.booked_min || 0) <= 0) continue;   // no activity in this section
@@ -4267,6 +4325,8 @@ router.get('/trainer-utilization-summary', (req, res) => {
                      : utilization >= 90 ? 'high'
                      : 'normal';
         const pv = prevBySec[sec] || { available_min: 0, booked_min: 0 };
+        const thisOutMin = (!activeSection && !outAttached) ? outMin : 0;
+        if (thisOutMin || (!activeSection && !outAttached)) outAttached = true;
         trainersOut.push({
           id: t.id,
           row_key: `${t.id}-${sec}`,   // unique per trainer×section (React key — a trainer can repeat)
@@ -4279,9 +4339,11 @@ router.get('/trainer-utilization-summary', (req, res) => {
           available_hours: Math.round(tot.available_min / 60),
           booked_hours: Math.round(tot.booked_min / 60),
           free_hours: Math.max(0, Math.round((tot.available_min - tot.booked_min) / 60)),
+          out_of_shift_hours: Math.round(thisOutMin / 60),   // محاضرات خارج الشيفت (تظهر منفصلة، مش في النسبة)
           status,
           _avail_min: tot.available_min,
           _booked_min: tot.booked_min,
+          _out_of_shift_min: thisOutMin,
         });
       }
     }
@@ -4289,6 +4351,7 @@ router.get('/trainer-utilization-summary', (req, res) => {
     // ── Summary KPIs (exact minutes from the per-section rows)
     const totalAvail  = trainersOut.reduce((s, t) => s + (t._avail_min || 0), 0);
     const totalBooked = trainersOut.reduce((s, t) => s + (t._booked_min || 0), 0);
+    const totalOutOfShift = trainersOut.reduce((s, t) => s + (t._out_of_shift_min || 0), 0);
     const totalWasted = Math.max(0, totalAvail - totalBooked);
     const avgUtil = totalAvail > 0 ? Math.round((totalBooked / totalAvail) * 100) : 0;
     // Previous period avg — same section scope as the current rows.
@@ -4312,6 +4375,7 @@ router.get('/trainer-utilization-summary', (req, res) => {
       prev_avg_utilization: prevAvgUtil,
       trend_pct: trendPct,
       wasted_hours: Math.round(totalWasted / 60),
+      out_of_shift_hours: Math.round(totalOutOfShift / 60),   // إجمالي ساعات خارج الشيفت (منفصلة عن النسبة)
       // courses-equivalent: 1 course ≈ 8 lectures × 90 min = 720 min = 12 h
       wasted_courses_eq: Math.round((totalWasted / 60) / 12),
       trainers_total: trainersOut.length,
