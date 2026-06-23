@@ -4064,9 +4064,48 @@ router.get('/trainer-utilization-summary', (req, res) => {
       trainerWhere += ` AND name LIKE '%${s}%' ESCAPE '\\'`;
     }
     const trainersRaw = db.prepare(`SELECT * FROM team_members ${trainerWhere}`).all();
+    // MERGE records that share a trainer name — SAME logic as /trainer-utilization
+    // (team leaders already excluded by trainerWhere). A trainer split into several
+    // records (e.g. a 'general' record + a 'semi' record after moving/adding a
+    // section) would otherwise be counted TWICE here: lectures are attributed by
+    // NAME, so each record independently pulled the trainer's full lecture pool and
+    // routed it to its own section via the daySection fallback — inflating the
+    // dashboard (Mariam Saad: semi 84h + general 93h = 177h vs 102h real). Merging
+    // their shifts lets the per-day section logic route each lecture to the section
+    // of the shift ACTIVE that day, counting it ONCE. Mirrors lines ~3632-3666.
+    const rawShiftsOf = (t) => {
+      let raw = null;
+      if (t.shifts_json) { try { raw = JSON.parse(t.shifts_json); } catch { raw = null; } }
+      if (!Array.isArray(raw) || raw.length === 0) {
+        raw = [];
+        if (t.shift)  raw.push({ shift: t.shift,  start: t.shift_start,  end: t.shift_end,  rests: t.shift_rests,  voice_notes: t.voice_notes,        work_days: t.work_days,        section: t.section, start_date: t.shift_start_date,  end_date: t.shift_end_date });
+        if (t.shift2) raw.push({ shift: t.shift2, start: t.shift2_start, end: t.shift2_end, rests: t.shift2_rests, voice_notes: t.shift2_voice_notes, work_days: t.shift2_work_days, section: t.section, start_date: t.shift2_start_date, end_date: t.shift2_end_date });
+      }
+      return Array.isArray(raw) ? raw : [];
+    };
+    const _byName = new Map();
+    for (const t of trainersRaw) {
+      const k = stripParens(t.name).toLowerCase();
+      if (!k) continue;
+      const existing = _byName.get(k);
+      if (!existing) {
+        _byName.set(k, { ...t, shifts_json: JSON.stringify(rawShiftsOf(t)) });
+      } else {
+        const mergedShifts = [...JSON.parse(existing.shifts_json || '[]'), ...rawShiftsOf(t)];
+        const preferT = (t.status === 'active' && existing.status !== 'active');
+        const merged = { ...(preferT ? t : existing) };
+        merged.shifts_json = JSON.stringify(mergedShifts);
+        const starts = [existing.start_date, t.start_date].filter(Boolean).sort();
+        merged.start_date = starts[0] || merged.start_date || null;
+        merged.end_date = (existing.end_date && t.end_date)
+          ? (existing.end_date > t.end_date ? existing.end_date : t.end_date) : null;
+        merged.status = (existing.status === 'active' || t.status === 'active') ? 'active' : merged.status;
+        _byName.set(k, merged);
+      }
+    }
     // "Has any shift" must read the canonical shifts_json (not just the legacy
     // shift/shift2 columns) so trainers configured purely via shifts_json count.
-    const trainers = trainersRaw.filter(t => parseTeamShifts(t).length > 0);
+    const trainers = [..._byName.values()].filter(t => parseTeamShifts(t).length > 0);
 
     // ── Fetch all lectures in [prevStart, currEnd] once
     const lecRaw = db.prepare(
