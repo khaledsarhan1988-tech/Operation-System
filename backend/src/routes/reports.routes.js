@@ -3711,6 +3711,11 @@ router.get('/trainer-utilization', (req, res) => {
     // without an N+1 query inside the per-trainer loop. Keyed by member_id
     // + date.
     const extraByMemberDay = {};
+    // Time BLOCKS of extra hours (per member,date) — used so a lecture that falls
+    // inside registered extra hours counts in-section, not as "out of shift".
+    const extraBlocksByMemberDay = {};
+    const _hm = s => { const m = String(s || '').match(/^(\d{1,2}):(\d{2})$/); return m ? (+m[1]) * 60 + (+m[2]) : null; };
+    const _hmEnd = s => { const v = _hm(s); return v === 0 ? 1440 : v; };
     try {
       const extraRows = db.prepare(`
         SELECT team_member_id, date, SUM(duration_min) AS mins
@@ -3721,6 +3726,16 @@ router.get('/trainer-utilization', (req, res) => {
       for (const r of extraRows) {
         extraByMemberDay[`${r.team_member_id}|${r.date}`] = r.mins || 0;
       }
+      db.prepare(`
+        SELECT team_member_id, date, start_time, end_time
+          FROM team_member_extra_shifts
+         WHERE date BETWEEN ? AND ?
+      `).all(fromDate, toDate).forEach(r => {
+        const a = _hm(r.start_time), b = _hmEnd(r.end_time);
+        if (a == null || b == null || b <= a) return;
+        const k = `${r.team_member_id}|${r.date}`;
+        (extraBlocksByMemberDay[k] = extraBlocksByMemberDay[k] || []).push([a, b]);
+      });
     } catch (_) { /* table might not exist yet on first deploy */ }
 
     // Build ONE row for a given (trainer, section). The whole computation is
@@ -3769,17 +3784,29 @@ router.get('/trainer-utilization', (req, res) => {
         availMin += extraMin;
         const isWorkDay = availMin > 0;
         if (isWorkDay) workDayCount++;
-        // Booked counts only when the day belongs to the active section.
-        let lectures = dayInSection ? (byTrainerDay[`${tKey}|${date}`] || []) : [];
+        // Booked is attributed PER-LECTURE by day+HOURS (owner rule 2026-06-23):
+        // a lecture counts in THIS section only if its start hour falls inside a
+        // shift of this section covering the day — or inside an extra-hours block
+        // when this is the day's section. Lectures matching no shift/extra are NOT
+        // counted here (they surface in the trainer's separate out_of_shift figure).
+        let dayAll = byTrainerDay[`${tKey}|${date}`] || [];
         // After the trainer has LEFT (all shifts ended) drop stale `مجدولة`
         // (scheduled) phantom rows dated past their departure — they're not in
         // the live sheet and falsely inflate booked. Confirmed lectures (مؤكدة)
         // are always kept, so a genuine last-day session still counts.
-        if (clampEnd && date > clampEnd && lectures.length) {
-          const before = lectures.length;
-          lectures = lectures.filter(l => l.status !== 'مجدولة');
-          staleAfterEnd += (before - lectures.length);
+        if (clampEnd && date > clampEnd && dayAll.length) {
+          const before = dayAll.length;
+          dayAll = dayAll.filter(l => l.status !== 'مجدولة');
+          staleAfterEnd += (before - dayAll.length);
         }
+        const extraBlk = extraBlocksByMemberDay[`${t.id}|${date}`] || [];
+        const lectures = dayAll.filter(l => {
+          const st = parseTime12(l.time);
+          if (st < 0) return false;
+          if (sectionShifts.some(sh => shiftMinsForDate(sh, date) > 0 && st >= sh.startMin && st < sh.endMin)) return true;
+          if (dayInSection && extraBlk.some(([a, b]) => st >= a && st < b)) return true;
+          return false;
+        });
         const voiceNotes = isWorkDay ? voiceNoteIntervalsForDate(sectionShifts, date) : [];
         // Booked = ACTUAL occupied wall-clock time (merge overlaps) — NOT the sum
         // of every session duration. Overlapping/simultaneous sessions (one
@@ -3841,6 +3868,33 @@ router.get('/trainer-utilization', (req, res) => {
       };
     };
 
+    // Per-TRAINER "out of shift": lectures whose day+start-hour fall inside NO
+    // shift (any section) AND no extra-hours block — shown separately, never in a
+    // section's booked (owner rule 2026-06-23). Mirrors the dashboard endpoint.
+    const outOfShiftMinForTrainer = (t) => {
+      const tKey = stripParens(t.name).toLowerCase();
+      const shifts = parseTeamShifts(t);
+      const clampStart = trainerCountStart(t, shifts);
+      const clampEnd   = trainerCountEnd(t, shifts);
+      let total = 0;
+      for (const date of dates) {
+        if (clampStart && date < clampStart) continue;
+        let lectures = byTrainerDay[`${tKey}|${date}`] || [];
+        if (clampEnd && date > clampEnd) lectures = lectures.filter(l => l.status !== 'مجدولة');
+        const extraBlk = extraBlocksByMemberDay[`${t.id}|${date}`] || [];
+        const outIv = [];
+        for (const l of lectures) {
+          const st = parseTime12(l.time), du = parseDur(l.duration);
+          if (st < 0 || du <= 0) continue;
+          const inShift = shifts.some(sh => shiftMinsForDate(sh, date) > 0 && st >= sh.startMin && st < sh.endMin);
+          const inExtra = extraBlk.some(([a, b]) => st >= a && st < b);
+          if (!inShift && !inExtra) outIv.push([st, st + du]);
+        }
+        total += mergeIntervalsMinutes(outIv);
+      }
+      return total;
+    };
+
     // One row per (trainer, section). When a section filter is active → just that
     // section. Otherwise → split the trainer across EVERY distinct section in
     // their shifts (a trainer who moved sections shows a row per section).
@@ -3849,7 +3903,18 @@ router.get('/trainer-utilization', (req, res) => {
       const secs = activeSection
         ? [activeSection]
         : [...new Set(parseTeamShifts(t).map(sh => shiftSection(sh, t)))];
-      for (const sec of secs) out.push(buildRow(t, sec));
+      // out-of-shift is per-trainer; attach to the FIRST emitted row only so it
+      // isn't double-counted across a trainer's per-section rows. Suppressed
+      // under a section filter (it belongs to no single section).
+      const outMin = activeSection ? 0 : outOfShiftMinForTrainer(t);
+      let first = true;
+      for (const sec of secs) {
+        const row = buildRow(t, sec);
+        row.out_of_shift_min = first ? outMin : 0;
+        row.out_of_shift_hours = Math.round((first ? outMin : 0) / 60);
+        first = false;
+        out.push(row);
+      }
     }
     // Drop rows with zero activity in the entire window (covers: was on shift, or
     // had lectures attributed even after shift ended). A trainer split per section

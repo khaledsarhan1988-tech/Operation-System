@@ -585,6 +585,16 @@ export default function TrainerUtilization() {
                           ⚠ {t.totals.stale_after_shift_end} صف شبح
                         </span>
                       )}
+                      {/* Lectures outside every shift + extra-hours block — shown
+                          separately, NOT counted in the section's utilization. */}
+                      {t.out_of_shift_hours > 0 && (
+                        <span
+                          title="محاضرات وقعت خارج أيام/ساعات شيفت المدرّب (والساعات الإضافية) — منفصلة، غير محتسبة في نسبة الإشغال"
+                          className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold bg-orange-50 text-orange-700 border border-orange-200 cursor-help"
+                        >
+                          خارج الشيفت {t.out_of_shift_hours}س
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-1 mt-0.5">
                       <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold border ${SECTION_TONE[t.section] || SECTION_TONE.all}`}>
