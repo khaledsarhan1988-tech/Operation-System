@@ -47,23 +47,16 @@ const shortGroup = g => {
   return m ? m[1].replace(/_/g, ' ') : noParen.split('_').slice(-2).join(' ');
 };
 
-// Build per-hour cells for a day: booked (a lecture overlaps) / free (in a free slot) / off.
-function buildHourCells(day) {
+// Build the day's timeline as EXACT blocks (no hour-bucket approximation): each
+// lecture is a booked block at its real start/end, each free_slot a green block.
+// Sorted chronologically. This is minute-accurate — a 1.5h lecture (7–8:30) and the
+// gap after it (8:30–9) render as two distinct blocks, never a mislabeled "hour".
+function buildBlocks(day) {
   const lec = (day.lectures || [])
-    .map(l => { const s = parseTime12(l.time), d = parseDur(l.duration); return s >= 0 && d > 0 ? { s, e: s + d, l } : null; })
+    .map(l => { const s = parseTime12(l.time), d = parseDur(l.duration); return s >= 0 && d > 0 ? { s, e: s + d, type: 'booked', group: shortGroup(l.group_name) } : null; })
     .filter(Boolean);
-  const free = (day.free_slots || []).map(f => [f.start_min, f.end_min]);
-  const spans = [...lec.map(x => [x.s, x.e]), ...free];
-  if (!spans.length) return [];
-  let lo = Math.min(...spans.map(x => x[0])), hi = Math.max(...spans.map(x => x[1]));
-  lo = Math.floor(lo / 60) * 60; hi = Math.ceil(hi / 60) * 60;
-  const cells = [];
-  for (let h = lo; h < hi; h += 60) {
-    const booked = lec.find(x => x.s < h + 60 && x.e > h);
-    const isFree = free.some(f => f[0] < h + 60 && f[1] > h);
-    cells.push({ start: h, status: booked ? 'booked' : (isFree ? 'free' : 'off') });
-  }
-  return cells;
+  const free = (day.free_slots || []).map(f => ({ s: f.start_min, e: f.end_min, type: 'free' }));
+  return [...lec, ...free].sort((a, b) => a.s - b.s || a.e - b.e);
 }
 
 // ─── main page ────────────────────────────────────────────────────────────────
@@ -217,10 +210,9 @@ function DayColumn({ date, day }) {
       </div>
     );
   }
-  const cells = buildHourCells(day);
-  const lectures = (day.lectures || []).slice().sort((a, b) => parseTime12(a.time) - parseTime12(b.time));
+  const blocks = buildBlocks(day);
   return (
-    <div className="w-[150px] shrink-0 rounded-xl border border-gray-100 bg-white flex flex-col">
+    <div className="w-[160px] shrink-0 rounded-xl border border-gray-100 bg-white flex flex-col">
       {/* day header */}
       <div className="px-2 py-1.5 text-center border-b border-gray-100 bg-slate-50/60">
         <div className="font-bold text-xs text-gray-800">{dow} {fmtArDate(date)}</div>
@@ -230,38 +222,27 @@ function DayColumn({ date, day }) {
           <span className="text-rose-700">محجوز {fmtMins(day.booked_min)}</span>
         </div>
       </div>
-      {/* hour cells */}
+      {/* exact time blocks (booked = red, free = green) */}
       <div className="p-1.5 flex flex-col gap-1">
-        {cells.length === 0 && <div className="text-[10px] text-gray-300 text-center py-2">—</div>}
-        {cells.map(c => {
-          if (c.status === 'off') {
-            return <div key={c.start} className="rounded-md py-1 text-center text-[11px] bg-gray-50 text-gray-300">{fmt12(c.start)}</div>;
-          }
-          const booked = c.status === 'booked';
+        {blocks.length === 0 && <div className="text-[10px] text-gray-300 text-center py-2">—</div>}
+        {blocks.map((b, i) => {
+          const booked = b.type === 'booked';
           return (
-            <div key={c.start}
-              className={`rounded-md py-1 text-center text-[11px] font-semibold flex items-center justify-center gap-1 ${
-                booked ? 'bg-rose-50 text-rose-700 border border-rose-100' : 'bg-emerald-50 text-emerald-700 border border-emerald-100'
+            <div key={i}
+              className={`rounded-md px-1.5 py-1 text-[10px] font-semibold border leading-snug ${
+                booked ? 'bg-rose-50 text-rose-700 border-rose-100' : 'bg-emerald-50 text-emerald-700 border-emerald-100'
               }`}>
-              {booked ? <X size={10} /> : <Check size={10} />} {fmt12(c.start)}
+              <div className="flex items-center gap-1">
+                {booked ? <X size={9} /> : <Check size={9} />}
+                <span dir="ltr">{fmt12(b.s)} - {fmt12(b.e)}</span>
+              </div>
+              {booked
+                ? <div className="text-[9px] text-gray-500 mt-0.5 truncate">{b.group}</div>
+                : <div className="text-[9px] text-emerald-600 mt-0.5">متاح</div>}
             </div>
           );
         })}
       </div>
-      {/* booked activities */}
-      {lectures.length > 0 && (
-        <div className="border-t border-gray-100 px-2 py-2">
-          <div className="text-[10px] text-gray-500 mb-1">المحاضرات المحجوزة</div>
-          <div className="flex flex-col gap-0.5">
-            {lectures.map((l, i) => (
-              <div key={i} className="text-[10px] text-gray-700 leading-snug">
-                <span className="text-rose-600 font-semibold">{fmt12(parseTime12(l.time))}</span>{' '}
-                <span className="text-gray-500">{shortGroup(l.group_name)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
