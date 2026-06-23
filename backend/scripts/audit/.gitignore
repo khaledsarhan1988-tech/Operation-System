@@ -1,0 +1,7 @@
+.snapshot.db
+.snapshot.db-*
+.run.db
+.run.db-*
+*.db
+*.db-wal
+*.db-shm
