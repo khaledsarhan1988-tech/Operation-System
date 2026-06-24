@@ -186,8 +186,12 @@ router.get('/list', (req, res) => {
       SELECT *,
         (IFNULL(total_paid_same_month, 0)
          + (SELECT IFNULL(SUM(amount), 0) FROM cs_sales_installments WHERE sale_id = cs_sales_register.id)
+         -- Model 2: a transfer's installments are the full payment ledger (old + new
+         -- payments). The consumed level is a loss, so subtract it; the old price is
+         -- NOT added back as credit (old payments are already in the installments).
+         -- total paid = direct + installments - consumedValue (= new price when fully paid).
          + (CASE WHEN op_type = 'transfer'
-              THEN IFNULL(price, 0) - IFNULL(IFNULL(price, 0) * IFNULL(transfer_consumed_levels, 0) / NULLIF(transfer_total_levels, 0), 0)
+              THEN - IFNULL(IFNULL(price, 0) * IFNULL(transfer_consumed_levels, 0) / NULLIF(transfer_total_levels, 0), 0)
               ELSE 0 END)
         ) AS total_paid_calc,
         COUNT(*) OVER() AS _total

@@ -100,13 +100,19 @@ function calcPaidBalance(form, installments, mode = 'normal') {
   const totalPaid = (manual || 0) + instSum;
 
   if (isTransfer) {
-    const oldPaid = subPrice;
+    // Model 2 — the installments are the FULL payment ledger (old + new payments).
+    // `price` (المدفوع في القديمة) is the OLD membership price, used ONLY to value
+    // the consumed level. That consumed value is a loss deducted from everything
+    // the client paid:   balance = newPrice − (allPaid − consumedValue).
+    // (We do NOT also add `price` back as credit — that would double-count the old
+    //  payments, which now live in the installments.)
+    const oldPrice = subPrice;
     const totalLevels = Number(form.transfer_total_levels) || 0;
     const consumedLevels = Number(form.transfer_consumed_levels) || 0;
-    const consumedValue = totalLevels > 0 ? (oldPaid * consumedLevels / totalLevels) : 0;
-    const credit = oldPaid - consumedValue;
-    const required = newPrice - credit;
-    const balance = required - totalPaid;
+    const consumedValue = totalLevels > 0 ? Math.round((oldPrice * consumedLevels / totalLevels) * 100) / 100 : 0;
+    const credit = oldPrice - consumedValue;       // value carried from the old membership (informational)
+    const required = newPrice - credit;            // new money still required (informational)
+    const balance = Math.round((newPrice - (totalPaid - consumedValue)) * 100) / 100;
     return { hasInst, instSum, manual: manual || 0, effPrice: newPrice, discount: 0,
              consumedValue, credit, required, totalPaid, balance };
   }
@@ -117,21 +123,20 @@ function calcPaidBalance(form, installments, mode = 'normal') {
   return { hasInst, instSum, manual: manual || 0, effPrice, discount, totalPaid, balance };
 }
 
-// Required transfer difference for a given form state (new price − credit).
-function transferRequired(form) {
-  const oldPaid = Number(form.price) || 0;
+function instTotal(list) { return (list || []).reduce((s, i) => s + (Number(i.amount) || 0), 0); }
+// The DIRECT (non-installment) payment toward the transfer, auto-filled so the
+// balance lands exactly on 0 given the installments entered:
+//   direct = max(0, newPrice + consumedValue − Σinstallments)
+// When every payment is listed as an installment this is ~0 (just rounding);
+// when the difference was paid directly (outside the installments) it equals
+// that difference. consumedValue here mirrors calcPaidBalance (rounded to 2dp).
+function transferDirectStr(form, list) {
+  const oldPrice = Number(form.price) || 0;
   const totalLevels = Number(form.transfer_total_levels) || 0;
   const consumedLevels = Number(form.transfer_consumed_levels) || 0;
-  const consumedValue = totalLevels > 0 ? (oldPaid * consumedLevels / totalLevels) : 0;
+  const consumedValue = totalLevels > 0 ? Math.round((oldPrice * consumedLevels / totalLevels) * 100) / 100 : 0;
   const newPrice = Number(String(form.new_prices ?? '').replace(/,/g, '')) || 0;
-  return Math.round((newPrice - (oldPaid - consumedValue)) * 100) / 100;
-}
-function instTotal(list) { return (list || []).reduce((s, i) => s + (Number(i.amount) || 0), 0); }
-// The transfer's direct payment auto-fills to the remainder after installments,
-// so the balance lands on 0 whether the difference is paid cash or in installments:
-// direct = max(0, required − sum(installments)).
-function transferDirectStr(form, list) {
-  return String(Math.max(0, Math.round((transferRequired(form) - instTotal(list)) * 100) / 100));
+  return String(Math.max(0, Math.round((newPrice + consumedValue - instTotal(list)) * 100) / 100));
 }
 
 // ─── FORM MODAL (create / edit) ───────────────────────────────────────────────
@@ -288,8 +293,8 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
   const newCourseOptions = (form.new_courses && !membershipCodes.includes(form.new_courses))
     ? [form.new_courses, ...membershipCodes] : membershipCodes;
 
-  // ── Transfer helpers: any change to a transfer input recomputes the required
-  // difference and auto-fills "فرق التحويل المدفوع" so the balance lands on 0.
+  // ── Transfer helpers: any change to a transfer input (or installment) recomputes
+  // the auto direct payment (transferDirectStr) so the balance lands exactly on 0.
   const setTr = (patch) => setForm(f => {
     const next = { ...f, ...patch };
     next.total_paid_same_month = transferDirectStr(next, installments);
@@ -502,10 +507,15 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                           className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-100 text-gray-700 font-bold outline-none" />
                       </div>
                       <div>
-                        <label className="block text-[11px] font-bold text-gray-500 mb-1">فرق التحويل المدفوع</label>
+                        <label className="block text-[11px] font-bold text-gray-500 mb-1">مدفوع مباشرة (غير الأقساط)</label>
                         <input type="number" value={form.total_paid_same_month ?? ''}
                           onChange={(e) => set('total_paid_same_month', e.target.value)}
                           className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-gray-500 mb-1">إجمالي المدفوع (كل الأقساط + المباشر) — تلقائي</label>
+                        <input type="number" readOnly value={Math.round((totals.totalPaid || 0) * 100) / 100}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-100 text-gray-700 font-bold outline-none" />
                       </div>
                       <div className="sm:col-span-2">
                         <label className="block text-[11px] font-bold text-gray-500 mb-1">الرصيد المتبقي — تلقائي</label>
