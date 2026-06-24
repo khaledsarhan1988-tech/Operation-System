@@ -126,6 +126,13 @@ function transferRequired(form) {
   const newPrice = Number(String(form.new_prices ?? '').replace(/,/g, '')) || 0;
   return Math.round((newPrice - (oldPaid - consumedValue)) * 100) / 100;
 }
+function instTotal(list) { return (list || []).reduce((s, i) => s + (Number(i.amount) || 0), 0); }
+// The transfer's direct payment auto-fills to the remainder after installments,
+// so the balance lands on 0 whether the difference is paid cash or in installments:
+// direct = max(0, required − sum(installments)).
+function transferDirectStr(form, list) {
+  return String(Math.max(0, Math.round((transferRequired(form) - instTotal(list)) * 100) / 100));
+}
 
 // ─── FORM MODAL (create / edit) ───────────────────────────────────────────────
 function SaleFormModal({ open, editId, options, onClose, onSaved }) {
@@ -222,9 +229,12 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
   if (!open) return null;
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-  const setInst = (idx, k, v) => setInstallments(list => list.map((it, i) => i === idx ? { ...it, [k]: v } : it));
-  const addInst = () => setInstallments(list => [...list, { ...EMPTY_INST }]);
-  const rmInst = (idx) => setInstallments(list => list.filter((_, i) => i !== idx));
+  // In transfer mode, keep the direct payment = required − installments so the
+  // balance stays 0 and installments are never double-counted.
+  const syncTr = (list) => { if (mode === 'transfer') setForm(f => ({ ...f, total_paid_same_month: transferDirectStr(f, list) })); };
+  const setInst = (idx, k, v) => { const next = installments.map((it, i) => i === idx ? { ...it, [k]: v } : it); setInstallments(next); syncTr(next); };
+  const addInst = () => { const next = [...installments, { ...EMPTY_INST }]; setInstallments(next); syncTr(next); };
+  const rmInst = (idx) => { const next = installments.filter((_, i) => i !== idx); setInstallments(next); syncTr(next); };
 
   const opt = (k) => options?.[k] || [];
 
@@ -282,7 +292,7 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
   // difference and auto-fills "فرق التحويل المدفوع" so the balance lands on 0.
   const setTr = (patch) => setForm(f => {
     const next = { ...f, ...patch };
-    next.total_paid_same_month = String(transferRequired(next));
+    next.total_paid_same_month = transferDirectStr(next, installments);
     return next;
   });
   // New membership (transfer): set new_courses + auto new_prices from catalog, recalc.
@@ -290,7 +300,7 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
     const next = { ...f, new_courses: v };
     const r = priceFor(v, f.pages);
     if (r.apply) next.new_prices = r.value == null ? '' : String(r.value);
-    next.total_paid_same_month = String(transferRequired(next));
+    next.total_paid_same_month = transferDirectStr(next, installments);
     return next;
   });
   // Old membership (transfer): set courses + total levels parsed from the code, recalc.
@@ -300,7 +310,7 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
     if (lv) next.transfer_total_levels = String(lv);
     const r = priceFor(v, f.pages);
     if (r.apply) next.price = r.value == null ? '' : String(r.value);
-    next.total_paid_same_month = String(transferRequired(next));
+    next.total_paid_same_month = transferDirectStr(next, installments);
     return next;
   });
 
