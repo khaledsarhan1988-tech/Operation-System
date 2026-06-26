@@ -7,6 +7,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { downloadCsv } from '../../utils/csv';
 import {
   BarChart2, TrendingUp, TrendingDown, Minus, Trophy, Sparkles, Target, ShieldAlert,
   Users, Calendar, Zap, X, Filter, Crown, Gem, CheckCircle2, AlertTriangle,
@@ -407,13 +408,7 @@ export default function TeamProgression() {
       a.avg, a.trend,
     ]);
     const csv = [headers, ...rows].map(r => r.map(c => `"${c}"`).join(',')).join('\n');
-    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `team-progression-${kpi}-${Date.now()}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
+    downloadCsv(csv, `team-progression-${kpi}-${Date.now()}.csv`);
   }
 
   return (

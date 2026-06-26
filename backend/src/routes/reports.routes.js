@@ -12,6 +12,22 @@ const { cacheMiddleware } = require('../utils/reportCache');
 const router = express.Router();
 router.use(authenticate, requireRole('agent'));
 
+// ── Defense-in-depth: validate untrusted date query params before any handler ──
+// Many report queries interpolate req.query date filters straight into SQL string
+// literals. Force the known date params to a strict YYYY-MM-DD shape (blank when
+// malformed) so a crafted value can never break out of the literal. Date columns
+// are only ever compared to ISO dates here, so this is behaviour-preserving for
+// legitimate input. Non-date string params are escaped at their interpolation site.
+const _DATE_QUERY_KEYS = ['from_date', 'to_date', 'modal_from', 'modal_to', 'from', 'to', 'date_from', 'date_to'];
+router.use((req, _res, next) => {
+  for (const k of _DATE_QUERY_KEYS) {
+    const v = req.query[k];
+    if (v === undefined) continue;
+    req.query[k] = (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) ? v : '';
+  }
+  next();
+});
+
 // ── Server-side cache for the heavy READ-ONLY analytics endpoints ──────────────
 // These were measured at 13–54s each; better-sqlite3 is synchronous so each run
 // freezes the whole server for every user. Caching repeated/concurrent reads
@@ -561,7 +577,41 @@ function buildDeptRemarkFilter(alias, department) {
 
 function escapeLike(s) {
   if (!s) return '';
-  return s.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+  // Escape LIKE wildcards (used with ESCAPE '\') AND the SQL single-quote, since
+  // the result is dropped into a '...' string literal in these queries.
+  return String(s).replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_').replace(/'/g, "''");
+}
+
+// SQL single-quote escape for a value interpolated into a '...' string literal.
+function qLit(s) {
+  return String(s == null ? '' : s).replace(/'/g, "''");
+}
+
+// ─── Time helpers (shared by the trainer occupancy / availability reports) ─────
+// "HH:MM AM/PM" → minutes-since-midnight (-1 when unparseable).
+function parseTime12(t) {
+  if (!t) return -1;
+  const m = String(t).match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+  if (!m) return -1;
+  let h = parseInt(m[1]), min = parseInt(m[2]);
+  if (m[3]?.toUpperCase() === 'PM' && h < 12) h += 12;
+  if (m[3]?.toUpperCase() === 'AM' && h === 12) h = 0;
+  return h * 60 + min;
+}
+// "HH:MM" duration → minutes (0 when unparseable).
+function parseDur(d) {
+  if (!d) return 0;
+  const m = String(d).match(/(\d{1,2}):(\d{2})/);
+  return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : 0;
+}
+// minutes-since-midnight → "HH:MM AM/PM" ('' when null).
+function fmt12(m) {
+  if (m == null) return '';
+  const mod = ((m % 1440) + 1440) % 1440;
+  const h24 = Math.floor(mod / 60), mm = mod % 60;
+  const ampm = h24 >= 12 ? 'PM' : 'AM';
+  let h12 = h24 % 12; if (h12 === 0) h12 = 12;
+  return `${String(h12).padStart(2,'0')}:${String(mm).padStart(2,'0')} ${ampm}`;
 }
 
 // ─── parseTeamShifts ─────────────────────────────────────────────────────────
@@ -1670,15 +1720,15 @@ router.get('/lectures-list', (req, res) => {
   // Date-aware: attribute lectures to coordinator who was responsible ON l.date
   // (not current batches.coordinators which is NULL for ended groups)
   const empFilter         = coordFilterAtDate('l.group_name', 'l.line', 'l.date', employee);
-  const searchEsc         = search.replace(/%/g, '\\%').replace(/_/g, '\\_');
+  const searchEsc         = escapeLike(search);
   const searchFilter      = search      ? ` AND l.group_name LIKE '%${searchEsc}%' ESCAPE '\\'` : '';
-  const trainerFilter     = trainer     ? ` AND l.trainer LIKE '%${trainer}%'` : '';
+  const trainerFilter     = trainer     ? ` AND l.trainer LIKE '%${escapeLike(trainer)}%' ESCAPE '\\'` : '';
   const coordFilter       = coordFilterAtDate('l.group_name', 'l.line', 'l.date', coordinator);
-  const groupFilter       = group_name  ? ` AND l.group_name = '${group_name.replace(/'/g, "''")}'` : '';
-  const categoryFilter    = category    ? ` AND l.side_session_category = '${category}'` : '';
+  const groupFilter       = group_name  ? ` AND l.group_name = '${qLit(group_name)}'` : '';
+  const categoryFilter    = category    ? ` AND l.side_session_category = '${qLit(category)}'` : '';
   // Duration filters (HH:MM string comparison works correctly for same-format values)
-  const minDurFilter      = min_duration ? ` AND l.duration >= '${min_duration}'` : '';
-  const maxDurFilter      = max_duration ? ` AND l.duration <= '${max_duration}'` : '';
+  const minDurFilter      = min_duration ? ` AND l.duration >= '${qLit(min_duration)}'` : '';
+  const maxDurFilter      = max_duration ? ` AND l.duration <= '${qLit(max_duration)}'` : '';
   // Modal date overrides outer date if provided
   const activFrom  = modal_from || from_date;
   const activTo    = modal_to   || to_date;
@@ -1687,7 +1737,7 @@ router.get('/lectures-list', (req, res) => {
                    : activTo   ? ` AND l.date <= '${activTo}'` : '';
 
   // When min_duration is set (main lectures mode), ignore session_type filter — use duration to identify them
-  const sessionTypeFilter = min_duration ? '' : ` AND l.session_type = '${session_type}'`;
+  const sessionTypeFilter = min_duration ? '' : ` AND l.session_type = '${qLit(session_type)}'`;
   // Only confirmed lectures count in any CS report
   const statusFilter = ` AND l.status != 'غير مؤكدة'`;
 
@@ -2103,9 +2153,9 @@ router.get('/remarks-list', (req, res) => {
                        : activeTo   ? ` AND ${remarkDate} <= '${activeTo}'` : '';
   const empFilter      = employee        ? ` AND ${nameInListInline('assigned_to', employee)}` : '';
   const assignFilter   = assigned_to     ? ` AND ${nameInListInline('assigned_to', assigned_to)}` : '';
-  const priorityFilter = priority        ? ` AND priority = '${priority}'` : '';
+  const priorityFilter = priority        ? ` AND priority = '${qLit(priority)}'` : '';
   const categoryFilter = category_search ? ` AND category LIKE '%${escapeLike(category_search)}%' ESCAPE '\\'` : '';
-  const statusFilter   = status_filter   ? ` AND status = '${status_filter}'` : '';
+  const statusFilter   = status_filter   ? ` AND status = '${qLit(status_filter)}'` : '';
   const searchFilter   = search          ? ` AND (client_name LIKE '%${escapeLike(search)}%' ESCAPE '\\' OR details LIKE '%${escapeLike(search)}%' ESCAPE '\\')` : '';
   // Coordinator-first dept filter (Fix 16) with team_members fallback (Fix 9).
   // Uses alias 'remarks' — baseWhereR swap below converts to 'r' for the joined query.
@@ -3507,20 +3557,7 @@ router.get('/trainer-utilization', (req, res) => {
       .map(r => ({ s: HHMM(r?.start), e: HHMM(r?.end) }))
       .filter(r => r.s != null && r.e != null && r.e > r.s);
   };
-  const parseTime12 = t => {
-    if (!t) return -1;
-    const m = String(t).match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
-    if (!m) return -1;
-    let h = parseInt(m[1]), min = parseInt(m[2]);
-    if (m[3]?.toUpperCase() === 'PM' && h < 12) h += 12;
-    if (m[3]?.toUpperCase() === 'AM' && h === 12) h = 0;
-    return h * 60 + min;
-  };
-  const parseDur = d => {
-    if (!d) return 0;
-    const m = String(d).match(/(\d{1,2}):(\d{2})/);
-    return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : 0;
-  };
+  // parseTime12 / parseDur are module-scope helpers (see top of file).
   const getDow = s => { if (!s) return -1; return new Date(s + 'T12:00:00').getDay(); };
   const stripParens = name => String(name || '').replace(/\([^)]*\)/g, '').trim();
   // Group identity WITHOUT the trailing coordinator suffix (everything after the
@@ -3798,14 +3835,7 @@ router.get('/trainer-utilization', (req, res) => {
 
       // Build a one-line shift summary like "مسائي 04:00 PM-12:00 AM"
       const SHIFT_AR = { morning: 'صباحي', evening: 'مسائي' };
-      const fmt12 = m => {
-        if (m == null) return '';
-        const mod = ((m % 1440) + 1440) % 1440;
-        const h24 = Math.floor(mod / 60), mm = mod % 60;
-        const ampm = h24 >= 12 ? 'PM' : 'AM';
-        let h12 = h24 % 12; if (h12 === 0) h12 = 12;
-        return `${String(h12).padStart(2,'0')}:${String(mm).padStart(2,'0')} ${ampm}`;
-      };
+      // fmt12 is a module-scope helper (see top of file).
       const shiftSummary = shifts
         .map(sh => `${SHIFT_AR[sh.label] || sh.label} ${fmt12(sh.startMin)}-${fmt12(sh.endMin)}`)
         .join(' + ');
@@ -4016,20 +4046,7 @@ router.get('/trainer-utilization-summary', (req, res) => {
     return arr.map(r => ({ s: HHMM(r?.start), e: HHMM(r?.end) }))
       .filter(r => r.s != null && r.e != null && r.e > r.s);
   };
-  const parseTime12 = t => {
-    if (!t) return -1;
-    const m = String(t).match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
-    if (!m) return -1;
-    let h = parseInt(m[1]), min = parseInt(m[2]);
-    if (m[3]?.toUpperCase() === 'PM' && h < 12) h += 12;
-    if (m[3]?.toUpperCase() === 'AM' && h === 12) h = 0;
-    return h * 60 + min;
-  };
-  const parseDur = d => {
-    if (!d) return 0;
-    const m = String(d).match(/(\d{1,2}):(\d{2})/);
-    return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : 0;
-  };
+  // parseTime12 / parseDur are module-scope helpers (see top of file).
   const getDow = s => { if (!s) return -1; return new Date(s + 'T12:00:00').getDay(); };
   const stripParens = name => String(name || '').replace(/\([^)]*\)/g, '').trim();
   const fmtISO = d => d.toISOString().slice(0, 10);
@@ -4403,14 +4420,7 @@ router.get('/trainer-utilization-summary', (req, res) => {
     // ── Per-trainer totals over current period
     const SECTION_AR = { general:'عام', private:'خاص', semi:'شبه خاص', phone_call:'فون كول', all:'الكل' };
     const SHIFT_AR = { morning: 'صباحي', evening: 'مسائي' };
-    const fmt12 = m => {
-      if (m == null) return '';
-      const mod = ((m % 1440) + 1440) % 1440;
-      const h24 = Math.floor(mod / 60), mm = mod % 60;
-      const ampm = h24 >= 12 ? 'PM' : 'AM';
-      let h12 = h24 % 12; if (h12 === 0) h12 = 12;
-      return `${String(h12).padStart(2,'0')}:${String(mm).padStart(2,'0')} ${ampm}`;
-    };
+    // fmt12 is a module-scope helper (see top of file).
     // One row PER (trainer × section) — a trainer who worked in two sections
     // during the period (e.g. شبه خاص في مايو ثم خاص في يونيو) gets two rows,
     // each with that section's available/booked. Section filter applied here.
@@ -4655,20 +4665,7 @@ router.get('/find-available-trainer', (req, res) => {
     return arr.map(r => ({ s: HHMM(r?.start), e: HHMM(r?.end) }))
       .filter(r => r.s != null && r.e != null && r.e > r.s);
   };
-  const parseTime12 = t => {
-    if (!t) return -1;
-    const m = String(t).match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
-    if (!m) return -1;
-    let h = parseInt(m[1]), min = parseInt(m[2]);
-    if (m[3]?.toUpperCase() === 'PM' && h < 12) h += 12;
-    if (m[3]?.toUpperCase() === 'AM' && h === 12) h = 0;
-    return h * 60 + min;
-  };
-  const parseDur = d => {
-    if (!d) return 0;
-    const m = String(d).match(/(\d{1,2}):(\d{2})/);
-    return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : 0;
-  };
+  // parseTime12 / parseDur are module-scope helpers (see top of file).
   const getDow = s => { if (!s) return -1; return new Date(s + 'T12:00:00').getDay(); };
   const stripParens = name => String(name || '').replace(/\([^)]*\)/g, '').trim();
   const fmtISO = d => d.toISOString().slice(0, 10);
@@ -4765,14 +4762,7 @@ router.get('/find-available-trainer', (req, res) => {
     if (sh.endDate   && dateStr > sh.endDate)   return false;
     return true;
   }
-  const fmt12 = m => {
-    if (m == null) return '';
-    const mod = ((m % 1440) + 1440) % 1440;
-    const h24 = Math.floor(mod / 60), mm = mod % 60;
-    const ampm = h24 >= 12 ? 'PM' : 'AM';
-    let h12 = h24 % 12; if (h12 === 0) h12 = 12;
-    return `${String(h12).padStart(2,'0')}:${String(mm).padStart(2,'0')} ${ampm}`;
-  };
+  // fmt12 is a module-scope helper (see top of file).
   const SHIFT_AR = { morning: 'صباحي', evening: 'مسائي' };
   // Free-gap computation for no-window mode: [start,end] minus the union of
   // block intervals (rests + voice notes + booked lectures).

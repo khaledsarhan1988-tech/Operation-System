@@ -1,6 +1,7 @@
 'use client';
 import { useState, useMemo, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { downloadCsv } from '../../utils/csv';
 import {
   BarChart3, TrendingUp, TrendingDown, Activity, AlertTriangle,
   CheckCircle2, Lightbulb, Users, Download, FileSpreadsheet,
@@ -140,13 +141,7 @@ export default function TrainerUtilizationDashboard() {
       }).join(','))
       .join('\n');
     // BOM for Excel Arabic support
-    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `trainer-utilization-${period?.from || 'export'}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadCsv(csv, `trainer-utilization-${period?.from || 'export'}.csv`);
   };
 
   // ── PDF Export ──────────────────────────────────────────────────────────────

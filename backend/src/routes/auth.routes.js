@@ -9,14 +9,27 @@ const avatarStorage = require('../utils/avatar-storage');
 
 const router = express.Router();
 
-// ─── Rate limiter: max 5 login attempts per 15 minutes per IP ─────────────────
+// ─── Rate limiter: max 8 login attempts per 15 minutes per IP ─────────────────
+// skip() is intentionally narrow: only an explicit development env disables it,
+// so a misconfigured/empty NODE_ENV in prod still throttles brute-force.
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 30,
+  max: 8,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'كثرة المحاولات الفاشلة، يرجى الانتظار 15 دقيقة قبل المحاولة مجدداً' },
-  skip: () => process.env.NODE_ENV !== 'production',
+  skip: () => process.env.NODE_ENV === 'development',
+});
+
+// Sensitive auth endpoints (token refresh, password change) get their own,
+// slightly more generous limiter to blunt abuse without harming normal use.
+const sensitiveAuthLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'كثرة المحاولات، يرجى الانتظار قليلاً قبل المحاولة مجدداً' },
+  skip: () => process.env.NODE_ENV === 'development',
 });
 
 const COOKIE_OPTIONS = {
@@ -130,7 +143,7 @@ router.post('/login', loginLimiter, (req, res) => {
 });
 
 // POST /api/auth/refresh
-router.post('/refresh', (req, res) => {
+router.post('/refresh', sensitiveAuthLimiter, (req, res) => {
   const rawToken = req.cookies?.refreshToken;
   if (!rawToken) return res.status(401).json({ error: 'No refresh token' });
 
@@ -187,7 +200,7 @@ router.post('/logout', authenticate, (req, res) => {
 // Verifies the current password, validates length, then rotates the bcrypt
 // hash. Existing refresh tokens are revoked so the user is logged out from
 // other devices (forces a fresh login with the new password).
-router.post('/change-password', authenticate, (req, res) => {
+router.post('/change-password', sensitiveAuthLimiter, authenticate, (req, res) => {
   const { current_password, new_password } = req.body || {};
   if (!current_password || !new_password) {
     return res.status(400).json({ error: 'كلمة السر الحالية والجديدة مطلوبتان' });

@@ -2,8 +2,18 @@
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 
-const ACCESS_SECRET  = process.env.JWT_SECRET         || 'dev_access_secret_change_in_prod';
-const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'dev_refresh_secret_change_in_prod';
+// Secrets MUST come from the environment. In production we fail fast rather
+// than silently signing tokens with a publicly-known fallback string (which
+// would let anyone forge an admin JWT). In dev, if unset, we generate an
+// ephemeral random secret at boot (tokens won't survive a restart — fine for dev).
+if (process.env.NODE_ENV === 'production' && (!process.env.JWT_SECRET || !process.env.JWT_REFRESH_SECRET)) {
+  throw new Error('JWT_SECRET and JWT_REFRESH_SECRET must be set in production');
+}
+const ACCESS_SECRET  = process.env.JWT_SECRET         || crypto.randomBytes(32).toString('hex');
+const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || crypto.randomBytes(32).toString('hex');
+if (!process.env.JWT_SECRET || !process.env.JWT_REFRESH_SECRET) {
+  console.warn('[jwt] JWT secrets not set in env — using ephemeral dev secrets (tokens invalid across restarts).');
+}
 const ACCESS_EXPIRES  = '15m';
 const REFRESH_EXPIRES = '7d';
 const REFRESH_EXPIRES_MS = 7 * 24 * 60 * 60 * 1000;

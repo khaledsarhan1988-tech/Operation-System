@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { downloadCsv } from '../../utils/csv';
 import {
   Activity, Clock, Search, RefreshCw, Globe, X, ArrowLeft, ArrowRight,
   AlertCircle, UserCircle, Layers, TrendingUp, AlertTriangle, MessageSquare,
@@ -404,16 +405,7 @@ export default function RemarksMonitorCategory() {
       return s;
     };
     const csv = [headers, ...rows].map(row => row.map(escape).join(',')).join('\r\n');
-    const bom = '﻿';
-    const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `remarks-monitor-${category}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    downloadCsv(csv, `remarks-monitor-${category}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv`);
   }
 
   const stats = useMemo(() => {

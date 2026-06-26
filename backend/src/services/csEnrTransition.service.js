@@ -17,6 +17,7 @@
 const db = require('../config/database');
 const { saveNow } = require('../config/database');
 const { csPrimaryPhone } = require('../utils/csPhoneNormalize');
+const { IGNORED_GROUP_PATTERNS, isIgnoredGroup, normName, realCoordinator } = require('../utils/csGroupHelpers');
 
 const DEPTS = ['General', 'Private', 'Semi'];
 const DISPOSITIONS = ['postponed', 'no_answer', 'unsuccessful'];
@@ -37,23 +38,8 @@ function logActivity({ action, sourceGroup, sourceLine, nextGroup, clientName, c
 const stripSpaces = (s) => String(s == null ? '' : s).replace(/\s/g, '');
 const canonGroupKey = (s) => stripSpaces(String(s == null ? '' : s).split('(')[0]);
 
-// Same placeholder list as csEnrGroups / csDeliveries.
-const IGNORED_GROUP_PATTERNS = [
-  /free\s*slots/i, /do\s*-?\s*not\s*closed/i, /donot\s*closed/i,
-  /grammer/i, /grammar/i, /comp[ae]ns/i, /تعويض/,
-];
-const isIgnoredGroup = (name) =>
-  IGNORED_GROUP_PATTERNS.some(re => re.test(String(name == null ? '' : name)));
-
-const normName = (s) =>
-  String(s == null ? '' : s).replace(/\(.*?\)/g, '').trim().toLowerCase().replace(/\s+/g, ' ');
-function realCoordinator(coordStr) {
-  for (const c of String(coordStr || '').split(',')) {
-    const t = c.trim();
-    if (t && normName(t) !== '--') return t;
-  }
-  return null;
-}
+// IGNORED_GROUP_PATTERNS / isIgnoredGroup / normName / realCoordinator now come
+// from ../utils/csGroupHelpers (shared with csDeliveries & csEnrGroups).
 
 // Real batches.status → status key (matches csEnrGroups / SystemReports).
 const STATUS_MAP = {

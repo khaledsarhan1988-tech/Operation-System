@@ -23,6 +23,7 @@
 const db = require('../config/database');
 const { saveNow } = require('../config/database');
 const { csPrimaryPhone } = require('../utils/csPhoneNormalize');
+const { IGNORED_GROUP_PATTERNS, isIgnoredGroup, normName } = require('../utils/csGroupHelpers');
 
 const DEPTS = ['General', 'Private', 'Semi'];
 const STATUSES = ['active', 'churned', 'postponed', 'exit_level', 'refund'];
@@ -50,28 +51,8 @@ function cleanGroupCode(raw) {
   return s;
 }
 
-// Placeholder / non-real groups that must be EXCLUDED from the deliveries view
-// entirely — they are not real client groups (e.g. the "Free Slots(DONOT CLOSED)"
-// filler batch). Add more patterns here as needed.
-const IGNORED_GROUP_PATTERNS = [
-  /free\s*slots/i,
-  /do\s*-?\s*not\s*closed/i,
-  /donot\s*closed/i,
-  /grammer/i,                  // "Grammer_Con_G(...)" — grammar sessions, not a level group
-  /grammar/i,                  // correct spelling, just in case
-  /comp[ae]ns/i,               // "..._Compensation" / "compensation _ s1_g2" — makeup sessions, not a real level group
-  /تعويض/,                     // "تعويض سيشن" — Arabic compensation/makeup session (owner decision 2026-06-18)
-];
-const isIgnoredGroup = (name) => {
-  const s = String(name == null ? '' : name);
-  return IGNORED_GROUP_PATTERNS.some(re => re.test(s));
-};
-
-// Normalize a coordinator/user name for comparison: drop any "(...)" suffix,
-// trim, lowercase, collapse spaces. Used to match the logged-in coordinator
-// (users.full_name) against batches.coordinators / team_members.name.
-const normName = (s) =>
-  String(s == null ? '' : s).replace(/\(.*?\)/g, '').trim().toLowerCase().replace(/\s+/g, ' ');
+// IGNORED_GROUP_PATTERNS / isIgnoredGroup / normName now come from
+// ../utils/csGroupHelpers (shared with csEnrGroups & csEnrTransition).
 
 // Does a (possibly comma-separated) coordinator string contain this person?
 // Coordinator names are stored inconsistently: users.full_name 'Radwa Gamal' vs

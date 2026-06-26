@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { downloadCsv } from '../../utils/csv';
 import {
   ListTodo, Plus, BarChart3, Users as UsersIcon, AlertTriangle, CheckCircle2,
   Zap, Clock, Calendar, AlertCircle, TrendingUp, Search, X, Edit3, Trash2,
@@ -156,16 +157,7 @@ export default function AdminTodos() {
       return s;
     };
     const csv = [headers, ...rows].map(r => r.map(escape).join(',')).join('\r\n');
-    const bom = '﻿';
-    const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `todos-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    downloadCsv(csv, `todos-${new Date().toISOString().slice(0, 10)}.csv`);
   }
 
   const activeFilters = (filterStatus ? 1 : 0) + (filterPriority ? 1 : 0) + (filterAssignee ? 1 : 0) + (search ? 1 : 0);

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { downloadCsv } from '../../utils/csv';
 import {
   ShieldCheck, Calendar, Filter, Search, X, Download, Wrench,
   ClipboardCheck, AlertCircle, Video, BookOpen, Layers, FileText, Users,
@@ -307,13 +308,7 @@ export default function QualityReports() {
       `${r.zoom_absent_rate}% (${r.zoom_absent_count}/${r.zoom_expected_count})`,
     ]);
     const csv = [headers, ...csvRows].map(r => r.map(c => `"${c}"`).join(',')).join('\n');
-    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `quality-report-${applied.from}-to-${applied.to}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
+    downloadCsv(csv, `quality-report-${applied.from}-to-${applied.to}.csv`);
   }
 
   async function exportPDF() {

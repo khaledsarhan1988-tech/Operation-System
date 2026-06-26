@@ -25,6 +25,7 @@
  */
 
 const db = require('../config/database');
+const { IGNORED_GROUP_PATTERNS, isIgnoredGroup, normName, realCoordinator } = require('../utils/csGroupHelpers');
 
 const DEPTS = ['General', 'Private', 'Semi'];
 
@@ -42,35 +43,8 @@ const stripSpaces = (s) => String(s == null ? '' : s).replace(/\s/g, '');
 // Same rule as csDeliveries so a group renamed/handed-over isn't double-counted.
 const canonGroupKey = (s) => stripSpaces(String(s == null ? '' : s).split('(')[0]);
 
-// Placeholder / non-real groups excluded entirely (same list as csDeliveries).
-const IGNORED_GROUP_PATTERNS = [
-  /free\s*slots/i,
-  /do\s*-?\s*not\s*closed/i,
-  /donot\s*closed/i,
-  /grammer/i,
-  /grammar/i,
-  /comp[ae]ns/i,
-  /تعويض/,
-];
-const isIgnoredGroup = (name) => {
-  const s = String(name == null ? '' : name);
-  return IGNORED_GROUP_PATTERNS.some(re => re.test(s));
-};
-
-// Normalize a coordinator name for the '--' placeholder check.
-const normName = (s) =>
-  String(s == null ? '' : s).replace(/\(.*?\)/g, '').trim().toLowerCase().replace(/\s+/g, ' ');
-
-// First REAL coordinator in a (possibly comma-separated) coordinators string —
-// skip the '--' placeholder (a "تعويض سيشن" comp-session group often sits with
-// coordinators='--', which would otherwise hide the real coordinator).
-function realCoordinator(coordStr) {
-  for (const c of String(coordStr || '').split(',')) {
-    const t = c.trim();
-    if (t && normName(t) !== '--') return t;
-  }
-  return null;
-}
+// IGNORED_GROUP_PATTERNS / isIgnoredGroup / normName / realCoordinator now come
+// from ../utils/csGroupHelpers (shared with csDeliveries & csEnrTransition).
 
 // Per-group lecture meta: count + first/last date. IDENTICAL query to
 // csDeliveries.makeGroupLectureMeta (main only, مؤكدة+مجدولة, current sheet only,

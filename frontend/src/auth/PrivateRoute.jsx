@@ -12,7 +12,7 @@ const ROLE_HOME = {
   enrollment_leader: '/enrollment-leader',
 };
 
-export default function PrivateRoute({ children, minRole, allowedRoles, superAdmin, onlyUsername, requirePage }) {
+export default function PrivateRoute({ children, minRole, allowedRoles, superAdmin, requireManagement, onlyUsername, requirePage }) {
   const { user, loading } = useAuth();
   const location = useLocation();
 
@@ -44,6 +44,19 @@ export default function PrivateRoute({ children, minRole, allowedRoles, superAdm
   // by URL even though the sidebar item is hidden.
   if (superAdmin && (user.role !== 'admin' || user.management !== 'All')) {
     return <Navigate to={ROLE_HOME[user.role] || '/login'} replace />;
+  }
+
+  // Department-management gate — admin whose management is 'All' OR matches the
+  // required department (primary `management` or any of `extra_managements`).
+  // Lets a department-scoped admin reach their OWN department's pages (e.g. the
+  // Customer-Services admin sees CS clients/sales) while bouncing admins of
+  // OTHER departments. Server-side authz remains the real control.
+  if (requireManagement) {
+    const mgmts = [user.management, ...String(user.extra_managements || '').split(',')]
+      .map(s => String(s || '').trim()).filter(Boolean);
+    if (user.role !== 'admin' || !(mgmts.includes('All') || mgmts.includes(requireManagement))) {
+      return <Navigate to={ROLE_HOME[user.role] || '/login'} replace />;
+    }
   }
 
   // Single-owner gate — a page locked to ONE specific account (case-insensitive

@@ -1,6 +1,7 @@
 'use strict';
 const ExcelJS = require('exceljs');
 const db = require('../config/database');
+const { nameInListParam } = require('../utils/nameMatch');
 
 const HEADER_STYLE = {
   font: { bold: true, color: { argb: 'FFFFFFFF' } },
@@ -88,9 +89,10 @@ async function exportRemarks({ from, to, agent, status, line }) {
   if (from)   { query += ' AND added_at >= ?'; params.push(from); }
   if (to)     { query += ' AND added_at <= ?'; params.push(to); }
   if (agent)  {
-    // Exact-token match so "Alaa" never matches "Alaa wael"
-    query += ` AND (',' || REPLACE(REPLACE(assigned_to, ', ', ','), ' ,', ',') || ',') LIKE ? COLLATE NOCASE`;
-    params.push(`%,${String(agent).trim()},%`);
+    // Exact-token match so "Alaa" never matches "Alaa wael" (shared helper).
+    const { clause, param } = nameInListParam('assigned_to')(agent);
+    query += ` AND ${clause}`;
+    params.push(param);
   }
   if (status) { query += ' AND status = ?'; params.push(status); }
   query += ' ORDER BY added_at DESC';

@@ -47,4 +47,23 @@ function requireSuperAdmin(req, res, next) {
   next();
 }
 
-module.exports = { requireRole, requireAnyRole, requireSuperAdmin };
+/**
+ * requireManagement('Customer Services') — admin whose management is 'All' OR
+ * matches the required department (primary `management` or any of the
+ * comma-separated `extra_managements`). Use to keep a department-scoped admin
+ * on their OWN department's sensitive routes while blocking admins of other
+ * departments. Mirrors the frontend PrivateRoute `requireManagement` guard.
+ */
+function requireManagement(required) {
+  return (req, res, next) => {
+    if (!req.user) return res.status(401).json({ error: 'Unauthenticated' });
+    const mgmts = [req.user.management, ...String(req.user.extra_managements || '').split(',')]
+      .map(s => String(s || '').trim()).filter(Boolean);
+    if (req.user.role !== 'admin' || !(mgmts.includes('All') || mgmts.includes(required))) {
+      return res.status(403).json({ error: 'Forbidden: department admin only' });
+    }
+    next();
+  };
+}
+
+module.exports = { requireRole, requireAnyRole, requireSuperAdmin, requireManagement };

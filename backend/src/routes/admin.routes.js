@@ -51,6 +51,20 @@ router.get('/users', (req, res) => {
   return res.json(users);
 });
 
+// Account-management guard. This router is gated at requireRole('leader'),
+// which also lets `admin` through. To stop a leader from escalating to admin,
+// only a true `admin` actor may create, modify, promote-to, or delete an
+// ADMIN account. Leaders manage non-admin accounts only.
+// Returns true (and writes a 403) when the action must be blocked.
+function blockLeaderTouchingAdmin(req, res, { targetRole, newRole } = {}) {
+  if (req.user.role === 'admin') return false;        // admins: unrestricted here
+  if (newRole === 'admin' || targetRole === 'admin') {
+    res.status(403).json({ error: 'Forbidden: only an admin can manage admin accounts' });
+    return true;
+  }
+  return false;
+}
+
 // POST /api/admin/users
 router.post('/users', (req, res) => {
   const {
@@ -80,6 +94,7 @@ router.post('/users', (req, res) => {
   if (!['agent', 'leader', 'admin', 'enrollment', 'enrollment_leader'].includes(role)) {
     return res.status(400).json({ error: 'Invalid role' });
   }
+  if (blockLeaderTouchingAdmin(req, res, { newRole: role })) return;
   const existing = db.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE').get(username);
   if (existing) return res.status(409).json({ error: 'Username already exists' });
 
@@ -147,9 +162,11 @@ router.put('/users/:id', (req, res) => {
   // Snapshot current state — needed for dept-change detection AND for the
   // employment end_date transition logic (old is_active / old end_date).
   const user = db.prepare(
-    'SELECT id, username, full_name, department, is_active, end_date FROM users WHERE id = ?'
+    'SELECT id, username, full_name, role, department, is_active, end_date FROM users WHERE id = ?'
   ).get(id);
   if (!user) return res.status(404).json({ error: 'User not found' });
+  // A leader may neither edit an existing admin nor promote anyone to admin.
+  if (blockLeaderTouchingAdmin(req, res, { targetRole: user.role, newRole: role })) return;
 
   // Username can be edited. Reject blanks and collisions with another user
   // (UNIQUE is case-insensitive). No-op when unchanged.
@@ -329,8 +346,10 @@ router.put('/users/:id', (req, res) => {
 router.patch('/users/:id/status', (req, res) => {
   const { id } = req.params;
   if (parseInt(id) === req.user.id) return res.status(400).json({ error: 'Cannot change your own status' });
-  const user = db.prepare('SELECT id, is_active, end_date FROM users WHERE id = ?').get(id);
+  const user = db.prepare('SELECT id, role, is_active, end_date FROM users WHERE id = ?').get(id);
   if (!user) return res.status(404).json({ error: 'User not found' });
+  // A leader may not activate/deactivate an admin account.
+  if (blockLeaderTouchingAdmin(req, res, { targetRole: user.role })) return;
   const newStatus = user.is_active ? 0 : 1;
   // Employment end_date is Admin/Manager-managed. When an admin toggles status
   // we keep end_date in sync with the transition; for any other role we flip
@@ -367,8 +386,10 @@ router.patch('/users/:id/status', (req, res) => {
 router.delete('/users/:id', (req, res) => {
   const { id } = req.params;
   if (parseInt(id) === req.user.id) return res.status(400).json({ error: 'Cannot delete yourself' });
-  const user = db.prepare('SELECT id, avatar_url FROM users WHERE id = ?').get(id);
+  const user = db.prepare('SELECT id, role, avatar_url FROM users WHERE id = ?').get(id);
   if (!user) return res.status(404).json({ error: 'User not found' });
+  // A leader may not delete an admin account.
+  if (blockLeaderTouchingAdmin(req, res, { targetRole: user.role })) return;
   // Clean up avatar file if present (DB column will go with the row)
   if (user.avatar_url) avatarStorage.deleteFile(user.avatar_url);
   db.prepare('DELETE FROM users WHERE id = ?').run(id);
