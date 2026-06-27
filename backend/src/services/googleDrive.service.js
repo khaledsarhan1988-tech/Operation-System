@@ -56,12 +56,15 @@ function getDriveClient() {
   if (driveClient) return driveClient;
 
   const credentials = loadCredentials();
-  const auth = new google.auth.JWT(
-    credentials.client_email,
-    null,
-    credentials.private_key,
-    SCOPES
-  );
+  // Use the options-object constructor. googleapis v173's bundled
+  // google-auth-library no longer authorizes the legacy POSITIONAL JWT
+  // signature (email, keyFile, key, scopes) — requests went out unauthenticated
+  // ("Method doesn't allow unregistered callers"). The options form works.
+  const auth = new google.auth.JWT({
+    email: credentials.client_email,
+    key: credentials.private_key,
+    scopes: SCOPES,
+  });
   driveClient = google.drive({ version: 'v3', auth });
   return driveClient;
 }
