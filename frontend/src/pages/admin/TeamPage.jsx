@@ -548,18 +548,31 @@ function ExtraShiftsSection({ memberId, inputCls, labelCls }) {
   const [genSel, setGenSel]     = useState(() => new Set());   // selected block keys
   const [genError, setGenError] = useState(null);
   const [genMsg, setGenMsg]     = useState(null);
+  const [genLine, setGenLine]   = useState('');   // line filter ('' = all lines)
   const blockKey = (b) => `${b.date}|${b.start_time || ''}|${b.end_time || ''}`;
+  // A line-neutral trainer (member.line='All') teaches on more than one line, and
+  // each Drive line has its OWN Excel file — so the preview is filtered by line to
+  // match whatever file the owner is looking at.
+  const genVisible = (genData?.blocks || []).filter(b => !genLine || (b.line || '') === genLine);
 
   const previewMut = useMutation({
     mutationFn: () => api.get(`/team/${memberId}/extra-shifts/from-lectures`, { params: { from: genFrom, to: genTo } }).then(r => r.data),
     onSuccess: (data) => {
       setGenData(data);
-      // pre-select everything addable (not already saved, not anomalous)
-      setGenSel(new Set((data.blocks || []).filter(b => !b.already_exists && !b.anomaly).map(blockKey)));
+      setGenLine('');   // reset line filter; selection is seeded by the effect below
       setGenError(null); setGenMsg(null);
     },
     onError: (err) => { setGenData(null); setGenError(err.response?.data?.error || 'تعذّر جلب المحاضرات'); },
   });
+
+  // (Re)seed the selection whenever the preview data or the line filter changes:
+  // pre-check everything addable (not already saved, not anomalous) in the current
+  // line view, so "إضافة المحدد" always matches the visible (per-line) list.
+  useEffect(() => {
+    if (!genData) return;
+    const visible = (genData.blocks || []).filter(b => !genLine || (b.line || '') === genLine);
+    setGenSel(new Set(visible.filter(b => !b.already_exists && !b.anomaly).map(blockKey)));
+  }, [genData, genLine]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const bulkAddMut = useMutation({
     mutationFn: (entries) => api.post(`/team/${memberId}/extra-shifts/from-lectures`, { entries }).then(r => r.data),
@@ -581,7 +594,7 @@ function ExtraShiftsSection({ memberId, inputCls, labelCls }) {
     setGenSel(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
   }
   function submitBulk() {
-    const entries = (genData?.blocks || [])
+    const entries = genVisible
       .filter(b => genSel.has(blockKey(b)))
       .map(b => ({ date: b.date, start_time: b.start_time, end_time: b.end_time, duration_min: b.duration_min, notes: `من الجدول: ${b.group_name || ''}`.trim() }));
     if (entries.length === 0) { setGenError('لم تختر أي محاضرة'); return; }
@@ -678,26 +691,44 @@ function ExtraShiftsSection({ memberId, inputCls, labelCls }) {
               {previewMut.isPending ? 'جاري البحث...' : 'معاينة المحاضرات'}
             </button>
 
-            {genData && (
+            {genData && (() => {
+              const lines = [...new Set((genData.blocks || []).map(b => b.line || '').filter(Boolean))];
+              const visAddable = genVisible.filter(b => !b.already_exists && !b.anomaly);
+              const visSelCount = genVisible.filter(b => genSel.has(blockKey(b))).length;
+              return (
               <div className="space-y-2">
+                {/* Line filter — only shown when the trainer's lectures span >1 line */}
+                {lines.length > 1 && (
+                  <div className="flex items-center gap-2 bg-white border border-amber-200 rounded-lg px-3 py-2">
+                    <label className="text-xs font-bold text-amber-900">الخط:</label>
+                    <select value={genLine} onChange={e => setGenLine(e.target.value)}
+                      className="text-xs border border-amber-200 rounded-lg px-2 py-1 bg-white focus:outline-none">
+                      <option value="">كل الخطوط ({genData.blocks.length})</option>
+                      {lines.map(ln => (
+                        <option key={ln} value={ln}>{ln} ({genData.blocks.filter(b => (b.line || '') === ln).length})</option>
+                      ))}
+                    </select>
+                    <span className="mr-auto text-[10px] text-amber-700">كل خط له ملف إكسيل منفصل على الدرايف</span>
+                  </div>
+                )}
                 <div className="flex items-center gap-2 text-xs text-gray-700">
-                  <span className="font-bold">{genData.count}</span> محاضرة في الفترة
-                  {genData.count > 0 && (
+                  <span className="font-bold">{genVisible.length}</span> محاضرة{genLine ? ` (خط ${genLine})` : ' في الفترة'}
+                  {genVisible.length > 0 && (
                     <>
                       <span className="mr-auto" />
                       <button type="button"
-                        onClick={() => setGenSel(new Set((genData.blocks || []).filter(b => !b.already_exists && !b.anomaly).map(blockKey)))}
+                        onClick={() => setGenSel(new Set(visAddable.map(blockKey)))}
                         className="text-amber-700 underline">تحديد الكل</button>
                       <button type="button" onClick={() => setGenSel(new Set())}
                         className="text-gray-500 underline">إلغاء الكل</button>
                     </>
                   )}
                 </div>
-                {genData.count === 0 ? (
+                {genVisible.length === 0 ? (
                   <p className="text-xs text-gray-500 italic text-center py-2">لا توجد محاضرات للمدرب في الفترة دي</p>
                 ) : (
                   <ul className="max-h-60 overflow-auto space-y-1 border border-amber-100 rounded-lg p-1.5">
-                    {genData.blocks.map(b => {
+                    {genVisible.map(b => {
                       const key = blockKey(b);
                       const disabled = b.already_exists || b.anomaly;
                       return (
@@ -711,6 +742,7 @@ function ExtraShiftsSection({ memberId, inputCls, labelCls }) {
                             ? <span className="text-gray-600">{b.start_time} → {b.end_time}</span>
                             : <span className="text-red-500">وقت غير مقروء</span>}
                           {b.duration_min ? <span className="bg-amber-100 text-amber-800 font-bold px-1.5 rounded">{fmtMins(b.duration_min)}</span> : null}
+                          {b.line && <span className="bg-sky-100 text-sky-700 px-1.5 rounded flex-shrink-0">{b.line}</span>}
                           <span className="text-gray-400 truncate flex-1" title={b.group_name}>{b.group_name}</span>
                           {b.already_exists && <span className="bg-gray-200 text-gray-600 px-1.5 rounded flex-shrink-0">مضاف</span>}
                           {b.anomaly && !b.already_exists && <span className="bg-red-100 text-red-700 px-1.5 rounded flex-shrink-0">مدة غير طبيعية</span>}
@@ -719,15 +751,16 @@ function ExtraShiftsSection({ memberId, inputCls, labelCls }) {
                     })}
                   </ul>
                 )}
-                {genData.count > 0 && (
-                  <button type="button" onClick={submitBulk} disabled={bulkAddMut.isPending || genSel.size === 0}
+                {genVisible.length > 0 && (
+                  <button type="button" onClick={submitBulk} disabled={bulkAddMut.isPending || visSelCount === 0}
                     className="w-full py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold disabled:opacity-50 flex items-center justify-center gap-2">
                     <Plus size={14} />
-                    {bulkAddMut.isPending ? 'جاري الإضافة...' : `إضافة المحدد (${genSel.size})`}
+                    {bulkAddMut.isPending ? 'جاري الإضافة...' : `إضافة المحدد (${visSelCount})`}
                   </button>
                 )}
               </div>
-            )}
+              );
+            })()}
             {genError && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">{genError}</p>}
             {genMsg && <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-2 py-1">{genMsg}</p>}
           </div>
