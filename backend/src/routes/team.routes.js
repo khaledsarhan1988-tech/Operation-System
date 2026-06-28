@@ -806,6 +806,188 @@ router.delete('/extra-shifts/:entryId', (req, res) => {
   }
 });
 
+// ─── EXTRA SHIFTS — BULK GENERATE FROM THE LECTURE SCHEDULE ──────────────────
+// Owner pain point: a trainer who covered 20+ lectures by the hour had to be
+// entered day-by-day above. These two endpoints read the trainer's own lectures
+// in a date window and turn each one into a ready extra-shift block (date +
+// start_time + end_time), so the owner only reviews & confirms. Purely additive:
+// the rows created are IDENTICAL to manual ones — same table, same semantics
+// (they raise the trainer's "available" capacity for that day in utilization).
+
+// "09:00 PM" / "10:00 AM" → minutes since midnight (lectures store 12h+AM/PM).
+// Falls back to a 24h read when no meridiem is present.
+function lecTime12ToMins(s) {
+  if (!s) return null;
+  const m = String(s).trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  const min = parseInt(m[2], 10);
+  const mer = m[3] ? m[3].toUpperCase() : null;
+  if (mer === 'PM' && h < 12) h += 12;
+  if (mer === 'AM' && h === 12) h = 0;
+  if (h > 23 || min > 59) return null;
+  return h * 60 + min;
+}
+
+// "01:00" → 60, "00:28" → 28; also tolerates a plain minutes number.
+function lecDurToMins(d) {
+  if (d === null || d === undefined) return null;
+  const s = String(d).trim();
+  const m = s.match(/^(\d{1,3}):(\d{2})$/);
+  if (m) return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+  const n = Number(s);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+}
+
+// minutes since midnight → 24h "HH:MM"
+function minsTo24h(mins) {
+  const t = ((Math.round(mins) % 1440) + 1440) % 1440;
+  const h = Math.floor(t / 60), m = t % 60;
+  return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+}
+
+const stripParens = s => String(s || '').replace(/\([^)]*\)/g, '').trim();
+const normTrainer = s => stripParens(s).toLowerCase().replace(/\s+/g, '');
+const MAX_REASONABLE_MIN = 6 * 60;  // > 6h on a single block = data anomaly → flag
+
+// Build the candidate blocks for a member over [from,to] (shared by GET+POST).
+// session_type='main', status IN ('مؤكدة','مجدولة'), matched by trainer name +
+// line. Twins (same date+start+end) collapse to one. Each block is flagged
+// `already_exists` (same date/start/end already saved) and `anomaly` (unparseable
+// time / duration ≤0 / duration > 6h).
+function buildLectureBlocks(member, from, to) {
+  // team_members.line is often 'All' (line-neutral) while lectures.line is a
+  // concrete line ('Ahmed Hassan' / 'Dardasha'). Only constrain by line when the
+  // member is pinned to a specific one — otherwise match across lines by name.
+  const pinnedLine = member.line && member.line !== 'All' ? member.line : null;
+  const rows = db.prepare(`
+    SELECT date, time, duration, trainer, group_name, status, line
+      FROM lectures
+     WHERE session_type = 'main'
+       AND status IN ('مؤكدة','مجدولة')
+       AND date BETWEEN ? AND ?
+       ${pinnedLine ? 'AND line = ?' : ''}
+  `).all(...(pinnedLine ? [from, to, pinnedLine] : [from, to]));
+
+  const target = normTrainer(member.name);
+  const existing = new Set(
+    db.prepare(`SELECT date, start_time, end_time FROM team_member_extra_shifts WHERE team_member_id = ?`)
+      .all(member.id)
+      .map(r => `${r.date}|${r.start_time || ''}|${r.end_time || ''}`)
+  );
+
+  const byKey = new Map();   // date|start|end → block (dedup twins)
+  for (const r of rows) {
+    if (normTrainer(r.trainer) !== target) continue;
+    const startMin = lecTime12ToMins(r.time);
+    const durMin   = lecDurToMins(r.duration);
+    let anomaly = false, start_time = null, end_time = null, duration_min = null;
+    if (startMin === null || durMin === null || durMin <= 0 || durMin > MAX_REASONABLE_MIN) {
+      anomaly = true;
+      duration_min = durMin && durMin > 0 ? durMin : null;
+      if (startMin !== null) start_time = minsTo24h(startMin);
+      if (startMin !== null && durMin && durMin > 0) end_time = minsTo24h(startMin + durMin);
+    } else {
+      start_time = minsTo24h(startMin);
+      end_time   = minsTo24h(startMin + durMin);
+      duration_min = durMin;
+    }
+    const key = `${r.date}|${start_time || ''}|${end_time || ''}`;
+    if (byKey.has(key)) continue;   // collapse rename/import twins
+    byKey.set(key, {
+      date: r.date, start_time, end_time, duration_min,
+      group_name: r.group_name, status: r.status, line: r.line,
+      already_exists: existing.has(key),
+      anomaly,
+    });
+  }
+  return [...byKey.values()].sort((a, b) =>
+    a.date === b.date ? String(a.start_time).localeCompare(String(b.start_time)) : a.date.localeCompare(b.date));
+}
+
+// GET /api/team/:id/extra-shifts/from-lectures?from=&to= — PREVIEW only (no write)
+router.get('/:id/extra-shifts/from-lectures', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'invalid member id' });
+  const { from, to } = req.query;
+  if (!from || !/^\d{4}-\d{2}-\d{2}$/.test(String(from)) ||
+      !to   || !/^\d{4}-\d{2}-\d{2}$/.test(String(to))) {
+    return res.status(400).json({ error: 'from & to are required (YYYY-MM-DD)' });
+  }
+  if (String(from) > String(to)) return res.status(400).json({ error: 'from must be ≤ to' });
+  const member = db.prepare(`SELECT id, name, line FROM team_members WHERE id = ?`).get(id);
+  if (!member) return res.status(404).json({ error: 'team member not found' });
+  try {
+    const blocks = buildLectureBlocks(member, String(from), String(to));
+    return res.json({
+      member: { id: member.id, name: member.name, line: member.line },
+      from, to,
+      count: blocks.length,
+      addable: blocks.filter(b => !b.already_exists && !b.anomaly).length,
+      blocks,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/team/:id/extra-shifts/from-lectures — bulk-insert the selected blocks.
+// Admin / leader only. Body: { entries: [{date, start_time, end_time, duration_min, notes?}] }
+// Idempotent: skips any (date,start,end) already saved for this member.
+router.post('/:id/extra-shifts/from-lectures', express.json(), (req, res) => {
+  if (req.user?.role !== 'admin' && req.user?.role !== 'leader') {
+    return res.status(403).json({ error: 'صلاحية للأدمن أو القائد فقط' });
+  }
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'invalid member id' });
+  const member = db.prepare(`SELECT id FROM team_members WHERE id = ?`).get(id);
+  if (!member) return res.status(404).json({ error: 'team member not found' });
+
+  const entries = Array.isArray(req.body?.entries) ? req.body.entries : null;
+  if (!entries || entries.length === 0) {
+    return res.status(400).json({ error: 'entries (non-empty array) is required' });
+  }
+
+  const existing = new Set(
+    db.prepare(`SELECT date, start_time, end_time FROM team_member_extra_shifts WHERE team_member_id = ?`)
+      .all(id)
+      .map(r => `${r.date}|${r.start_time || ''}|${r.end_time || ''}`)
+  );
+
+  const ins = db.prepare(`
+    INSERT INTO team_member_extra_shifts
+      (team_member_id, date, start_time, end_time, duration_min, notes, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  const createdBy = req.user?.id || null;
+  let inserted = 0, skipped = 0;
+  const errors = [];
+
+  const run = db.transaction(() => {
+    for (const e of entries) {
+      const date = String(e?.date || '');
+      const start_time = e?.start_time ? String(e.start_time) : null;
+      const end_time   = e?.end_time ? String(e.end_time) : null;
+      const durMin     = Math.round(Number(e?.duration_min));
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !(durMin > 0)) {
+        skipped++; errors.push({ date, reason: 'تاريخ أو مدة غير صالحة' }); continue;
+      }
+      const key = `${date}|${start_time || ''}|${end_time || ''}`;
+      if (existing.has(key)) { skipped++; continue; }   // already saved → idempotent
+      ins.run(id, date, start_time, end_time, durMin, e?.notes ? String(e.notes) : 'من الجدول', createdBy);
+      existing.add(key);
+      inserted++;
+    }
+  });
+
+  try {
+    run();
+    return res.status(201).json({ inserted, skipped, errors });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── OUT-OF-DUTY PAID HOURS ("خارج مهام عمله") ────────────────────────────────
 // PAID extra hours outside a trainer's normal duties. Stored in a SEPARATE table
 // from extra-shifts and NEVER counted in utilization. Surfaced only in the

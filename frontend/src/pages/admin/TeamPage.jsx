@@ -540,6 +540,54 @@ function ExtraShiftsSection({ memberId, inputCls, labelCls }) {
   const [error, setError] = useState(null);
   const [monthFilter, setMonthFilter] = useState('');   // 'YYYY-MM' for the monthly total ('' = all months)
 
+  // ── Bulk generate from the lecture schedule ──
+  const [genOpen, setGenOpen]   = useState(false);
+  const [genFrom, setGenFrom]   = useState('');
+  const [genTo, setGenTo]       = useState('');
+  const [genData, setGenData]   = useState(null);   // { count, addable, blocks: [...] }
+  const [genSel, setGenSel]     = useState(() => new Set());   // selected block keys
+  const [genError, setGenError] = useState(null);
+  const [genMsg, setGenMsg]     = useState(null);
+  const blockKey = (b) => `${b.date}|${b.start_time || ''}|${b.end_time || ''}`;
+
+  const previewMut = useMutation({
+    mutationFn: () => api.get(`/team/${memberId}/extra-shifts/from-lectures`, { params: { from: genFrom, to: genTo } }).then(r => r.data),
+    onSuccess: (data) => {
+      setGenData(data);
+      // pre-select everything addable (not already saved, not anomalous)
+      setGenSel(new Set((data.blocks || []).filter(b => !b.already_exists && !b.anomaly).map(blockKey)));
+      setGenError(null); setGenMsg(null);
+    },
+    onError: (err) => { setGenData(null); setGenError(err.response?.data?.error || 'تعذّر جلب المحاضرات'); },
+  });
+
+  const bulkAddMut = useMutation({
+    mutationFn: (entries) => api.post(`/team/${memberId}/extra-shifts/from-lectures`, { entries }).then(r => r.data),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['team-extra-shifts', memberId] });
+      setGenMsg(`تمت إضافة ${res.inserted} ساعة${res.skipped ? ` (تخطّى ${res.skipped} مكرّر/غير صالح)` : ''}`);
+      setGenData(null); setGenSel(new Set());
+    },
+    onError: (err) => setGenError(err.response?.data?.error || 'تعذّر الإضافة'),
+  });
+
+  function runPreview() {
+    setGenError(null); setGenMsg(null);
+    if (!genFrom || !genTo) { setGenError('اختر الفترة (من / إلى)'); return; }
+    if (genFrom > genTo) { setGenError('«من» لازم يكون قبل «إلى»'); return; }
+    previewMut.mutate();
+  }
+  function toggleSel(key) {
+    setGenSel(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
+  }
+  function submitBulk() {
+    const entries = (genData?.blocks || [])
+      .filter(b => genSel.has(blockKey(b)))
+      .map(b => ({ date: b.date, start_time: b.start_time, end_time: b.end_time, duration_min: b.duration_min, notes: `من الجدول: ${b.group_name || ''}`.trim() }));
+    if (entries.length === 0) { setGenError('لم تختر أي محاضرة'); return; }
+    bulkAddMut.mutate(entries);
+  }
+
   const addMut = useMutation({
     mutationFn: (body) => api.post(`/team/${memberId}/extra-shifts`, body).then(r => r.data),
     onSuccess: () => {
@@ -601,6 +649,90 @@ function ExtraShiftsSection({ memberId, inputCls, labelCls }) {
         💡 لو الموظف خلص شيفته (تاريخ نهاية الشيفت)، لكن بيدخل أيام محددة لساعات إضافية —
         ضيف كل يوم هنا. الساعات بتتحسب في utilization من غير ما تفتح شيفت جديد.
       </p>
+
+      {/* ── Bulk generate from the lecture schedule ── */}
+      <div className="bg-white border border-amber-300 rounded-lg mb-3">
+        <button type="button" onClick={() => setGenOpen(o => !o)}
+          className="w-full flex items-center gap-2 px-3 py-2 text-sm font-bold text-amber-900">
+          <Clock size={14} className="text-amber-600" />
+          توليد من الجدول (من غير إدخال يدوي)
+          <ChevronDown size={16} className={`mr-auto transition-transform ${genOpen ? 'rotate-180' : ''}`} />
+        </button>
+        {genOpen && (
+          <div className="px-3 pb-3 border-t border-amber-200 pt-3 space-y-2">
+            <p className="text-[11px] text-gray-600 leading-relaxed">
+              حدّد فترة، والنظام يلاقي المحاضرات الأساسية (مؤكدة + مجدولة) للمدرب في الفترة دي ويحوّلها لساعات إضافية — راجع واختار اللي عايزه.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className={labelCls}>من تاريخ</label>
+                <input type="date" className={inputCls} value={genFrom} onChange={e => setGenFrom(e.target.value)} />
+              </div>
+              <div>
+                <label className={labelCls}>إلى تاريخ</label>
+                <input type="date" className={inputCls} value={genTo} onChange={e => setGenTo(e.target.value)} />
+              </div>
+            </div>
+            <button type="button" onClick={runPreview} disabled={previewMut.isPending}
+              className="w-full py-2 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 text-sm font-bold disabled:opacity-50">
+              {previewMut.isPending ? 'جاري البحث...' : 'معاينة المحاضرات'}
+            </button>
+
+            {genData && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-xs text-gray-700">
+                  <span className="font-bold">{genData.count}</span> محاضرة في الفترة
+                  {genData.count > 0 && (
+                    <>
+                      <span className="mr-auto" />
+                      <button type="button"
+                        onClick={() => setGenSel(new Set((genData.blocks || []).filter(b => !b.already_exists && !b.anomaly).map(blockKey)))}
+                        className="text-amber-700 underline">تحديد الكل</button>
+                      <button type="button" onClick={() => setGenSel(new Set())}
+                        className="text-gray-500 underline">إلغاء الكل</button>
+                    </>
+                  )}
+                </div>
+                {genData.count === 0 ? (
+                  <p className="text-xs text-gray-500 italic text-center py-2">لا توجد محاضرات للمدرب في الفترة دي</p>
+                ) : (
+                  <ul className="max-h-60 overflow-auto space-y-1 border border-amber-100 rounded-lg p-1.5">
+                    {genData.blocks.map(b => {
+                      const key = blockKey(b);
+                      const disabled = b.already_exists || b.anomaly;
+                      return (
+                        <li key={key}
+                          className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs ${disabled ? 'bg-gray-50' : 'bg-white'}`}>
+                          <input type="checkbox" disabled={disabled}
+                            checked={genSel.has(key)} onChange={() => toggleSel(key)} />
+                          <CalendarIcon size={11} className="text-amber-600 flex-shrink-0" />
+                          <span className="font-bold text-gray-800">{b.date}</span>
+                          {b.start_time && b.end_time
+                            ? <span className="text-gray-600">{b.start_time} → {b.end_time}</span>
+                            : <span className="text-red-500">وقت غير مقروء</span>}
+                          {b.duration_min ? <span className="bg-amber-100 text-amber-800 font-bold px-1.5 rounded">{fmtMins(b.duration_min)}</span> : null}
+                          <span className="text-gray-400 truncate flex-1" title={b.group_name}>{b.group_name}</span>
+                          {b.already_exists && <span className="bg-gray-200 text-gray-600 px-1.5 rounded flex-shrink-0">مضاف</span>}
+                          {b.anomaly && !b.already_exists && <span className="bg-red-100 text-red-700 px-1.5 rounded flex-shrink-0">مدة غير طبيعية</span>}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+                {genData.count > 0 && (
+                  <button type="button" onClick={submitBulk} disabled={bulkAddMut.isPending || genSel.size === 0}
+                    className="w-full py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold disabled:opacity-50 flex items-center justify-center gap-2">
+                    <Plus size={14} />
+                    {bulkAddMut.isPending ? 'جاري الإضافة...' : `إضافة المحدد (${genSel.size})`}
+                  </button>
+                )}
+              </div>
+            )}
+            {genError && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">{genError}</p>}
+            {genMsg && <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-2 py-1">{genMsg}</p>}
+          </div>
+        )}
+      </div>
 
       {/* Monthly total — pick a month to see its total extra hours */}
       {rows.length > 0 && (
