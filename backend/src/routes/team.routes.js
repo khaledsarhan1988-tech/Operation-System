@@ -194,7 +194,9 @@ function normalizeRests(raw) {
 // Shift fields are only meaningful when the shift itself is set.
 // start_date is required when shift is set; end_date is optional (NULL = still active).
 // voice_notes use the same [{start,end}, ...] shape as rests, normalized via normalizeRests.
-const VALID_SECTIONS = ['general', 'private', 'semi', 'phone_call', 'all'];
+// phone_call is split into 3 course-type sub-sections (عام/شبه خاص/خاص).
+// Plain 'phone_call' kept for LEGACY members not yet re-classified — no data loss.
+const VALID_SECTIONS = ['general', 'private', 'semi', 'phone_call', 'phone_call_general', 'phone_call_semi', 'phone_call_private', 'all'];
 function buildShiftBundle(rawShift, rawStart, rawEnd, rawRests, rawEmpType, rawDays, rawStartDate, rawEndDate, rawVoiceNotes, rawSection, rawSalaryCategory) {
   const shift = rawShift || null;
   // Salary category: a free-text label linking the shift to a salary scheme
@@ -429,7 +431,7 @@ router.post('/', (req, res) => {
   const user_id   = req.body.user_id   || null;
   const notes     = req.body.notes     || null;
   const teachable = buildTeachable(req.body);
-  const validSections = ['all','general','private','semi','phone_call'];
+  const validSections = ['all','general','private','semi','phone_call','phone_call_general','phone_call_semi','phone_call_private'];
   if (!name || !department || !section || !validSections.includes(section))
     return res.status(400).json({ error: 'name, department, section required' });
   const dateErr = validateShiftsArray(allShifts);

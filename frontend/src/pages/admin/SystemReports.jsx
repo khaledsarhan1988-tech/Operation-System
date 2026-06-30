@@ -1930,6 +1930,7 @@ const DEPT_META = {
 };
 const SECTION_LABELS = {
   all: 'الكل', general: 'عام', private: 'خاص', semi: 'شبه خاص', phone_call: 'فون كول',
+  phone_call_general: 'فون كول عام', phone_call_semi: 'فون كول شبه خاص', phone_call_private: 'فون كول خاص',
 };
 
 function MetricCell({ value, warnColor = 'red', label, onClick }) {

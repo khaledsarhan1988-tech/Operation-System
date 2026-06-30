@@ -19,6 +19,9 @@ const SECTIONS = {
   private:    'خاص',
   semi:       'شبه خاص',
   phone_call: 'فون كول',
+  phone_call_general: 'فون كول عام',
+  phone_call_semi:    'فون كول شبه خاص',
+  phone_call_private: 'فون كول خاص',
 };
 const DOW_AR = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 const DOW_SHORT = ['أحد', 'إثن', 'ثلاث', 'أربع', 'خميس', 'جمعة', 'سبت'];
@@ -65,6 +68,9 @@ const SECTION_TONE = {
   private:    'bg-violet-50 text-violet-700 border-violet-200',
   semi:       'bg-amber-50 text-amber-700 border-amber-200',
   phone_call: 'bg-pink-50 text-pink-700 border-pink-200',
+  phone_call_general: 'bg-pink-50 text-pink-700 border-pink-200',
+  phone_call_semi:    'bg-rose-50 text-rose-700 border-rose-200',
+  phone_call_private: 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200',
   all:        'bg-slate-100 text-slate-600 border-slate-200',
 };
 
@@ -463,7 +469,7 @@ export default function TrainerUtilization() {
         // Dedup by trainer id — a trainer split across sections appears in
         // multiple rows, but the Voice-Note audit is per-person (not per-section).
         const auditPool = [...new Map(
-          trainers.filter(t => t.section !== 'phone_call').map(t => [t.id, t])
+          trainers.filter(t => !String(t.section || '').startsWith('phone_call')).map(t => [t.id, t])
         ).values()];
         const missing = auditPool.filter(t => t.has_voice_notes === false);
         const total = auditPool.length;

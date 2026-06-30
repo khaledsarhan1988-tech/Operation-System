@@ -8,7 +8,7 @@ import EmptyState from '../../components/ui/EmptyState';
 import HolidayBanner from '../../components/ui/HolidayBanner';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
-const SECTIONS = { all: 'الكل', general: 'عام', private: 'خاص', semi: 'شبه خاص', phone_call: 'فون كول' };
+const SECTIONS = { all: 'الكل', general: 'عام', private: 'خاص', semi: 'شبه خاص', phone_call: 'فون كول', phone_call_general: 'فون كول عام', phone_call_semi: 'فون كول شبه خاص', phone_call_private: 'فون كول خاص' };
 const DOW_AR = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 // Day-pair filter — each group meets twice a week on a fixed pair. getDay(): 0=Sun..6=Sat.
 const DAY_PAIRS = {

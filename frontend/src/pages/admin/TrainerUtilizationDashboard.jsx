@@ -25,12 +25,18 @@ const SECTIONS = {
   private:    'خاص',
   semi:       'شبه خاص',
   phone_call: 'فون كول',
+  phone_call_general: 'فون كول عام',
+  phone_call_semi:    'فون كول شبه خاص',
+  phone_call_private: 'فون كول خاص',
 };
 const SECTION_TONE = {
   general:    'bg-sky-50 text-sky-700 border-sky-200',
   private:    'bg-violet-50 text-violet-700 border-violet-200',
   semi:       'bg-amber-50 text-amber-700 border-amber-200',
   phone_call: 'bg-pink-50 text-pink-700 border-pink-200',
+  phone_call_general: 'bg-pink-50 text-pink-700 border-pink-200',
+  phone_call_semi:    'bg-rose-50 text-rose-700 border-rose-200',
+  phone_call_private: 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200',
   all:        'bg-slate-100 text-slate-600 border-slate-200',
 };
 const SECTION_COLORS_CHART = {
@@ -38,6 +44,9 @@ const SECTION_COLORS_CHART = {
   private:    '#8B5CF6',
   semi:       '#F59E0B',
   phone_call: '#EC4899',
+  phone_call_general: '#EC4899',
+  phone_call_semi:    '#F43F5E',
+  phone_call_private: '#D946EF',
 };
 
 // Status tone (low/normal/high)
@@ -158,9 +167,11 @@ export default function TrainerUtilizationDashboard() {
     const periodStr = period ? `${period.from} → ${period.to}` : '';
 
     // Flatten trainers grouped by section (section header rows + trainer rows)
-    const order = ['general', 'private', 'semi', 'phone_call'];
+    const order = ['general', 'private', 'semi', 'phone_call_general', 'phone_call_semi', 'phone_call_private', 'phone_call'];
     const groups = {};
     trainers.forEach(t => { (groups[t.section] = groups[t.section] || []).push(t); });
+    // Any section not in the explicit order (future-proof) appended at the end.
+    Object.keys(groups).forEach(s => { if (!order.includes(s)) order.push(s); });
     const items = [];
     order.forEach(sec => {
       const arr = groups[sec];

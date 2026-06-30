@@ -25,7 +25,10 @@ const SECTIONS = {
   general:    'عام',
   private:    'خاص',
   semi:       'شبه خاص',
-  phone_call: 'فون كول',
+  phone_call: 'فون كول',            // legacy umbrella (kept for un-reclassified members)
+  phone_call_general: 'فون كول عام',
+  phone_call_semi:    'فون كول شبه خاص',
+  phone_call_private: 'فون كول خاص',
 };
 
 const SHIFTS = {
@@ -50,7 +53,7 @@ const DAY_PAIRS = [
 
 const DEPT_SECTIONS = {
   customer_services: ['all', 'general', 'private', 'semi'],
-  education:         ['all', 'general', 'private', 'semi', 'phone_call'],
+  education:         ['all', 'general', 'private', 'semi', 'phone_call_general', 'phone_call_semi', 'phone_call_private'],
   appointments:      ['all', 'general', 'private', 'semi'],
 };
 
@@ -74,6 +77,9 @@ const SECTION_COLORS = {
   private:    'bg-violet-100 text-violet-800 border-violet-200',
   semi:       'bg-amber-100 text-amber-800 border-amber-200',
   phone_call: 'bg-pink-100 text-pink-800 border-pink-200',
+  phone_call_general: 'bg-pink-100 text-pink-800 border-pink-200',
+  phone_call_semi:    'bg-rose-100 text-rose-800 border-rose-200',
+  phone_call_private: 'bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200',
 };
 
 // ─── EMPTY FORM ───────────────────────────────────────────────────────────────
@@ -297,7 +303,10 @@ function ShiftSection({
             <option value="general">عام</option>
             <option value="private">خاص</option>
             <option value="semi">شبه خاص</option>
-            <option value="phone_call">فون كول</option>
+            <option value="phone_call_general">فون كول عام</option>
+            <option value="phone_call_semi">فون كول شبه خاص</option>
+            <option value="phone_call_private">فون كول خاص</option>
+            {sectionValue === 'phone_call' && <option value="phone_call">فون كول (قديم)</option>}
           </select>
         </div>
       )}
@@ -962,9 +971,11 @@ export function MemberModal({ initial, onSave, onClose, loading }) {
     setShifts(s => s.filter((_, i) => i !== idx));
   };
 
-  // Reset section when dept changes if invalid; clear shifts if leaving education
+  // Reset section when dept changes if invalid; clear shifts if leaving education.
+  // A legacy 'phone_call' section is preserved (not auto-reset) until the owner
+  // re-classifies the member into one of the 3 phone_call sub-sections.
   useEffect(() => {
-    if (!DEPT_SECTIONS[form.department]?.includes(form.section)) {
+    if (form.section !== 'phone_call' && !DEPT_SECTIONS[form.department]?.includes(form.section)) {
       set('section', DEPT_SECTIONS[form.department][0]);
     }
     if (form.department !== 'education') {
@@ -1038,6 +1049,9 @@ export function MemberModal({ initial, onSave, onClose, loading }) {
             <label className={labelCls}>القسم <span className="text-red-500">*</span></label>
             <select className={inputCls} value={form.section} onChange={e => set('section', e.target.value)}>
               {DEPT_SECTIONS[form.department].map(s => <option key={s} value={s}>{SECTIONS[s]}</option>)}
+              {/* Preserve a legacy section (e.g. old 'phone_call') so existing members keep it until re-classified */}
+              {form.section && !DEPT_SECTIONS[form.department]?.includes(form.section) &&
+                <option value={form.section}>{(SECTIONS[form.section] || form.section) + ' (قديم)'}</option>}
             </select>
           </div>
 
@@ -1515,6 +1529,12 @@ export default function TeamPage() {
   const bySection = {};
   DEPT_SECTIONS[activeDept].forEach(s => { bySection[s] = []; });
   visible.forEach(m => { (bySection[m.section] = bySection[m.section] || []).push(m); });
+  // Render the dept's sections + any legacy section that still has members (e.g.
+  // un-reclassified 'phone_call') so nobody silently disappears from the page.
+  const sectionsToRender = [
+    ...DEPT_SECTIONS[activeDept],
+    ...Object.keys(bySection).filter(s => !DEPT_SECTIONS[activeDept].includes(s) && (bySection[s] || []).length > 0),
+  ];
 
   const totalVisible = visible.length;
 
@@ -1627,7 +1647,7 @@ export default function TeamPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {DEPT_SECTIONS[activeDept].map(section => (
+          {sectionsToRender.map(section => (
             <SectionGroup
               key={section}
               section={section}

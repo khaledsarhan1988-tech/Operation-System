@@ -4418,7 +4418,7 @@ router.get('/trainer-utilization-summary', (req, res) => {
     }
 
     // ── Per-trainer totals over current period
-    const SECTION_AR = { general:'عام', private:'خاص', semi:'شبه خاص', phone_call:'فون كول', all:'الكل' };
+    const SECTION_AR = { general:'عام', private:'خاص', semi:'شبه خاص', phone_call:'فون كول', phone_call_general:'فون كول عام', phone_call_semi:'فون كول شبه خاص', phone_call_private:'فون كول خاص', all:'الكل' };
     const SHIFT_AR = { morning: 'صباحي', evening: 'مسائي' };
     // fmt12 is a module-scope helper (see top of file).
     // One row PER (trainer × section) — a trainer who worked in two sections
@@ -4528,8 +4528,9 @@ router.get('/trainer-utilization-summary', (req, res) => {
       });
     }
 
-    // ── Section averages
-    const sections = ['general','private','semi','phone_call'];
+    // ── Section averages (phone_call split into 3 + legacy 'phone_call' kept last
+    //    so un-reclassified members still appear under «فون كول»).
+    const sections = ['general','private','semi','phone_call_general','phone_call_semi','phone_call_private','phone_call'];
     const sectionAverages = sections.map(sec => {
       const inSec = trainersOut.filter(t => t.section === sec);
       const secAvail  = inSec.reduce((s, t) => s + (t.available_hours * 60), 0);

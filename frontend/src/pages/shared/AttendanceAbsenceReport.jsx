@@ -104,12 +104,15 @@ function AbsenceRateCell({ rate, absent, expected }) {
 }
 
 /* ─── Per-coordinator MOVEMENT breakdown (section-periods) ──────────────────── */
-const SEC_LABEL = { all: 'الكل', general: 'عام', private: 'خاص', semi: 'شبه خاص', phone_call: 'فون كول' };
+const SEC_LABEL = { all: 'الكل', general: 'عام', private: 'خاص', semi: 'شبه خاص', phone_call: 'فون كول', phone_call_general: 'فون كول عام', phone_call_semi: 'فون كول شبه خاص', phone_call_private: 'فون كول خاص' };
 const SEC_CLS = {
   general: 'bg-sky-50 text-sky-700 border-sky-200',
   private: 'bg-violet-50 text-violet-700 border-violet-200',
   semi:    'bg-amber-50 text-amber-700 border-amber-200',
   phone_call: 'bg-pink-50 text-pink-700 border-pink-200',
+  phone_call_general: 'bg-pink-50 text-pink-700 border-pink-200',
+  phone_call_semi:    'bg-rose-50 text-rose-700 border-rose-200',
+  phone_call_private: 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200',
   all:     'bg-gray-50 text-gray-600 border-gray-200',
 };
 function CoordinatorSegments({ coordinator, from, to }) {

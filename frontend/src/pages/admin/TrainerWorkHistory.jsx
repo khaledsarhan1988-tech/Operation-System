@@ -17,6 +17,9 @@ const SECTIONS = {
   private:    'خاص',
   semi:       'شبه خاص',
   phone_call: 'فون كول',
+  phone_call_general: 'فون كول عام',
+  phone_call_semi:    'فون كول شبه خاص',
+  phone_call_private: 'فون كول خاص',
 };
 
 const SECTION_BADGE = {
@@ -24,6 +27,9 @@ const SECTION_BADGE = {
   private:    'bg-violet-100 text-violet-800 border-violet-200',
   semi:       'bg-amber-100 text-amber-800 border-amber-200',
   phone_call: 'bg-pink-100 text-pink-800 border-pink-200',
+  phone_call_general: 'bg-pink-100 text-pink-800 border-pink-200',
+  phone_call_semi:    'bg-rose-100 text-rose-800 border-rose-200',
+  phone_call_private: 'bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200',
   all:        'bg-gray-100 text-gray-700 border-gray-200',
 };
 
@@ -39,7 +45,7 @@ const EMPLOYMENT_LABEL = {
 
 // Section display order for the grouped "مرتبات المدربين" view: General →
 // Private → Semi → Phone Call → (anything else).
-const SECTION_ORDER = { general: 0, private: 1, semi: 2, phone_call: 3, all: 8 };
+const SECTION_ORDER = { general: 0, private: 1, semi: 2, phone_call: 3, phone_call_general: 3, phone_call_semi: 4, phone_call_private: 5, all: 8 };
 const sectionRank = (s) => (s in SECTION_ORDER ? SECTION_ORDER[s] : 9);
 
 // Salary-category badge colors. Full Time & Part Time get fixed colors; every
@@ -82,7 +88,7 @@ function fmtMoney(v) {
 // Which salary system applies to a section: Phone Call → "فون كول",
 // everything else (General / Private / Semi) → "جلسات اساسيه".
 function systemTargetForSection(section) {
-  return section === 'phone_call' ? 'فون كول' : 'جلسات اساسيه';
+  return String(section || '').startsWith('phone_call') ? 'فون كول' : 'جلسات اساسيه';
 }
 
 // Find the salary-def row that matches a trainer's (section, salary_category).
