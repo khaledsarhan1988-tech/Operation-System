@@ -10,6 +10,13 @@ import HolidayBanner from '../../components/ui/HolidayBanner';
 // ─── helpers ────────────────────────────────────────────────────────────────
 const SECTIONS = { all: 'الكل', general: 'عام', private: 'خاص', semi: 'شبه خاص', phone_call: 'فون كول' };
 const DOW_AR = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+// Day-pair filter — each group meets twice a week on a fixed pair. getDay(): 0=Sun..6=Sat.
+const DAY_PAIRS = {
+  all:     { label: 'كل الأيام',    dows: null },
+  sat_tue: { label: 'سبت وثلاثاء',  dows: [6, 2] },
+  sun_wed: { label: 'أحد وأربعاء',  dows: [0, 3] },
+  mon_thu: { label: 'إثنين وخميس',  dows: [1, 4] },
+};
 const fmtISO = d => d.toISOString().slice(0, 10);
 const addDays = (d, n) => { const c = new Date(d); c.setDate(c.getDate() + n); return c; };
 const dowFromISO = iso => new Date(iso + 'T12:00:00').getDay();
@@ -55,21 +62,13 @@ const countMeaad = (pairPatterns, sec) => {
   return n;
 };
 
-// short group label from a lecture group_name (strip date/day/time prefix noise)
-const shortGroup = g => {
-  if (!g) return '';
-  const noParen = String(g).replace(/\([^)]*\)/g, '').trim();
-  const m = noParen.match(/(General\s?\d|Con\s?\d|Conversation\s?\d|Starter\s?\d|Con_\d|General_?\d)/i);
-  return m ? m[1].replace(/_/g, ' ') : noParen.split('_').slice(-2).join(' ');
-};
-
 // Build the day's timeline as EXACT blocks (no hour-bucket approximation): each
 // lecture is a booked block at its real start/end, each free_slot a green block.
 // Sorted chronologically. This is minute-accurate — a 1.5h lecture (7–8:30) and the
 // gap after it (8:30–9) render as two distinct blocks, never a mislabeled "hour".
 function buildBlocks(day) {
   const lec = (day.lectures || [])
-    .map(l => { const s = parseTime12(l.time), d = parseDur(l.duration); return s >= 0 && d > 0 ? { s, e: s + d, type: 'booked', group: shortGroup(l.group_name) } : null; })
+    .map(l => { const s = parseTime12(l.time), d = parseDur(l.duration); return s >= 0 && d > 0 ? { s, e: s + d, type: 'booked', group: String(l.group_name || '').trim() } : null; })
     .filter(Boolean);
   const free = (day.free_slots || []).map(f => ({ s: f.start_min, e: f.end_min, type: 'free' }));
   return [...lec, ...free].sort((a, b) => a.s - b.s || a.e - b.e);
@@ -79,6 +78,7 @@ function buildBlocks(day) {
 export default function TrainerDetails() {
   const today = new Date();
   const [section, setSection] = useState('semi');
+  const [dayPair, setDayPair] = useState('all');
   const [from, setFrom] = useState(fmtISO(today));
   const [to, setTo] = useState(fmtISO(addDays(today, 30)));
 
@@ -93,6 +93,13 @@ export default function TrainerDetails() {
   });
 
   const dates = useMemo(() => data?.dates || [], [data]);
+  // Day-pair filter — restrict the displayed day columns to the chosen pair.
+  const visibleDates = useMemo(() => {
+    const p = DAY_PAIRS[dayPair];
+    if (!p?.dows) return dates;
+    const set = new Set(p.dows);
+    return dates.filter(d => set.has(dowFromISO(d)));
+  }, [dates, dayPair]);
   const trainers = useMemo(
     () => (data?.trainers || []).slice().sort((a, b) => String(a.name).localeCompare(String(b.name), 'ar')),
     [data]
@@ -147,6 +154,16 @@ export default function TrainerDetails() {
           </select>
         </div>
         <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-gray-500">الأيام</span>
+          <select
+            value={dayPair}
+            onChange={e => setDayPair(e.target.value)}
+            className="px-3 py-2 rounded-lg border border-gray-200 text-sm font-semibold text-gray-700 bg-gray-50 focus:bg-white outline-none"
+          >
+            {Object.entries(DAY_PAIRS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
           <span className="text-xs font-bold text-gray-500">من</span>
           <input type="date" value={from} onChange={e => setFrom(e.target.value)}
             className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 bg-gray-50 focus:bg-white outline-none" />
@@ -156,6 +173,7 @@ export default function TrainerDetails() {
         </div>
         <div className="text-xs text-gray-400 flex items-center gap-1">
           <CalendarDays size={13} /> {fmtArDate(from)} → {fmtArDate(to)} · {trainers.length} مدرب
+          {dayPair !== 'all' && <span className="text-blue-500 font-semibold">· {DAY_PAIRS[dayPair].label} ({visibleDates.length} يوم)</span>}
         </div>
       </div>
 
@@ -194,7 +212,7 @@ export default function TrainerDetails() {
           <TrainerCard
             key={`${t.id}-${t.section}`}
             trainer={t}
-            dates={dates}
+            dates={visibleDates}
             recurring={recurringByName[String(t.name || '').replace(/\([^)]*\)/g, '').trim().toLowerCase()]}
           />
         ))}
@@ -316,7 +334,7 @@ function DayColumn({ date, day }) {
                 <span dir="ltr">{fmt12(b.s)} - {fmt12(b.e)}</span>
               </div>
               {booked
-                ? <div className="text-[9px] text-gray-500 mt-0.5 truncate">{b.group}</div>
+                ? <div className="text-[9px] text-gray-600 mt-0.5 break-all leading-tight font-mono" dir="ltr" title={b.group}>{b.group}</div>
                 : <div className="text-[9px] text-emerald-600 mt-0.5">متاح</div>}
             </div>
           );
