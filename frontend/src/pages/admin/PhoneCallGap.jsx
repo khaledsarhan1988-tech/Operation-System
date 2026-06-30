@@ -1,7 +1,7 @@
 'use client';
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { PhoneCall, AlertTriangle, Users, TrendingDown, Search, UserPlus, CalendarPlus, CheckCircle2 } from 'lucide-react';
+import { PhoneCall, AlertTriangle, Users, TrendingDown, Search, UserPlus, CalendarPlus, CheckCircle2, Lightbulb, X, Clock } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import EmptyState from '../../components/ui/EmptyState';
@@ -19,6 +19,7 @@ export default function PhoneCallGap() {
   const [callsPerHour, setCallsPerHour] = useState(4);
   const [onlyGap, setOnlyGap] = useState(true);
   const [q, setQ] = useState('');
+  const [showSugg, setShowSugg] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['phone-call-gap', section, callsPerHour],
@@ -30,6 +31,16 @@ export default function PhoneCallGap() {
 
   const totals = data?.totals || {};
   const sections = data?.sections || [];
+  const suggestions = data?.suggestions || [];
+  // hourly demand bars for the chosen section (or summed across all)
+  const hourlyBars = useMemo(() => {
+    const h = data?.hourly; if (!h) return [];
+    const acc = {};
+    const keys = section === 'all' ? Object.keys(h) : [section];
+    for (const k of keys) for (const { hour, calls } of (h[k] || [])) acc[hour] = (acc[hour] || 0) + calls;
+    return Object.entries(acc).map(([hour, calls]) => ({ hour: +hour, calls })).sort((a, b) => a.hour - b.hour);
+  }, [data, section]);
+  const maxBar = Math.max(1, ...hourlyBars.map(b => b.calls));
   const rows = useMemo(() => {
     let r = data?.groups || [];
     if (onlyGap) r = r.filter(x => x.gap > 0);
@@ -64,6 +75,31 @@ export default function PhoneCallGap() {
         <div className="relative mr-auto">
           <Search className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="مجموعة / منسق..." className="pr-8 pl-2 py-2 rounded-lg border border-gray-200 text-xs w-52" />
+        </div>
+        <button onClick={() => setShowSugg(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold shadow-sm">
+          <Lightbulb size={15} /> اقتراحات
+        </button>
+      </div>
+
+      {/* Suggestion #4 — hourly demand shape */}
+      <div className="bg-white rounded-2xl border border-gray-100 p-4">
+        <div className="flex items-center gap-2 mb-3 text-sm font-bold text-gray-700">
+          <Clock size={15} className="text-rose-500" /> توزيع جلسات الفون كول بالساعة
+          <span className="text-[11px] font-normal text-gray-400">(الطلب القادم — يوضّح ساعات الذروة)</span>
+        </div>
+        {hourlyBars.length === 0 ? <div className="text-center text-gray-300 text-xs py-6">—</div> : (
+          <div className="flex items-end gap-2 h-36" dir="ltr">
+            {hourlyBars.map(b => (
+              <div key={b.hour} className="flex-1 flex flex-col items-center justify-end gap-1">
+                <span className="text-[10px] font-bold text-rose-700">{num(b.calls)}</span>
+                <div className="w-full rounded-t bg-gradient-to-t from-rose-400 to-rose-300" style={{ height: `${Math.max(4, (b.calls / maxBar) * 100)}%` }} />
+                <span className="text-[10px] text-gray-500">{String(b.hour).padStart(2, '0')}:00</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="mt-2 text-[11px] text-blue-700 bg-blue-50 rounded-lg px-3 py-1.5">
+          الطلب مركّز مساءً (16:00–00:00) = نفس ساعات شيفت مدربي الفون كول. لو ساعة معيّنة عالية جدًا فوق الباقي ⟵ اختناق وقتي محتمل رغم اتساع الأسبوع.
         </div>
       </div>
 
@@ -147,6 +183,58 @@ export default function PhoneCallGap() {
         </div>
         {rows.length > 0 && <div className="px-4 py-2 text-[11px] text-gray-400 border-t">عرض {rows.length} مجموعة</div>}
       </div>
+
+      {/* Suggestions side drawer */}
+      {showSugg && (
+        <div className="fixed inset-0 z-50 flex" dir="rtl">
+          <div className="flex-1 bg-black/30" onClick={() => setShowSugg(false)} />
+          <div className="w-full max-w-md bg-white h-full overflow-y-auto shadow-2xl animate-slideIn">
+            <div className="sticky top-0 bg-amber-500 text-white px-5 py-3 flex items-center justify-between">
+              <span className="font-black flex items-center gap-2"><Lightbulb size={18} /> اقتراحات السعة</span>
+              <button onClick={() => setShowSugg(false)} className="p-1 hover:bg-white/20 rounded"><X size={18} /></button>
+            </div>
+            <div className="p-4 space-y-4">
+              <p className="text-[12px] text-gray-500">
+                لكل قسم: مدربو الأساسي → المجموعات → ساعات الفون كول المطلوبة على الأيام العكسية، مقابل سعة مدربي الفون كول.
+              </p>
+              {suggestions.map(s => (
+                <div key={s.section} className={`rounded-2xl border p-4 ${SEC_TONE[s.section]}`}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-black text-base">{s.label}</span>
+                    <span className="text-[11px] opacity-80">{s.main_trainers} مدرب أساسي</span>
+                  </div>
+                  <div className="text-[11px] opacity-80 mb-3">
+                    متوسط {s.avg_students} طالب/مجموعة · مدة المجموعة {s.group_duration_h}س
+                    {s.main_trainers_missing_shift > 0 && <span className="text-rose-600 font-bold"> · {s.main_trainers_missing_shift} بدون بيانات شيفت</span>}
+                  </div>
+
+                  {/* ACTUAL (reliable) */}
+                  <div className="bg-white/70 rounded-xl p-3 mb-2">
+                    <div className="text-[11px] font-black mb-1 flex items-center gap-1"><CheckCircle2 size={12} /> الواقعي (المجموعات الحالية)</div>
+                    <div className="text-[12px]">{s.actual.current_groups} مجموعة · طلب <b>{num(s.actual.weekly_demand_calls)}</b> / سعة <b>{num(s.actual.capacity_weekly_calls)}</b> مكالمة/أسبوع</div>
+                    <div className={`mt-1 inline-block text-[11px] font-bold px-2 py-0.5 rounded ${s.actual.sufficient ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+                      {s.actual.sufficient ? 'السعة تكفي ✓' : `ناقص ${s.actual.trainers_needed} مدرب`}
+                    </div>
+                  </div>
+
+                  {/* POTENTIAL (planning ceiling) */}
+                  <div className="bg-white/50 rounded-xl p-3">
+                    <div className="text-[11px] font-black mb-1 flex items-center gap-1"><TrendingDown size={12} /> النظري (لو الأساسي اشتغل بأقصى سعة)</div>
+                    <div className="text-[12px]">أقصى {s.potential.max_groups} مجموعة · طلب <b>{num(s.potential.weekly_demand_calls)}</b> / سعة <b>{num(s.potential.capacity_weekly_calls)}</b> مكالمة/أسبوع</div>
+                    <div className={`mt-1 inline-block text-[11px] font-bold px-2 py-0.5 rounded ${s.potential.shortfall === 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                      {s.potential.shortfall === 0 ? 'السعة تكفي ✓' : `عجز ${num(s.potential.shortfall)}/أسبوع ← ~${s.potential.trainers_needed} مدرب`}
+                    </div>
+                    <div className="mt-1.5 text-[10px] text-gray-500 flex items-start gap-1">
+                      <AlertTriangle size={11} className="shrink-0 mt-0.5" />
+                      تقديري — سقف أقصى من ساعات الشيفت{s.main_trainers_missing_shift > 0 ? ` (ناقص ${s.main_trainers_missing_shift} مدرب بدون بيانات شيفت فالرقم أقل من الواقع)` : ''}.
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -7897,7 +7897,102 @@ router.get('/phone-call-gap', (req, res) => {
       };
     });
 
+    // ── SUGGESTIONS panel: main-lecture trainers → groups → implied zoom demand ──
+    // Two views per section: ACTUAL (current groups, reliable) + POTENTIAL (max
+    // groups the main shifts could hold, a planning ceiling flagged as such —
+    // depends on shift-day data that's incomplete for some trainers).
+    const GROUP_DUR = { general: 1.5, semi: 1, private: 1 };   // typical main-lecture hours (verified from live)
+    const COURSE_WEEKS = 4;                                     // 8 main lectures ÷ 2/week
+    const PAIRS = { sat_tue: ['saturday', 'tuesday'], sun_wed: ['sunday', 'wednesday'], mon_thu: ['monday', 'thursday'] };
+    const PAIR_AR = { sat_tue: 'سبت + ثلاثاء', sun_wed: 'أحد + أربعاء', mon_thu: 'إثنين + خميس' };
+    // average students per active group, per section (from the groups we loaded)
+    const secAgg = {}; SEC.forEach(s => secAgg[s] = { stu: 0, n: 0 });
+    for (const r of rows) { secAgg[r.section].stu += r.trainees; secAgg[r.section].n++; }
+    // main-lecture trainers per section: name → { day: maxHours }
+    const mainBySec = {}; SEC.forEach(s => mainBySec[s] = { trainers: new Map(), missing: 0 });
+    for (const t of members) {
+      const shifts = parseTeamShifts(t);
+      const secs = new Set();
+      if (SEC.includes(String(t.section || ''))) secs.add(t.section);
+      for (const sh of shifts) if (SEC.includes(String(sh.section || ''))) secs.add(sh.section);
+      for (const sec of secs) {
+        const dayHours = {};
+        for (const sh of shifts) {
+          if (String(sh.section || '') !== sec) continue;
+          for (const d of sh.days) dayHours[d] = Math.max(dayHours[d] || 0, (sh.endMin - sh.startMin) / 60);
+        }
+        if (Object.keys(dayHours).length) mainBySec[sec].trainers.set(t.name, dayHours);
+        else mainBySec[sec].missing++;
+      }
+    }
+    const suggestions = sections.map(sObj => {
+      const sec = sObj.section, m = mainBySec[sec];
+      const avgStudents = secAgg[sec].n ? +(secAgg[sec].stu / secAgg[sec].n).toFixed(1) : 0;
+      const perTrainer = sObj.per_trainer_weekly_calls;
+      // POTENTIAL: max groups the main shifts could run + implied weekly zoom calls
+      let maxGroups = 0; const daysSet = new Set();
+      for (const [, dh] of m.trainers) {
+        Object.keys(dh).forEach(d => daysSet.add(d));
+        for (const [, pd] of Object.entries(PAIRS)) {
+          if (dh[pd[0]] && dh[pd[1]]) maxGroups += Math.floor(Math.min(dh[pd[0]], dh[pd[1]]) / GROUP_DUR[sec]);
+        }
+      }
+      const potentialWeeklyCalls = Math.round(maxGroups * avgStudents * PER_STUDENT / COURSE_WEEKS);
+      const potShort = Math.max(0, potentialWeeklyCalls - sObj.capacity_weekly_calls);
+      // ACTUAL: current groups already need the section's peak weekly demand
+      return {
+        section: sec, label: sObj.label,
+        avg_students: avgStudents, group_duration_h: GROUP_DUR[sec],
+        main_trainers: m.trainers.size + m.missing,
+        main_trainers_with_shift: m.trainers.size,
+        main_trainers_missing_shift: m.missing,
+        shift_days: [...daysSet],
+        actual: {
+          current_groups: sObj.groups,
+          weekly_demand_calls: sObj.peak_weekly_demand,
+          capacity_weekly_calls: sObj.capacity_weekly_calls,
+          sufficient: sObj.capacity_sufficient,
+          trainers_needed: sObj.trainers_needed,
+        },
+        potential: {
+          max_groups: maxGroups,
+          weekly_demand_calls: potentialWeeklyCalls,
+          capacity_weekly_calls: sObj.capacity_weekly_calls,
+          shortfall: potShort,
+          trainers_needed: (perTrainer > 0 && potShort > 0) ? Math.ceil(potShort / perTrainer) : 0,
+        },
+      };
+    });
+
+    // ── HOURLY demand shape (suggestion #4): future side sessions by hour, per section ──
+    const sectionByGroup = new Map(rows.map(r => [r.group_name + '|' + r.line, r.section]));
+    const sideTimeRows = db.prepare(
+      `SELECT l.group_name, l.line, l.time
+         FROM lectures l
+         INNER JOIN (SELECT group_name, line, date(MAX(synced_at)) sd
+                       FROM lectures WHERE session_type='side' GROUP BY group_name, line) ls
+           ON l.group_name=ls.group_name AND l.line=ls.line AND date(l.synced_at)=ls.sd
+        WHERE l.session_type='side' AND l.date >= date('now','+2 hours')${line ? ' AND l.line = ?' : ''}`
+    ).all(...lineP);
+    const hourly = {}; SEC.forEach(s => hourly[s] = {});
+    for (const r of sideTimeRows) {
+      const sec = sectionByGroup.get(r.group_name + '|' + r.line);
+      if (!sec) continue;
+      const mins = parseTime12(r.time);   // returns MINUTES-of-day (or -1)
+      if (mins < 0) continue;
+      const h = Math.floor(mins / 60);
+      hourly[sec][h] = (hourly[sec][h] || 0) + 1;
+    }
+    // capacity reference: phone-call trainers available per hour × calls_per_hour (per day)
+    const hourlyOut = {};
+    for (const sec of SEC) {
+      const arr = [];
+      for (let h = 0; h < 24; h++) if (hourly[sec][h]) arr.push({ hour: h, calls: hourly[sec][h] });
+      hourlyOut[sec] = arr.sort((a, b) => a.hour - b.hour);
+    }
+
     const visibleSections = sectionFilter === 'all' ? sections : sections.filter(s => s.section === sectionFilter);
+    const visibleSuggestions = sectionFilter === 'all' ? suggestions : suggestions.filter(s => s.section === sectionFilter);
     const visibleRows = sectionFilter === 'all' ? rows : rows.filter(r => r.section === sectionFilter);
     visibleRows.sort((a, b) => b.gap - a.gap);
 
@@ -7911,8 +8006,9 @@ router.get('/phone-call-gap', (req, res) => {
     };
 
     return res.json({
-      params: { per_student: PER_STUDENT, calls_per_hour: callsPerHour, section: sectionFilter },
+      params: { per_student: PER_STUDENT, calls_per_hour: callsPerHour, section: sectionFilter, course_weeks: COURSE_WEEKS },
       totals, sections: visibleSections, groups: visibleRows,
+      suggestions: visibleSuggestions, hourly: hourlyOut,
     });
   } catch (err) {
     console.error('[reports] phone-call-gap:', err);
