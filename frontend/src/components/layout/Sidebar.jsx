@@ -8,7 +8,7 @@ import {
   LogOut, Headphones, GraduationCap, ShieldCheck, AlertTriangle, Activity, Shuffle, Kanban,
   TrendingUp, Target, Settings, Award, Snowflake, Goal, Database, ChevronDown, Sparkles, BarChart3,
   Cloud, History, Network, ListTodo, ClipboardCheck, CalendarClock, KeyRound, Wallet,
-  Link as LinkIcon, GitBranch,
+  Link as LinkIcon, GitBranch, PhoneCall,
 } from 'lucide-react';
 import UserAvatar from '../ui/UserAvatar';
 
@@ -105,7 +105,7 @@ const REPORT_LINKS = [
       { to: '/admin/reports/trainer-utilization',    label: 'nav.trainerUtilization',   icon: Activity,  color: 'teal'   },
       { to: '/admin/reports/find-available-trainer', label: 'nav.findAvailableTrainer', icon: Sparkles,  color: 'cyan'   },
       { to: '/admin/reports/trainer-dashboard',      label: 'nav.trainerDashboard',     icon: BarChart3, color: 'indigo' },
-      { to: '/admin/reports/trainer-work-history',   label: 'سجل عمل المدربين',          icon: History,   color: 'violet' },
+      { to: '/admin/reports/phone-call-gap',         label: 'فجوة الفون كول',            icon: PhoneCall, color: 'rose'   },
       { to: '/admin/reports/trainer-details',        label: 'تفاصيل المدربين',           icon: Users,     color: 'amber'  },
     ],
   },
@@ -249,7 +249,7 @@ export default function Sidebar({ mobile, onClose }) {
         { to: '/reports/trainer-utilization',    label: 'nav.trainerUtilization',   icon: Activity,  color: 'teal'   },
         { to: '/reports/find-available-trainer', label: 'nav.findAvailableTrainer', icon: Sparkles,  color: 'cyan'   },
         { to: '/reports/trainer-dashboard',      label: 'nav.trainerDashboard',     icon: BarChart3, color: 'indigo' },
-        { to: '/reports/trainer-work-history',   label: 'سجل عمل المدربين',          icon: History,   color: 'violet' },
+        { to: '/reports/phone-call-gap',         label: 'فجوة الفون كول',            icon: PhoneCall, color: 'rose'   },
         { to: '/reports/trainer-details',        label: 'تفاصيل المدربين',           icon: Users,     color: 'amber'  },
       );
     }
