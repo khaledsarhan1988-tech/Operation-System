@@ -106,50 +106,64 @@ export default function PhoneCallGap() {
       {/* Top summary */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <SumCard icon={Users} label="مجموعات" value={num(totals.groups)} tone="bg-white border-gray-200 text-gray-800" />
-        <SumCard icon={PhoneCall} label="مطلوب / موجود" value={`${num(totals.required)} / ${num(totals.actual)}`} tone="bg-white border-gray-200 text-gray-800" />
+        <SumCard icon={PhoneCall} label="مطلوب / موجود (مكالمات)" value={`${num(totals.required)} / ${num(totals.actual)}`} tone="bg-white border-gray-200 text-gray-800" />
         <SumCard icon={CalendarPlus} label="جلسات ناقصة (محتاجة جدولة)" value={num(totals.gap)} tone="bg-rose-50 border-rose-200 text-rose-800" />
-        <SumCard icon={UserPlus} label="مدربين ناقصين (سعة)" value={num(totals.trainers_needed)} tone="bg-emerald-50 border-emerald-200 text-emerald-800" />
+        <SumCard icon={UserPlus} label="مدربين زوم ناقصين (سعة)" value={num(totals.trainers_needed)} tone="bg-emerald-50 border-emerald-200 text-emerald-800" />
+      </div>
+
+      {/* Per-section DAY-PAIR hours balance — the main view */}
+      <div className="space-y-3">
+        {sections.map(s => (
+          <div key={s.section} className={`rounded-2xl border p-4 ${SEC_TONE[s.section] || 'border-gray-200 bg-white'}`}>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+              <span className="font-black text-base">{s.label}</span>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
+                <span><b>{s.main_trainers}</b> مدرب أساسي <span className="opacity-70">({(s.main_trainer_days || []).join('، ') || '—'})</span></span>
+                <span><b>{s.zoom_trainers}</b> مدرب زوم <span className="opacity-70">({(s.zoom_trainer_days || []).join('، ') || '—'})</span></span>
+                <span className={`font-black px-2 py-0.5 rounded ${s.total_balance_hours >= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+                  الإجمالي: {s.total_balance_hours >= 0 ? `زيادة +${s.total_balance_hours}` : `عجز ${s.total_balance_hours}`}س/أسبوع
+                </span>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-[12px]" style={{ minWidth: '520px' }}>
+                <thead><tr className="text-[10px] opacity-70 border-b border-current/10">
+                  <th className="text-right py-1.5 font-semibold">أيام الزوم كول</th>
+                  <th className="py-1.5 font-semibold">مجموعات</th>
+                  <th className="py-1.5 font-semibold">ساعات مطلوبة</th>
+                  <th className="py-1.5 font-semibold">ساعات متاحة</th>
+                  <th className="py-1.5 font-semibold">العجز / الزيادة</th>
+                </tr></thead>
+                <tbody>
+                  {(s.day_balance || []).map((d, i) => (
+                    <tr key={i} className="border-b border-current/5 last:border-0">
+                      <td className="text-right py-2 font-bold text-blue-700">{d.side_pair}</td>
+                      <td className="text-center">{d.groups}</td>
+                      <td className="text-center font-semibold">{d.demand_hours}س</td>
+                      <td className="text-center font-semibold">{d.supply_hours}س</td>
+                      <td className="text-center">
+                        <span className={`inline-block px-2 py-0.5 rounded font-black ${d.balance >= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+                          {d.balance >= 0 ? `زيادة +${d.balance}` : `عجز ${d.balance}`}س
+                          {d.balance < 0 && <span className="opacity-70 font-normal"> (~{Math.ceil(-d.balance / 14)} مدرب)</span>}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Interpretation banner */}
       <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5 text-[12px] text-blue-800 flex items-start gap-2">
         <AlertTriangle size={15} className="text-blue-500 shrink-0 mt-0.5" />
         <span>
-          <b>«جلسات ناقصة»</b> = جلسات فون كول المفروض تتعمل ولسه ماتجدولتش.{' '}
-          <b>«مدربين ناقصين»</b> = الناقص فعلًا في السعة (ذروة الطلب الأسبوعي مقابل سعة المدربين الحاليين).{' '}
-          لو «مدربين ناقصين = 0» والسعة تكفي ⟵ <b>العجز محتاج جدولة مش تعيين.</b>
+          <b>ساعات مطلوبة</b> = زوم كول لمجموعات القسم على أيامها (ذروة الأسبوع × ¼س للمكالمة).{' '}
+          <b>ساعات متاحة</b> = ساعات عمل مدربي الزوم في نفس اليومين.{' '}
+          <b>العجز في يوم معيّن</b> يحتاج مدرّب زوم على نفس اليومين — حتى لو الإجمالي زيادة (الفائض في أيام تانية مايغطّيش يوم ناقص).
         </span>
-      </div>
-
-      {/* Per-section cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        {sections.map(s => (
-          <div key={s.section} className={`rounded-2xl border p-4 ${SEC_TONE[s.section] || 'border-gray-200 bg-white'}`}>
-            <div className="flex items-center justify-between mb-2">
-              <span className="font-black text-base">{s.label}</span>
-              <span className="text-[11px] opacity-70">{s.groups} مجموعة</span>
-            </div>
-            <div className="grid grid-cols-3 gap-2 text-center mb-3">
-              <Mini label="مطلوب" value={num(s.required)} />
-              <Mini label="موجود" value={num(s.actual)} />
-              <Mini label="ناقصة جدولة" value={num(s.gap)} strong />
-            </div>
-            <div className="text-[11px] space-y-1 border-t border-current/10 pt-2">
-              <div>السعة: <b>{s.capacity_trainers}</b> مدرب × {s.per_trainer_weekly_calls} = <b>{num(s.capacity_weekly_calls)}</b> مكالمة/أسبوع</div>
-              <div>ذروة الطلب: <b>{num(s.peak_weekly_demand)}</b> مكالمة/أسبوع {s.peak_week ? `(${s.peak_week})` : ''}</div>
-              <div className="flex flex-wrap gap-x-3 opacity-80">{Object.entries(s.by_pair || {}).map(([k, v]) => <span key={k}>{k}: <b>{v}</b></span>)}</div>
-              {s.capacity_sufficient ? (
-                <div className="mt-1.5 inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 rounded-lg px-2 py-1 font-bold">
-                  <CheckCircle2 size={13} /> السعة تكفي — العجز محتاج جدولة
-                </div>
-              ) : (
-                <div className="mt-1.5 inline-flex items-center gap-1 bg-rose-100 text-rose-800 rounded-lg px-2 py-1 font-bold">
-                  <UserPlus size={13} /> ناقص {s.trainers_needed} مدرب (عجز ذروة {num(s.peak_shortfall)}/أسبوع)
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
       </div>
 
       {/* Groups table */}

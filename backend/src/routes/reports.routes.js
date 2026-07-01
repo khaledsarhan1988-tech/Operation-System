@@ -7791,8 +7791,9 @@ router.get('/phone-call-gap', (req, res) => {
 
     const SEC = ['general', 'semi', 'private'];
     const blankPair = () => ({ '1,4': 0, '6,2': 0, '0,3': 0 });
-    const bySec = {}; SEC.forEach(s => bySec[s] = { groups: 0, required: 0, actual: 0, gap: 0, by_pair: blankPair() });
+    const bySec = {}; SEC.forEach(s => bySec[s] = { groups: 0, required: 0, actual: 0, gap: 0, by_pair: blankPair(), groups_pair: blankPair() });
     const demandWk = {}; SEC.forEach(s => demandWk[s] = {});   // section → { isoWeek: demandCalls }
+    const demandWkPair = {}; SEC.forEach(s => demandWkPair[s] = { '1,4': {}, '6,2': {}, '0,3': {} });  // section → sidePair → { week: calls }
     const rows = [];
     for (const g of groups) {
       const trainees = g.tc || cliMap.get(g.group_name + '|' + g.line) || 0;
@@ -7804,7 +7805,7 @@ router.get('/phone-call-gap', (req, res) => {
       const dow = dowFromName(g.group_name);
       const pk = sidePairKey(dow) || '6,2';
       const b = bySec[sec];
-      b.groups++; b.required += required; b.actual += actual; b.gap += gap; b.by_pair[pk] += gap;
+      b.groups++; b.required += required; b.actual += actual; b.gap += gap; b.by_pair[pk] += gap; b.groups_pair[pk]++;
       // distribute REQUIRED across the ISO weeks of the group's course span
       const sp = spanMap.get(g.group_name + '|' + g.line);
       const mn = (sp && sp.mn) || g.sd, mx = (sp && sp.mx) || g.ed;
@@ -7812,7 +7813,7 @@ router.get('/phone-call-gap', (req, res) => {
         const wks = new Set([isoWeek(mx)]);
         for (let d = new Date(mn + 'T12:00:00Z'), end = new Date(mx + 'T12:00:00Z'); d <= end; d.setUTCDate(d.getUTCDate() + 7)) wks.add(isoWeek(d.toISOString().slice(0, 10)));
         const perWk = required / wks.size;
-        for (const w of wks) demandWk[sec][w] = (demandWk[sec][w] || 0) + perWk;
+        for (const w of wks) { demandWk[sec][w] = (demandWk[sec][w] || 0) + perWk; demandWkPair[sec][pk][w] = (demandWkPair[sec][pk][w] || 0) + perWk; }
       }
       rows.push({
         group_name: g.group_name, line: g.line, section: sec, dept_type: g.dept,
@@ -7837,11 +7838,23 @@ router.get('/phone-call-gap', (req, res) => {
       for (let i = 1; i < ivs.length; i++) { const [s, e] = ivs[i]; if (s > ce) { tot += ce - cs; cs = s; ce = e; } else ce = Math.max(ce, e); }
       return tot + (ce - cs);
     };
+    const DAY_AR3 = { saturday: 'سبت', sunday: 'أحد', monday: 'إثنين', tuesday: 'ثلاثاء', wednesday: 'أربعاء', thursday: 'خميس' };
     const capBySec = {}; SEC.forEach(s => capBySec[s] = { trainers: 0, weekly_calls: 0, names: [] });
+    const capDayHours = {}; SEC.forEach(s => capDayHours[s] = {});   // section → { day: netHours/week }
+    const zoomDays = {}; SEC.forEach(s => zoomDays[s] = new Set());
+    const mainNames = {}; SEC.forEach(s => mainNames[s] = new Set());
+    const mainDays = {}; SEC.forEach(s => mainDays[s] = new Set());
     for (const t of members) {
-      const shifts = parseTeamShifts(t).filter(sh => String(sh.section || '').startsWith('phone_call'));
+      const allShifts = parseTeamShifts(t);
+      // main-lecture trainer info (non-phone_call section shifts)
+      for (const sh of allShifts) {
+        const sc = String(sh.section || '');
+        if (SEC.includes(sc)) { mainNames[sc].add(t.name); sh.days.forEach(d => mainDays[sc].add(d)); }
+      }
+      // phone-call (zoom) capacity, per day + weekly
+      const shifts = allShifts.filter(sh => String(sh.section || '').startsWith('phone_call'));
       if (!shifts.length) continue;
-      const subShifts = {};   // sub-section → [shifts]
+      const subShifts = {};
       for (const sh of shifts) {
         const sub = sh.section.replace('phone_call_', '').replace('phone_call', 'general') || 'general';
         (subShifts[sub] = subShifts[sub] || []).push(sh);
@@ -7859,7 +7872,7 @@ router.get('/phone-call-gap', (req, res) => {
               if (rd.includes(day)) rests.push([r.startMin, r.endMin]);
             }
           }
-          if (ivs.length) weeklyMin += Math.max(0, unionMin(ivs) - unionMin(rests));
+          if (ivs.length) { const net = Math.max(0, unionMin(ivs) - unionMin(rests)); weeklyMin += net; capDayHours[sub][day] = (capDayHours[sub][day] || 0) + net / 60; zoomDays[sub].add(day); }
         }
         const calls = Math.round(weeklyMin / 60 * callsPerHour);
         capBySec[sub].trainers++; capBySec[sub].weekly_calls += calls; capBySec[sub].names.push(t.name);
@@ -7884,6 +7897,21 @@ router.get('/phone-call-gap', (req, res) => {
       const weeklyCapacity = c.weekly_calls;
       const peakShortfall = Math.max(0, peak - weeklyCapacity);
       const trainersNeeded = (perTrainer > 0 && peakShortfall > 0) ? Math.ceil(peakShortfall / perTrainer) : 0;
+      // ── DAY-PAIR HOURS BALANCE (what the owner wants): zoom demand vs zoom-trainer
+      // supply, in HOURS, per side day-pair. demand = peak weekly calls on the pair ×
+      // 0.25h; supply = phone-call trainers' net hours on the pair's 2 days.
+      const PAIR_DAYS = { '1,4': ['monday', 'thursday'], '6,2': ['saturday', 'tuesday'], '0,3': ['sunday', 'wednesday'] };
+      const dayOrder = ['saturday', 'sunday', 'monday', 'tuesday', 'wednesday', 'thursday'];
+      const dayBalance = ['1,4', '6,2', '0,3'].map(pkk => {
+        let pkPeak = 0; for (const [w, v] of Object.entries(demandWkPair[sec][pkk])) { if (w >= curWeek && v > pkPeak) pkPeak = v; }
+        const demandHours = +(Math.round(pkPeak) * 0.25).toFixed(1);
+        const supplyHours = +(PAIR_DAYS[pkk].reduce((a, d) => a + (capDayHours[sec][d] || 0), 0)).toFixed(1);
+        return {
+          side_pair: PAIR_LABEL[pkk], groups: b.groups_pair[pkk],
+          demand_hours: demandHours, supply_hours: supplyHours,
+          balance: +(supplyHours - demandHours).toFixed(1),
+        };
+      });
       return {
         section: sec,
         label: { general: 'عام', semi: 'شبه خاص', private: 'خاص' }[sec],
@@ -7894,6 +7922,15 @@ router.get('/phone-call-gap', (req, res) => {
         peak_weekly_demand: peak, peak_week: peakWeek,
         peak_shortfall: peakShortfall, capacity_sufficient: peakShortfall === 0,
         trainers_needed: trainersNeeded,
+        // owner's day-pair hours view
+        main_trainers: mainNames[sec].size,
+        main_trainer_days: dayOrder.filter(d => mainDays[sec].has(d)).map(d => DAY_AR3[d]),
+        zoom_trainers: c.trainers,
+        zoom_trainer_days: dayOrder.filter(d => zoomDays[sec].has(d)).map(d => DAY_AR3[d]),
+        day_balance: dayBalance,
+        total_demand_hours: +dayBalance.reduce((a, x) => a + x.demand_hours, 0).toFixed(1),
+        total_supply_hours: +dayBalance.reduce((a, x) => a + x.supply_hours, 0).toFixed(1),
+        total_balance_hours: +dayBalance.reduce((a, x) => a + x.balance, 0).toFixed(1),
       };
     });
 
