@@ -857,7 +857,7 @@ const MAX_REASONABLE_MIN = 6 * 60;  // > 6h on a single block = data anomaly →
 // line. Twins (same date+start+end) collapse to one. Each block is flagged
 // `already_exists` (same date/start/end already saved) and `anomaly` (unparseable
 // time / duration ≤0 / duration > 6h).
-function buildLectureBlocks(member, from, to) {
+function buildLectureBlocks(member, from, to, win) {
   // team_members.line is often 'All' (line-neutral) while lectures.line is a
   // concrete line ('Ahmed Hassan' / 'Dardasha'). Only constrain by line when the
   // member is pinned to a specific one — otherwise match across lines by name.
@@ -883,6 +883,9 @@ function buildLectureBlocks(member, from, to) {
     if (normTrainer(r.trainer) !== target) continue;
     const startMin = lecTime12ToMins(r.time);
     const durMin   = lecDurToMins(r.duration);
+    // Optional time window: keep only lectures whose START time is within
+    // [win.fromMin, win.toMin]. Unparseable times can't be placed → skipped.
+    if (win && (startMin === null || startMin < win.fromMin || startMin > win.toMin)) continue;
     let anomaly = false, start_time = null, end_time = null, duration_min = null;
     if (startMin === null || durMin === null || durMin <= 0 || durMin > MAX_REASONABLE_MIN) {
       anomaly = true;
@@ -907,23 +910,39 @@ function buildLectureBlocks(member, from, to) {
     a.date === b.date ? String(a.start_time).localeCompare(String(b.start_time)) : a.date.localeCompare(b.date));
 }
 
-// GET /api/team/:id/extra-shifts/from-lectures?from=&to= — PREVIEW only (no write)
+// GET /api/team/:id/extra-shifts/from-lectures?from=&to=&from_time=&to_time= — PREVIEW only (no write)
+// Optional from_time/to_time (24h HH:MM): restrict to lectures whose START time is
+// inside the window. Both or neither — one alone is an error.
 router.get('/:id/extra-shifts/from-lectures', (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!id) return res.status(400).json({ error: 'invalid member id' });
-  const { from, to } = req.query;
+  const { from, to, from_time, to_time } = req.query;
   if (!from || !/^\d{4}-\d{2}-\d{2}$/.test(String(from)) ||
       !to   || !/^\d{4}-\d{2}-\d{2}$/.test(String(to))) {
     return res.status(400).json({ error: 'from & to are required (YYYY-MM-DD)' });
   }
   if (String(from) > String(to)) return res.status(400).json({ error: 'from must be ≤ to' });
+
+  // Optional time window
+  let win = null;
+  if (from_time || to_time) {
+    if (!from_time || !to_time) {
+      return res.status(400).json({ error: 'حدد وقت البداية والنهاية معًا، أو سيبهم فاضيين' });
+    }
+    const ft = timeStrToMins(from_time), tt = timeStrToMins(to_time);
+    if (ft === null || tt === null) return res.status(400).json({ error: 'صيغة وقت غير صحيحة (HH:MM)' });
+    if (ft > tt) return res.status(400).json({ error: 'وقت البداية يجب أن يكون قبل وقت النهاية' });
+    win = { fromMin: ft, toMin: tt };
+  }
+
   const member = db.prepare(`SELECT id, name, line FROM team_members WHERE id = ?`).get(id);
   if (!member) return res.status(404).json({ error: 'team member not found' });
   try {
-    const blocks = buildLectureBlocks(member, String(from), String(to));
+    const blocks = buildLectureBlocks(member, String(from), String(to), win);
     return res.json({
       member: { id: member.id, name: member.name, line: member.line },
       from, to,
+      from_time: from_time || null, to_time: to_time || null,
       count: blocks.length,
       addable: blocks.filter(b => !b.already_exists && !b.anomaly).length,
       blocks,

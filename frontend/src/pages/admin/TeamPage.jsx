@@ -558,6 +558,8 @@ function ExtraShiftsSection({ memberId, inputCls, labelCls }) {
   const [genError, setGenError] = useState(null);
   const [genMsg, setGenMsg]     = useState(null);
   const [genLine, setGenLine]   = useState('');   // line filter ('' = all lines)
+  const [genFromTime, setGenFromTime] = useState('');   // optional time window (24h HH:MM)
+  const [genToTime, setGenToTime]     = useState('');
   const blockKey = (b) => `${b.date}|${b.start_time || ''}|${b.end_time || ''}`;
   // A line-neutral trainer (member.line='All') teaches on more than one line, and
   // each Drive line has its OWN Excel file — so the preview is filtered by line to
@@ -565,7 +567,9 @@ function ExtraShiftsSection({ memberId, inputCls, labelCls }) {
   const genVisible = (genData?.blocks || []).filter(b => !genLine || (b.line || '') === genLine);
 
   const previewMut = useMutation({
-    mutationFn: () => api.get(`/team/${memberId}/extra-shifts/from-lectures`, { params: { from: genFrom, to: genTo } }).then(r => r.data),
+    mutationFn: () => api.get(`/team/${memberId}/extra-shifts/from-lectures`, {
+      params: { from: genFrom, to: genTo, ...(genFromTime && genToTime ? { from_time: genFromTime, to_time: genToTime } : {}) },
+    }).then(r => r.data),
     onSuccess: (data) => {
       setGenData(data);
       setGenLine('');   // reset line filter; selection is seeded by the effect below
@@ -597,6 +601,12 @@ function ExtraShiftsSection({ memberId, inputCls, labelCls }) {
     setGenError(null); setGenMsg(null);
     if (!genFrom || !genTo) { setGenError('اختر الفترة (من / إلى)'); return; }
     if (genFrom > genTo) { setGenError('«من» لازم يكون قبل «إلى»'); return; }
+    if ((genFromTime && !genToTime) || (!genFromTime && genToTime)) {
+      setGenError('حدد وقت البداية والنهاية معًا، أو سيبهم فاضيين'); return;
+    }
+    if (genFromTime && genToTime && genFromTime > genToTime) {
+      setGenError('وقت البداية لازم يكون قبل وقت النهاية'); return;
+    }
     previewMut.mutate();
   }
   function toggleSel(key) {
@@ -695,6 +705,21 @@ function ExtraShiftsSection({ memberId, inputCls, labelCls }) {
                 <input type="date" className={inputCls} value={genTo} onChange={e => setGenTo(e.target.value)} />
               </div>
             </div>
+            {/* Optional time window — leave empty to include all times */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className={labelCls}>من الساعة <span className="text-[10px] text-gray-400">(اختياري)</span></label>
+                <input type="time" className={inputCls} value={genFromTime} onChange={e => setGenFromTime(e.target.value)} />
+              </div>
+              <div>
+                <label className={labelCls}>إلى الساعة <span className="text-[10px] text-gray-400">(اختياري)</span></label>
+                <input type="time" className={inputCls} value={genToTime} onChange={e => setGenToTime(e.target.value)} />
+              </div>
+            </div>
+            <p className="text-[10px] text-gray-400 leading-relaxed">
+              سيبهم فاضيين = كل الأوقات. حدّدهم = المحاضرات اللي وقت بدايتها جوّه النافذة بس.
+              {genFromTime && genToTime && <button type="button" onClick={() => { setGenFromTime(''); setGenToTime(''); }} className="text-amber-700 underline ms-1">مسح الوقت</button>}
+            </p>
             <button type="button" onClick={runPreview} disabled={previewMut.isPending}
               className="w-full py-2 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 text-sm font-bold disabled:opacity-50">
               {previewMut.isPending ? 'جاري البحث...' : 'معاينة المحاضرات'}
