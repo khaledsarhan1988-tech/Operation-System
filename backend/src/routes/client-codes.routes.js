@@ -31,8 +31,11 @@ router.get('/list', (req, res) => {
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
     const offset = (page - 1) * limit;
-    const where = q ? 'WHERE code LIKE ? OR client_name LIKE ? OR mobile_no LIKE ?' : '';
-    const params = q ? [`%${q}%`, `%${q}%`, `%${q}%`] : [];
+    // Mobiles are stored without the leading zero → strip a leading zero from both
+    // sides so "01555…" and "1555…" both match.
+    const qz = q.replace(/^0+/, '') || q;
+    const where = q ? "WHERE code LIKE ? OR client_name LIKE ? OR LTRIM(IFNULL(mobile_no,''),'0') LIKE ?" : '';
+    const params = q ? [`%${q}%`, `%${q}%`, `%${qz}%`] : [];
     const rows = db.prepare(`
       SELECT *, COUNT(*) OVER() AS _total FROM cs_client_codes
       ${where}

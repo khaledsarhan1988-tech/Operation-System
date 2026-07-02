@@ -284,4 +284,45 @@ router.get('/disk-usage', (req, res) => {
   }
 });
 
+// ─── DUP-CHECK DIAGNOSTIC (read-only, small JSON) ────────────────────────────
+// Returns just the duplicate-detection result as compact JSON so it can be
+// fetched WITHOUT downloading the whole 376 MB snapshot (which truncates under a
+// flaky network). Pure read-only. `code` is intentionally non-unique on
+// cs_sales_register, so duplicate MONEY rows can only be told apart by an
+// identical content signature (code+client+price+courses+entry_date).
+router.get('/sales-dups', (req, res) => {
+  try {
+    const salesCols = db.prepare("PRAGMA table_info(cs_sales_register)").all().map(c => c.name);
+    const codeCols  = db.prepare("PRAGMA table_info(cs_client_codes)").all().map(c => c.name);
+    const dupOps = db.prepare(`
+      SELECT code, client_name, price, courses, entry_date,
+             COUNT(*) AS n, GROUP_CONCAT(id) AS ids,
+             GROUP_CONCAT(substr(created_at,1,19)) AS created_at
+        FROM cs_sales_register
+       WHERE source = 'system'
+       GROUP BY IFNULL(code,''), IFNULL(client_name,''), IFNULL(price,''),
+                IFNULL(courses,''), IFNULL(entry_date,'')
+      HAVING n > 1
+       ORDER BY n DESC LIMIT 200
+    `).all();
+    const dupCodes = db.prepare(`
+      SELECT code, COUNT(*) AS n, GROUP_CONCAT(id) AS ids
+        FROM cs_client_codes GROUP BY code HAVING n > 1 ORDER BY n DESC LIMIT 200
+    `).all();
+    res.json({
+      generated_at: new Date().toISOString(),
+      guard: {
+        sales_has_client_request_id: salesCols.includes('client_request_id'),
+        codes_has_client_request_id: codeCols.includes('client_request_id'),
+      },
+      system_rows_total: db.prepare("SELECT COUNT(*) c FROM cs_sales_register WHERE source='system'").get().c,
+      system_rows_today: db.prepare("SELECT COUNT(*) c FROM cs_sales_register WHERE source='system' AND substr(created_at,1,10)=?").get(new Date().toISOString().slice(0,10)).c,
+      duplicate_operation_groups: dupOps,
+      duplicate_code_groups: dupCodes,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;

@@ -167,8 +167,11 @@ router.get('/list', (req, res) => {
       // Name = substring match; code + mobile = PREFIX match. Prefix avoids the
       // false positive where a short code (e.g. 22364) appears inside an
       // unrelated phone number (e.g. 1223643366 contains "22364").
-      where.push('(client_name LIKE ? OR mobile_no LIKE ? OR code LIKE ?)');
-      p.push(`%${q}%`, `${q}%`, `${q}%`);
+      // Mobiles are stored WITHOUT the leading zero (e.g. 1555…), so strip a
+      // leading zero from BOTH sides — searching "01555…" or "1555…" both match.
+      const qz = q.replace(/^0+/, '') || q;
+      where.push("(client_name LIKE ? OR LTRIM(IFNULL(mobile_no,''),'0') LIKE ? OR code LIKE ?)");
+      p.push(`%${q}%`, `${qz}%`, `${q}%`);
     }
     if (department) { where.push('department = ?');  p.push(department); }
     if (paymentWay) { where.push('payment_way = ?'); p.push(paymentWay); }
