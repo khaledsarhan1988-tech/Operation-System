@@ -96,6 +96,13 @@ router.post('/', (req, res) => {
   try {
     const code = str(req.body?.code);
     if (!code) return res.status(400).json({ error: 'الكود مطلوب' });
+    // Idempotency: a retry of a save that silently committed during a gateway 502
+    // returns the already-created row (instead of a confusing "code exists" 409).
+    const reqId = str(req.body?.client_request_id);
+    if (reqId) {
+      const prior = db.prepare('SELECT * FROM cs_client_codes WHERE client_request_id = ?').get(reqId);
+      if (prior) return res.status(200).json(prior);
+    }
     const dup = db.prepare('SELECT id FROM cs_client_codes WHERE code = ?').get(code);
     if (dup) return res.status(409).json({ error: `الكود «${code}» موجود بالفعل` });
     // Warn (not block) on a duplicate phone unless the caller confirms (force).
@@ -110,9 +117,9 @@ router.post('/', (req, res) => {
     }
     const ts = nowTs();
     const info = db.prepare(`
-      INSERT INTO cs_client_codes (code, client_name, mobile_no, note, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(code, str(req.body.client_name), str(req.body.mobile_no), str(req.body.note), ts, ts);
+      INSERT INTO cs_client_codes (code, client_name, mobile_no, note, client_request_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(code, str(req.body.client_name), str(req.body.mobile_no), str(req.body.note), reqId, ts, ts);
     saveNow();
     return res.status(201).json(db.prepare('SELECT * FROM cs_client_codes WHERE id = ?').get(info.lastInsertRowid));
   } catch (err) {

@@ -303,16 +303,41 @@ router.post('/', (req, res) => {
     const body = req.body || {};
     const installments = Array.isArray(body.installments) ? body.installments : [];
     const ts = nowTs();
+    const reqId = str(body.client_request_id);
 
     // NOTE: `code` is a CLIENT code, NOT a per-row id — one client legitimately
     // has many operation rows sharing the same code (course + refund + delay…).
     // So duplicate codes are EXPECTED and must not be blocked.
 
+    // Idempotency: if this exact create was already applied (a retry after a gateway
+    // 502 that had actually committed server-side), UPDATE that same row instead of
+    // inserting a DUPLICATE money row. Since `code` isn't unique we can't dedupe on
+    // content — the client_request_id (one per save action) is the only safe key.
+    if (reqId) {
+      const dup = db.prepare('SELECT id FROM cs_sales_register WHERE client_request_id = ?').get(reqId);
+      if (dup) {
+        const setSql = SALE_FIELDS.map(f => `${f} = ?`).join(', ');
+        const updateSale = db.prepare(`UPDATE cs_sales_register SET ${setSql}, updated_at = ? WHERE id = ?`);
+        const insertInstD = db.prepare(INSERT_INST);
+        db.transaction(() => {
+          updateSale.run(...saleValues(body), ts, dup.id);
+          db.prepare('DELETE FROM cs_sales_installments WHERE sale_id = ?').run(dup.id);
+          installments
+            .filter(ins => ins && Object.values(ins).some(v => str(v) !== null))
+            .forEach((ins, i) => insertInstD.run(instValues(dup.id, ins, i + 1)));
+        })();
+        saveNow();
+        const sale = db.prepare('SELECT * FROM cs_sales_register WHERE id = ?').get(dup.id);
+        const insts = db.prepare('SELECT * FROM cs_sales_installments WHERE sale_id = ? ORDER BY seq ASC').all(dup.id);
+        return res.status(200).json({ sale, installments: insts, deduped: true });
+      }
+    }
+
     const placeholders = SALE_FIELDS.map(() => '?').join(', ');
     const insertSale = db.prepare(`
       INSERT INTO cs_sales_register
-        (${SALE_FIELDS.join(', ')}, source, created_by, created_by_name, created_at, updated_at)
-      VALUES (${placeholders}, 'system', ?, ?, ?, ?)
+        (${SALE_FIELDS.join(', ')}, client_request_id, source, created_by, created_by_name, created_at, updated_at)
+      VALUES (${placeholders}, ?, 'system', ?, ?, ?, ?)
     `);
     const insertInst = db.prepare(INSERT_INST);
 
@@ -320,6 +345,7 @@ router.post('/', (req, res) => {
     db.transaction(() => {
       const info = insertSale.run(
         ...saleValues(body),
+        reqId,
         req.user.id || null,
         req.user.full_name || null,
         ts, ts

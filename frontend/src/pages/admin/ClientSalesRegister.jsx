@@ -163,8 +163,12 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
   // refetch must never overwrite what the user is typing — so once we've seeded
   // the form from the server we never re-seed it until the modal is reopened.
   const seededFor = useRef(null);
+  // Idempotency key for a NEW operation — generated ONCE per open and re-sent on
+  // every retry, so a save that silently committed during a gateway 502 can't be
+  // duplicated by the user clicking save again. Reset when the modal closes.
+  const reqIdRef = useRef(null);
   useEffect(() => {
-    if (!open) { seededFor.current = null; return; } // reset when modal closes
+    if (!open) { seededFor.current = null; reqIdRef.current = null; return; } // reset when modal closes
     const target = isEdit ? editId : 'new';
     if (seededFor.current === target) return;          // already seeded this open
     if (isEdit) {
@@ -193,6 +197,7 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
       seededFor.current = target;
     } else {
       setForm(EMPTY_FORM); setInstallments([]); setError(''); setMode('normal');
+      reqIdRef.current = (globalThis.crypto?.randomUUID?.() || `req-${Date.now()}-${Math.random().toString(36).slice(2)}`);
       seededFor.current = target;
     }
   }, [open, isEdit, editId, rowData]);
@@ -205,7 +210,7 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
       const payload = { ...form, balance, op_type: mode === 'normal' ? '' : mode, installments };
       return isEdit
         ? api.put(`/cs-sales-register/${editId}`, payload).then(r => r.data)
-        : api.post('/cs-sales-register', payload).then(r => r.data);
+        : api.post('/cs-sales-register', { ...payload, client_request_id: reqIdRef.current }).then(r => r.data);
     },
     onSuccess: () => { onSaved(); onClose(); },
     onError: (err) => setError(err?.response?.data?.error || 'فشل الحفظ'),

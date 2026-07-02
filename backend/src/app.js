@@ -3064,7 +3064,18 @@ initDb().then(db => {
       addCol('op_type', 'TEXT');
       addCol('transfer_consumed_levels', 'REAL');
       addCol('transfer_total_levels', 'REAL');
+      // Idempotency key for CREATE: lets a retried save (after a gateway 502 that had
+      // actually committed) update the same row instead of inserting a duplicate.
+      addCol('client_request_id', 'TEXT');
     }
+    // A client_request_id may appear at most once → a retried create can never
+    // produce a duplicate money row. Partial index so legacy NULLs are allowed.
+    db._raw.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_cs_sales_reqid ON cs_sales_register(client_request_id) WHERE client_request_id IS NOT NULL`);
+    {
+      const ccols = db._raw.prepare(`PRAGMA table_info(cs_client_codes)`).all().map(c => c.name);
+      if (!ccols.includes('client_request_id')) db._raw.run(`ALTER TABLE cs_client_codes ADD COLUMN client_request_id TEXT`);
+    }
+    db._raw.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_cs_client_codes_reqid ON cs_client_codes(client_request_id) WHERE client_request_id IS NOT NULL`);
 
     saveNow();
     console.log('✅ Migration: cs_sales_register + cs_sales_installments + cs_membership_prices + cs_client_codes tables ready');

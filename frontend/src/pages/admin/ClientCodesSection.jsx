@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Hash, Search, X, RefreshCw, Plus, Pencil, Trash2, Save, AlertTriangle, Download,
@@ -15,6 +15,9 @@ function FormModal({ open, row, onClose, onSaved }) {
   const [error, setError] = useState('');
   const [phoneWarn, setPhoneWarn] = useState('');
   const [syncedKey, setSyncedKey] = useState(null);
+  // Idempotency key for a NEW code — generated once per open, re-sent on retries so
+  // a save that silently committed during a gateway 502 can't be re-created.
+  const reqIdRef = useRef(null);
 
   // Suggest the next code (max+1) when adding a new one.
   const { data: nextData } = useQuery({
@@ -29,6 +32,7 @@ function FormModal({ open, row, onClose, onSaved }) {
     setForm(isEdit
       ? { code: row.code ?? '', client_name: row.client_name ?? '', mobile_no: row.mobile_no ?? '', note: row.note ?? '' }
       : { ...EMPTY, code: nextData?.next ?? '' });
+    if (!isEdit) reqIdRef.current = (globalThis.crypto?.randomUUID?.() || `req-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     setError(''); setPhoneWarn('');
     setSyncedKey(key);
   }
@@ -38,7 +42,7 @@ function FormModal({ open, row, onClose, onSaved }) {
       const body = { ...form, force };
       return isEdit
         ? api.put(`/client-codes/${row.id}`, body).then(r => r.data)
-        : api.post('/client-codes', body).then(r => r.data);
+        : api.post('/client-codes', { ...body, client_request_id: reqIdRef.current }).then(r => r.data);
     },
     onSuccess: () => { onSaved(); onClose(); },
     onError: (err) => {
