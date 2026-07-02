@@ -28,6 +28,19 @@ const PRIORITY_CFG = {
   low:    { label: 'منخفض', emoji: '⚪', color: '#9ca3af', bg: 'bg-gray-50',    text: 'text-gray-700',    border: 'border-gray-200' },
 };
 
+// Week days in the academy's order (work week starts Saturday). Used by the
+// multi-select recurrence picker; codes are the 3-letter en prefixes the
+// backend's recurrence_pattern 'weekly:sat,mon,...' understands.
+const WEEK_DAYS = [
+  { code: 'sat', label: 'السبت' },
+  { code: 'sun', label: 'الأحد' },
+  { code: 'mon', label: 'الإثنين' },
+  { code: 'tue', label: 'الثلاثاء' },
+  { code: 'wed', label: 'الأربعاء' },
+  { code: 'thu', label: 'الخميس' },
+  { code: 'fri', label: 'الجمعة' },
+];
+
 const STATUS_CFG = {
   new:         { label: 'جديدة',       color: '#60a5fa' },
   in_progress: { label: 'قيد التنفيذ', color: '#f59e0b' },
@@ -1003,7 +1016,22 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
   const [dueTime, setDueTime] = useState(todo?.due_time || '');
   const [assignedTo, setAssignedTo] = useState(todo?.assigned_to || '');
   const [isRecurring, setIsRecurring] = useState(todo?.is_recurring === 1);
-  const [recurrencePattern, setRecurrencePattern] = useState(todo?.recurrence_pattern || 'daily');
+  // Recurrence as multi-select weekdays. Parse the stored pattern into a mode
+  // ('daily' vs specific weekdays) + a set of day codes. 'monthly:*' (never
+  // created from this UI) falls back to daily.
+  const _initPat = todo?.recurrence_pattern || 'daily';
+  const [recurIsDaily, setRecurIsDaily] = useState(!_initPat.startsWith('weekly:'));
+  const [recurDays, setRecurDays] = useState(
+    _initPat.startsWith('weekly:')
+      ? _initPat.slice(7).split(',').map(s => s.trim()).filter(Boolean)
+      : []
+  );
+  // Source of truth sent to the backend.
+  const recurrencePattern = recurIsDaily ? 'daily' : `weekly:${recurDays.join(',')}`;
+  const toggleDay = (code) => {
+    setRecurIsDaily(false);
+    setRecurDays(d => d.includes(code) ? d.filter(x => x !== code) : [...d, code]);
+  };
   // Recurring-template scheduling + fan-out scope (only meaningful on templates)
   const [targetScope, setTargetScope] = useState(todo?.target_scope || 'user'); // user | department | all
   const [targetDept, setTargetDept]   = useState(todo?.department || '');       // dept when scope='department'
@@ -1037,6 +1065,9 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
     if (!title.trim()) { setError('العنوان مطلوب'); return; }
     if (isFanout && targetScope === 'department' && !targetDept) {
       setError('اختر القسم اللي هينزّله التاسك'); return;
+    }
+    if (recurringTemplate && !recurIsDaily && recurDays.length === 0) {
+      setError('اختر يوم واحد على الأقل للتكرار'); return;
     }
     if (recurringTemplate && recStart && recEnd && recEnd < recStart) {
       setError('تاريخ نهاية التكرار قبل تاريخ البداية'); return;
@@ -1181,20 +1212,48 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
                 </label>
                 {isRecurring && (
                   <div className="mt-2 space-y-2">
-                    <select value={recurrencePattern} onChange={e => setRecurrencePattern(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-violet-300 text-sm bg-white">
-                      <option value="daily">كل يوم</option>
-                      <option value="weekly:sat,sun,mon,tue,wed,thu">أيام العمل (سبت - خميس)</option>
-                      <option value="weekly:sat,sun,mon,tue,wed">سبت - أربعاء</option>
-                      <option value="weekly:fri,sat">عطلة (جمعة - سبت)</option>
-                      <option value="weekly:sun">كل أحد</option>
-                      <option value="weekly:mon">كل إثنين</option>
-                      <option value="weekly:tue">كل ثلاثاء</option>
-                      <option value="weekly:wed">كل أربعاء</option>
-                      <option value="weekly:thu">كل خميس</option>
-                      <option value="weekly:fri">كل جمعة</option>
-                      <option value="weekly:sat">كل سبت</option>
-                    </select>
+                    {/* Recurrence: كل يوم OR pick one-or-more specific weekdays */}
+                    <div>
+                      <span className="text-[11px] font-bold text-gray-600 block mb-1">التكرار</span>
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <button type="button" onClick={() => { setRecurIsDaily(true); setRecurDays([]); }}
+                          className={`px-3 py-1.5 rounded-lg border text-[11px] font-bold transition ${
+                            recurIsDaily ? 'border-violet-500 bg-violet-100 text-violet-700'
+                                         : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`}>
+                          كل يوم
+                        </button>
+                        <button type="button" onClick={() => setRecurIsDaily(false)}
+                          className={`px-3 py-1.5 rounded-lg border text-[11px] font-bold transition ${
+                            !recurIsDaily ? 'border-violet-500 bg-violet-50 text-violet-700'
+                                          : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`}>
+                          أيام محددة
+                        </button>
+                        {!recurIsDaily && (
+                          <button type="button"
+                            onClick={() => { setRecurIsDaily(false); setRecurDays(['sat','sun','mon','tue','wed','thu']); }}
+                            className="px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-[10px] font-bold text-gray-500 hover:border-gray-300">
+                            أيام العمل
+                          </button>
+                        )}
+                      </div>
+                      {!recurIsDaily && (
+                        <>
+                          <div className="flex flex-wrap gap-1.5">
+                            {WEEK_DAYS.map(d => (
+                              <button key={d.code} type="button" onClick={() => toggleDay(d.code)}
+                                className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-bold transition ${
+                                  recurDays.includes(d.code) ? 'border-violet-500 bg-violet-100 text-violet-700'
+                                                             : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`}>
+                                {d.label}
+                              </button>
+                            ))}
+                          </div>
+                          <p className="text-[10px] text-gray-500 mt-1">
+                            اختار يوم أو أكتر — التاسك هينزل في كل الأيام دي أسبوعيًا.
+                          </p>
+                        </>
+                      )}
+                    </div>
 
                     {/* Scope of the recurring task — who receives it */}
                     <div>
