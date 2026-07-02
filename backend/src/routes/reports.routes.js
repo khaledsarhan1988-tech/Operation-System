@@ -7719,6 +7719,9 @@ router.get('/phone-call-gap', (req, res) => {
     const callsPerHour    = Math.max(1, parseInt(req.query.calls_per_hour, 10) || 4);
     const sectionFilter   = ['general', 'semi', 'private'].includes(req.query.section) ? req.query.section : 'all';
     const line            = lineFilter(req);   // null for admin/All; honors ?line=
+    const dateRe          = /^\d{4}-\d{2}-\d{2}$/;
+    const fromDate        = dateRe.test(req.query.from || '') ? req.query.from : null;
+    const toDate          = dateRe.test(req.query.to   || '') ? req.query.to   : null;
 
     const DAY_NUM = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
     const TEACH_DAYS = ['saturday', 'sunday', 'monday', 'tuesday', 'wednesday', 'thursday'];
@@ -7750,6 +7753,11 @@ router.get('/phone-call-gap', (req, res) => {
     };
     const nowIso = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const curWeek = isoWeek(nowIso);
+    // Optional date-range filter: demand is measured only within the chosen window
+    // (weeks between fromWeek..toWeek). Defaults: from = this week, to = open.
+    const fromWeek = fromDate ? isoWeek(fromDate) : curWeek;
+    const toWeek = toDate ? isoWeek(toDate) : null;
+    const weekInRange = w => w >= fromWeek && (!toWeek || w <= toWeek);
 
     const lineSql = line ? ' AND line = ?' : '';
     const lineP = line ? [line] : [];
@@ -7890,7 +7898,7 @@ router.get('/phone-call-gap', (req, res) => {
       // peak upcoming weekly demand for this section
       let peak = 0, peakWeek = null;
       for (const [w, v] of Object.entries(demandWk[sec])) {
-        if (w < curWeek) continue;                 // only weeks from now forward
+        if (!weekInRange(w)) continue;             // within the chosen date window
         if (v > peak) { peak = v; peakWeek = w; }
       }
       peak = Math.round(peak);
@@ -7903,7 +7911,7 @@ router.get('/phone-call-gap', (req, res) => {
       const PAIR_DAYS = { '1,4': ['monday', 'thursday'], '6,2': ['saturday', 'tuesday'], '0,3': ['sunday', 'wednesday'] };
       const dayOrder = ['saturday', 'sunday', 'monday', 'tuesday', 'wednesday', 'thursday'];
       const dayBalance = ['1,4', '6,2', '0,3'].map(pkk => {
-        let pkPeak = 0; for (const [w, v] of Object.entries(demandWkPair[sec][pkk])) { if (w >= curWeek && v > pkPeak) pkPeak = v; }
+        let pkPeak = 0; for (const [w, v] of Object.entries(demandWkPair[sec][pkk])) { if (weekInRange(w) && v > pkPeak) pkPeak = v; }
         const demandHours = +(Math.round(pkPeak) * 0.25).toFixed(1);
         const supplyHours = +(PAIR_DAYS[pkk].reduce((a, d) => a + (capDayHours[sec][d] || 0), 0)).toFixed(1);
         return {
@@ -8009,8 +8017,8 @@ router.get('/phone-call-gap', (req, res) => {
          INNER JOIN (SELECT group_name, line, date(MAX(synced_at)) sd
                        FROM lectures WHERE session_type='side' GROUP BY group_name, line) ls
            ON l.group_name=ls.group_name AND l.line=ls.line AND date(l.synced_at)=ls.sd
-        WHERE l.session_type='side' AND l.date >= date('now','+2 hours')${line ? ' AND l.line = ?' : ''}`
-    ).all(...lineP);
+        WHERE l.session_type='side' AND l.date >= ?${toDate ? ' AND l.date <= ?' : ''}${line ? ' AND l.line = ?' : ''}`
+    ).all(fromDate || nowIso, ...(toDate ? [toDate] : []), ...lineP);
     const hourly = {}; SEC.forEach(s => hourly[s] = {});
     for (const r of sideTimeRows) {
       const sec = sectionByGroup.get(r.group_name + '|' + r.line);
@@ -8043,7 +8051,7 @@ router.get('/phone-call-gap', (req, res) => {
     };
 
     return res.json({
-      params: { per_student: PER_STUDENT, calls_per_hour: callsPerHour, section: sectionFilter, course_weeks: COURSE_WEEKS },
+      params: { per_student: PER_STUDENT, calls_per_hour: callsPerHour, section: sectionFilter, course_weeks: COURSE_WEEKS, from: fromDate, to: toDate },
       totals, sections: visibleSections, groups: visibleRows,
       suggestions: visibleSuggestions, hourly: hourlyOut,
     });

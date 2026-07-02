@@ -17,14 +17,16 @@ const num = n => (n ?? 0).toLocaleString('en-US');
 export default function PhoneCallGap() {
   const [section, setSection] = useState('all');
   const [callsPerHour, setCallsPerHour] = useState(4);
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
   const [onlyGap, setOnlyGap] = useState(true);
   const [q, setQ] = useState('');
   const [showSugg, setShowSugg] = useState(false);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['phone-call-gap', section, callsPerHour],
+    queryKey: ['phone-call-gap', section, callsPerHour, from, to],
     queryFn: () => api.get('/reports/phone-call-gap', {
-      params: { section, calls_per_hour: callsPerHour },
+      params: { section, calls_per_hour: callsPerHour, from: from || undefined, to: to || undefined },
     }).then(r => r.data),
     staleTime: 60 * 1000,
   });
@@ -64,6 +66,13 @@ export default function PhoneCallGap() {
           <select value={section} onChange={e => setSection(e.target.value)} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
             {Object.entries(SECTIONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-gray-500">من</span>
+          <input type="date" value={from} onChange={e => setFrom(e.target.value)} className="px-2 py-2 rounded-lg border border-gray-200 text-xs text-gray-700 bg-gray-50" />
+          <span className="text-xs font-bold text-gray-500">إلى</span>
+          <input type="date" value={to} onChange={e => setTo(e.target.value)} className="px-2 py-2 rounded-lg border border-gray-200 text-xs text-gray-700 bg-gray-50" />
+          {(from || to) && <button onClick={() => { setFrom(''); setTo(''); }} className="text-[11px] text-rose-500 font-bold hover:underline">مسح</button>}
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs font-bold text-gray-500">مكالمات/ساعة عمل</span>
