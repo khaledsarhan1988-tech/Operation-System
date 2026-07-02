@@ -5,6 +5,7 @@ const path = require('path');
 const db = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { resolveLeaderDepts, sqlInDepts } = require('../utils/leader-scope');
+const dailyTodos = require('../services/daily-todos.service');
 
 const router = express.Router();
 router.use(authenticate);
@@ -198,32 +199,18 @@ function addDaysCairo(n) {
 }
 
 // ─── Recurring instance generator ─────────────────────────────────────────────
-// For each recurring "template" todo, ensure that today's instance exists.
-// Templates are: is_recurring=1 AND parent_todo_id IS NULL.
-// Instances are: parent_todo_id = template.id, due_date = today.
-// Patterns supported:
-//   • 'daily'                                  → every day
-//   • 'weekly:sat,sun,mon,tue,wed,thu,fri'     → specific weekdays
-//   • 'monthly:15'                             → 15th of every month
-function recurrenceMatchesToday(pattern, today) {
-  if (!pattern) return false;
-  if (pattern === 'daily') return true;
-  if (pattern.startsWith('weekly:')) {
-    const days = pattern.slice(7).toLowerCase().split(',').map(s => s.trim());
-    const dayOfWeek = new Date(today + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' }).toLowerCase();
-    return days.some(d => d.startsWith(dayOfWeek));
-  }
-  if (pattern.startsWith('monthly:')) {
-    const day = parseInt(pattern.slice(8), 10);
-    const todayDay = parseInt(today.split('-')[2], 10);
-    return day === todayDay;
-  }
-  return false;
-}
-
+// For each recurring "template" todo VISIBLE to this viewer, ensure that
+// today's instance(s) exist. Templates are: is_recurring=1 AND
+// parent_todo_id IS NULL. Instances are: parent_todo_id = template.id.
+//
+// The scheduling + fan-out logic (pattern match, [start,end] window, and the
+// per-scope assignee resolution for 'department'/'all') lives ENTIRELY in
+// daily-todos.service.js so the lazy path here and the nightly cron / startup
+// catch-up all share one implementation and can never drift. This function
+// only decides WHICH templates the current viewer is allowed to trigger.
 function ensureTodayRecurringInstances(scope) {
   try {
-    const today = todayCairo();
+    const today = dailyTodos.todayCairo();
     const lineParam = scope.line === 'All' ? 'Ahmed Hassan' : scope.line;
 
     // Find all visible recurring templates for this user
@@ -272,29 +259,9 @@ function ensureTodayRecurringInstances(scope) {
       `).all(lineParam, scope.id, scope.id);
     }
 
-    const insertInstance = db.prepare(`
-      INSERT INTO todos
-        (title, description, status, priority, due_date, due_time,
-         created_by, assigned_to, department, management,
-         related_remark_id, tags, parent_todo_id, line)
-      VALUES (?,?,'new',?,?,?,?,?,?,?,?,?,?,?)
-    `);
-
+    const stmts = dailyTodos.makeStmts();
     for (const tmpl of templates) {
-      if (!recurrenceMatchesToday(tmpl.recurrence_pattern, today)) continue;
-
-      // Skip if today's instance already exists
-      const existing = db.prepare(
-        `SELECT id FROM todos WHERE parent_todo_id = ? AND due_date = ? LIMIT 1`
-      ).get(tmpl.id, today);
-      if (existing) continue;
-
-      insertInstance.run(
-        tmpl.title, tmpl.description, tmpl.priority,
-        today, tmpl.due_time,
-        tmpl.created_by, tmpl.assigned_to, tmpl.department, tmpl.management,
-        tmpl.related_remark_id, tmpl.tags, tmpl.id, tmpl.line
-      );
+      dailyTodos.generateInstancesForTemplate(tmpl, today, stmts);
     }
   } catch (e) {
     console.error('[todos] recurring generation error:', e.message);
@@ -874,13 +841,33 @@ router.post('/', express.json(), (req, res) => {
     // Single-day task → store NULL for end (signals "no range")
     if (dueDateEnd && dueDate && dueDateEnd === dueDate) dueDateEnd = null;
 
+    // ── Recurring-template scheduling + fan-out scope ──────────────────────
+    // target_scope is meaningful ONLY on recurring templates. Agents can never
+    // fan out (forced to their own 'user' scope). department/all templates are
+    // UNASSIGNED at the template level — the generator resolves the concrete
+    // assignees per day (see daily-todos.service.js).
+    const isRecurring = b.is_recurring ? 1 : 0;
+    let targetScope = 'user';
+    let templateDepartment = b.department || scope.department || null;
+    if (isRecurring && scope.role !== 'agent' &&
+        (b.target_scope === 'department' || b.target_scope === 'all')) {
+      targetScope = b.target_scope;
+      assignedTo = null;                       // fan-out template holds no assignee
+      if (targetScope === 'department') {
+        templateDepartment = b.department || null;   // required target dept
+      }
+    }
+    const recStart = isRecurring ? (b.recurrence_start_date || null) : null;
+    const recEnd   = isRecurring ? (b.recurrence_end_date   || null) : null;
+
     const result = db.prepare(`
       INSERT INTO todos
         (title, description, status, priority, due_date, due_date_end, due_time,
          created_by, assigned_to, department, management,
          related_remark_id, tags, is_recurring, recurrence_pattern,
+         recurrence_start_date, recurrence_end_date, target_scope,
          parent_todo_id, line)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       String(b.title).trim(),
       b.description || null,
@@ -891,12 +878,15 @@ router.post('/', express.json(), (req, res) => {
       b.due_time || null,
       scope.id,
       assignedTo,
-      b.department || scope.department || null,
+      templateDepartment,
       b.management || scope.management || null,
       b.related_remark_id || null,
       b.tags || null,
-      b.is_recurring ? 1 : 0,
+      isRecurring,
       b.recurrence_pattern || null,
+      recStart,
+      recEnd,
+      targetScope,
       b.parent_todo_id || null,
       scope.line === 'All' ? 'Ahmed Hassan' : scope.line,
     );
@@ -937,7 +927,9 @@ router.patch('/:id', express.json(), (req, res) => {
     const params = [];
     const allowed = ['title', 'description', 'status', 'priority', 'due_date', 'due_date_end', 'due_time',
                      'assigned_to', 'department', 'management', 'related_remark_id',
-                     'tags', 'is_recurring', 'recurrence_pattern', 'parent_todo_id'];
+                     'tags', 'is_recurring', 'recurrence_pattern',
+                     'recurrence_start_date', 'recurrence_end_date', 'target_scope',
+                     'parent_todo_id'];
 
     // Permission cascade:
     //   1. Non-creators (assignees + their leaders) can ONLY update `status`.

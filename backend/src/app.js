@@ -853,6 +853,40 @@ initDb().then(db => {
     console.error('todos.due_date_end migration error:', e.message);
   }
 
+  // ── todos: recurring-template scheduling (start/end date + fan-out scope) ──
+  // Additive, idempotent columns — meaningful ONLY on recurring templates
+  // (is_recurring=1 AND parent_todo_id IS NULL). Daily instances ignore them.
+  //   • recurrence_start_date — first day the template may fire (NULL = now)
+  //   • recurrence_end_date   — last day the template fires (NULL = forever)
+  //   • target_scope          — 'user' (legacy default) | 'department' | 'all'
+  //       - 'user'       → one instance for the template's assigned_to
+  //       - 'department' → one instance per ACTIVE agent in `department` + line
+  //       - 'all'        → one instance per ACTIVE agent in `management` + line
+  //     Fan-out is resolved at generation time so new hires are auto-included
+  //     and departed staff auto-dropped. Existing rows read as 'user' (NULL).
+  try {
+    const info = db._raw.exec(`PRAGMA table_info(todos)`);
+    const cols = info[0]?.values.map(r => r[1]) || [];
+    if (cols.length > 0) {
+      let added = false;
+      if (!cols.includes('recurrence_start_date')) {
+        db._raw.run(`ALTER TABLE todos ADD COLUMN recurrence_start_date TEXT`); added = true;
+      }
+      if (!cols.includes('recurrence_end_date')) {
+        db._raw.run(`ALTER TABLE todos ADD COLUMN recurrence_end_date TEXT`); added = true;
+      }
+      if (!cols.includes('target_scope')) {
+        db._raw.run(`ALTER TABLE todos ADD COLUMN target_scope TEXT`); added = true;
+      }
+      if (added) {
+        saveNow();
+        console.log('✅ Migration: added recurring-scheduling columns to todos (start/end date + target_scope)');
+      }
+    }
+  } catch (e) {
+    console.error('todos recurring-scheduling migration error:', e.message);
+  }
+
   // ── coordinator_history: backfill effective_from to earliest lecture date ──
   // Root cause: when a group is first synced, effective_from was set to the
   // sync timestamp (nowIso). If sessions were uploaded with dates BEFORE the

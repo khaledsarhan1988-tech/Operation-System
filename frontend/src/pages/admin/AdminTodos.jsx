@@ -1004,6 +1004,11 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
   const [assignedTo, setAssignedTo] = useState(todo?.assigned_to || '');
   const [isRecurring, setIsRecurring] = useState(todo?.is_recurring === 1);
   const [recurrencePattern, setRecurrencePattern] = useState(todo?.recurrence_pattern || 'daily');
+  // Recurring-template scheduling + fan-out scope (only meaningful on templates)
+  const [targetScope, setTargetScope] = useState(todo?.target_scope || 'user'); // user | department | all
+  const [targetDept, setTargetDept]   = useState(todo?.department || '');       // dept when scope='department'
+  const [recStart, setRecStart]       = useState(todo?.recurrence_start_date || '');
+  const [recEnd, setRecEnd]           = useState(todo?.recurrence_end_date || '');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
@@ -1015,8 +1020,27 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
   const leaderOptions = assignableUsers.filter(u => u.role === 'leader');
   const otherOptions  = assignableUsers.filter(u => u.role !== 'leader');
 
+  // Distinct departments among assignable users — used for the "قسم كامل"
+  // fan-out picker (future-proof: adapts to whatever departments exist).
+  const deptOptions = useMemo(() => {
+    const set = new Set();
+    assignableUsers.forEach(u => { if (u.department) set.add(u.department); });
+    return Array.from(set).sort();
+  }, [assignableUsers]);
+
+  // Whether this save is a fan-out template (one instance per agent, no single
+  // assignee). Only recurring, non-instance templates can fan out.
+  const recurringTemplate = isRecurring && !isInstance;
+  const isFanout = recurringTemplate && (targetScope === 'department' || targetScope === 'all');
+
   async function save() {
     if (!title.trim()) { setError('العنوان مطلوب'); return; }
+    if (isFanout && targetScope === 'department' && !targetDept) {
+      setError('اختر القسم اللي هينزّله التاسك'); return;
+    }
+    if (recurringTemplate && recStart && recEnd && recEnd < recStart) {
+      setError('تاريخ نهاية التكرار قبل تاريخ البداية'); return;
+    }
     setSubmitting(true); setError(null);
     try {
       const body = {
@@ -1024,10 +1048,18 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
         due_date: dueDate || null,
         due_date_end: dueDateEnd || null,
         due_time: dueTime || null,
-        assigned_to: assignedTo || null,
-        is_recurring: isRecurring && !isInstance ? 1 : 0,
-        recurrence_pattern: isRecurring && !isInstance ? recurrencePattern : null,
+        // Fan-out templates carry no single assignee — the generator resolves
+        // the concrete per-agent assignees each day.
+        assigned_to: isFanout ? null : (assignedTo || null),
+        is_recurring: recurringTemplate ? 1 : 0,
+        recurrence_pattern: recurringTemplate ? recurrencePattern : null,
+        target_scope: recurringTemplate ? targetScope : 'user',
+        recurrence_start_date: recurringTemplate && recStart ? recStart : null,
+        recurrence_end_date:   recurringTemplate && recEnd   ? recEnd   : null,
       };
+      // Only send department when it's the fan-out target, so normal tasks keep
+      // the backend's default-to-creator-department behaviour untouched.
+      if (recurringTemplate && targetScope === 'department') body.department = targetDept || null;
       if (isEdit) await api.patch(`/todos/${todo.id}`, body);
       else        await api.post('/todos', body);
       onSaved();
@@ -1108,9 +1140,12 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
             </p>
           )}
           <label className="block">
-            <span className="text-xs font-bold text-gray-600 block mb-1">مُكلّف لـ</span>
+            <span className="text-xs font-bold text-gray-600 block mb-1">
+              مُكلّف لـ
+              {isFanout && <span className="text-violet-600 font-normal"> — مُعطّل (بيتوزّع على {targetScope === 'all' ? 'الكل' : 'القسم'})</span>}
+            </span>
             <select value={assignedTo} onChange={e => setAssignedTo(e.target.value)}
-              disabled={lockContent}
+              disabled={lockContent || isFanout}
               className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white disabled:bg-gray-50 disabled:cursor-not-allowed">
               <option value="">— نفسي —</option>
               {isManagerViewer && leaderOptions.length > 0 ? (
@@ -1145,20 +1180,74 @@ function TodoEditModal({ todo, usersData, onClose, onSaved }) {
                   <span className="text-sm font-bold text-gray-800">🔁 مهمة متكررة</span>
                 </label>
                 {isRecurring && (
-                  <select value={recurrencePattern} onChange={e => setRecurrencePattern(e.target.value)}
-                    className="mt-2 w-full px-3 py-2 rounded-lg border border-violet-300 text-sm bg-white">
-                    <option value="daily">كل يوم</option>
-                    <option value="weekly:sat,sun,mon,tue,wed,thu">أيام العمل (سبت - خميس)</option>
-                    <option value="weekly:sat,sun,mon,tue,wed">سبت - أربعاء</option>
-                    <option value="weekly:fri,sat">عطلة (جمعة - سبت)</option>
-                    <option value="weekly:sun">كل أحد</option>
-                    <option value="weekly:mon">كل إثنين</option>
-                    <option value="weekly:tue">كل ثلاثاء</option>
-                    <option value="weekly:wed">كل أربعاء</option>
-                    <option value="weekly:thu">كل خميس</option>
-                    <option value="weekly:fri">كل جمعة</option>
-                    <option value="weekly:sat">كل سبت</option>
-                  </select>
+                  <div className="mt-2 space-y-2">
+                    <select value={recurrencePattern} onChange={e => setRecurrencePattern(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-violet-300 text-sm bg-white">
+                      <option value="daily">كل يوم</option>
+                      <option value="weekly:sat,sun,mon,tue,wed,thu">أيام العمل (سبت - خميس)</option>
+                      <option value="weekly:sat,sun,mon,tue,wed">سبت - أربعاء</option>
+                      <option value="weekly:fri,sat">عطلة (جمعة - سبت)</option>
+                      <option value="weekly:sun">كل أحد</option>
+                      <option value="weekly:mon">كل إثنين</option>
+                      <option value="weekly:tue">كل ثلاثاء</option>
+                      <option value="weekly:wed">كل أربعاء</option>
+                      <option value="weekly:thu">كل خميس</option>
+                      <option value="weekly:fri">كل جمعة</option>
+                      <option value="weekly:sat">كل سبت</option>
+                    </select>
+
+                    {/* Scope of the recurring task — who receives it */}
+                    <div>
+                      <span className="text-[11px] font-bold text-gray-600 block mb-1">النطاق — مين يستلم التاسك</span>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        {[
+                          { key: 'user',       label: 'موظف محدد' },
+                          { key: 'department', label: 'قسم كامل' },
+                          { key: 'all',        label: 'الكل' },
+                        ].map(s => (
+                          <button key={s.key} type="button" onClick={() => setTargetScope(s.key)}
+                            className={`px-2 py-1.5 rounded-lg border text-[11px] font-bold transition ${
+                              targetScope === s.key
+                                ? 'border-violet-500 bg-violet-100 text-violet-700'
+                                : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`}>
+                            {s.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {targetScope === 'department' && (
+                      <div>
+                        <span className="text-[11px] font-bold text-gray-600 block mb-1">القسم</span>
+                        <select value={targetDept} onChange={e => setTargetDept(e.target.value)}
+                          className="w-full px-3 py-2 rounded-lg border border-violet-300 text-sm bg-white">
+                          <option value="">— اختر القسم —</option>
+                          {deptOptions.map(d => (<option key={d} value={d}>{d}</option>))}
+                        </select>
+                      </div>
+                    )}
+
+                    {/* Start / end date of the recurrence */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="block">
+                        <span className="text-[11px] font-bold text-gray-600 block mb-1">يبدأ من (اختياري)</span>
+                        <input type="date" value={recStart} onChange={e => setRecStart(e.target.value)}
+                          className="w-full px-2 py-1.5 rounded-lg border border-violet-300 text-sm" />
+                      </label>
+                      <label className="block">
+                        <span className="text-[11px] font-bold text-gray-600 block mb-1">ينتهي في (اختياري)</span>
+                        <input type="date" value={recEnd} onChange={e => setRecEnd(e.target.value)}
+                          min={recStart || undefined}
+                          className="w-full px-2 py-1.5 rounded-lg border border-violet-300 text-sm" />
+                      </label>
+                    </div>
+
+                    <p className="text-[10px] text-violet-700 bg-violet-50 border border-violet-200 rounded px-2 py-1 leading-relaxed">
+                      💡 {isFanout
+                        ? <>هينزل نسخة لكل موظف {targetScope === 'all' ? 'في إدارتك' : `في قسم ${targetDept || '—'}`} تلقائيًا في كل يوم مطابق{recStart ? <> ابتداءً من <b>{recStart}</b></> : ''}{recEnd ? <> حتى <b>{recEnd}</b></> : ''}. كل موظف يعلّم نسخته «تمّت» بنفسه.</>
+                        : <>هينزل للموظف المختار في كل يوم مطابق{recStart ? <> ابتداءً من <b>{recStart}</b></> : ''}{recEnd ? <> حتى <b>{recEnd}</b></> : ''}.</>}
+                    </p>
+                  </div>
                 )}
               </>
             )}
