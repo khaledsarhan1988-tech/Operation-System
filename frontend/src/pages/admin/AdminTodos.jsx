@@ -954,7 +954,7 @@ function DailyWorkflowModal({ users, onClose, onApplied }) {
           <div className={`px-5 py-3 ${result.error ? 'bg-red-50 border-t border-red-200 text-red-700' : 'bg-emerald-50 border-t border-emerald-200 text-emerald-800'} text-sm flex items-center gap-2`}>
             {result.error
               ? <><AlertCircle size={16} /> {result.error}</>
-              : <><CheckCircle2 size={16} /> {result.message} — موزعة على {result.total_users} مستخدم</>}
+              : <><CheckCircle2 size={16} /> {result.message} — موزعة على {result.total_users} مستخدم{result.instances_created ? ` · ${result.instances_created} مهمة ظهرت فورًا عند الموظفين` : ''}</>}
           </div>
         )}
 

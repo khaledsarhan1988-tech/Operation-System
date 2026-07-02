@@ -1050,6 +1050,7 @@ router.post('/bulk-templates', express.json(), (req, res) => {
 
   let created = 0, skipped = 0;
   const details = [];
+  const createdIds = [];
 
   for (const uid of userIds) {
     const u = getUser.get(uid);
@@ -1061,7 +1062,7 @@ router.post('/bulk-templates', express.json(), (req, res) => {
       if (!title) continue;
       if (checkExisting.get(uid, title)) { skipped++; userSkipped++; continue; }
       try {
-        insertTemplate.run(
+        const ins = insertTemplate.run(
           title,
           t.description || null,
           t.priority || 'normal',
@@ -1073,6 +1074,7 @@ router.post('/bulk-templates', express.json(), (req, res) => {
           t.recurrence_pattern || 'daily',
           u.line || 'Ahmed Hassan',
         );
+        createdIds.push(ins.lastInsertRowid);
         created++; userCreated++;
       } catch (e) {
         details.push({ user_id: uid, task: title, error: e.message });
@@ -1081,9 +1083,24 @@ router.post('/bulk-templates', express.json(), (req, res) => {
     details.push({ user_id: uid, created: userCreated, skipped: userSkipped });
   }
 
+  // Generate the upcoming window immediately for the just-created templates so
+  // the new daily tasks appear in the employees' lists RIGHT AWAY — not only
+  // after the nightly cron. Idempotent + cheap (one template × window days).
+  let instances_created = 0;
+  if (createdIds.length) {
+    try {
+      const getT = db.prepare(`SELECT * FROM todos WHERE id = ?`);
+      for (const tid of createdIds) {
+        const r = dailyTodos.generateWindowForTemplate(getT.get(tid));
+        instances_created += r.created;
+      }
+    } catch (e) { console.error('[todos] bulk-templates window gen:', e.message); }
+  }
+
   return res.json({
     message: `تم إنشاء ${created} قالب، تخطي ${skipped} مكرّر`,
     created, skipped,
+    instances_created,
     total_users: userIds.length,
     total_templates: templates.length,
     details,
