@@ -892,6 +892,13 @@ router.post('/', express.json(), (req, res) => {
     );
 
     const todo = db.prepare(`SELECT * FROM todos WHERE id = ?`).get(result.lastInsertRowid);
+    // Pre-generate the upcoming window for a new recurring template so its
+    // instances show up immediately (this week + next), not only after the
+    // nightly cron. Idempotent + cheap (one template).
+    if (todo.is_recurring === 1 && todo.parent_todo_id == null) {
+      try { dailyTodos.generateWindowForTemplate(todo); }
+      catch (e) { console.error('[todos] window gen (create):', e.message); }
+    }
     return res.status(201).json({ todo });
   } catch (err) {
     console.error('[todos] create error:', err);
@@ -966,6 +973,23 @@ router.patch('/:id', express.json(), (req, res) => {
 
     db.prepare(`UPDATE todos SET ${fields.join(', ')} WHERE id = ?`).run(...params, req.params.id);
     const todo = db.prepare(`SELECT * FROM todos WHERE id = ?`).get(req.params.id);
+
+    // If a recurring template's SCHEDULE/SCOPE changed, drop its FUTURE
+    // still-untouched ('new') instances (due_date > today) and regenerate the
+    // upcoming window — so the edit takes effect going forward WITHOUT touching
+    // any instance the employee already started or completed.
+    const recurrenceFields = ['is_recurring', 'recurrence_pattern', 'target_scope',
+      'department', 'assigned_to', 'recurrence_start_date', 'recurrence_end_date', 'due_time'];
+    if (todo.is_recurring === 1 && todo.parent_todo_id == null
+        && canEditTodoContent(scope, existing)
+        && recurrenceFields.some(f => f in b)) {
+      try {
+        const today = dailyTodos.todayCairo();
+        db.prepare(`DELETE FROM todos WHERE parent_todo_id = ? AND status = 'new' AND due_date > ?`)
+          .run(todo.id, today);
+        dailyTodos.generateWindowForTemplate(todo);
+      } catch (e) { console.error('[todos] window regen (edit):', e.message); }
+    }
     return res.json({ todo });
   } catch (err) {
     console.error('[todos] update error:', err);
@@ -1104,7 +1128,8 @@ router.post('/admin/generate-daily', (req, res) => {
       return res.status(403).json({ error: 'صلاحية للأدمن العام فقط' });
     }
     const dailyTodosService = require('../services/daily-todos.service');
-    const r = dailyTodosService.generateDailyInstancesForAll();
+    // Fire the whole upcoming window now (this week + next), not just today.
+    const r = dailyTodosService.generateUpcomingInstances();
     return res.json({ ok: true, ...r });
   } catch (err) {
     console.error('[todos] generate-daily error:', err);

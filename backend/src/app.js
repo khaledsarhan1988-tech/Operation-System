@@ -3548,11 +3548,14 @@ initDb().then(db => {
     } else {
       cron.schedule(cronExpr, () => {
         try {
-          const r = dailyTodosService.generateDailyInstancesForAll();
+          // Pre-generate the whole upcoming window (today .. today+HORIZON) so
+          // employees can see the week(s) ahead, not just today. Rolling +
+          // idempotent: each nightly run extends the far edge by one day.
+          const r = dailyTodosService.generateUpcomingInstances();
           if (r.created > 0) saveNow();   // persist to disk only if we wrote rows
           console.log(
-            `📋 Daily-todos cron (${r.date}): templates=${r.total_templates} ` +
-            `matched=${r.matched} created=${r.created} skipped=${r.skipped}`
+            `📋 Daily-todos cron (${r.from}→${r.to}): templates=${r.total_templates} ` +
+            `created=${r.created} skipped=${r.skipped}`
           );
         } catch (e) {
           console.error('Daily-todos cron error:', e.message);
@@ -3572,10 +3575,12 @@ initDb().then(db => {
   setTimeout(() => {
     try {
       const dailyTodosService = require('./services/daily-todos.service');
-      const r = dailyTodosService.generateDailyInstancesForAll();
+      // Fill the whole upcoming window on every boot (covers a missed cron AND
+      // back-fills the week ahead for all existing templates after a deploy).
+      const r = dailyTodosService.generateUpcomingInstances();
       if (r.created > 0) {
         saveNow();
-        console.log(`📋 Daily-todos startup catch-up (${r.date}): created=${r.created}`);
+        console.log(`📋 Daily-todos startup catch-up (${r.from}→${r.to}): created=${r.created}`);
       }
     } catch (e) {
       console.error('Daily-todos startup catch-up error:', e.message);

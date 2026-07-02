@@ -34,6 +34,19 @@ function todayCairo() {
   return r?.d || new Date().toISOString().slice(0, 10);
 }
 
+// How many days AHEAD to pre-generate recurring instances so employees can see
+// the week(s) coming up (not just today). Env-overridable. Default 14 = the
+// current week + the next week. A rolling window: every nightly run extends it
+// by one day, so it always covers `today .. today+HORIZON`.
+const HORIZON_DAYS = Math.max(0, parseInt(process.env.RECURRING_HORIZON_DAYS, 10) || 14);
+
+// Add N calendar days to a YYYY-MM-DD string (UTC math — safe for plain dates).
+function addDays(dateStr, n) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
 // Does the template's recurrence pattern match the given date?
 // Supports:
 //   'daily'                              → every day
@@ -184,12 +197,72 @@ function generateDailyInstancesForAll(date = null) {
   };
 }
 
+/**
+ * Pre-generate instances for ALL active templates across a rolling window
+ * [from .. from+days]. Idempotent, so calling it repeatedly (nightly cron,
+ * startup) simply extends/fills the window without duplicating. Fetches the
+ * template set once and loops dates × templates.
+ *
+ * @param {number} days  horizon length (default HORIZON_DAYS)
+ * @param {string|null} from  window start YYYY-MM-DD (default today Cairo)
+ */
+function generateUpcomingInstances(days = HORIZON_DAYS, from = null) {
+  const start = from || todayCairo();
+  const templates = db.prepare(`
+    SELECT * FROM todos
+    WHERE is_recurring = 1
+      AND parent_todo_id IS NULL
+      AND status NOT IN ('cancelled')
+  `).all();
+
+  const stmts = makeStmts();
+  let created = 0, skipped = 0;
+  for (let i = 0; i <= days; i++) {
+    const d = addDays(start, i);
+    for (const tmpl of templates) {
+      const r = generateInstancesForTemplate(tmpl, d, stmts);
+      created += r.created;
+      skipped += r.skipped;
+    }
+  }
+  return {
+    from: start,
+    to: addDays(start, days),
+    days,
+    total_templates: templates.length,
+    created,
+    skipped,
+  };
+}
+
+/**
+ * Pre-generate the upcoming window for ONE template (used right after a
+ * template is created/edited so its upcoming days appear immediately without
+ * waiting for the nightly cron). Cheap: one template × (days+1) dates.
+ */
+function generateWindowForTemplate(tmpl, days = HORIZON_DAYS, from = null) {
+  if (!tmpl || tmpl.is_recurring !== 1 || tmpl.parent_todo_id != null) return { created: 0, skipped: 0 };
+  const start = from || todayCairo();
+  const stmts = makeStmts();
+  let created = 0, skipped = 0;
+  for (let i = 0; i <= days; i++) {
+    const r = generateInstancesForTemplate(tmpl, addDays(start, i), stmts);
+    created += r.created;
+    skipped += r.skipped;
+  }
+  return { from: start, to: addDays(start, days), days, created, skipped };
+}
+
 module.exports = {
+  HORIZON_DAYS,
   todayCairo,
+  addDays,
   recurrenceMatchesDate,
   templateFiresOn,
   resolveFanoutAssignees,
   makeStmts,
   generateInstancesForTemplate,
   generateDailyInstancesForAll,
+  generateUpcomingInstances,
+  generateWindowForTemplate,
 };
