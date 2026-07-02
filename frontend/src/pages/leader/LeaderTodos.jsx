@@ -114,7 +114,13 @@ export default function LeaderTodos() {
   // Manual/one-off "extra" tasks get their own dedicated section above the
   // board so leaders don't have to hunt through ~143 daily cards to find them.
   const kanbanTodos = useMemo(
-    () => filtered.filter(t => t.parent_todo_id != null),
+    () => filtered.filter(t => t.parent_todo_id != null).sort((a, b) => {
+      // Order daily cards by scheduled time (due_time "HH:MM") so each column
+      // reads in workflow order (10:00 → 10:15 → …); no-time tasks sink last.
+      const ta = a.due_time || '99:99';
+      const tb = b.due_time || '99:99';
+      return ta.localeCompare(tb) || (a.title || '').localeCompare(b.title || '');
+    }),
     [filtered]
   );
   const byColumn = useMemo(() => {

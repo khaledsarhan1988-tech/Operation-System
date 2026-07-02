@@ -125,7 +125,14 @@ export default function MyTodos() {
   // (one-off manual tasks). Templates themselves (is_recurring=1 + no parent)
   // are hidden by the API for this view.
   const dailyTodos = useMemo(
-    () => todos.filter(t => t.parent_todo_id != null),
+    () => todos.filter(t => t.parent_todo_id != null).sort((a, b) => {
+      // Order by scheduled time (due_time "HH:MM") so the list reads top-to-
+      // bottom like the daily workflow setup (10:00 → 10:15 → 10:30 …). Tasks
+      // without a time sink to the bottom; ties break by title.
+      const ta = a.due_time || '99:99';
+      const tb = b.due_time || '99:99';
+      return ta.localeCompare(tb) || (a.title || '').localeCompare(b.title || '');
+    }),
     [todos]
   );
   const extraTodos = useMemo(
