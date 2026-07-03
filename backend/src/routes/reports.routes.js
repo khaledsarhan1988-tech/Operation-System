@@ -8074,6 +8074,14 @@ router.get('/trainer-recruitment', (req, res) => {
     const PER_STUDENT   = 7;
     const sectionFilter = ['general', 'semi', 'private'].includes(req.query.section) ? req.query.section : 'all';
     const line          = lineFilter(req);   // null for admin/All; honors ?line=
+    // ── global filters (from/to already sanitized to YYYY-MM-DD by router middleware) ──
+    const fromDate   = req.query.from || null;   // '' → null
+    const toDate     = req.query.to   || null;
+    const hasDateF   = !!(fromDate || toDate);
+    // day_pair names the PHONE-CALL (side) day-pair; map to its side-pair key.
+    const DAYPAIR_SIDEKEY = { sat_tue: '6,2', sun_wed: '0,3', mon_thu: '1,4' };
+    const wantSideKey = DAYPAIR_SIDEKEY[req.query.day_pair] || null;   // null = all
+    const statusMode  = req.query.status === 'active' ? 'active' : 'all';   // default: include waiting
 
     const DAY_NUM = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
     // non-teaching / placeholder groups (same set as phone-call-gap)
@@ -8132,12 +8140,39 @@ router.get('/trainer-recruitment', (req, res) => {
     ).all(...lineP);
     const cliMap = new Map(cliRows.map(r => [r.group_name + '|' + r.line, r.c]));
 
+    // ── per-group main-lecture date span (current sheet) — for the date filter +
+    // the per-group first/last date shown in the expanded list ──
+    const spanRows = db.prepare(
+      `SELECT l.group_name, l.line, MIN(l.date) mn, MAX(l.date) mx
+         FROM lectures l
+         INNER JOIN (SELECT group_name, line, date(MAX(synced_at)) sd
+                       FROM lectures WHERE session_type='main' GROUP BY group_name, line) ls
+           ON l.group_name=ls.group_name AND l.line=ls.line AND date(l.synced_at)=ls.sd
+        WHERE l.session_type='main'${line ? ' AND l.line = ?' : ''}
+        GROUP BY l.group_name, l.line`
+    ).all(...lineP);
+    const spanMap = new Map(spanRows.map(r => [r.group_name + '|' + r.line, { mn: r.mn, mx: r.mx }]));
+    // A group counts within [from,to] if its main-lecture span OVERLAPS the window
+    // (i.e. it's running during the period). Groups with no main lectures are
+    // excluded when a date filter is active (can't place them in time).
+    const inDateWindow = sp => {
+      if (!hasDateF) return true;
+      if (!sp || !sp.mn || !sp.mx) return false;
+      if (fromDate && sp.mx < fromDate) return false;
+      if (toDate   && sp.mn > toDate)   return false;
+      return true;
+    };
+
     // ── aggregate demand per main trainer ──
     const blankPair = () => ({ '1,4': 0, '6,2': 0, '0,3': 0 });
     const byTrainer = new Map();
     let skippedNoTrainer = 0;
     for (const g of groups) {
       const key = g.group_name + '|' + g.line;
+      // ── global filters ──
+      if (statusMode === 'active' && g.status !== 'نشطة') continue;
+      const sp = spanMap.get(key);
+      if (!inDateWindow(sp)) continue;
       const gt = grpTrainer.get(key);
       if (!gt) { skippedNoTrainer++; continue; }          // no main trainer on current sheet
       const trainer = gt.trainer;
@@ -8147,6 +8182,7 @@ router.get('/trainer-recruitment', (req, res) => {
       const sec = sectionOf(g.dept);
       const dow = dowFromName(g.group_name);
       const pk  = sidePairKey(dow) || '6,2';
+      if (wantSideKey && pk !== wantSideKey) continue;     // day-pair filter (phone-call pair)
       const demand = trainees * PER_STUDENT;
 
       let t = byTrainer.get(trainer);
@@ -8164,6 +8200,9 @@ router.get('/trainer-recruitment', (req, res) => {
       t.group_list.push({
         group_name: g.group_name, line: g.line, section: sec, trainees,
         main_pair: mainPairLabel(dow), side_pair: PAIR_LABEL[pk] || '—', demand_month: demand,
+        // fields for the per-trainer LOCAL filter (client-side)
+        status: g.status, side_key: pk,
+        first_date: sp ? sp.mn : null, last_date: sp ? sp.mx : null,
       });
     }
 
@@ -8218,7 +8257,11 @@ router.get('/trainer-recruitment', (req, res) => {
     };
 
     return res.json({
-      params: { per_student: PER_STUDENT, section: sectionFilter, groups_without_main_trainer: skippedNoTrainer },
+      params: {
+        per_student: PER_STUDENT, section: sectionFilter,
+        from: fromDate, to: toDate, day_pair: req.query.day_pair || 'all', status: statusMode,
+        groups_without_main_trainer: skippedNoTrainer,
+      },
       totals, sections, trainers,
     });
   } catch (err) {

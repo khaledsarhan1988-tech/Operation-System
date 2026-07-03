@@ -1,7 +1,7 @@
 'use client';
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { UserPlus, PhoneCall, Users, Search, ChevronDown, ChevronLeft, GraduationCap } from 'lucide-react';
+import { UserPlus, PhoneCall, Users, Search, ChevronDown, ChevronLeft, GraduationCap, Filter, X } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import EmptyState from '../../components/ui/EmptyState';
@@ -12,16 +12,43 @@ const SEC_TONE = {
   semi:    'border-amber-200 bg-amber-50 text-amber-800',
   private: 'border-violet-200 bg-violet-50 text-violet-800',
 };
+// day_pair values name the PHONE-CALL (side) day-pair; side_key matches group_list.side_key
+const DAY_PAIRS = {
+  all:     { label: 'كل الأيام',      sideKey: null },
+  sat_tue: { label: 'سبت + ثلاثاء',   sideKey: '6,2' },
+  sun_wed: { label: 'أحد + أربعاء',   sideKey: '0,3' },
+  mon_thu: { label: 'إثنين + خميس',   sideKey: '1,4' },
+};
+const STATUS_OPTS = { all: 'تشمل بانتظار التسجيل', active: 'نشطة فقط' };
 const num = n => (n ?? 0).toLocaleString('en-US');
+// span [a,b] overlaps window [from,to]? (matches the backend rule)
+const overlaps = (mn, mx, from, to) => {
+  if (!from && !to) return true;
+  if (!mn || !mx) return false;
+  if (from && mx < from) return false;
+  if (to && mn > to) return false;
+  return true;
+};
 
 export default function TrainerRecruitment() {
   const [section, setSection] = useState('all');
   const [q, setQ] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [dayPair, setDayPair] = useState('all');
+  const [status, setStatus] = useState('all');
   const [open, setOpen] = useState({});   // trainer name → expanded?
 
   const { data, isLoading } = useQuery({
-    queryKey: ['trainer-recruitment', section],
-    queryFn: () => api.get('/reports/trainer-recruitment', { params: { section } }).then(r => r.data),
+    queryKey: ['trainer-recruitment', section, from, to, dayPair, status],
+    queryFn: () => api.get('/reports/trainer-recruitment', {
+      params: {
+        section,
+        from: from || undefined, to: to || undefined,
+        day_pair: dayPair === 'all' ? undefined : dayPair,
+        status: status === 'active' ? 'active' : undefined,
+      },
+    }).then(r => r.data),
     staleTime: 60 * 1000,
   });
 
@@ -33,6 +60,8 @@ export default function TrainerRecruitment() {
     return t;
   }, [data, q]);
 
+  const anyGlobalFilter = from || to || dayPair !== 'all' || status !== 'all';
+
   return (
     <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
       <PageHero
@@ -42,7 +71,7 @@ export default function TrainerRecruitment() {
         gradient="rose"
       />
 
-      {/* Filters */}
+      {/* Global filters */}
       <div className="bg-white rounded-2xl border border-gray-100 p-4 flex flex-wrap items-center gap-3 text-sm">
         <div className="flex items-center gap-2">
           <span className="text-xs font-bold text-gray-500">القسم</span>
@@ -50,9 +79,30 @@ export default function TrainerRecruitment() {
             {Object.entries(SECTIONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
         </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-gray-500">من</span>
+          <input type="date" value={from} onChange={e => setFrom(e.target.value)} className="px-2 py-2 rounded-lg border border-gray-200 text-xs text-gray-700 bg-gray-50" />
+          <span className="text-xs font-bold text-gray-500">إلى</span>
+          <input type="date" value={to} onChange={e => setTo(e.target.value)} className="px-2 py-2 rounded-lg border border-gray-200 text-xs text-gray-700 bg-gray-50" />
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-gray-500">يوم الفون كول</span>
+          <select value={dayPair} onChange={e => setDayPair(e.target.value)} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
+            {Object.entries(DAY_PAIRS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-gray-500">الحالة</span>
+          <select value={status} onChange={e => setStatus(e.target.value)} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
+            {Object.entries(STATUS_OPTS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </div>
+        {anyGlobalFilter && (
+          <button onClick={() => { setFrom(''); setTo(''); setDayPair('all'); setStatus('all'); }} className="text-[11px] text-rose-500 font-bold hover:underline">مسح الفلاتر</button>
+        )}
         <div className="relative mr-auto">
           <Search className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="اسم المدرب..." className="pr-8 pl-2 py-2 rounded-lg border border-gray-200 text-xs w-52" />
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="اسم المدرب..." className="pr-8 pl-2 py-2 rounded-lg border border-gray-200 text-xs w-44" />
         </div>
       </div>
 
@@ -87,9 +137,8 @@ export default function TrainerRecruitment() {
 
       {/* Interpretation banner */}
       <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5 text-[12px] text-blue-800">
-        كل طالب محتاج <b>7 معادات فون كول في الشهر</b>، بتتعمل على <b>الزوج العكسي</b> لأيام محاضراته الأساسية
-        (سبت+ثلاثاء ⟷ إثنين+خميس · أحد+أربعاء ⟷ سبت+ثلاثاء · إثنين+خميس ⟷ أحد+أربعاء).
-        الأرقام دي هي <b>الطلب</b> — السعة (مدربين الفون كول) بتيجي في المرحلة الجاية.
+        كل طالب محتاج <b>7 معادات فون كول في الشهر</b>، بتتعمل على <b>الزوج العكسي</b> لأيام محاضراته الأساسية.
+        الفلاتر فوق بتتحكّم في <b>كل الصفحة</b>؛ وجوّه كل مدرب في <b>فلتر مستقل</b> لمجموعاته لوحدها.
       </div>
 
       {/* Trainers table */}
@@ -105,7 +154,7 @@ export default function TrainerRecruitment() {
               {isLoading ? (
                 <tr><td colSpan={7} className="text-center py-10 text-gray-400">جارٍ التحميل…</td></tr>
               ) : trainers.length === 0 ? (
-                <tr><td colSpan={7} className="py-12"><EmptyState title="لا يوجد مدربون" /></td></tr>
+                <tr><td colSpan={7} className="py-12"><EmptyState title="لا يوجد مدربون بهذه الفلاتر" /></td></tr>
               ) : trainers.map((t) => {
                 const isOpen = !!open[t.name];
                 return (
@@ -133,28 +182,7 @@ export default function TrainerRecruitment() {
                       <tr key={t.name + '_d'} className="bg-gray-50/40">
                         <td></td>
                         <td colSpan={6} className="px-3 py-2">
-                          <table className="w-full text-[11px]">
-                            <thead><tr className="text-gray-400">
-                              <th className="text-right py-1 font-semibold">المجموعة</th>
-                              <th className="py-1 font-semibold">القسم</th>
-                              <th className="py-1 font-semibold">طلاب</th>
-                              <th className="py-1 font-semibold">أيام الأساسي</th>
-                              <th className="py-1 font-semibold">أيام الفون كول</th>
-                              <th className="py-1 font-semibold">طلب/شهر</th>
-                            </tr></thead>
-                            <tbody>
-                              {t.group_list.map((g, gi) => (
-                                <tr key={gi} className="border-t border-gray-100">
-                                  <td className="py-1 font-mono text-gray-700 max-w-[260px] truncate" dir="ltr" title={g.group_name}>{g.group_name}</td>
-                                  <td className="py-1 text-center">{SECTIONS[g.section]}</td>
-                                  <td className="py-1 text-center font-bold">{g.trainees}</td>
-                                  <td className="py-1 text-center text-gray-500">{g.main_pair}</td>
-                                  <td className="py-1 text-center text-blue-700 font-semibold">{g.side_pair}</td>
-                                  <td className="py-1 text-center font-black text-rose-700">{num(g.demand_month)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                          <TrainerGroups groups={t.group_list} />
                         </td>
                       </tr>
                     )}
@@ -169,9 +197,82 @@ export default function TrainerRecruitment() {
 
       {data?.params?.groups_without_main_trainer > 0 && (
         <div className="text-[11px] text-gray-400 px-1">
-          ملاحظة: {data.params.groups_without_main_trainer} مجموعة نشطة من غير مدرب أساسي على الشيت الحالي — مستبعدة من الجدول.
+          ملاحظة: {data.params.groups_without_main_trainer} مجموعة (ضمن الفلاتر الحالية) من غير مدرب أساسي على الشيت الحالي — مستبعدة من الجدول.
         </div>
       )}
+    </div>
+  );
+}
+
+// Expanded per-trainer group list with its OWN independent local filter
+// (day-pair + status + date) — filters this trainer's groups without touching the page.
+function TrainerGroups({ groups }) {
+  const [dp, setDp] = useState('all');
+  const [st, setSt] = useState('all');
+  const [lf, setLf] = useState('');
+  const [lt, setLt] = useState('');
+
+  const filtered = useMemo(() => {
+    const sideKey = DAY_PAIRS[dp]?.sideKey;
+    return (groups || []).filter(g => {
+      if (sideKey && g.side_key !== sideKey) return false;
+      if (st === 'active' && g.status !== 'نشطة') return false;
+      if ((lf || lt) && !overlaps(g.first_date, g.last_date, lf, lt)) return false;
+      return true;
+    });
+  }, [groups, dp, st, lf, lt]);
+
+  const subDemand = filtered.reduce((a, g) => a + (g.demand_month || 0), 0);
+  const subStudents = filtered.reduce((a, g) => a + (g.trainees || 0), 0);
+  const anyLocal = dp !== 'all' || st !== 'all' || lf || lt;
+
+  return (
+    <div>
+      {/* local filter bar */}
+      <div className="flex flex-wrap items-center gap-2 mb-2 text-[11px] bg-white rounded-lg border border-gray-100 px-2 py-1.5">
+        <span className="flex items-center gap-1 font-bold text-gray-500"><Filter size={12} /> فلتر مجموعاته:</span>
+        <select value={dp} onChange={e => setDp(e.target.value)} className="px-2 py-1 rounded border border-gray-200 bg-gray-50 text-gray-700">
+          {Object.entries(DAY_PAIRS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+        </select>
+        <select value={st} onChange={e => setSt(e.target.value)} className="px-2 py-1 rounded border border-gray-200 bg-gray-50 text-gray-700">
+          {Object.entries(STATUS_OPTS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+        <input type="date" value={lf} onChange={e => setLf(e.target.value)} className="px-1.5 py-1 rounded border border-gray-200 bg-gray-50 text-gray-700" title="من" />
+        <input type="date" value={lt} onChange={e => setLt(e.target.value)} className="px-1.5 py-1 rounded border border-gray-200 bg-gray-50 text-gray-700" title="إلى" />
+        {anyLocal && <button onClick={() => { setDp('all'); setSt('all'); setLf(''); setLt(''); }} className="text-rose-500 font-bold hover:underline flex items-center gap-0.5"><X size={11} /> مسح</button>}
+        <span className="mr-auto text-gray-500">
+          {filtered.length} مجموعة · {num(subStudents)} طالب · طلب <b className="text-rose-700">{num(subDemand)}</b>/شهر
+        </span>
+      </div>
+
+      <table className="w-full text-[11px]">
+        <thead><tr className="text-gray-400">
+          <th className="text-right py-1 font-semibold">المجموعة</th>
+          <th className="py-1 font-semibold">القسم</th>
+          <th className="py-1 font-semibold">الحالة</th>
+          <th className="py-1 font-semibold">طلاب</th>
+          <th className="py-1 font-semibold">أيام الأساسي</th>
+          <th className="py-1 font-semibold">أيام الفون كول</th>
+          <th className="py-1 font-semibold">أول/آخر محاضرة</th>
+          <th className="py-1 font-semibold">طلب/شهر</th>
+        </tr></thead>
+        <tbody>
+          {filtered.length === 0 ? (
+            <tr><td colSpan={8} className="py-3 text-center text-gray-300">لا مجموعات بهذا الفلتر</td></tr>
+          ) : filtered.map((g, gi) => (
+            <tr key={gi} className="border-t border-gray-100">
+              <td className="py-1 font-mono text-gray-700 max-w-[260px] truncate" dir="ltr" title={g.group_name}>{g.group_name}</td>
+              <td className="py-1 text-center">{SECTIONS[g.section]}</td>
+              <td className="py-1 text-center text-gray-500">{g.status}</td>
+              <td className="py-1 text-center font-bold">{g.trainees}</td>
+              <td className="py-1 text-center text-gray-500">{g.main_pair}</td>
+              <td className="py-1 text-center text-blue-700 font-semibold">{g.side_pair}</td>
+              <td className="py-1 text-center text-gray-400" dir="ltr">{g.first_date || '—'} → {g.last_date || '—'}</td>
+              <td className="py-1 text-center font-black text-rose-700">{num(g.demand_month)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
