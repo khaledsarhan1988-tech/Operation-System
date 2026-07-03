@@ -8061,4 +8061,170 @@ router.get('/phone-call-gap', (req, res) => {
   }
 });
 
+// ─── GET /api/reports/trainer-recruitment ────────────────────────────────────
+// «توظيف المدربين» — PHASE 1 (demand side). For every MAIN-lecture trainer, from
+// LIVE data, aggregate the phone-call (zoom) DEMAND their groups generate:
+//   students × 7  (each student needs 7 phone-call sessions per month)
+// mapped to the INVERSE day-pair of the group's main lectures (that's where the
+// calls happen). This mirrors the owner's planning sheet (right table) but with
+// live actual numbers. NOT salary-related. Later phases add the phone-call
+// trainer SUPPLY and the demand-vs-supply balance / hiring need.
+router.get('/trainer-recruitment', (req, res) => {
+  try {
+    const PER_STUDENT   = 7;
+    const sectionFilter = ['general', 'semi', 'private'].includes(req.query.section) ? req.query.section : 'all';
+    const line          = lineFilter(req);   // null for admin/All; honors ?line=
+
+    const DAY_NUM = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+    // non-teaching / placeholder groups (same set as phone-call-gap)
+    const isInternal = s => /free slot|hiring new teacher|placem.*test|تحديد مستو|comp[ae]ns|تعويض|grammar|go english|meeting|coch|coach/i.test(s || '');
+    // weekday from the standard group-name pattern (also filters non-real groups)
+    const dowFromName = name => {
+      const m = String(name).match(/^[A-Za-z]{3,4}_\d{1,2}_([A-Za-z]{3})/);
+      if (!m) return null;
+      const d = DAY_NUM[m[1].toLowerCase()];
+      return d === undefined ? null : d;
+    };
+    // side (phone-call) day-pair = INVERSE of the main day-pair
+    const sidePairKey  = d => (d === 6 || d === 2) ? '1,4' : (d === 0 || d === 3) ? '6,2' : (d === 1 || d === 4) ? '0,3' : null;
+    const mainPairLabel = d => (d === 6 || d === 2) ? 'سبت + ثلاثاء' : (d === 0 || d === 3) ? 'أحد + أربعاء' : (d === 1 || d === 4) ? 'إثنين + خميس' : '—';
+    const PAIR_LABEL = { '1,4': 'إثنين + خميس', '6,2': 'سبت + ثلاثاء', '0,3': 'أحد + أربعاء' };
+    const sectionOf = dt => {
+      const s = String(dt || '').toLowerCase();
+      if (s.includes('semi') || s.includes('شبه')) return 'semi';
+      if (s.includes('priv') || s.includes('خاص')) return 'private';
+      return 'general';
+    };
+    const SEC = ['general', 'semi', 'private'];
+    const SEC_LABEL = { general: 'عام', semi: 'شبه خاص', private: 'خاص' };
+
+    const lineSql = line ? ' AND line = ?' : '';
+    const lineP   = line ? [line] : [];
+
+    // ── active + waiting groups (demand source) ──
+    const groups = db.prepare(
+      `SELECT group_name, line, MAX(trainee_count) tc, MAX(dept_type) dept,
+              MAX(coordinators) coord, MAX(status) status
+         FROM batches
+        WHERE status IN ('نشطة','بانتظار تسجيل المحاضرات','بانتظار تسجيل المتدربين')${lineSql}
+        GROUP BY group_name, line`
+    ).all(...lineP).filter(g => !isInternal(g.group_name) && dowFromName(g.group_name) !== null);
+
+    // ── main trainer per group (current sheet): dominant trainer on main lectures ──
+    const mainRows = db.prepare(
+      `SELECT l.group_name, l.line, l.trainer, COUNT(*) c
+         FROM lectures l
+         INNER JOIN (SELECT group_name, line, date(MAX(synced_at)) sd
+                       FROM lectures WHERE session_type='main' GROUP BY group_name, line) ls
+           ON l.group_name=ls.group_name AND l.line=ls.line AND date(l.synced_at)=ls.sd
+        WHERE l.session_type='main' AND COALESCE(l.trainer,'')<>''${line ? ' AND l.line = ?' : ''}
+        GROUP BY l.group_name, l.line, l.trainer`
+    ).all(...lineP);
+    const grpTrainer = new Map();   // group|line → { trainer, c }
+    for (const r of mainRows) {
+      const key = r.group_name + '|' + r.line;
+      const cur = grpTrainer.get(key);
+      if (!cur || r.c > cur.c) grpTrainer.set(key, { trainer: r.trainer, c: r.c });
+    }
+    // trainee-count fallback from clients
+    const cliRows = db.prepare(
+      `SELECT group_name, line, COUNT(DISTINCT phone) c FROM clients${line ? ' WHERE line = ?' : ''} GROUP BY group_name, line`
+    ).all(...lineP);
+    const cliMap = new Map(cliRows.map(r => [r.group_name + '|' + r.line, r.c]));
+
+    // ── aggregate demand per main trainer ──
+    const blankPair = () => ({ '1,4': 0, '6,2': 0, '0,3': 0 });
+    const byTrainer = new Map();
+    let skippedNoTrainer = 0;
+    for (const g of groups) {
+      const key = g.group_name + '|' + g.line;
+      const gt = grpTrainer.get(key);
+      if (!gt) { skippedNoTrainer++; continue; }          // no main trainer on current sheet
+      const trainer = gt.trainer;
+      if (/\(z\.?[cm]\)/i.test(trainer)) continue;         // defensive: skip zoom trainers
+      const trainees = g.tc || cliMap.get(key) || 0;
+      if (!trainees) continue;
+      const sec = sectionOf(g.dept);
+      const dow = dowFromName(g.group_name);
+      const pk  = sidePairKey(dow) || '6,2';
+      const demand = trainees * PER_STUDENT;
+
+      let t = byTrainer.get(trainer);
+      if (!t) {
+        t = {
+          name: trainer, groups: 0, students: 0,
+          sectionStudents: { general: 0, semi: 0, private: 0 },
+          demand_pair: blankPair(), students_pair: blankPair(), groups_pair: blankPair(),
+          group_list: [],
+        };
+        byTrainer.set(trainer, t);
+      }
+      t.groups++; t.students += trainees; t.sectionStudents[sec] += trainees;
+      t.demand_pair[pk] += demand; t.students_pair[pk] += trainees; t.groups_pair[pk]++;
+      t.group_list.push({
+        group_name: g.group_name, line: g.line, section: sec, trainees,
+        main_pair: mainPairLabel(dow), side_pair: PAIR_LABEL[pk] || '—', demand_month: demand,
+      });
+    }
+
+    // ── shape trainers + primary section ──
+    // NOTE: demand_pair / students_pair / groups_pair are keyed by the SIDE (phone-
+    // call) day-pair — that's what sidePairKey() produced. MAIN_FOR_SIDE recovers
+    // the group's MAIN day-pair label from that side key, for display.
+    const MAIN_FOR_SIDE = { '6,2': 'أحد + أربعاء', '0,3': 'إثنين + خميس', '1,4': 'سبت + ثلاثاء' };
+    const pairDemand = o => o['1,4'] + o['6,2'] + o['0,3'];
+    let trainers = [...byTrainer.values()].map(t => {
+      const primary = SEC.reduce((a, s) => (t.sectionStudents[s] > t.sectionStudents[a] ? s : a), 'general');
+      t.group_list.sort((a, b) => b.trainees - a.trainees);
+      return {
+        name: t.name, section: primary, section_label: SEC_LABEL[primary],
+        groups: t.groups, students: t.students, demand_month: pairDemand(t.demand_pair),
+        teach_pairs: ['6,2', '0,3', '1,4']
+          .filter(pk => t.groups_pair[pk] > 0)
+          .map(pk => ({
+            main_pair: MAIN_FOR_SIDE[pk], side_pair: PAIR_LABEL[pk],
+            groups: t.groups_pair[pk], students: t.students_pair[pk], demand_month: t.demand_pair[pk],
+          })),
+        demand_by_side_pair: Object.fromEntries(
+          ['1,4', '6,2', '0,3'].filter(pk => t.demand_pair[pk] > 0).map(pk => [PAIR_LABEL[pk], t.demand_pair[pk]])
+        ),
+        group_list: t.group_list,
+      };
+    });
+
+    if (sectionFilter !== 'all') trainers = trainers.filter(t => t.section === sectionFilter);
+    trainers.sort((a, b) => b.students - a.students || String(a.name).localeCompare(String(b.name), 'ar'));
+
+    // ── per-section summary (from each trainer's primary section) ──
+    const sections = SEC.map(sec => {
+      const ts = trainers.filter(t => t.section === sec);
+      const byPair = { 'إثنين + خميس': 0, 'سبت + ثلاثاء': 0, 'أحد + أربعاء': 0 };
+      for (const t of ts) for (const [lbl, v] of Object.entries(t.demand_by_side_pair)) byPair[lbl] += v;
+      return {
+        section: sec, label: SEC_LABEL[sec],
+        trainers: ts.length,
+        groups: ts.reduce((a, t) => a + t.groups, 0),
+        students: ts.reduce((a, t) => a + t.students, 0),
+        demand_month: ts.reduce((a, t) => a + t.demand_month, 0),
+        demand_by_side_pair: byPair,
+      };
+    }).filter(s => sectionFilter === 'all' || s.section === sectionFilter);
+
+    const totals = {
+      trainers: trainers.length,
+      groups: trainers.reduce((a, t) => a + t.groups, 0),
+      students: trainers.reduce((a, t) => a + t.students, 0),
+      demand_month: trainers.reduce((a, t) => a + t.demand_month, 0),
+    };
+
+    return res.json({
+      params: { per_student: PER_STUDENT, section: sectionFilter, groups_without_main_trainer: skippedNoTrainer },
+      totals, sections, trainers,
+    });
+  } catch (err) {
+    console.error('[reports] trainer-recruitment:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

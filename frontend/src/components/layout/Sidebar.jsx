@@ -8,7 +8,7 @@ import {
   LogOut, Headphones, GraduationCap, ShieldCheck, AlertTriangle, Activity, Shuffle, Kanban,
   TrendingUp, Target, Settings, Award, Snowflake, Goal, Database, ChevronDown, Sparkles, BarChart3,
   Cloud, History, Network, ListTodo, ClipboardCheck, CalendarClock, KeyRound, Wallet,
-  Link as LinkIcon, GitBranch, PhoneCall,
+  Link as LinkIcon, GitBranch, PhoneCall, UserPlus,
 } from 'lucide-react';
 import UserAvatar from '../ui/UserAvatar';
 
@@ -107,6 +107,7 @@ const REPORT_LINKS = [
       { to: '/admin/reports/trainer-dashboard',      label: 'nav.trainerDashboard',     icon: BarChart3, color: 'indigo' },
       { to: '/admin/reports/phone-call-gap',         label: 'فجوة الفون كول',            icon: PhoneCall, color: 'rose'   },
       { to: '/admin/reports/trainer-details',        label: 'تفاصيل المدربين',           icon: Users,     color: 'amber'  },
+      { to: '/admin/reports/trainer-recruitment',    label: 'توظيف المدربين',            icon: UserPlus,  color: 'rose'   },
     ],
   },
   { to: '/admin/reports/quality',               label: 'nav.qualityReports',     icon: ShieldCheck,   color: 'green',   management: 'Quality' },
@@ -251,6 +252,7 @@ export default function Sidebar({ mobile, onClose }) {
         { to: '/reports/trainer-dashboard',      label: 'nav.trainerDashboard',     icon: BarChart3, color: 'indigo' },
         { to: '/reports/phone-call-gap',         label: 'فجوة الفون كول',            icon: PhoneCall, color: 'rose'   },
         { to: '/reports/trainer-details',        label: 'تفاصيل المدربين',           icon: Users,     color: 'amber'  },
+        { to: '/reports/trainer-recruitment',    label: 'توظيف المدربين',            icon: UserPlus,  color: 'rose'   },
       );
     }
     // تسليمات الأقسام grants — the two CS pages live on the role-neutral

@@ -48,6 +48,7 @@ import TrainerUtilizationDashboard from './pages/admin/TrainerUtilizationDashboa
 import TrainerWorkHistory from './pages/admin/TrainerWorkHistory';
 import TrainerDetails from './pages/admin/TrainerDetails';
 import PhoneCallGap from './pages/admin/PhoneCallGap';
+import TrainerRecruitment from './pages/admin/TrainerRecruitment';
 import TrainerSalaries from './pages/admin/TrainerSalaries';
 import TrainersPayroll from './pages/admin/TrainersPayroll';
 import LectureReschedules from './pages/admin/LectureReschedules';
@@ -128,6 +129,7 @@ const router = createBrowserRouter([
       { path: 'trainer-work-history',   element: <PrivateRoute requirePage="occupancy-trainers"><TrainerWorkHistory /></PrivateRoute> },
       { path: 'phone-call-gap',         element: <PrivateRoute requirePage="occupancy-trainers"><PhoneCallGap /></PrivateRoute> },
       { path: 'trainer-details',        element: <PrivateRoute requirePage="occupancy-trainers"><TrainerDetails /></PrivateRoute> },
+      { path: 'trainer-recruitment',    element: <PrivateRoute requirePage="occupancy-trainers"><TrainerRecruitment /></PrivateRoute> },
     ],
   },
 
@@ -185,6 +187,7 @@ const router = createBrowserRouter([
       { path: 'reports/trainer-work-history',   element: <TrainerWorkHistory /> },
       { path: 'reports/phone-call-gap',         element: <PhoneCallGap /> },
       { path: 'reports/trainer-details',        element: <TrainerDetails /> },
+      { path: 'reports/trainer-recruitment',    element: <TrainerRecruitment /> },
       { path: 'reschedules',                    element: <LectureReschedules /> },
       { path: 'schedule-changes',               element: <PrivateRoute superAdmin><ScheduleChangeLog /></PrivateRoute> },
       { path: 'holidays',                       element: <HolidaysManagement /> },
