@@ -8493,4 +8493,173 @@ router.get('/trainer-recruitment-supply', (req, res) => {
   }
 });
 
+// ─── GET /api/reports/trainer-recruitment-balance ────────────────────────────
+// «توظيف المدربين» — PHASE 3 (balance). Puts DEMAND (phase 1) next to SUPPLY
+// (phase 2) per section × phone-call day-pair, and shows TWO views (owner picked
+// option ج):
+//   • DIRECT deficit  = monthly demand (Σ students×7 of active groups on the pair)
+//                       − monthly capacity. "إجمالي الجلسات الناقصة/شهر".
+//   • PEAK-WEEK need   = spread each group's required across its course ISO-weeks,
+//                       compare the busiest week to weekly capacity → realistic
+//                       hiring number (same model the owner chose in فجوة الفون كول,
+//                       which avoids the naive-monthly over-count).
+// Demand is attributed by the GROUP's own dept-section (a شبه group needs شبه
+// phone-call trainers) — right basis for a capacity balance. Filters: section +
+// day-pair only (to keep demand & supply comparable; supply has no date/status).
+router.get('/trainer-recruitment-balance', (req, res) => {
+  try {
+    const PER_STUDENT     = 7;
+    const CALLS_PER_HOUR  = 4;
+    const WEEKS_PER_MONTH  = 4;
+    const PER_TRAINER_WEEKLY_PER_PAIR = 7 * 2 * CALLS_PER_HOUR;   // 56 = a full-timer's calls/week on one day-pair (7h×2days×4)
+    const sectionFilter = ['general', 'semi', 'private'].includes(req.query.section) ? req.query.section : 'all';
+    const line = lineFilter(req);
+    const DAYPAIR_KEY = { sat_tue: '6,2', sun_wed: '0,3', mon_thu: '1,4' };
+    const wantPairKey = DAYPAIR_KEY[req.query.day_pair] || null;
+
+    const SEC = ['general', 'semi', 'private'];
+    const SEC_LABEL  = { general: 'عام', semi: 'شبه خاص', private: 'خاص' };
+    const PAIR_LABEL = { '6,2': 'سبت + ثلاثاء', '0,3': 'أحد + أربعاء', '1,4': 'إثنين + خميس' };
+    const PAIR_DAYS  = { '6,2': ['saturday', 'tuesday'], '0,3': ['sunday', 'wednesday'], '1,4': ['monday', 'thursday'] };
+    const PAIR_KEYS  = ['6,2', '0,3', '1,4'];
+    const TEACH_DAYS = ['saturday', 'sunday', 'monday', 'tuesday', 'wednesday', 'thursday'];
+    const DAY_NUM = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+    const isInternal = s => /free slot|hiring new teacher|placem.*test|تحديد مستو|comp[ae]ns|تعويض|grammar|go english|meeting|coch|coach/i.test(s || '');
+    const dowFromName = name => { const m = String(name).match(/^[A-Za-z]{3,4}_\d{1,2}_([A-Za-z]{3})/); if (!m) return null; const d = DAY_NUM[m[1].toLowerCase()]; return d === undefined ? null : d; };
+    const sidePairKey = d => (d === 6 || d === 2) ? '1,4' : (d === 0 || d === 3) ? '6,2' : (d === 1 || d === 4) ? '0,3' : null;
+    const sectionOf = dt => { const s = String(dt || '').toLowerCase(); if (s.includes('semi') || s.includes('شبه')) return 'semi'; if (s.includes('priv') || s.includes('خاص')) return 'private'; return 'general'; };
+    const isoWeek = iso => { const d = new Date(iso + 'T12:00:00Z'); const y = d.getUTCFullYear(); const onejan = new Date(Date.UTC(y, 0, 1)); return y + '-' + String(Math.ceil((((d - onejan) / 86400000) + onejan.getUTCDay() + 1) / 7)).padStart(2, '0'); };
+    const unionMin = ivs => { if (!ivs.length) return 0; ivs.sort((a, b) => a[0] - b[0]); let tot = 0, cs = ivs[0][0], ce = ivs[0][1]; for (let i = 1; i < ivs.length; i++) { const [s, e] = ivs[i]; if (s > ce) { tot += ce - cs; cs = s; ce = e; } else ce = Math.max(ce, e); } return tot + (ce - cs); };
+
+    const lineSql = line ? ' AND line = ?' : '';
+    const lineP = line ? [line] : [];
+
+    // ── DEMAND ──
+    const groups = db.prepare(
+      `SELECT group_name, line, MAX(trainee_count) tc, MAX(dept_type) dept, MAX(status) status, MAX(start_date) sd, MAX(end_date) ed
+         FROM batches
+        WHERE status IN ('نشطة','بانتظار تسجيل المحاضرات','بانتظار تسجيل المتدربين')${lineSql}
+        GROUP BY group_name, line`
+    ).all(...lineP).filter(g => !isInternal(g.group_name) && dowFromName(g.group_name) !== null);
+    const spanRows = db.prepare(
+      `SELECT l.group_name, l.line, MIN(l.date) mn, MAX(l.date) mx
+         FROM lectures l
+         INNER JOIN (SELECT group_name, line, date(MAX(synced_at)) sd FROM lectures WHERE session_type='main' GROUP BY group_name, line) ls
+           ON l.group_name=ls.group_name AND l.line=ls.line AND date(l.synced_at)=ls.sd
+        WHERE l.session_type='main'${line ? ' AND l.line = ?' : ''}
+        GROUP BY l.group_name, l.line`
+    ).all(...lineP);
+    const spanMap = new Map(spanRows.map(r => [r.group_name + '|' + r.line, { mn: r.mn, mx: r.mx }]));
+    const cliMap = new Map(db.prepare(`SELECT group_name, line, COUNT(DISTINCT phone) c FROM clients${line ? ' WHERE line = ?' : ''} GROUP BY group_name, line`).all(...lineP).map(r => [r.group_name + '|' + r.line, r.c]));
+
+    const demandDirect = {}; SEC.forEach(s => demandDirect[s] = { '6,2': 0, '0,3': 0, '1,4': 0 });
+    const demandWk = {}; SEC.forEach(s => demandWk[s] = { '6,2': {}, '0,3': {}, '1,4': {} });
+    for (const g of groups) {
+      const key = g.group_name + '|' + g.line;
+      const trainees = g.tc || cliMap.get(key) || 0;
+      if (!trainees) continue;
+      const sec = sectionOf(g.dept);
+      const pk = sidePairKey(dowFromName(g.group_name)) || '6,2';
+      if (wantPairKey && pk !== wantPairKey) continue;
+      const required = trainees * PER_STUDENT;
+      demandDirect[sec][pk] += required;
+      // spread across the group's course ISO-weeks (peak-week model)
+      const sp = spanMap.get(key); const mn = (sp && sp.mn) || g.sd, mx = (sp && sp.mx) || g.ed;
+      if (mn && mx) {
+        const wks = new Set([isoWeek(mx)]);
+        for (let d = new Date(mn + 'T12:00:00Z'), end = new Date(mx + 'T12:00:00Z'); d <= end; d.setUTCDate(d.getUTCDate() + 7)) wks.add(isoWeek(d.toISOString().slice(0, 10)));
+        const perWk = required / wks.size;
+        for (const w of wks) demandWk[sec][pk][w] = (demandWk[sec][pk][w] || 0) + perWk;
+      }
+    }
+
+    // ── SUPPLY (net hours/week per section per day) ──
+    const members = db.prepare(
+      `SELECT name, section, job_title, status, shifts_json, shift, shift_start, shift_end,
+              shift_rests, voice_notes, work_days, shift_start_date, shift_end_date,
+              shift2, shift2_start, shift2_end, shift2_rests, shift2_voice_notes, shift2_work_days,
+              shift2_start_date, shift2_end_date, employment_type, start_date
+         FROM team_members WHERE status='active' AND (job_title IS NULL OR job_title <> 'تيم ليدر')`
+    ).all();
+    const capDayHours = {}; SEC.forEach(s => capDayHours[s] = {});
+    const capTrainers = {}; SEC.forEach(s => capTrainers[s] = new Set());
+    for (const t of members) {
+      const shifts = parseTeamShifts(t).filter(sh => String(sh.section || '').startsWith('phone_call'));
+      if (!shifts.length) continue;
+      const subShifts = {};
+      for (const sh of shifts) { const sub = sh.section.replace('phone_call_', '').replace('phone_call', 'general') || 'general'; (subShifts[sub] = subShifts[sub] || []).push(sh); }
+      for (const [sub, shs] of Object.entries(subShifts)) {
+        if (!SEC.includes(sub)) continue;
+        let any = false;
+        for (const day of TEACH_DAYS) {
+          const ivs = [], rests = [];
+          for (const sh of shs) {
+            if (!sh.days.includes(day)) continue;
+            ivs.push([sh.startMin, sh.endMin]);
+            for (const r of (sh.rests || [])) { const rd = (r.days && r.days.length) ? r.days : sh.days; if (rd.includes(day)) rests.push([r.startMin, r.endMin]); }
+          }
+          if (ivs.length) { const net = Math.max(0, unionMin(ivs) - unionMin(rests)) / 60; if (net > 0) { capDayHours[sub][day] = (capDayHours[sub][day] || 0) + net; any = true; } }
+        }
+        if (any) capTrainers[sub].add(t.name);
+      }
+    }
+    const supplyWeeklyCalls = (sec, pk) => PAIR_DAYS[pk].reduce((a, d) => a + (capDayHours[sec][d] || 0), 0) * CALLS_PER_HOUR;
+
+    // ── build per-section balance ──
+    const pairsForFilter = wantPairKey ? [wantPairKey] : PAIR_KEYS;
+    const sections = SEC.map(sec => {
+      const pairs = pairsForFilter.map(pk => {
+        const dm = Math.round(demandDirect[sec][pk]);
+        const sw = supplyWeeklyCalls(sec, pk);
+        const sm = Math.round(sw * WEEKS_PER_MONTH);
+        let peak = 0; for (const v of Object.values(demandWk[sec][pk])) if (v > peak) peak = v; peak = Math.round(peak);
+        const peakShort = Math.max(0, peak - sw);
+        return {
+          side_pair: PAIR_LABEL[pk],
+          demand_monthly: dm, supply_monthly: sm, balance_monthly: sm - dm, deficit_monthly: Math.max(0, dm - sm),
+          demand_peak_weekly: peak, supply_weekly: Math.round(sw),
+          peak_shortfall_weekly: Math.round(peakShort),
+          trainers_hint: Math.ceil(peakShort / PER_TRAINER_WEEKLY_PER_PAIR),
+        };
+      });
+      const demand_monthly = pairs.reduce((a, p) => a + p.demand_monthly, 0);
+      const supply_monthly = pairs.reduce((a, p) => a + p.supply_monthly, 0);
+      const deficit_monthly = pairs.reduce((a, p) => a + p.deficit_monthly, 0);
+      // section-level PEAK-WEEK realistic hire number (full-timers cover all pairs):
+      // busiest week of total section demand vs total section weekly capacity.
+      const weekTotals = {};
+      for (const pk of pairsForFilter) for (const [w, v] of Object.entries(demandWk[sec][pk])) weekTotals[w] = (weekTotals[w] || 0) + v;
+      let peakSection = 0; for (const v of Object.values(weekTotals)) if (v > peakSection) peakSection = v; peakSection = Math.round(peakSection);
+      const weeklyCapacity = Math.round(pairsForFilter.reduce((a, pk) => a + supplyWeeklyCalls(sec, pk), 0));
+      const trainers = capTrainers[sec].size;
+      const perTrainerWeekly = trainers ? Math.round(weeklyCapacity / trainers) : CALLS_PER_HOUR * 42;
+      const peakShortSection = Math.max(0, peakSection - weeklyCapacity);
+      const trainersNeeded = (perTrainerWeekly > 0 && peakShortSection > 0) ? Math.ceil(peakShortSection / perTrainerWeekly) : 0;
+      return {
+        section: sec, label: SEC_LABEL[sec], trainers,
+        demand_monthly, supply_monthly, balance_monthly: supply_monthly - demand_monthly, deficit_monthly,
+        peak_weekly_demand: peakSection, weekly_capacity: weeklyCapacity,
+        peak_shortfall: Math.round(peakShortSection), per_trainer_weekly: perTrainerWeekly,
+        trainers_needed: trainersNeeded, capacity_sufficient: peakShortSection === 0,
+        pairs,
+      };
+    }).filter(s => sectionFilter === 'all' || s.section === sectionFilter);
+
+    const totals = {
+      demand_monthly: sections.reduce((a, s) => a + s.demand_monthly, 0),
+      supply_monthly: sections.reduce((a, s) => a + s.supply_monthly, 0),
+      deficit_monthly: sections.reduce((a, s) => a + s.deficit_monthly, 0),
+      trainers_needed: sections.reduce((a, s) => a + s.trainers_needed, 0),
+    };
+
+    return res.json({
+      params: { per_student: PER_STUDENT, calls_per_hour: CALLS_PER_HOUR, weeks_per_month: WEEKS_PER_MONTH, per_trainer_weekly_per_pair: PER_TRAINER_WEEKLY_PER_PAIR, section: sectionFilter, day_pair: req.query.day_pair || 'all' },
+      totals, sections,
+    });
+  } catch (err) {
+    console.error('[reports] trainer-recruitment-balance:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

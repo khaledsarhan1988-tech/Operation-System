@@ -1,7 +1,7 @@
 'use client';
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { UserPlus, PhoneCall, Users, Search, ChevronDown, ChevronLeft, GraduationCap, Filter, X, Clock } from 'lucide-react';
+import { UserPlus, PhoneCall, Users, Search, ChevronDown, ChevronLeft, GraduationCap, Filter, X, Clock, Scale, UserCheck } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import EmptyState from '../../components/ui/EmptyState';
@@ -72,13 +72,15 @@ export default function TrainerRecruitment() {
         gradient="rose"
       />
 
-      {/* View toggle: demand (phase 1) vs supply (phase 2) */}
+      {/* View toggle: demand (phase 1) · supply (phase 2) · balance (phase 3) */}
       <div className="flex gap-2">
         <TabBtn active={view === 'demand'} onClick={() => setView('demand')} icon={PhoneCall} label="الطلب" />
         <TabBtn active={view === 'supply'} onClick={() => setView('supply')} icon={Clock} label="السعة" />
+        <TabBtn active={view === 'balance'} onClick={() => setView('balance')} icon={Scale} label="الميزان" />
       </div>
 
       {view === 'supply' && <SupplyView />}
+      {view === 'balance' && <BalanceView />}
 
       {view === 'demand' && (<>
       {/* Global filters */}
@@ -333,6 +335,113 @@ function SupplyView() {
         </div>
         {trainers.length > 0 && <div className="px-4 py-2 text-[11px] text-gray-400 border-t">عرض {trainers.length} مدرب فون كول</div>}
       </div>
+    </div>
+  );
+}
+
+// Phase 3 — balance: demand (phase 1) vs supply (phase 2) per section × day-pair,
+// with BOTH the direct monthly deficit AND the peak-week realistic hire number.
+function BalanceView() {
+  const [section, setSection] = useState('all');
+  const [dayPair, setDayPair] = useState('all');
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['trainer-recruitment-balance', section, dayPair],
+    queryFn: () => api.get('/reports/trainer-recruitment-balance', {
+      params: { section, day_pair: dayPair === 'all' ? undefined : dayPair },
+    }).then(r => r.data),
+    staleTime: 60 * 1000,
+  });
+
+  const totals = data?.totals || {};
+  const sections = data?.sections || [];
+
+  return (
+    <div className="space-y-5">
+      {/* filters: section + day-pair */}
+      <div className="bg-white rounded-2xl border border-gray-100 p-4 flex flex-wrap items-center gap-3 text-sm">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-gray-500">القسم</span>
+          <select value={section} onChange={e => setSection(e.target.value)} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
+            {Object.entries(SECTIONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-gray-500">يوم الفون كول</span>
+          <select value={dayPair} onChange={e => setDayPair(e.target.value)} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
+            {Object.entries(DAY_PAIRS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* summary */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <SumCard icon={PhoneCall} label="طلب / شهر" value={num(totals.demand_monthly)} tone="bg-white border-gray-200 text-gray-800" />
+        <SumCard icon={Clock}     label="سعة / شهر" value={num(totals.supply_monthly)} tone="bg-white border-gray-200 text-gray-800" />
+        <SumCard icon={Scale}     label="عجز مباشر (جلسات ناقصة/شهر)" value={num(totals.deficit_monthly)} tone="bg-rose-50 border-rose-200 text-rose-800" />
+        <SumCard icon={UserCheck} label="مدربين محتاج توظيفهم (ذروة الأسبوع)" value={num(totals.trainers_needed)} tone="bg-amber-50 border-amber-200 text-amber-800" />
+      </div>
+
+      {/* interpretation */}
+      <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5 text-[12px] text-blue-800 space-y-1">
+        <div><b>العجز المباشر</b> = طلب الشهر (كل المجموعات × 7) − السعة الشهرية. بيقولّك إجمالي الجلسات الناقصة لو كل المجموعات اشتغلت نفس الشهر.</div>
+        <div><b>الاحتياج الفعلي للتوظيف</b> = بموديل «ذروة الأسبوع» (توزيع طلب كل مجموعة على أسابيع كورسها) — بيقارن أسبوع الذروة بالسعة الأسبوعية، فبيدّي رقم توظيف واقعي (مايضخّمش).</div>
+      </div>
+
+      {/* per-section balance */}
+      {isLoading ? (
+        <div className="text-center py-10 text-gray-400">جارٍ التحميل…</div>
+      ) : sections.length === 0 ? (
+        <EmptyState title="لا توجد بيانات" />
+      ) : sections.map(s => (
+        <div key={s.section} className={`rounded-2xl border p-4 ${SEC_TONE[s.section] || 'border-gray-200 bg-white'}`}>
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <span className="font-black text-base">{s.label}</span>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
+              <span><b>{s.trainers}</b> مدرب فون كول</span>
+              <span className={`font-black px-2 py-0.5 rounded ${s.capacity_sufficient ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                {s.capacity_sufficient
+                  ? 'السعة تكفي (ذروة الأسبوع) ✓'
+                  : `محتاج ${s.trainers_needed} مدرب فون كول`}
+              </span>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[12px]" style={{ minWidth: '560px' }}>
+              <thead><tr className="text-[10px] opacity-70 border-b border-current/10">
+                <th className="text-right py-1.5 font-semibold">زوج أيام الفون كول</th>
+                <th className="py-1.5 font-semibold">طلب / شهر</th>
+                <th className="py-1.5 font-semibold">سعة / شهر</th>
+                <th className="py-1.5 font-semibold">العجز / الزيادة (مباشر)</th>
+                <th className="py-1.5 font-semibold">عجز الذروة (أسبوعي)</th>
+              </tr></thead>
+              <tbody>
+                {(s.pairs || []).map((p, i) => (
+                  <tr key={i} className="border-b border-current/5 last:border-0">
+                    <td className="text-right py-2 font-bold text-blue-700">{p.side_pair}</td>
+                    <td className="text-center font-semibold">{num(p.demand_monthly)}</td>
+                    <td className="text-center font-semibold">{num(p.supply_monthly)}</td>
+                    <td className="text-center">
+                      <span className={`inline-block px-2 py-0.5 rounded font-black ${p.balance_monthly >= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+                        {p.balance_monthly >= 0 ? `زيادة +${num(p.balance_monthly)}` : `عجز ${num(p.balance_monthly)}`}
+                      </span>
+                    </td>
+                    <td className="text-center text-gray-600">
+                      {p.peak_shortfall_weekly > 0
+                        ? <span className="text-amber-700 font-bold">{num(p.peak_shortfall_weekly)} <span className="opacity-70 font-normal">(~{p.trainers_hint} مدرب)</span></span>
+                        : <span className="text-emerald-600">—</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="mt-2 text-[11px] opacity-80">
+            ذروة الأسبوع: طلب <b>{num(s.peak_weekly_demand)}</b> مقابل سعة <b>{num(s.weekly_capacity)}</b> مكالمة/أسبوع
+            {s.peak_shortfall > 0 && <span className="text-amber-700 font-bold"> · عجز {num(s.peak_shortfall)}/أسبوع</span>}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
