@@ -10,10 +10,15 @@ const express = require('express');
 const db = require('../config/database');
 const { saveNow } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
-const { requireRole } = require('../middleware/roles');
+const { requirePageOrManagement } = require('../middleware/roles');
 
 const router = express.Router();
-router.use(authenticate, requireRole('admin'));
+// The Clients Codes tab lives INSIDE كشف العملاء, so it must accept the same
+// callers as the parent module: users granted the 'sales-register' page (a
+// non-admin data-entry user like Asmaa) OR Customer-Services/All admins. Other-
+// department admins stay blocked (client names + phones are PII). Mirrors
+// cs-sales-register.routes.js exactly.
+router.use(authenticate, requirePageOrManagement('sales-register', 'Customer Services'));
 
 function nowTs() {
   return new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
