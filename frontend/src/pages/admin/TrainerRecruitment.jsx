@@ -21,12 +21,12 @@ const DAY_PAIRS = {
 };
 const STATUS_OPTS = { all: 'تشمل بانتظار التسجيل', active: 'نشطة فقط' };
 const num = n => (n ?? 0).toLocaleString('en-US');
-// span [a,b] overlaps window [from,to]? (matches the backend rule)
-const overlaps = (mn, mx, from, to) => {
+// Is the group's FIRST lecture date within the window [from,to]? (inner filter rule)
+const firstInRange = (first, from, to) => {
   if (!from && !to) return true;
-  if (!mn || !mx) return false;
-  if (from && mx < from) return false;
-  if (to && mn > to) return false;
+  if (!first) return false;
+  if (from && first < from) return false;
+  if (to && first > to) return false;
   return true;
 };
 
@@ -217,7 +217,7 @@ function TrainerGroups({ groups }) {
     return (groups || []).filter(g => {
       if (sideKey && g.side_key !== sideKey) return false;
       if (st === 'active' && g.status !== 'نشطة') return false;
-      if ((lf || lt) && !overlaps(g.first_date, g.last_date, lf, lt)) return false;
+      if ((lf || lt) && !firstInRange(g.first_date, lf, lt)) return false;
       return true;
     });
   }, [groups, dp, st, lf, lt]);
@@ -237,8 +237,10 @@ function TrainerGroups({ groups }) {
         <select value={st} onChange={e => setSt(e.target.value)} className="px-2 py-1 rounded border border-gray-200 bg-gray-50 text-gray-700">
           {Object.entries(STATUS_OPTS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </select>
-        <input type="date" value={lf} onChange={e => setLf(e.target.value)} className="px-1.5 py-1 rounded border border-gray-200 bg-gray-50 text-gray-700" title="من" />
-        <input type="date" value={lt} onChange={e => setLt(e.target.value)} className="px-1.5 py-1 rounded border border-gray-200 bg-gray-50 text-gray-700" title="إلى" />
+        <span className="text-gray-400">أول محاضرة من</span>
+        <input type="date" value={lf} onChange={e => setLf(e.target.value)} className="px-1.5 py-1 rounded border border-gray-200 bg-gray-50 text-gray-700" title="أول محاضرة من" />
+        <span className="text-gray-400">إلى</span>
+        <input type="date" value={lt} onChange={e => setLt(e.target.value)} className="px-1.5 py-1 rounded border border-gray-200 bg-gray-50 text-gray-700" title="أول محاضرة إلى" />
         {anyLocal && <button onClick={() => { setDp('all'); setSt('all'); setLf(''); setLt(''); }} className="text-rose-500 font-bold hover:underline flex items-center gap-0.5"><X size={11} /> مسح</button>}
         <span className="mr-auto text-gray-500">
           {filtered.length} مجموعة · {num(subStudents)} طالب · طلب <b className="text-rose-700">{num(subDemand)}</b>/شهر

@@ -8152,13 +8152,14 @@ router.get('/trainer-recruitment', (req, res) => {
         GROUP BY l.group_name, l.line`
     ).all(...lineP);
     const spanMap = new Map(spanRows.map(r => [r.group_name + '|' + r.line, { mn: r.mn, mx: r.mx }]));
-    // A group counts within [from,to] if its main-lecture span OVERLAPS the window
-    // (i.e. it's running during the period). Groups with no main lectures are
+    // A group counts within [from,to] if its FIRST main lecture (sp.mn) falls
+    // inside the window — i.e. the group STARTS in the period (owner's rule,
+    // same as the per-trainer inner filter). Groups with no main lectures are
     // excluded when a date filter is active (can't place them in time).
     const inDateWindow = sp => {
       if (!hasDateF) return true;
-      if (!sp || !sp.mn || !sp.mx) return false;
-      if (fromDate && sp.mx < fromDate) return false;
+      if (!sp || !sp.mn) return false;
+      if (fromDate && sp.mn < fromDate) return false;
       if (toDate   && sp.mn > toDate)   return false;
       return true;
     };
