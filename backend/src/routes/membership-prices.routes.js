@@ -14,10 +14,13 @@ const express = require('express');
 const db = require('../config/database');
 const { saveNow } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
-const { requireRole } = require('../middleware/roles');
+const { requirePageOrManagement } = require('../middleware/roles');
 
 const router = express.Router();
-router.use(authenticate, requireRole('admin'));
+// Any admin OR a user granted the 'sales-register' page (the العضويات tab lives
+// inside كشف العملاء). requiredMgmt omitted → keeps the original any-admin gate
+// while adding the page-grant path for scoped accounts users.
+router.use(authenticate, requirePageOrManagement('sales-register'));
 
 function nowTs() {
   return new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);

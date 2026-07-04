@@ -130,6 +130,7 @@ const router = createBrowserRouter([
       { path: 'phone-call-gap',         element: <PrivateRoute requirePage="occupancy-trainers"><PhoneCallGap /></PrivateRoute> },
       { path: 'trainer-details',        element: <PrivateRoute requirePage="occupancy-trainers"><TrainerDetails /></PrivateRoute> },
       { path: 'trainer-recruitment',    element: <PrivateRoute requirePage="occupancy-trainers"><TrainerRecruitment /></PrivateRoute> },
+      { path: 'sales-register',         element: <PrivateRoute requirePage="sales-register"><ClientSalesRegister /></PrivateRoute> },
     ],
   },
 

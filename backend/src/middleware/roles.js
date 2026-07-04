@@ -66,4 +66,37 @@ function requireManagement(required) {
   };
 }
 
-module.exports = { requireRole, requireAnyRole, requireSuperAdmin, requireManagement };
+/**
+ * requirePageOrManagement(pageKey, requiredMgmt) — passes when EITHER:
+ *   (a) the user was granted this specific page via users.extra_pages (CSV of
+ *       page keys) — lets a NON-admin data-entry/accounts user reach ONE
+ *       admin-gated page (e.g. كشف العملاء = 'sales-register') WITHOUT being
+ *       made an admin, OR
+ *   (b) the user is an admin for the required department: role='admin' AND
+ *       (management 'All' | requiredMgmt | any of extra_managements). When
+ *       `requiredMgmt` is null/omitted, ANY admin passes (preserves an
+ *       existing requireRole('admin') gate while adding the page-grant path).
+ * extra_pages / extra_managements travel in the JWT (login + refresh), so
+ * req.user carries them. Mirrors the frontend PrivateRoute requirePage +
+ * requireManagement guards. Only admins can set extra_pages (UserManagement),
+ * so the grant itself stays controlled.
+ */
+function requirePageOrManagement(pageKey, requiredMgmt = null) {
+  return (req, res, next) => {
+    if (!req.user) return res.status(401).json({ error: 'Unauthenticated' });
+    // (a) Page-grant path — any role whose extra_pages includes the key.
+    const pages = String(req.user.extra_pages || '')
+      .split(',').map(s => s.trim()).filter(Boolean);
+    if (pageKey && pages.includes(pageKey)) return next();
+    // (b) Department-admin path.
+    if (req.user.role === 'admin') {
+      if (!requiredMgmt) return next(); // any admin
+      const mgmts = [req.user.management, ...String(req.user.extra_managements || '').split(',')]
+        .map(s => String(s || '').trim()).filter(Boolean);
+      if (mgmts.includes('All') || mgmts.includes(requiredMgmt)) return next();
+    }
+    return res.status(403).json({ error: 'Forbidden: requires page grant or department admin' });
+  };
+}
+
+module.exports = { requireRole, requireAnyRole, requireSuperAdmin, requireManagement, requirePageOrManagement };

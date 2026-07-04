@@ -32,6 +32,7 @@ const GRANTABLE_PAGES = [
   { value: 'occupancy-trainers', label: 'الإشغال والمدربين' },
   { value: 'cs-deliveries',      label: 'تسليمات الأقسام — Customer Services Department' },
   { value: 'cs-enrollment',      label: 'تسليمات الأقسام — Enrollment' },
+  { value: 'sales-register',     label: 'كشف العملاء' },
 ];
 
 // Sections a LEADER can manage. Matches users.department values used by the

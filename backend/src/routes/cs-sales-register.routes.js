@@ -18,15 +18,18 @@ const multer = require('multer');
 const db = require('../config/database');
 const { saveNow } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
-const { requireRole, requireManagement } = require('../middleware/roles');
+const { requirePageOrManagement } = require('../middleware/roles');
 const { importSalesCsv } = require('../services/salesRegisterImport.service');
 
 const router = express.Router();
 
-// Customer-Services admins only — entry + edit + delete of the CS sales register.
-// 'All' (super) admins pass; admins of OTHER departments (e.g. Education) are
-// blocked from this financial/PII data. Mirrors the frontend route guard.
-router.use(authenticate, requireRole('admin'), requireManagement('Customer Services'));
+// Customer-Services admins OR users granted the 'sales-register' page.
+// Admin path: 'All' (super) admins + Customer-Services admins pass; admins of
+// OTHER departments (e.g. Education) are blocked from this financial/PII data.
+// Grant path: a NON-admin (e.g. an accounts data-entry user) whose
+// users.extra_pages includes 'sales-register' is allowed in WITHOUT full admin
+// rights. Mirrors the frontend route guard (requirePage="sales-register").
+router.use(authenticate, requirePageOrManagement('sales-register', 'Customer Services'));
 
 // CSV upload (one-time historical import) — in-memory, .csv only, 30MB cap.
 const upload = multer({

@@ -264,6 +264,12 @@ export default function Sidebar({ mobile, onClose }) {
       if (grantedPages.includes('cs-enrollment'))
         grantedLinks.push({ to: '/subscriptions/enrollment', label: 'Enrollment', icon: GraduationCap, color: 'cyan' });
     }
+    // كشف العملاء grant — the page lives on the role-neutral /reports mount
+    // (guarded by requirePage="sales-register"), so a granted user of any role
+    // reaches it. Same label/icon as the admin sidebar link for consistency.
+    if (grantedPages.includes('sales-register')) {
+      grantedLinks.push({ to: '/reports/sales-register', label: 'كشف العملاء', icon: Wallet, color: 'emerald' });
+    }
   }
   const baseLinks = [...roleLinks, ...grantedLinks];
 
