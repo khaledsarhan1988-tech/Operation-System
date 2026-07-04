@@ -1,7 +1,7 @@
 'use client';
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { UserPlus, PhoneCall, Users, Search, ChevronDown, ChevronLeft, GraduationCap, Filter, X, Clock, Scale, UserCheck } from 'lucide-react';
+import { UserPlus, PhoneCall, Users, Search, ChevronDown, ChevronLeft, GraduationCap, Filter, X, Clock, Scale, UserCheck, ArrowLeftRight } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import EmptyState from '../../components/ui/EmptyState';
@@ -77,10 +77,12 @@ export default function TrainerRecruitment() {
         <TabBtn active={view === 'demand'} onClick={() => setView('demand')} icon={PhoneCall} label="الطلب" />
         <TabBtn active={view === 'supply'} onClick={() => setView('supply')} icon={Clock} label="السعة" />
         <TabBtn active={view === 'balance'} onClick={() => setView('balance')} icon={Scale} label="الميزان" />
+        <TabBtn active={view === 'cross'} onClick={() => setView('cross')} icon={ArrowLeftRight} label="خارج القسم" />
       </div>
 
       {view === 'supply' && <SupplyView />}
       {view === 'balance' && <BalanceView />}
+      {view === 'cross' && <CrossSectionView />}
 
       {view === 'demand' && (<>
       {/* Global filters */}
@@ -442,6 +444,130 @@ function BalanceView() {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+// «خارج القسم» — main trainers whose group students get phone-call sessions from
+// phone-call trainers of a DIFFERENT section. Expand a row → per group → which
+// phone-call trainer (+ their section) + session count.
+function CrossSectionView() {
+  const [section, setSection] = useState('all');
+  const [dayPair, setDayPair] = useState('all');
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState({});
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['trainer-recruitment-cross', section, dayPair],
+    queryFn: () => api.get('/reports/trainer-recruitment-cross-section', {
+      params: { section, day_pair: dayPair === 'all' ? undefined : dayPair },
+    }).then(r => r.data),
+    staleTime: 60 * 1000,
+  });
+
+  const totals = data?.totals || {};
+  const trainers = useMemo(() => {
+    let t = data?.trainers || [];
+    if (q.trim()) { const s = q.trim().toLowerCase(); t = t.filter(x => (x.name || '').toLowerCase().includes(s)); }
+    return t;
+  }, [data, q]);
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-white rounded-2xl border border-gray-100 p-4 flex flex-wrap items-center gap-3 text-sm">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-gray-500">القسم</span>
+          <select value={section} onChange={e => setSection(e.target.value)} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
+            {Object.entries(SECTIONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-gray-500">يوم الفون كول</span>
+          <select value={dayPair} onChange={e => setDayPair(e.target.value)} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
+            {Object.entries(DAY_PAIRS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          </select>
+        </div>
+        <div className="relative mr-auto">
+          <Search className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="اسم المدرب..." className="pr-8 pl-2 py-2 rounded-lg border border-gray-200 text-xs w-44" />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3">
+        <SumCard icon={Users}          label="مدربين أساسيين متأثرين" value={num(totals.trainers)} tone="bg-white border-gray-200 text-gray-800" />
+        <SumCard icon={GraduationCap}  label="مجموعات" value={num(totals.groups)} tone="bg-white border-gray-200 text-gray-800" />
+        <SumCard icon={ArrowLeftRight} label="جلسات فون كول خارج القسم" value={num(totals.sessions)} tone="bg-rose-50 border-rose-200 text-rose-800" />
+      </div>
+
+      <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-[12px] text-amber-800">
+        الجدول بيعرض مدربي المحاضرات الأساسية اللي طلاب مجموعاتهم بياخدوا فون كول من <b>مدرب فون كول قسمه مختلف</b> عن قسم المجموعة.
+        اضغط أي صف تشوف المجموعات + مدرب الفون كول اللي عملها وقسمه.
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-right" style={{ minWidth: '640px' }}>
+            <thead><tr className="bg-gray-50 border-b border-gray-100 text-[11px] text-gray-500">
+              <th className="px-3 py-2.5 font-semibold w-8"></th>
+              {['المدرب الأساسي', 'قسمه', 'مجموعات متأثرة', 'جلسات خارج القسم'].map(h =>
+                <th key={h} className="px-3 py-2.5 font-semibold whitespace-nowrap">{h}</th>)}
+            </tr></thead>
+            <tbody className="divide-y divide-gray-50">
+              {isLoading ? (
+                <tr><td colSpan={5} className="text-center py-10 text-gray-400">جارٍ التحميل…</td></tr>
+              ) : trainers.length === 0 ? (
+                <tr><td colSpan={5} className="py-12"><EmptyState title="لا يوجد مدربون بمواعيد خارج القسم" /></td></tr>
+              ) : trainers.map(t => {
+                const isOpen = !!open[t.name];
+                return (
+                  <>
+                    <tr key={t.name} className="hover:bg-gray-50/60 cursor-pointer" onClick={() => setOpen(o => ({ ...o, [t.name]: !o[t.name] }))}>
+                      <td className="px-3 py-2 text-gray-400">{isOpen ? <ChevronDown size={15} /> : <ChevronLeft size={15} />}</td>
+                      <td className="px-3 py-2 font-mono text-[12px] text-gray-800 whitespace-nowrap" dir="ltr">{t.name}</td>
+                      <td className="px-3 py-2"><span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold ${SEC_TONE[t.section]}`}>{t.section_label}</span></td>
+                      <td className="px-3 py-2 text-center font-bold">{t.groups}</td>
+                      <td className="px-3 py-2 text-center font-black text-rose-700">{num(t.sessions)}</td>
+                    </tr>
+                    {isOpen && (
+                      <tr key={t.name + '_d'} className="bg-gray-50/40">
+                        <td></td>
+                        <td colSpan={4} className="px-3 py-2">
+                          <div className="space-y-2">
+                            {t.group_list.map((g, gi) => (
+                              <div key={gi} className="bg-white rounded-lg border border-gray-100 p-2.5">
+                                <div className="flex flex-wrap items-center gap-2 mb-1.5 text-[12px]">
+                                  <span className="font-mono text-gray-700 truncate max-w-[320px]" dir="ltr" title={g.group_name}>{g.group_name}</span>
+                                  <span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold ${SEC_TONE[g.section]}`}>{g.section_label}</span>
+                                  <span className="text-[11px] text-blue-700 font-semibold">فون كول: {g.side_pair}</span>
+                                  <span className="mr-auto text-[11px] text-rose-700 font-black">{num(g.sessions)} جلسة</span>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {g.phone_trainers.map((p, pi) => (
+                                    <span key={pi} className={`text-[11px] px-2 py-1 rounded-lg border font-semibold ${SEC_TONE[p.section]}`} dir="ltr">
+                                      {p.name} <span className="opacity-70">({p.section_label})</span> · <b>{num(p.sessions)}</b>
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        {trainers.length > 0 && <div className="px-4 py-2 text-[11px] text-gray-400 border-t">عرض {trainers.length} مدرب — اضغط على أي صف للتفاصيل</div>}
+      </div>
+
+      {data?.params?.unresolved_sessions > 0 && (
+        <div className="text-[11px] text-gray-400 px-1">
+          ملاحظة: {num(data.params.unresolved_sessions)} جلسة جانبية قسم مدرّبها غير محدّد (حسابات تجريبية / CS / مدربون أساسيون يغطّون) — مستبعدة من الكشف.
+        </div>
+      )}
     </div>
   );
 }

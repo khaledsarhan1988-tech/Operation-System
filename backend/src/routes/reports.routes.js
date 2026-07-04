@@ -8662,4 +8662,141 @@ router.get('/trainer-recruitment-balance', (req, res) => {
   }
 });
 
+// ─── GET /api/reports/trainer-recruitment-cross-section ──────────────────────
+// «توظيف المدربين» — «خارج القسم» tab. Detects MAIN-lecture trainers whose group
+// students are getting their phone-call (side) sessions from phone-call trainers
+// of a DIFFERENT section (e.g. a general group served by a private phone-call
+// trainer). Section of the phone-call trainer = team_members phone_call sub-section
+// (authoritative) else parsed from the name suffix ((semi)/(Private)/General…);
+// unknown-section side trainers (CS agents, test accounts, main trainers covering)
+// are NOT flagged (counted separately). Scope: active+waiting groups, current sheet.
+router.get('/trainer-recruitment-cross-section', (req, res) => {
+  try {
+    const sectionFilter = ['general', 'semi', 'private'].includes(req.query.section) ? req.query.section : 'all';
+    const line = lineFilter(req);
+    const DAYPAIR_KEY = { sat_tue: '6,2', sun_wed: '0,3', mon_thu: '1,4' };
+    const wantSideKey = DAYPAIR_KEY[req.query.day_pair] || null;
+
+    const SEC = ['general', 'semi', 'private'];
+    const SEC_LABEL = { general: 'عام', semi: 'شبه خاص', private: 'خاص' };
+    const PAIR_LABEL = { '1,4': 'إثنين + خميس', '6,2': 'سبت + ثلاثاء', '0,3': 'أحد + أربعاء' };
+    const DAY_NUM = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+    const isInternal = s => /free slot|hiring new teacher|placem.*test|تحديد مستو|comp[ae]ns|تعويض|grammar|go english|meeting|coch|coach/i.test(s || '');
+    const dowFromName = name => { const m = String(name).match(/^[A-Za-z]{3,4}_\d{1,2}_([A-Za-z]{3})/); if (!m) return null; const d = DAY_NUM[m[1].toLowerCase()]; return d === undefined ? null : d; };
+    const sidePairKey = d => (d === 6 || d === 2) ? '1,4' : (d === 0 || d === 3) ? '6,2' : (d === 1 || d === 4) ? '0,3' : null;
+    const mainPairLabel = d => (d === 6 || d === 2) ? 'سبت + ثلاثاء' : (d === 0 || d === 3) ? 'أحد + أربعاء' : (d === 1 || d === 4) ? 'إثنين + خميس' : '—';
+    const sectionOf = dt => { const s = String(dt || '').toLowerCase(); if (s.includes('semi') || s.includes('شبه')) return 'semi'; if (s.includes('priv') || s.includes('خاص')) return 'private'; return 'general'; };
+    const baseGroupOf = g => { const s = String(g || ''); const i = s.lastIndexOf(')'); return (i >= 0 ? s.slice(0, i + 1) : s).replace(/\s+/g, '').toLowerCase(); };
+    const stripName = s => String(s || '').replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+    // phone-call trainer section from the side-trainer name suffix (fallback)
+    const parseSecFromName = raw => {
+      const s = String(raw || '').toLowerCase();
+      if (/semi|شبه/.test(s)) return 'semi';
+      if (/priv|خاص|\(m\.?p\)|\(p\.?c\)|\bp\.c\b|z\.c\.p|\.p\)|\bmp\b/.test(s)) return 'private';
+      if (/general|\bgen\b/.test(s)) return 'general';
+      return null;
+    };
+
+    const lineSql = line ? ' AND line = ?' : '';
+    const lineP = line ? [line] : [];
+
+    // team_members → phone_call section (authoritative), by normalized name
+    const tmSec = new Map();
+    for (const t of db.prepare(`SELECT name, section, shifts_json FROM team_members`).all()) {
+      let sec = String(t.section || '').startsWith('phone_call') ? t.section : null;
+      if (!sec) { try { sec = JSON.parse(t.shifts_json || '[]').map(s => s.section).find(s => String(s || '').startsWith('phone_call')); } catch {} }
+      if (sec) tmSec.set(stripName(t.name), sec.replace('phone_call_', '').replace('phone_call', 'general') || 'general');
+    }
+    const trainerSecOf = raw => tmSec.get(stripName(raw)) || parseSecFromName(raw) || null;
+
+    // active + waiting groups → base key → { section, side_pair_key, main_pair }
+    const grp = new Map();
+    for (const g of db.prepare(
+      `SELECT group_name, line, MAX(dept_type) dept, MAX(status) status
+         FROM batches WHERE status IN ('نشطة','بانتظار تسجيل المحاضرات','بانتظار تسجيل المتدربين')${lineSql}
+        GROUP BY group_name, line`
+    ).all(...lineP)) {
+      if (isInternal(g.group_name)) continue;
+      const dow = dowFromName(g.group_name); if (dow === null) continue;
+      const pk = sidePairKey(dow) || '6,2';
+      grp.set(baseGroupOf(g.group_name) + '|' + g.line, {
+        group_name: g.group_name, line: g.line, section: sectionOf(g.dept),
+        side_key: pk, side_pair: PAIR_LABEL[pk], main_pair: mainPairLabel(dow),
+      });
+    }
+
+    // dominant MAIN trainer per active group (current sheet)
+    const mainAgg = new Map();   // baseKey -> Map(trainer->count)
+    for (const r of db.prepare(
+      `SELECT l.group_name, l.line, l.trainer, COUNT(*) c FROM lectures l
+         INNER JOIN (SELECT group_name,line,date(MAX(synced_at)) sd FROM lectures WHERE session_type='main' GROUP BY group_name,line) ls
+           ON l.group_name=ls.group_name AND l.line=ls.line AND date(l.synced_at)=ls.sd
+        WHERE l.session_type='main' AND COALESCE(l.trainer,'')<>''${line ? ' AND l.line = ?' : ''}
+        GROUP BY l.group_name, l.line, l.trainer`
+    ).all(...lineP)) {
+      const k = baseGroupOf(r.group_name) + '|' + r.line;
+      if (!grp.has(k)) continue;
+      const m = mainAgg.get(k) || new Map(); m.set(r.trainer, (m.get(r.trainer) || 0) + r.c); mainAgg.set(k, m);
+    }
+    const mainTrainerOf = k => { const m = mainAgg.get(k); if (!m) return null; let best = null, bc = -1; for (const [t, c] of m) if (c > bc) { bc = c; best = t; } return best; };
+
+    // current-sheet side sessions of active groups → flag cross-section
+    let unresolved = 0, crossTotal = 0;
+    const byTrainer = new Map();   // main trainer -> { section counts, groups:Map }
+    for (const r of db.prepare(
+      `SELECT l.group_name, l.line, l.trainer FROM lectures l
+         INNER JOIN (SELECT group_name,line,date(MAX(synced_at)) sd FROM lectures WHERE session_type='side' GROUP BY group_name,line) ls
+           ON l.group_name=ls.group_name AND l.line=ls.line AND date(l.synced_at)=ls.sd
+        WHERE l.session_type='side' AND COALESCE(l.trainer,'')<>''${line ? ' AND l.line = ?' : ''}`
+    ).all(...lineP)) {
+      const k = baseGroupOf(r.group_name) + '|' + r.line;
+      const g = grp.get(k); if (!g) continue;                 // only active/waiting groups
+      if (wantSideKey && g.side_key !== wantSideKey) continue;
+      const tsec = trainerSecOf(r.trainer);
+      if (!tsec) { unresolved++; continue; }
+      if (tsec === g.section) continue;                        // same section — fine
+      // CROSS
+      const main = mainTrainerOf(k); if (!main) continue;
+      if (/\(z\.?[cm]\)/i.test(main)) continue;
+      crossTotal++;
+      let t = byTrainer.get(main);
+      if (!t) { t = { name: main, secCount: { general: 0, semi: 0, private: 0 }, groups: new Map() }; byTrainer.set(main, t); }
+      t.secCount[g.section] = (t.secCount[g.section] || 0) + 1;
+      let gg = t.groups.get(k);
+      if (!gg) { gg = { group_name: g.group_name, section: g.section, main_pair: g.main_pair, side_pair: g.side_pair, sessions: 0, phone: new Map() }; t.groups.set(k, gg); }
+      gg.sessions++;
+      const pe = gg.phone.get(r.trainer) || { name: r.trainer, section: tsec, sessions: 0 }; pe.sessions++; gg.phone.set(r.trainer, pe);
+    }
+
+    let trainers = [...byTrainer.values()].map(t => {
+      const primary = SEC.reduce((a, s) => (t.secCount[s] > t.secCount[a] ? s : a), 'general');
+      const group_list = [...t.groups.values()].map(g => ({
+        group_name: g.group_name, section: g.section, section_label: SEC_LABEL[g.section],
+        main_pair: g.main_pair, side_pair: g.side_pair, sessions: g.sessions,
+        phone_trainers: [...g.phone.values()].map(p => ({ name: p.name, section: p.section, section_label: SEC_LABEL[p.section], sessions: p.sessions })).sort((a, b) => b.sessions - a.sessions),
+      })).sort((a, b) => b.sessions - a.sessions);
+      return {
+        name: t.name, section: primary, section_label: SEC_LABEL[primary],
+        groups: group_list.length, sessions: group_list.reduce((a, g) => a + g.sessions, 0),
+        group_list,
+      };
+    });
+    if (sectionFilter !== 'all') trainers = trainers.filter(t => t.section === sectionFilter);
+    trainers.sort((a, b) => b.sessions - a.sessions || String(a.name).localeCompare(String(b.name), 'ar'));
+
+    const totals = {
+      trainers: trainers.length,
+      groups: trainers.reduce((a, t) => a + t.groups, 0),
+      sessions: trainers.reduce((a, t) => a + t.sessions, 0),
+    };
+    return res.json({
+      params: { section: sectionFilter, day_pair: req.query.day_pair || 'all', unresolved_sessions: unresolved },
+      totals, trainers,
+    });
+  } catch (err) {
+    console.error('[reports] trainer-recruitment-cross-section:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
