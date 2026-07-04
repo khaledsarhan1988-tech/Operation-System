@@ -1,7 +1,7 @@
 'use client';
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { UserPlus, PhoneCall, Users, Search, ChevronDown, ChevronLeft, GraduationCap, Filter, X } from 'lucide-react';
+import { UserPlus, PhoneCall, Users, Search, ChevronDown, ChevronLeft, GraduationCap, Filter, X, Clock } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import EmptyState from '../../components/ui/EmptyState';
@@ -31,6 +31,7 @@ const firstInRange = (first, from, to) => {
 };
 
 export default function TrainerRecruitment() {
+  const [view, setView] = useState('demand');   // 'demand' (phase 1) | 'supply' (phase 2)
   const [section, setSection] = useState('all');
   const [q, setQ] = useState('');
   const [from, setFrom] = useState('');
@@ -71,6 +72,15 @@ export default function TrainerRecruitment() {
         gradient="rose"
       />
 
+      {/* View toggle: demand (phase 1) vs supply (phase 2) */}
+      <div className="flex gap-2">
+        <TabBtn active={view === 'demand'} onClick={() => setView('demand')} icon={PhoneCall} label="الطلب" />
+        <TabBtn active={view === 'supply'} onClick={() => setView('supply')} icon={Clock} label="السعة" />
+      </div>
+
+      {view === 'supply' && <SupplyView />}
+
+      {view === 'demand' && (<>
       {/* Global filters */}
       <div className="bg-white rounded-2xl border border-gray-100 p-4 flex flex-wrap items-center gap-3 text-sm">
         <div className="flex items-center gap-2">
@@ -200,6 +210,129 @@ export default function TrainerRecruitment() {
           ملاحظة: {data.params.groups_without_main_trainer} مجموعة (ضمن الفلاتر الحالية) من غير مدرب أساسي على الشيت الحالي — مستبعدة من الجدول.
         </div>
       )}
+      </>)}
+    </div>
+  );
+}
+
+function TabBtn({ active, onClick, icon: Icon, label }) {
+  return (
+    <button onClick={onClick} className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold border transition ${active ? 'bg-rose-500 text-white border-rose-500 shadow-sm' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
+      <Icon size={15} /> {label}
+    </button>
+  );
+}
+
+// PHASE 2 — supply side: phone-call trainers' monthly call capacity (own filters).
+function SupplyView() {
+  const [section, setSection] = useState('all');
+  const [dayPair, setDayPair] = useState('all');
+  const [q, setQ] = useState('');
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['trainer-recruitment-supply', section, dayPair],
+    queryFn: () => api.get('/reports/trainer-recruitment-supply', {
+      params: { section, day_pair: dayPair === 'all' ? undefined : dayPair },
+    }).then(r => r.data),
+    staleTime: 60 * 1000,
+  });
+
+  const totals = data?.totals || {};
+  const sections = data?.sections || [];
+  const trainers = useMemo(() => {
+    let t = data?.trainers || [];
+    if (q.trim()) { const s = q.trim().toLowerCase(); t = t.filter(x => (x.name || '').toLowerCase().includes(s)); }
+    return t;
+  }, [data, q]);
+
+  return (
+    <div className="space-y-5">
+      {/* filters: section + day-pair + search */}
+      <div className="bg-white rounded-2xl border border-gray-100 p-4 flex flex-wrap items-center gap-3 text-sm">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-gray-500">القسم</span>
+          <select value={section} onChange={e => setSection(e.target.value)} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
+            {Object.entries(SECTIONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-gray-500">يوم الفون كول</span>
+          <select value={dayPair} onChange={e => setDayPair(e.target.value)} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
+            {Object.entries(DAY_PAIRS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          </select>
+        </div>
+        <div className="relative mr-auto">
+          <Search className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="اسم المدرب..." className="pr-8 pl-2 py-2 rounded-lg border border-gray-200 text-xs w-44" />
+        </div>
+      </div>
+
+      {/* summary */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <SumCard icon={Users}     label="مدربين فون كول" value={num(totals.trainers)} tone="bg-white border-gray-200 text-gray-800" />
+        <SumCard icon={Clock}     label="ساعات / أسبوع" value={num(totals.weekly_hours)} tone="bg-white border-gray-200 text-gray-800" />
+        <SumCard icon={PhoneCall} label="سعة / شهر (مكالمات)" value={num(totals.monthly_calls)} tone="bg-emerald-50 border-emerald-200 text-emerald-800" />
+      </div>
+
+      {/* per-section capacity */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {sections.map(s => (
+          <div key={s.section} className={`rounded-2xl border p-4 ${SEC_TONE[s.section] || 'border-gray-200 bg-white'}`}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="font-black text-base">{s.label}</span>
+              <span className="text-[11px] opacity-80">{s.trainers} مدرب · {num(s.weekly_hours)}س/أسبوع</span>
+            </div>
+            <div className="text-[12px] mb-1">إجمالي السعة: <b>{num(s.monthly_calls)}</b> مكالمة/شهر</div>
+            <div className="space-y-0.5">
+              {Object.entries(s.capacity_by_side_pair || {}).map(([lbl, v]) => (
+                <div key={lbl} className="flex items-center justify-between text-[11px] bg-white/60 rounded px-2 py-0.5">
+                  <span className="font-semibold text-blue-700">{lbl}</span>
+                  <span className="font-black">{num(v)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-2.5 text-[12px] text-emerald-800">
+        السعة = صافي ساعات عمل كل مدرب فون كول × <b>4 مكالمات/ساعة</b> × <b>4 أسابيع</b> = مكالمات/شهر، موزّعة على أزواج أيام عمله.
+      </div>
+
+      {/* trainers table */}
+      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-right" style={{ minWidth: '760px' }}>
+            <thead><tr className="bg-gray-50 border-b border-gray-100 text-[11px] text-gray-500">
+              {['المدرب', 'القسم', 'ساعات/أسبوع', 'سعة/شهر', 'أيام العمل', 'السعة لكل زوج أيام'].map(h =>
+                <th key={h} className="px-3 py-2.5 font-semibold whitespace-nowrap">{h}</th>)}
+            </tr></thead>
+            <tbody className="divide-y divide-gray-50">
+              {isLoading ? (
+                <tr><td colSpan={6} className="text-center py-10 text-gray-400">جارٍ التحميل…</td></tr>
+              ) : trainers.length === 0 ? (
+                <tr><td colSpan={6} className="py-12"><EmptyState title="لا يوجد مدربو فون كول بهذه الفلاتر" /></td></tr>
+              ) : trainers.map((t, i) => (
+                <tr key={i} className="hover:bg-gray-50/60">
+                  <td className="px-3 py-2 font-mono text-[12px] text-gray-800 whitespace-nowrap" dir="ltr">{t.name}</td>
+                  <td className="px-3 py-2"><span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold ${SEC_TONE[t.section]}`}>{t.section_label}</span></td>
+                  <td className="px-3 py-2 text-center font-bold">{num(t.weekly_hours)}</td>
+                  <td className="px-3 py-2 text-center font-black text-emerald-700">{num(t.monthly_calls)}</td>
+                  <td className="px-3 py-2 text-xs text-gray-500 whitespace-nowrap">{(t.work_days || []).join('، ') || '—'}</td>
+                  <td className="px-3 py-2 text-xs whitespace-nowrap">
+                    {(t.by_pair || []).filter(p => p.monthly_calls > 0).map((p, idx, arr) => (
+                      <span key={p.pair_key} className="inline-block">
+                        <span className="text-blue-700 font-semibold">{p.side_pair}</span>: <b className="text-emerald-700">{num(p.monthly_calls)}</b>{idx < arr.length - 1 ? ' · ' : ''}
+                      </span>
+                    ))}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {trainers.length > 0 && <div className="px-4 py-2 text-[11px] text-gray-400 border-t">عرض {trainers.length} مدرب فون كول</div>}
+      </div>
     </div>
   );
 }

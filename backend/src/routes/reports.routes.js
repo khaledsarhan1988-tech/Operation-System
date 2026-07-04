@@ -8371,4 +8371,126 @@ router.get('/trainer-recruitment', (req, res) => {
   }
 });
 
+// ─── GET /api/reports/trainer-recruitment-supply ─────────────────────────────
+// «توظيف المدربين» — PHASE 2 (supply side). Phone-call (zoom) trainers' call
+// CAPACITY, from LIVE data. Per owner: capacity = each trainer's ACTUAL net
+// work-hours × 4 calls/hour (NOT a flat 28), expressed per MONTH (× 4 weeks, to
+// match the demand's students×7/month). Grouped per section + per phone-call
+// day-pair, so it can sit beside the Phase-1 demand. Filters: section + day-pair
+// only (date/status are group attributes, N/A to trainers).
+router.get('/trainer-recruitment-supply', (req, res) => {
+  try {
+    const CALLS_PER_HOUR  = 4;
+    const WEEKS_PER_MONTH = 4;
+    const sectionFilter   = ['general', 'semi', 'private'].includes(req.query.section) ? req.query.section : 'all';
+    const DAYPAIR_KEY = { sat_tue: '6,2', sun_wed: '0,3', mon_thu: '1,4' };
+    const wantPairKey = DAYPAIR_KEY[req.query.day_pair] || null;
+
+    const SEC = ['general', 'semi', 'private'];
+    const SEC_LABEL  = { general: 'عام', semi: 'شبه خاص', private: 'خاص' };
+    const PAIR_LABEL = { '6,2': 'سبت + ثلاثاء', '0,3': 'أحد + أربعاء', '1,4': 'إثنين + خميس' };
+    const PAIR_DAYS  = { '6,2': ['saturday', 'tuesday'], '0,3': ['sunday', 'wednesday'], '1,4': ['monday', 'thursday'] };
+    const PAIR_KEYS  = ['6,2', '0,3', '1,4'];
+    const TEACH_DAYS = ['saturday', 'sunday', 'monday', 'tuesday', 'wednesday', 'thursday'];
+    const DAY_AR     = { saturday: 'سبت', sunday: 'أحد', monday: 'إثنين', tuesday: 'ثلاثاء', wednesday: 'أربعاء', thursday: 'خميس' };
+    const callsOf = h => Math.round(h * CALLS_PER_HOUR * WEEKS_PER_MONTH);   // net weekly hours → calls/month
+    const unionMin = ivs => {
+      if (!ivs.length) return 0;
+      ivs.sort((a, b) => a[0] - b[0]); let tot = 0, cs = ivs[0][0], ce = ivs[0][1];
+      for (let i = 1; i < ivs.length; i++) { const [s, e] = ivs[i]; if (s > ce) { tot += ce - cs; cs = s; ce = e; } else ce = Math.max(ce, e); }
+      return tot + (ce - cs);
+    };
+
+    const members = db.prepare(
+      `SELECT name, section, job_title, status, shifts_json, shift, shift_start, shift_end,
+              shift_rests, voice_notes, work_days, shift_start_date, shift_end_date,
+              shift2, shift2_start, shift2_end, shift2_rests, shift2_voice_notes, shift2_work_days,
+              shift2_start_date, shift2_end_date, employment_type, start_date
+         FROM team_members
+        WHERE status = 'active' AND (job_title IS NULL OR job_title <> 'تيم ليدر')`
+    ).all();
+
+    // one row per (phone-call trainer, sub-section) with net hours per day
+    const raw = [];
+    for (const t of members) {
+      const shifts = parseTeamShifts(t).filter(sh => String(sh.section || '').startsWith('phone_call'));
+      if (!shifts.length) continue;
+      const subShifts = {};
+      for (const sh of shifts) {
+        const sub = sh.section.replace('phone_call_', '').replace('phone_call', 'general') || 'general';
+        (subShifts[sub] = subShifts[sub] || []).push(sh);
+      }
+      for (const [sub, shs] of Object.entries(subShifts)) {
+        if (!SEC.includes(sub)) continue;
+        const dayHours = {};
+        for (const day of TEACH_DAYS) {
+          const ivs = [], rests = [];
+          for (const sh of shs) {
+            if (!sh.days.includes(day)) continue;
+            ivs.push([sh.startMin, sh.endMin]);
+            for (const r of (sh.rests || [])) {
+              const rd = (r.days && r.days.length) ? r.days : sh.days;
+              if (rd.includes(day)) rests.push([r.startMin, r.endMin]);
+            }
+          }
+          if (ivs.length) { const net = Math.max(0, unionMin(ivs) - unionMin(rests)) / 60; if (net > 0) dayHours[day] = net; }
+        }
+        const weeklyHours = Object.values(dayHours).reduce((a, b) => a + b, 0);
+        if (weeklyHours > 0) raw.push({ name: t.name, section: sub, dayHours, weeklyHours });
+      }
+    }
+
+    // shape trainers (+ per-pair capacity), then apply filters
+    let trainers = raw.map(r => {
+      const by_pair = PAIR_KEYS.map(pk => {
+        const h = PAIR_DAYS[pk].reduce((a, d) => a + (r.dayHours[d] || 0), 0);
+        return { pair_key: pk, side_pair: PAIR_LABEL[pk], weekly_hours: +h.toFixed(1), monthly_calls: callsOf(h) };
+      });
+      return {
+        name: r.name, section: r.section, section_label: SEC_LABEL[r.section],
+        weekly_hours: +r.weeklyHours.toFixed(1), monthly_calls: callsOf(r.weeklyHours),
+        work_days: TEACH_DAYS.filter(d => r.dayHours[d] > 0).map(d => DAY_AR[d]),
+        by_pair,
+      };
+    });
+    if (sectionFilter !== 'all') trainers = trainers.filter(t => t.section === sectionFilter);
+    if (wantPairKey) {
+      // scope every headline number to the chosen phone-call day-pair
+      trainers = trainers
+        .map(t => { const p = t.by_pair.find(x => x.pair_key === wantPairKey); return { ...t, weekly_hours: p.weekly_hours, monthly_calls: p.monthly_calls, by_pair: [p] }; })
+        .filter(t => t.weekly_hours > 0);
+    }
+    trainers.sort((a, b) => b.monthly_calls - a.monthly_calls || String(a.name).localeCompare(String(b.name), 'ar'));
+
+    const sections = SEC.map(sec => {
+      const ts = trainers.filter(t => t.section === sec);
+      const cap_by_pair = {};
+      for (const pk of PAIR_KEYS) {
+        if (wantPairKey && pk !== wantPairKey) continue;
+        cap_by_pair[PAIR_LABEL[pk]] = ts.reduce((a, t) => a + (t.by_pair.find(p => p.pair_key === pk)?.monthly_calls || 0), 0);
+      }
+      return {
+        section: sec, label: SEC_LABEL[sec], trainers: ts.length,
+        weekly_hours: +ts.reduce((a, t) => a + t.weekly_hours, 0).toFixed(1),
+        monthly_calls: ts.reduce((a, t) => a + t.monthly_calls, 0),
+        capacity_by_side_pair: cap_by_pair,
+      };
+    }).filter(s => sectionFilter === 'all' || s.section === sectionFilter);
+
+    const totals = {
+      trainers: trainers.length,
+      weekly_hours: +trainers.reduce((a, t) => a + t.weekly_hours, 0).toFixed(1),
+      monthly_calls: trainers.reduce((a, t) => a + t.monthly_calls, 0),
+    };
+
+    return res.json({
+      params: { calls_per_hour: CALLS_PER_HOUR, weeks_per_month: WEEKS_PER_MONTH, section: sectionFilter, day_pair: req.query.day_pair || 'all' },
+      totals, sections, trainers,
+    });
+  } catch (err) {
+    console.error('[reports] trainer-recruitment-supply:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
