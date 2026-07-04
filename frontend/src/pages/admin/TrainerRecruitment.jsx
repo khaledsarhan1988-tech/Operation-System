@@ -20,6 +20,11 @@ const DAY_PAIRS = {
   mon_thu: { label: 'إثنين + خميس',   sideKey: '1,4' },
 };
 const STATUS_OPTS = { all: 'تشمل بانتظار التسجيل', active: 'نشطة فقط' };
+// Main-lecture day-pair → the inverse (phone-call/side) day-pair. Picking a main
+// pair is just another label for the same axis, so it maps to the side filter.
+const MAIN_DAY_PAIRS = { all: 'كل الأيام', sat_tue: 'سبت + ثلاثاء', sun_wed: 'أحد + أربعاء', mon_thu: 'إثنين + خميس' };
+const MAIN_TO_SIDE = { sat_tue: 'mon_thu', sun_wed: 'sat_tue', mon_thu: 'sun_wed' };
+const effDayPair = (side, main) => (main && main !== 'all') ? MAIN_TO_SIDE[main] : side;
 const num = n => (n ?? 0).toLocaleString('en-US');
 // Is the group's FIRST lecture date within the window [from,to]? (inner filter rule)
 const firstInRange = (first, from, to) => {
@@ -37,16 +42,17 @@ export default function TrainerRecruitment() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [dayPair, setDayPair] = useState('all');
+  const [mainDayPair, setMainDayPair] = useState('all');
   const [status, setStatus] = useState('all');
   const [open, setOpen] = useState({});   // trainer name → expanded?
 
   const { data, isLoading } = useQuery({
-    queryKey: ['trainer-recruitment', section, from, to, dayPair, status],
+    queryKey: ['trainer-recruitment', section, from, to, dayPair, mainDayPair, status],
     queryFn: () => api.get('/reports/trainer-recruitment', {
       params: {
         section,
         from: from || undefined, to: to || undefined,
-        day_pair: dayPair === 'all' ? undefined : dayPair,
+        day_pair: effDayPair(dayPair, mainDayPair) === 'all' ? undefined : effDayPair(dayPair, mainDayPair),
         status: status === 'active' ? 'active' : undefined,
       },
     }).then(r => r.data),
@@ -61,7 +67,7 @@ export default function TrainerRecruitment() {
     return t;
   }, [data, q]);
 
-  const anyGlobalFilter = from || to || dayPair !== 'all' || status !== 'all';
+  const anyGlobalFilter = from || to || dayPair !== 'all' || mainDayPair !== 'all' || status !== 'all';
 
   return (
     <div className="space-y-5 animate-fadeIn pb-12" dir="rtl">
@@ -100,8 +106,14 @@ export default function TrainerRecruitment() {
           <input type="date" value={to} onChange={e => setTo(e.target.value)} className="px-2 py-2 rounded-lg border border-gray-200 text-xs text-gray-700 bg-gray-50" />
         </div>
         <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-gray-500">يوم المحاضرات الأساسية</span>
+          <select value={mainDayPair} onChange={e => { setMainDayPair(e.target.value); if (e.target.value !== 'all') setDayPair('all'); }} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
+            {Object.entries(MAIN_DAY_PAIRS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
           <span className="text-xs font-bold text-gray-500">يوم الفون كول</span>
-          <select value={dayPair} onChange={e => setDayPair(e.target.value)} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
+          <select value={dayPair} onChange={e => { setDayPair(e.target.value); if (e.target.value !== 'all') setMainDayPair('all'); }} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
             {Object.entries(DAY_PAIRS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
         </div>
@@ -112,7 +124,7 @@ export default function TrainerRecruitment() {
           </select>
         </div>
         {anyGlobalFilter && (
-          <button onClick={() => { setFrom(''); setTo(''); setDayPair('all'); setStatus('all'); }} className="text-[11px] text-rose-500 font-bold hover:underline">مسح الفلاتر</button>
+          <button onClick={() => { setFrom(''); setTo(''); setDayPair('all'); setMainDayPair('all'); setStatus('all'); }} className="text-[11px] text-rose-500 font-bold hover:underline">مسح الفلاتر</button>
         )}
         <div className="relative mr-auto">
           <Search className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
@@ -231,12 +243,13 @@ function TabBtn({ active, onClick, icon: Icon, label }) {
 function SupplyView() {
   const [section, setSection] = useState('all');
   const [dayPair, setDayPair] = useState('all');
+  const [mainDayPair, setMainDayPair] = useState('all');
   const [q, setQ] = useState('');
 
   const { data, isLoading } = useQuery({
-    queryKey: ['trainer-recruitment-supply', section, dayPair],
+    queryKey: ['trainer-recruitment-supply', section, dayPair, mainDayPair],
     queryFn: () => api.get('/reports/trainer-recruitment-supply', {
-      params: { section, day_pair: dayPair === 'all' ? undefined : dayPair },
+      params: { section, day_pair: effDayPair(dayPair, mainDayPair) === 'all' ? undefined : effDayPair(dayPair, mainDayPair) },
     }).then(r => r.data),
     staleTime: 60 * 1000,
   });
@@ -260,8 +273,14 @@ function SupplyView() {
           </select>
         </div>
         <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-gray-500">يوم المحاضرات الأساسية</span>
+          <select value={mainDayPair} onChange={e => { setMainDayPair(e.target.value); if (e.target.value !== 'all') setDayPair('all'); }} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
+            {Object.entries(MAIN_DAY_PAIRS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
           <span className="text-xs font-bold text-gray-500">يوم الفون كول</span>
-          <select value={dayPair} onChange={e => setDayPair(e.target.value)} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
+          <select value={dayPair} onChange={e => { setDayPair(e.target.value); if (e.target.value !== 'all') setMainDayPair('all'); }} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
             {Object.entries(DAY_PAIRS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
         </div>
@@ -346,11 +365,12 @@ function SupplyView() {
 function BalanceView() {
   const [section, setSection] = useState('all');
   const [dayPair, setDayPair] = useState('all');
+  const [mainDayPair, setMainDayPair] = useState('all');
 
   const { data, isLoading } = useQuery({
-    queryKey: ['trainer-recruitment-balance', section, dayPair],
+    queryKey: ['trainer-recruitment-balance', section, dayPair, mainDayPair],
     queryFn: () => api.get('/reports/trainer-recruitment-balance', {
-      params: { section, day_pair: dayPair === 'all' ? undefined : dayPair },
+      params: { section, day_pair: effDayPair(dayPair, mainDayPair) === 'all' ? undefined : effDayPair(dayPair, mainDayPair) },
     }).then(r => r.data),
     staleTime: 60 * 1000,
   });
@@ -369,8 +389,14 @@ function BalanceView() {
           </select>
         </div>
         <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-gray-500">يوم المحاضرات الأساسية</span>
+          <select value={mainDayPair} onChange={e => { setMainDayPair(e.target.value); if (e.target.value !== 'all') setDayPair('all'); }} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
+            {Object.entries(MAIN_DAY_PAIRS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
           <span className="text-xs font-bold text-gray-500">يوم الفون كول</span>
-          <select value={dayPair} onChange={e => setDayPair(e.target.value)} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
+          <select value={dayPair} onChange={e => { setDayPair(e.target.value); if (e.target.value !== 'all') setMainDayPair('all'); }} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
             {Object.entries(DAY_PAIRS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
         </div>
@@ -454,13 +480,14 @@ function BalanceView() {
 function CrossSectionView() {
   const [section, setSection] = useState('all');
   const [dayPair, setDayPair] = useState('all');
+  const [mainDayPair, setMainDayPair] = useState('all');
   const [q, setQ] = useState('');
   const [open, setOpen] = useState({});
 
   const { data, isLoading } = useQuery({
-    queryKey: ['trainer-recruitment-cross', section, dayPair],
+    queryKey: ['trainer-recruitment-cross', section, dayPair, mainDayPair],
     queryFn: () => api.get('/reports/trainer-recruitment-cross-section', {
-      params: { section, day_pair: dayPair === 'all' ? undefined : dayPair },
+      params: { section, day_pair: effDayPair(dayPair, mainDayPair) === 'all' ? undefined : effDayPair(dayPair, mainDayPair) },
     }).then(r => r.data),
     staleTime: 60 * 1000,
   });
@@ -482,8 +509,14 @@ function CrossSectionView() {
           </select>
         </div>
         <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-gray-500">يوم المحاضرات الأساسية</span>
+          <select value={mainDayPair} onChange={e => { setMainDayPair(e.target.value); if (e.target.value !== 'all') setDayPair('all'); }} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
+            {Object.entries(MAIN_DAY_PAIRS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
           <span className="text-xs font-bold text-gray-500">يوم الفون كول</span>
-          <select value={dayPair} onChange={e => setDayPair(e.target.value)} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
+          <select value={dayPair} onChange={e => { setDayPair(e.target.value); if (e.target.value !== 'all') setMainDayPair('all'); }} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
             {Object.entries(DAY_PAIRS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
         </div>
