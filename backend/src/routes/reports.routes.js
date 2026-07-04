@@ -8061,6 +8061,106 @@ router.get('/phone-call-gap', (req, res) => {
   }
 });
 
+// ─── GET /api/reports/groups-missing-phonecall ───────────────────────────────
+// «مجموعات بلا فون كول / ناقصة» — active + waiting groups that HAVE at least one
+// MAIN lecture but whose phone-call (side) sessions are FEWER than trainees × 7
+// (zero counts too). Same required/actual definition as /phone-call-gap so the
+// numbers agree. Internal/placeholder groups excluded. Returns {total, rows}
+// (paginated) for the dashboard card + its list modal. count_only=1 → {total}.
+router.get('/groups-missing-phonecall', (req, res) => {
+  try {
+    const PER_STUDENT = 7;
+    const line   = lineFilter(req);          // null for admin/All; honors ?line=
+    const lineP  = line ? [line] : [];
+    const countOnly = String(req.query.count_only || '') === '1';
+    const page   = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit  = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 100));
+    const search = String(req.query.search || '').trim().toLowerCase();
+    const dept   = ['General', 'Private', 'Semi'].includes(req.query.department) ? req.query.department : null;
+    const employee = String(req.query.employee || '').trim();
+    const norm   = s => String(s || '').replace(/\s+/g, '').toLowerCase();
+
+    // Non-teaching / placeholder groups — SAME set as /phone-call-gap.
+    const isInternal = s => /free slot|hiring new teacher|placem.*test|تحديد مستو|comp[ae]ns|تعويض|grammar|go english|meeting|coch|coach/i.test(s || '');
+    const sectionOf = dt => {
+      const s = String(dt || '').toLowerCase();
+      if (s.includes('semi') || s.includes('شبه')) return 'Semi';
+      if (s.includes('priv') || s.includes('خاص')) return 'Private';
+      return 'General';
+    };
+
+    // candidate groups: active + waiting (same scope as /phone-call-gap)
+    const groups = db.prepare(
+      `SELECT group_name, line, MAX(trainee_count) tc, MAX(dept_type) dept, MAX(coordinators) coord
+         FROM batches
+        WHERE status IN ('نشطة','بانتظار تسجيل المحاضرات','بانتظار تسجيل المتدربين')${line ? ' AND line = ?' : ''}
+        GROUP BY group_name, line`
+    ).all(...lineP).filter(g => !isInternal(g.group_name));
+
+    // current-sheet side (phone-call) count per group — IDENTICAL to /phone-call-gap
+    const sideRows = db.prepare(
+      `SELECT l.group_name, l.line, COUNT(DISTINCT l.date||'|'||l.time||'|'||l.trainer) c
+         FROM lectures l
+         INNER JOIN (SELECT group_name, line, date(MAX(synced_at)) sd
+                       FROM lectures WHERE session_type='side' GROUP BY group_name, line) ls
+           ON l.group_name=ls.group_name AND l.line=ls.line AND date(l.synced_at)=ls.sd
+        WHERE l.session_type='side'${line ? ' AND l.line = ?' : ''}
+        GROUP BY l.group_name, l.line`
+    ).all(...lineP);
+    const sideMap = new Map(sideRows.map(r => [r.group_name + '|' + r.line, r.c]));
+
+    // current-sheet MAIN (registered) count per group → "has main lecture" gate
+    const mainRows = db.prepare(
+      `SELECT l.group_name, l.line, COUNT(DISTINCT l.date||'|'||l.time) c
+         FROM lectures l
+         INNER JOIN (SELECT group_name, line, date(MAX(synced_at)) sd
+                       FROM lectures WHERE session_type='main' GROUP BY group_name, line) ls
+           ON l.group_name=ls.group_name AND l.line=ls.line AND date(l.synced_at)=ls.sd
+        WHERE l.session_type='main' AND l.status IN ('مؤكدة','مجدولة')${line ? ' AND l.line = ?' : ''}
+        GROUP BY l.group_name, l.line`
+    ).all(...lineP);
+    const mainMap = new Map(mainRows.map(r => [r.group_name + '|' + r.line, r.c]));
+
+    // client-count fallback for trainee count (same as /phone-call-gap)
+    const cliRows = db.prepare(
+      `SELECT group_name, line, COUNT(DISTINCT phone) c FROM clients${line ? ' WHERE line = ?' : ''} GROUP BY group_name, line`
+    ).all(...lineP);
+    const cliMap = new Map(cliRows.map(r => [r.group_name + '|' + r.line, r.c]));
+
+    const rows = [];
+    for (const g of groups) {
+      const key = g.group_name + '|' + g.line;
+      const mainCnt = mainMap.get(key) || 0;
+      if (mainCnt < 1) continue;                        // must HAVE main lectures
+      const trainees = g.tc || cliMap.get(key) || 0;
+      if (!trainees) continue;                          // no roster → can't size the requirement
+      const required = trainees * PER_STUDENT;
+      const actual = sideMap.get(key) || 0;
+      if (actual >= required) continue;                 // phone-call complete → not a problem
+      const secAr = sectionOf(g.dept);
+      if (dept && secAr !== dept) continue;             // optional dept filter
+      const coordName = (String(g.coord || '').split(',')[0].trim().replace(/^-+$/, '')) || null;
+      if (employee && !norm(g.coord).includes(norm(employee))) continue;  // optional coordinator filter
+      if (search && !g.group_name.toLowerCase().includes(search)) continue;
+      rows.push({
+        group_name: g.group_name, line: g.line,
+        dept_type: secAr, coordinators: coordName,
+        trainee_count: trainees, required, actual, missing: required - actual,
+        main_lectures: mainCnt,
+      });
+    }
+    rows.sort((a, b) => b.missing - a.missing);
+
+    const total = rows.length;
+    if (countOnly) return res.json({ total });
+    const start = (page - 1) * limit;
+    return res.json({ total, rows: rows.slice(start, start + limit) });
+  } catch (err) {
+    console.error('[reports] groups-missing-phonecall:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/reports/trainer-recruitment ────────────────────────────────────
 // «توظيف المدربين» — PHASE 1 (demand side). For every MAIN-lecture trainer, from
 // LIVE data, aggregate the phone-call (zoom) DEMAND their groups generate:

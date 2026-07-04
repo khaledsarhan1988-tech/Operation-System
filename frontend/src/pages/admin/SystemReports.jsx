@@ -7,7 +7,7 @@ import {
   UserCheck, Eye, Search, Filter, TrendingUp, Calendar,
   CheckCircle, XCircle, AlertOctagon, BarChart2, Zap, FileText,
   Edit3, Save, Bell, ShieldCheck, Loader2, Copy, Check, Video,
-  Headphones,
+  Headphones, PhoneOff,
 } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
@@ -2355,6 +2355,15 @@ export default function SystemReports() {
     gcTime:    15 * 60 * 1000,
   });
 
+  // «مجموعات بلا فون كول / ناقصة» card count — its own lightweight query (like
+  // code-problems). The list modal fetches the full paginated rows on click.
+  const { data: gmpc, isLoading: gmpcLoading } = useQuery({
+    queryKey: ['groups-missing-phonecall', applied],
+    queryFn: () => api.get('/reports/groups-missing-phonecall', { params: { ...applied, count_only: 1 } }).then(r => r.data),
+    staleTime: 5 * 60 * 1000,
+    gcTime:    15 * 60 * 1000,
+  });
+
   // Team summary — reloads when top-page filters change
   const { data: teamSummary, isLoading: teamSummaryLoading } = useQuery({
     queryKey: ['team-summary', applied],
@@ -2688,6 +2697,26 @@ export default function SystemReports() {
             onClick={() => setGroupsModal({
               title: 'مجموعات مكررة (نفس المجموعة في أكتر من صف بالشيت)',
               groups: data?.duplicate_groups_list ?? [],
+            })} />
+          <KpiCard label="مجموعات بلا فون كول / ناقص"
+            value={isLoading || gmpcLoading ? undefined : (gmpc?.total ?? 0)}
+            icon={PhoneOff}
+            gradient="linear-gradient(135deg, #9d174d 0%, #ec4899 100%)"
+            loading={isLoading || gmpcLoading} pulse={(gmpc?.total ?? 0) > 0}
+            onClick={() => setListModal({
+              title: 'مجموعات بلا فون كول / الفون كول ناقص (المطلوب = المتدربين × 7)',
+              endpoint: '/reports/groups-missing-phonecall',
+              params: { ...applied },
+              columns: [
+                { key: 'group_name',    label: 'المجموعة',          noWrap: true },
+                { key: 'dept_type',     label: 'القسم',             type: 'badge' },
+                { key: 'coordinators',  label: 'المنسق' },
+                { key: 'trainee_count', label: 'المتدربين' },
+                { key: 'required',      label: 'المطلوب (×7)' },
+                { key: 'actual',        label: 'الموجود' },
+                { key: 'missing',       label: 'الناقص' },
+                { key: 'main_lectures', label: 'المحاضرات الأساسية' },
+              ],
             })} />
         </div>
       </div>
