@@ -1034,7 +1034,9 @@ router.post('/bulk-templates', express.json(), (req, res) => {
   const getUser = db.prepare(
     `SELECT id, line, department, management FROM users WHERE id = ? AND is_active = 1`
   );
-  const checkExisting = db.prepare(`
+  // Match an existing template for this user by title (the workflow's stable
+  // key). We UPSERT: found → update its schedule; not found → insert.
+  const findExisting = db.prepare(`
     SELECT id FROM todos
      WHERE assigned_to = ? AND is_recurring = 1 AND parent_todo_id IS NULL
        AND LOWER(TRIM(title)) = LOWER(TRIM(?))
@@ -1047,59 +1049,77 @@ router.post('/bulk-templates', express.json(), (req, res) => {
        is_recurring, recurrence_pattern, line)
     VALUES (?,?,'new',?,NULL,?,?,?,?,?,1,?,?)
   `);
+  // Applying the workflow is the source of truth → update the existing
+  // template's schedule (time/description/priority/recurrence) to match.
+  const updateTemplate = db.prepare(`
+    UPDATE todos SET description = ?, priority = ?, due_time = ?,
+      recurrence_pattern = ?, updated_at = datetime('now', '+2 hours')
+     WHERE id = ?
+  `);
 
-  let created = 0, skipped = 0;
+  let created = 0, updated = 0;
   const details = [];
   const createdIds = [];
+  const updatedIds = [];
 
   for (const uid of userIds) {
     const u = getUser.get(uid);
     if (!u) { details.push({ user_id: uid, status: 'user_not_found' }); continue; }
 
-    let userCreated = 0, userSkipped = 0;
+    let userCreated = 0, userUpdated = 0;
     for (const t of templates) {
       const title = String(t.title || '').trim();
       if (!title) continue;
-      if (checkExisting.get(uid, title)) { skipped++; userSkipped++; continue; }
+      const desc = t.description || null;
+      const prio = t.priority || 'normal';
+      const time = t.due_time || null;
+      const pat  = t.recurrence_pattern || 'daily';
       try {
-        const ins = insertTemplate.run(
-          title,
-          t.description || null,
-          t.priority || 'normal',
-          t.due_time || null,
-          scope.id,
-          uid,
-          u.department || null,
-          u.management || null,
-          t.recurrence_pattern || 'daily',
-          u.line || 'Ahmed Hassan',
-        );
-        createdIds.push(ins.lastInsertRowid);
-        created++; userCreated++;
+        const ex = findExisting.get(uid, title);
+        if (ex) {
+          updateTemplate.run(desc, prio, time, pat, ex.id);
+          updatedIds.push(ex.id);
+          updated++; userUpdated++;
+        } else {
+          const ins = insertTemplate.run(
+            title, desc, prio, time, scope.id, uid,
+            u.department || null, u.management || null, pat, u.line || 'Ahmed Hassan',
+          );
+          createdIds.push(ins.lastInsertRowid);
+          created++; userCreated++;
+        }
       } catch (e) {
         details.push({ user_id: uid, task: title, error: e.message });
       }
     }
-    details.push({ user_id: uid, created: userCreated, skipped: userSkipped });
+    details.push({ user_id: uid, created: userCreated, updated: userUpdated });
   }
 
-  // Generate the upcoming window immediately for the just-created templates so
-  // the new daily tasks appear in the employees' lists RIGHT AWAY — not only
-  // after the nightly cron. Idempotent + cheap (one template × window days).
+  // Materialize the change on the employees' lists IMMEDIATELY (not only after
+  // the nightly cron):
+  //   • created  → generate the upcoming window.
+  //   • updated  → drop still-untouched ('new') instances from TODAY forward
+  //                and regenerate them with the new schedule, WITHOUT touching
+  //                any instance the employee already started/finished.
   let instances_created = 0;
-  if (createdIds.length) {
-    try {
-      const getT = db.prepare(`SELECT * FROM todos WHERE id = ?`);
-      for (const tid of createdIds) {
-        const r = dailyTodos.generateWindowForTemplate(getT.get(tid));
-        instances_created += r.created;
-      }
-    } catch (e) { console.error('[todos] bulk-templates window gen:', e.message); }
-  }
+  try {
+    const getT = db.prepare(`SELECT * FROM todos WHERE id = ?`);
+    const today = dailyTodos.todayCairo();
+    const delFuture = db.prepare(
+      `DELETE FROM todos WHERE parent_todo_id = ? AND status = 'new' AND due_date >= ?`
+    );
+    for (const tid of createdIds) {
+      instances_created += dailyTodos.generateWindowForTemplate(getT.get(tid)).created;
+    }
+    for (const tid of updatedIds) {
+      delFuture.run(tid, today);
+      instances_created += dailyTodos.generateWindowForTemplate(getT.get(tid)).created;
+    }
+  } catch (e) { console.error('[todos] bulk-templates window gen:', e.message); }
 
   return res.json({
-    message: `تم إنشاء ${created} قالب، تخطي ${skipped} مكرّر`,
-    created, skipped,
+    message: `تم إنشاء ${created} قالب وتحديث ${updated}`,
+    created, updated,
     instances_created,
     total_users: userIds.length,
     total_templates: templates.length,

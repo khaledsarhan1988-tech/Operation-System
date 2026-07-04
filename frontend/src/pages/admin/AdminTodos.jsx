@@ -816,7 +816,7 @@ function DailyWorkflowModal({ users, onClose, onApplied }) {
     const activeTasks = tasks.filter(t => t.enabled && t.title.trim());
     if (activeTasks.length === 0) { setResult({ error: 'لا توجد مهام مفعّلة' }); return; }
     if (selectedUserIds.length === 0) { setResult({ error: 'لم تختار أي مستخدم' }); return; }
-    if (!confirm(`سيتم إنشاء ${activeTasks.length} قالب لـ ${selectedUserIds.length} مستخدم (= ${activeTasks.length * selectedUserIds.length} قالب). متابعة؟`)) return;
+    if (!confirm(`سيتم تطبيق ${activeTasks.length} قالب على ${selectedUserIds.length} مستخدم (الموجود يتحدّث والجديد يتضاف — ${activeTasks.length * selectedUserIds.length} إجمالاً). متابعة؟`)) return;
 
     setSubmitting(true); setResult(null);
     try {
@@ -960,7 +960,7 @@ function DailyWorkflowModal({ users, onClose, onApplied }) {
 
         <div className="px-5 py-3 bg-gray-50 border-t flex items-center justify-between">
           <p className="text-xs text-gray-600">
-            ⚡ <strong>{activeCount * selectedUserIds.length}</strong> قالب سيتم إنشاؤها ({activeCount} مهمة × {selectedUserIds.length} مستخدم)
+            ⚡ <strong>{activeCount * selectedUserIds.length}</strong> قالب سيتم تطبيقها ({activeCount} مهمة × {selectedUserIds.length} مستخدم) — الموجود يتحدّث والجديد يتضاف
           </p>
           <div className="flex gap-2">
             <button onClick={onClose}
