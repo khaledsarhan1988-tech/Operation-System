@@ -483,6 +483,7 @@ function CrossSectionView() {
   const [mainDayPair, setMainDayPair] = useState('all');
   const [q, setQ] = useState('');
   const [open, setOpen] = useState({});
+  const [openChip, setOpenChip] = useState({});   // "trainer|gi|pi" → show that phone-trainer's session dates
 
   const { data, isLoading } = useQuery({
     queryKey: ['trainer-recruitment-cross', section, dayPair, mainDayPair],
@@ -575,12 +576,30 @@ function CrossSectionView() {
                                   <span className="mr-auto text-[11px] text-rose-700 font-black">{num(g.sessions)} جلسة</span>
                                 </div>
                                 <div className="flex flex-wrap gap-1.5">
-                                  {g.phone_trainers.map((p, pi) => (
-                                    <span key={pi} className={`text-[11px] px-2 py-1 rounded-lg border font-semibold ${SEC_TONE[p.section]}`} dir="ltr">
-                                      {p.name} <span className="opacity-70">({p.section_label})</span> · <b>{num(p.sessions)}</b>
-                                    </span>
-                                  ))}
+                                  {g.phone_trainers.map((p, pi) => {
+                                    const ck = `${t.name}|${gi}|${pi}`;
+                                    return (
+                                      <button key={pi} onClick={() => setOpenChip(o => ({ ...o, [ck]: !o[ck] }))}
+                                        className={`text-[11px] px-2 py-1 rounded-lg border font-semibold cursor-pointer hover:brightness-95 ${SEC_TONE[p.section]} ${openChip[ck] ? 'ring-2 ring-rose-300' : ''}`} dir="ltr" title="اضغط لعرض المواعيد">
+                                        {p.name} <span className="opacity-70">({p.section_label})</span> · <b>{num(p.sessions)}</b>
+                                      </button>
+                                    );
+                                  })}
                                 </div>
+                                {g.phone_trainers.map((p, pi) => {
+                                  const ck = `${t.name}|${gi}|${pi}`;
+                                  if (!openChip[ck]) return null;
+                                  return (
+                                    <div key={'l' + pi} className="mt-1.5 bg-rose-50/50 border border-rose-100 rounded-lg p-2">
+                                      <div className="text-[11px] font-bold text-rose-700 mb-1" dir="ltr">{p.name} — {num(p.sessions)} موعد</div>
+                                      <div className="flex flex-wrap gap-1">
+                                        {(p.sessions_list || []).map((s, si) => (
+                                          <span key={si} className="text-[10px] px-1.5 py-0.5 bg-white border border-gray-200 rounded text-gray-700 whitespace-nowrap" dir="ltr">{s.date} · {s.time}</span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
                               </div>
                             ))}
                           </div>

@@ -8744,7 +8744,7 @@ router.get('/trainer-recruitment-cross-section', (req, res) => {
     let unresolved = 0, crossTotal = 0;
     const byTrainer = new Map();   // main trainer -> { section counts, groups:Map }
     for (const r of db.prepare(
-      `SELECT l.group_name, l.line, l.trainer FROM lectures l
+      `SELECT l.group_name, l.line, l.trainer, l.date, l.time FROM lectures l
          INNER JOIN (SELECT group_name,line,date(MAX(synced_at)) sd FROM lectures WHERE session_type='side' GROUP BY group_name,line) ls
            ON l.group_name=ls.group_name AND l.line=ls.line AND date(l.synced_at)=ls.sd
         WHERE l.session_type='side' AND COALESCE(l.trainer,'')<>''${line ? ' AND l.line = ?' : ''}`
@@ -8765,7 +8765,7 @@ router.get('/trainer-recruitment-cross-section', (req, res) => {
       let gg = t.groups.get(k);
       if (!gg) { gg = { group_name: g.group_name, section: g.section, main_pair: g.main_pair, side_pair: g.side_pair, sessions: 0, phone: new Map() }; t.groups.set(k, gg); }
       gg.sessions++;
-      const pe = gg.phone.get(r.trainer) || { name: r.trainer, section: tsec, sessions: 0 }; pe.sessions++; gg.phone.set(r.trainer, pe);
+      const pe = gg.phone.get(r.trainer) || { name: r.trainer, section: tsec, sessions: 0, list: [] }; pe.sessions++; pe.list.push({ date: r.date, time: r.time }); gg.phone.set(r.trainer, pe);
     }
 
     let trainers = [...byTrainer.values()].map(t => {
@@ -8773,7 +8773,10 @@ router.get('/trainer-recruitment-cross-section', (req, res) => {
       const group_list = [...t.groups.values()].map(g => ({
         group_name: g.group_name, section: g.section, section_label: SEC_LABEL[g.section],
         main_pair: g.main_pair, side_pair: g.side_pair, sessions: g.sessions,
-        phone_trainers: [...g.phone.values()].map(p => ({ name: p.name, section: p.section, section_label: SEC_LABEL[p.section], sessions: p.sessions })).sort((a, b) => b.sessions - a.sessions),
+        phone_trainers: [...g.phone.values()].map(p => ({
+          name: p.name, section: p.section, section_label: SEC_LABEL[p.section], sessions: p.sessions,
+          sessions_list: p.list.slice().sort((a, b) => (a.date || '').localeCompare(b.date || '') || (parseTime12(a.time) - parseTime12(b.time))),
+        })).sort((a, b) => b.sessions - a.sessions),
       })).sort((a, b) => b.sessions - a.sessions);
       return {
         name: t.name, section: primary, section_label: SEC_LABEL[primary],
