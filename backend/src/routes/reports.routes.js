@@ -8765,6 +8765,40 @@ router.get('/trainer-recruitment-cross-section', (req, res) => {
     }
     const trainerSecOf = raw => tmSec.get(stripName(raw)) || parseSecFromName(raw) || null;
 
+    // ── MAIN trainer's section = their CURRENTLY-ACTIVE shift's section (owner's rule:
+    // use the shift that is still ongoing today, NOT the group's dept nor the name suffix) ──
+    const today = new Date(Date.now() + 2 * 3600 * 1000).toISOString().slice(0, 10);
+    const normFull = s => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const MAIN_SECS = new Set(['general', 'semi', 'private']);
+    const tmByFull = new Map(), tmByStrip = new Map();
+    for (const t of db.prepare(
+      `SELECT name, section, shifts_json, shift, shift_start, shift_end, shift_rests, voice_notes, work_days, shift_start_date, shift_end_date,
+              shift2, shift2_start, shift2_end, shift2_rests, shift2_voice_notes, shift2_work_days, shift2_start_date, shift2_end_date, employment_type
+         FROM team_members`
+    ).all()) {
+      tmByFull.set(normFull(t.name), t);
+      const k = stripName(t.name); const arr = tmByStrip.get(k) || []; arr.push(t); tmByStrip.set(k, arr);
+    }
+    const activeShiftSec = t => {
+      let best = null, bestStart = '';
+      for (const sh of parseTeamShifts(t)) {
+        const active = (!sh.startDate || sh.startDate <= today) && (!sh.endDate || sh.endDate >= today);
+        if (!active) continue;
+        const sec = MAIN_SECS.has(sh.section) ? sh.section : (MAIN_SECS.has(String(t.section || '').toLowerCase()) ? String(t.section).toLowerCase() : null);
+        if (!sec) continue;
+        const st = sh.startDate || '0000-00-00';
+        if (st >= bestStart) { bestStart = st; best = sec; }   // latest-starting active shift
+      }
+      if (best) return best;
+      const col = String(t.section || '').toLowerCase();       // fallback (all shifts ended): the column section
+      return MAIN_SECS.has(col) ? col : null;
+    };
+    const mainSecOf = name => {
+      let t = tmByFull.get(normFull(name));
+      if (!t) { const arr = tmByStrip.get(stripName(name)); if (arr && arr.length) t = arr.find(x => activeShiftSec(x)) || arr[0]; }
+      return t ? activeShiftSec(t) : null;
+    };
+
     // active + waiting groups → base key → { section, side_pair_key, main_pair }
     const grp = new Map();
     for (const g of db.prepare(
@@ -8825,7 +8859,9 @@ router.get('/trainer-recruitment-cross-section', (req, res) => {
     }
 
     let trainers = [...byTrainer.values()].map(t => {
-      const primary = SEC.reduce((a, s) => (t.secCount[s] > t.secCount[a] ? s : a), 'general');
+      // section = the trainer's currently-active shift section (fallback: dominant group section)
+      const groupPrimary = SEC.reduce((a, s) => (t.secCount[s] > t.secCount[a] ? s : a), 'general');
+      const primary = mainSecOf(t.name) || groupPrimary;
       const group_list = [...t.groups.values()].map(g => ({
         group_name: g.group_name, section: g.section, section_label: SEC_LABEL[g.section],
         main_pair: g.main_pair, side_pair: g.side_pair, sessions: g.sessions,
