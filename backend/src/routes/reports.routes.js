@@ -8516,6 +8516,11 @@ router.get('/trainer-recruitment-balance', (req, res) => {
     const line = lineFilter(req);
     const DAYPAIR_KEY = { sat_tue: '6,2', sun_wed: '0,3', mon_thu: '1,4' };
     const wantPairKey = DAYPAIR_KEY[req.query.day_pair] || null;
+    // date filter by the group's FIRST main lecture (round start) — scopes the WHOLE tab
+    const fromDate = req.query.from || null, toDate = req.query.to || null;
+    const hasDateF = !!(fromDate || toDate);
+    const firstInRange = mn => { if (!hasDateF) return true; if (!mn) return false; if (fromDate && mn < fromDate) return false; if (toDate && mn > toDate) return false; return true; };
+    const baseGroupOf = g => { const s = String(g || ''); const i = s.lastIndexOf(')'); return (i >= 0 ? s.slice(0, i + 1) : s).replace(/\s+/g, '').toLowerCase(); };
 
     const SEC = ['general', 'semi', 'private'];
     const SEC_LABEL  = { general: 'عام', semi: 'شبه خاص', private: 'خاص' };
@@ -8552,26 +8557,69 @@ router.get('/trainer-recruitment-balance', (req, res) => {
     const spanMap = new Map(spanRows.map(r => [r.group_name + '|' + r.line, { mn: r.mn, mx: r.mx }]));
     const cliMap = new Map(db.prepare(`SELECT group_name, line, COUNT(DISTINCT phone) c FROM clients${line ? ' WHERE line = ?' : ''} GROUP BY group_name, line`).all(...lineP).map(r => [r.group_name + '|' + r.line, r.c]));
 
+    // per-group ACTUAL side (zoom-call) sessions (current sheet, distinct date|time|trainer) — for the "missing zoom-call" list
+    const sideSets = new Map();
+    for (const r of db.prepare(
+      `SELECT l.group_name, l.line, l.date, l.time, l.trainer FROM lectures l
+         INNER JOIN (SELECT group_name,line,date(MAX(synced_at)) sd FROM lectures WHERE session_type='side' GROUP BY group_name,line) ls
+           ON l.group_name=ls.group_name AND l.line=ls.line AND date(l.synced_at)=ls.sd
+        WHERE l.session_type='side'${line ? ' AND l.line = ?' : ''}`
+    ).all(...lineP)) {
+      const k = baseGroupOf(r.group_name) + '|' + r.line;
+      let set = sideSets.get(k); if (!set) { set = new Set(); sideSets.set(k, set); }
+      set.add((r.date || '') + '|' + (r.time || '') + '|' + (r.trainer || ''));
+    }
+    const sideCount = k => (sideSets.get(k) ? sideSets.get(k).size : 0);
+    // dominant MAIN trainer per group (current sheet) — for the list
+    const mainAgg = new Map();
+    for (const r of db.prepare(
+      `SELECT l.group_name, l.line, l.trainer, COUNT(*) c FROM lectures l
+         INNER JOIN (SELECT group_name,line,date(MAX(synced_at)) sd FROM lectures WHERE session_type='main' GROUP BY group_name,line) ls
+           ON l.group_name=ls.group_name AND l.line=ls.line AND date(l.synced_at)=ls.sd
+        WHERE l.session_type='main' AND COALESCE(l.trainer,'')<>''${line ? ' AND l.line = ?' : ''}
+        GROUP BY l.group_name, l.line, l.trainer`
+    ).all(...lineP)) {
+      const k = baseGroupOf(r.group_name) + '|' + r.line;
+      const m = mainAgg.get(k) || new Map(); m.set(r.trainer, (m.get(r.trainer) || 0) + r.c); mainAgg.set(k, m);
+    }
+    const mainOf = k => { const m = mainAgg.get(k); if (!m) return null; let b = null, bc = -1; for (const [t, c] of m) if (c > bc) { bc = c; b = t; } return b; };
+    const groups_missing = [];   // active groups (in range) whose actual zoom-call < required (students×7)
+
     const demandDirect = {}; SEC.forEach(s => demandDirect[s] = { '6,2': 0, '0,3': 0, '1,4': 0 });
     const demandWk = {}; SEC.forEach(s => demandWk[s] = { '6,2': {}, '0,3': {}, '1,4': {} });
     for (const g of groups) {
       const key = g.group_name + '|' + g.line;
       const trainees = g.tc || cliMap.get(key) || 0;
       if (!trainees) continue;
+      const sp = spanMap.get(key);
+      const firstDate = (sp && sp.mn) || g.sd || null;
+      if (!firstInRange(firstDate)) continue;                 // date filter (round start) — scopes the whole tab
       const sec = sectionOf(g.dept);
       const pk = sidePairKey(dowFromName(g.group_name)) || '6,2';
       if (wantPairKey && pk !== wantPairKey) continue;
       const required = trainees * PER_STUDENT;
       demandDirect[sec][pk] += required;
       // spread across the group's course ISO-weeks (peak-week model)
-      const sp = spanMap.get(key); const mn = (sp && sp.mn) || g.sd, mx = (sp && sp.mx) || g.ed;
+      const mn = firstDate, mx = (sp && sp.mx) || g.ed;
       if (mn && mx) {
         const wks = new Set([isoWeek(mx)]);
         for (let d = new Date(mn + 'T12:00:00Z'), end = new Date(mx + 'T12:00:00Z'); d <= end; d.setUTCDate(d.getUTCDate() + 7)) wks.add(isoWeek(d.toISOString().slice(0, 10)));
         const perWk = required / wks.size;
         for (const w of wks) demandWk[sec][pk][w] = (demandWk[sec][pk][w] || 0) + perWk;
       }
+      // ── missing zoom-call list: actual side sessions < required (students×7) ──
+      const baseKey = baseGroupOf(g.group_name) + '|' + g.line;
+      const actual = sideCount(baseKey);
+      if (actual < required) {
+        groups_missing.push({
+          group_name: g.group_name, main_trainer: mainOf(baseKey) || null,
+          section: sec, section_label: SEC_LABEL[sec], students: trainees,
+          required, actual, missing: required - actual,
+          first_date: firstDate, side_pair: PAIR_LABEL[pk], zero: actual === 0,
+        });
+      }
     }
+    groups_missing.sort((a, b) => (a.zero === b.zero ? b.missing - a.missing : (a.zero ? -1 : 1)));
 
     // ── SUPPLY (net hours/week per section per day) ──
     const members = db.prepare(
@@ -8652,9 +8700,12 @@ router.get('/trainer-recruitment-balance', (req, res) => {
       trainers_needed: sections.reduce((a, s) => a + s.trainers_needed, 0),
     };
 
+    const missingOut = sectionFilter === 'all' ? groups_missing : groups_missing.filter(g => g.section === sectionFilter);
+    const missingCountsOut = { total: missingOut.length, zero: missingOut.filter(g => g.zero).length, partial: missingOut.filter(g => !g.zero).length };
     return res.json({
-      params: { per_student: PER_STUDENT, calls_per_hour: CALLS_PER_HOUR, weeks_per_month: WEEKS_PER_MONTH, per_trainer_weekly_per_pair: PER_TRAINER_WEEKLY_PER_PAIR, section: sectionFilter, day_pair: req.query.day_pair || 'all' },
+      params: { per_student: PER_STUDENT, calls_per_hour: CALLS_PER_HOUR, weeks_per_month: WEEKS_PER_MONTH, per_trainer_weekly_per_pair: PER_TRAINER_WEEKLY_PER_PAIR, section: sectionFilter, day_pair: req.query.day_pair || 'all', from: fromDate, to: toDate },
       totals, sections,
+      groups_missing: missingOut, missing_counts: missingCountsOut,
     });
   } catch (err) {
     console.error('[reports] trainer-recruitment-balance:', err);

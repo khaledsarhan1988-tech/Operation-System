@@ -366,17 +366,26 @@ function BalanceView() {
   const [section, setSection] = useState('all');
   const [dayPair, setDayPair] = useState('all');
   const [mainDayPair, setMainDayPair] = useState('all');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [missFilter, setMissFilter] = useState('all');   // all | partial | zero
 
   const { data, isLoading } = useQuery({
-    queryKey: ['trainer-recruitment-balance', section, dayPair, mainDayPair],
+    queryKey: ['trainer-recruitment-balance', section, dayPair, mainDayPair, from, to],
     queryFn: () => api.get('/reports/trainer-recruitment-balance', {
-      params: { section, day_pair: effDayPair(dayPair, mainDayPair) === 'all' ? undefined : effDayPair(dayPair, mainDayPair) },
+      params: {
+        section, day_pair: effDayPair(dayPair, mainDayPair) === 'all' ? undefined : effDayPair(dayPair, mainDayPair),
+        from: from || undefined, to: to || undefined,
+      },
     }).then(r => r.data),
     staleTime: 60 * 1000,
   });
 
   const totals = data?.totals || {};
   const sections = data?.sections || [];
+  const missing = data?.groups_missing || [];
+  const missCounts = data?.missing_counts || {};
+  const missingShown = useMemo(() => missFilter === 'zero' ? missing.filter(g => g.zero) : missFilter === 'partial' ? missing.filter(g => !g.zero) : missing, [missing, missFilter]);
 
   return (
     <div className="space-y-5">
@@ -399,6 +408,13 @@ function BalanceView() {
           <select value={dayPair} onChange={e => { setDayPair(e.target.value); if (e.target.value !== 'all') setMainDayPair('all'); }} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
             {Object.entries(DAY_PAIRS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-gray-500">أول محاضرة من</span>
+          <input type="date" value={from} onChange={e => setFrom(e.target.value)} className="px-2 py-2 rounded-lg border border-gray-200 text-xs text-gray-700 bg-gray-50" />
+          <span className="text-xs font-bold text-gray-500">إلى</span>
+          <input type="date" value={to} onChange={e => setTo(e.target.value)} className="px-2 py-2 rounded-lg border border-gray-200 text-xs text-gray-700 bg-gray-50" />
+          {(from || to) && <button onClick={() => { setFrom(''); setTo(''); }} className="text-[11px] text-rose-500 font-bold hover:underline">مسح</button>}
         </div>
       </div>
 
@@ -470,6 +486,48 @@ function BalanceView() {
           </div>
         </div>
       ))}
+
+      {/* المجموعات اللي فون كولها ناقص / بدون نهائي */}
+      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+        <div className="flex flex-wrap items-center gap-2 p-4 border-b border-gray-100">
+          <span className="font-black text-base text-gray-800">مجموعات فون كولها ناقص</span>
+          <span className="text-[11px] text-gray-400">(الموجود أقل من المطلوب = طلاب × 7{(from || to) ? ' · ضمن الفترة المختارة' : ''})</span>
+          <div className="mr-auto flex items-center gap-1">
+            {[['all', `الكل (${num(missCounts.total)})`], ['partial', `ناقص جزئيًا (${num(missCounts.partial)})`], ['zero', `بدون نهائي (${num(missCounts.zero)})`]].map(([k, lbl]) => (
+              <button key={k} onClick={() => setMissFilter(k)}
+                className={`text-[11px] px-2.5 py-1 rounded-lg font-bold border ${missFilter === k ? 'bg-rose-500 text-white border-rose-500' : 'bg-gray-50 text-gray-600 border-gray-200'}`}>{lbl}</button>
+            ))}
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-right" style={{ minWidth: '900px' }}>
+            <thead><tr className="bg-gray-50 border-b border-gray-100 text-[11px] text-gray-500">
+              {['المجموعة', 'المدرب الأساسي', 'القسم', 'الطلاب', 'مطلوب (×7)', 'موجود', 'ناقص', 'أول محاضرة', 'يوم الفون كول'].map(h =>
+                <th key={h} className="px-3 py-2.5 font-semibold whitespace-nowrap">{h}</th>)}
+            </tr></thead>
+            <tbody className="divide-y divide-gray-50">
+              {isLoading ? (
+                <tr><td colSpan={9} className="text-center py-10 text-gray-400">جارٍ التحميل…</td></tr>
+              ) : missingShown.length === 0 ? (
+                <tr><td colSpan={9} className="py-10"><EmptyState title="لا توجد مجموعات ناقصة بهذه الفلاتر" /></td></tr>
+              ) : missingShown.map((g, i) => (
+                <tr key={i} className={`hover:bg-gray-50/60 ${g.zero ? 'bg-rose-50/40' : ''}`}>
+                  <td className="px-3 py-2 font-mono text-[11px] text-gray-700 max-w-[240px] truncate" dir="ltr" title={g.group_name}>{g.group_name}</td>
+                  <td className="px-3 py-2 text-xs text-gray-600 whitespace-nowrap" dir="ltr">{g.main_trainer || '—'}</td>
+                  <td className="px-3 py-2"><span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold ${SEC_TONE[g.section]}`}>{g.section_label}</span></td>
+                  <td className="px-3 py-2 text-center font-bold">{g.students}</td>
+                  <td className="px-3 py-2 text-center text-gray-600">{num(g.required)}</td>
+                  <td className="px-3 py-2 text-center font-semibold">{g.zero ? <span className="text-rose-700 font-black">0</span> : num(g.actual)}</td>
+                  <td className="px-3 py-2 text-center font-black text-rose-700">{num(g.missing)}{g.zero && <span className="text-[10px] font-bold mr-1">(بدون نهائي)</span>}</td>
+                  <td className="px-3 py-2 text-center text-gray-500" dir="ltr">{g.first_date || '—'}</td>
+                  <td className="px-3 py-2 text-center text-blue-700 font-semibold whitespace-nowrap">{g.side_pair}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {missingShown.length > 0 && <div className="px-4 py-2 text-[11px] text-gray-400 border-t">عرض {missingShown.length} مجموعة</div>}
+      </div>
     </div>
   );
 }
