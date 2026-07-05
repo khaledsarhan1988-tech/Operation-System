@@ -422,13 +422,13 @@ function BalanceView() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <SumCard icon={PhoneCall} label="طلب / شهر" value={num(totals.demand_monthly)} tone="bg-white border-gray-200 text-gray-800" />
         <SumCard icon={Clock}     label="سعة / شهر" value={num(totals.supply_monthly)} tone="bg-white border-gray-200 text-gray-800" />
-        <SumCard icon={Scale}     label="عجز مباشر (جلسات ناقصة/شهر)" value={num(totals.deficit_monthly)} tone="bg-rose-50 border-rose-200 text-rose-800" />
+        <SumCard icon={Scale}     label="إجمالي الجلسات الناقصة" value={num(missCounts.sessions)} tone="bg-rose-50 border-rose-200 text-rose-800" />
         <SumCard icon={UserCheck} label="مدربين محتاج توظيفهم (ذروة الأسبوع)" value={num(totals.trainers_needed)} tone="bg-amber-50 border-amber-200 text-amber-800" />
       </div>
 
       {/* interpretation */}
       <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5 text-[12px] text-blue-800 space-y-1">
-        <div><b>العجز المباشر</b> = طلب الشهر (كل المجموعات × 7) − السعة الشهرية. بيقولّك إجمالي الجلسات الناقصة لو كل المجموعات اشتغلت نفس الشهر.</div>
+        <div><b>إجمالي الجلسات الناقصة</b> = مجموع (المطلوب − الموجود) لكل مجموعة في القائمة تحت — الجلسات اللي لسه محتاجة تتعمل فعلًا (بيتغيّر مع الفلاتر). جدول الأقسام تحته بيوضّح ميزان السعة (طلب مقابل سعة لكل زوج أيام).</div>
         <div><b>الاحتياج الفعلي للتوظيف</b> = بموديل «ذروة الأسبوع» (توزيع طلب كل مجموعة على أسابيع كورسها) — بيقارن أسبوع الذروة بالسعة الأسبوعية، فبيدّي رقم توظيف واقعي (مايضخّمش).</div>
       </div>
 
@@ -491,7 +491,7 @@ function BalanceView() {
       <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 p-4 border-b border-gray-100">
           <span className="font-black text-base text-gray-800">مجموعات فون كولها ناقص</span>
-          <span className="text-[11px] text-gray-400">(الموجود أقل من المطلوب = طلاب × 7{(from || to) ? ' · ضمن الفترة المختارة' : ''})</span>
+          <span className="text-[11px] text-gray-400">(الموجود أقل من المطلوب = طلاب × 7{(from || to) ? ' · ضمن الفترة المختارة' : ''} · الرقم الكبير في «ناقص» = ÷7، كل طالب = 7 مواعيد)</span>
           <div className="mr-auto flex items-center gap-1">
             {[['all', `الكل (${num(missCounts.total)})`], ['partial', `ناقص جزئيًا (${num(missCounts.partial)})`], ['zero', `بدون نهائي (${num(missCounts.zero)})`]].map(([k, lbl]) => (
               <button key={k} onClick={() => setMissFilter(k)}
@@ -518,7 +518,11 @@ function BalanceView() {
                   <td className="px-3 py-2 text-center font-bold">{g.students}</td>
                   <td className="px-3 py-2 text-center text-gray-600">{num(g.required)}</td>
                   <td className="px-3 py-2 text-center font-semibold">{g.zero ? <span className="text-rose-700 font-black">0</span> : num(g.actual)}</td>
-                  <td className="px-3 py-2 text-center font-black text-rose-700">{num(g.missing)}{g.zero && <span className="text-[10px] font-bold mr-1">(بدون نهائي)</span>}</td>
+                  <td className="px-3 py-2 text-center">
+                    <span className="font-black text-rose-700 text-base">{num(Math.round(g.missing / 7))}</span>
+                    <span className="text-[10px] text-gray-400 mr-1">({num(g.missing)} جلسة)</span>
+                    {g.zero && <span className="block text-[9px] font-bold text-rose-600">بدون نهائي</span>}
+                  </td>
                   <td className="px-3 py-2 text-center text-gray-500" dir="ltr">{g.first_date || '—'}</td>
                   <td className="px-3 py-2 text-center text-blue-700 font-semibold whitespace-nowrap">{g.side_pair}</td>
                 </tr>

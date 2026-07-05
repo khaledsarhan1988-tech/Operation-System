@@ -8701,7 +8701,12 @@ router.get('/trainer-recruitment-balance', (req, res) => {
     };
 
     const missingOut = sectionFilter === 'all' ? groups_missing : groups_missing.filter(g => g.section === sectionFilter);
-    const missingCountsOut = { total: missingOut.length, zero: missingOut.filter(g => g.zero).length, partial: missingOut.filter(g => !g.zero).length };
+    const missingCountsOut = {
+      total: missingOut.length,
+      zero: missingOut.filter(g => g.zero).length,
+      partial: missingOut.filter(g => !g.zero).length,
+      sessions: missingOut.reduce((a, g) => a + g.missing, 0),   // total missing sessions (the real "جلسات ناقصة")
+    };
     return res.json({
       params: { per_student: PER_STUDENT, calls_per_hour: CALLS_PER_HOUR, weeks_per_month: WEEKS_PER_MONTH, per_trainer_weekly_per_pair: PER_TRAINER_WEEKLY_PER_PAIR, section: sectionFilter, day_pair: req.query.day_pair || 'all', from: fromDate, to: toDate },
       totals, sections,
