@@ -26,6 +26,11 @@ const MAIN_DAY_PAIRS = { all: 'كل الأيام', sat_tue: 'سبت + ثلاثا
 const MAIN_TO_SIDE = { sat_tue: 'mon_thu', sun_wed: 'sat_tue', mon_thu: 'sun_wed' };
 const effDayPair = (side, main) => (main && main !== 'all') ? MAIN_TO_SIDE[main] : side;
 const num = n => (n ?? 0).toLocaleString('en-US');
+const per7 = n => Math.round((n || 0) / 7);
+// Phone-call session figures shown uniformly: ÷7 (بالطالب) big + raw sessions small.
+function Call({ n }) {
+  return <span className="whitespace-nowrap"><b>{num(per7(n))}</b> <span className="text-[9px] text-gray-400 font-normal">({num(n || 0)})</span></span>;
+}
 // Is the group's FIRST lecture date within the window [from,to]? (inner filter rule)
 const firstInRange = (first, from, to) => {
   if (!from && !to) return true;
@@ -137,7 +142,7 @@ export default function TrainerRecruitment() {
         <SumCard icon={Users}     label="مدربين أساسيين" value={num(totals.trainers)} tone="bg-white border-gray-200 text-gray-800" />
         <SumCard icon={GraduationCap} label="مجموعات" value={num(totals.groups)} tone="bg-white border-gray-200 text-gray-800" />
         <SumCard icon={Users}     label="طلاب" value={num(totals.students)} tone="bg-white border-gray-200 text-gray-800" />
-        <SumCard icon={PhoneCall} label="طلب فون كول / شهر" value={num(totals.demand_month)} tone="bg-rose-50 border-rose-200 text-rose-800" />
+        <SumCard icon={PhoneCall} label="طلب فون كول / شهر" value={<Call n={totals.demand_month} />} tone="bg-rose-50 border-rose-200 text-rose-800" />
       </div>
 
       {/* Per-section demand summary */}
@@ -148,12 +153,12 @@ export default function TrainerRecruitment() {
               <span className="font-black text-base">{s.label}</span>
               <span className="text-[11px] opacity-80">{s.trainers} مدرب · {s.groups} مجموعة · {num(s.students)} طالب</span>
             </div>
-            <div className="text-[12px] mb-1">إجمالي طلب الفون كول: <b>{num(s.demand_month)}</b> معاد/شهر</div>
+            <div className="text-[12px] mb-1">إجمالي طلب الفون كول: <Call n={s.demand_month} /> <span className="opacity-70">معاد/شهر</span></div>
             <div className="space-y-0.5">
               {Object.entries(s.demand_by_side_pair || {}).filter(([, v]) => v > 0).map(([lbl, v]) => (
                 <div key={lbl} className="flex items-center justify-between text-[11px] bg-white/60 rounded px-2 py-0.5">
                   <span className="font-semibold text-blue-700">{lbl}</span>
-                  <span className="font-black">{num(v)}</span>
+                  <span className="font-black"><Call n={v} /></span>
                 </div>
               ))}
             </div>
@@ -165,6 +170,7 @@ export default function TrainerRecruitment() {
       <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5 text-[12px] text-blue-800">
         كل طالب محتاج <b>7 معادات فون كول في الشهر</b>، بتتعمل على <b>الزوج العكسي</b> لأيام محاضراته الأساسية.
         الفلاتر فوق بتتحكّم في <b>كل الصفحة</b>؛ وجوّه كل مدرب في <b>فلتر مستقل</b> لمجموعاته لوحدها.
+        <br /><b>أرقام الفون كول = بالطالب (÷7)</b> بالحجم الكبير، والرقم الصغير بين قوسين = عدد المواعيد الفعلي.
       </div>
 
       {/* Trainers table */}
@@ -199,7 +205,7 @@ export default function TrainerRecruitment() {
                       <td className="px-3 py-2 text-xs whitespace-nowrap">
                         {Object.entries(t.demand_by_side_pair || {}).map(([lbl, v], i, arr) => (
                           <span key={lbl} className="inline-block">
-                            <span className="text-blue-700 font-semibold">{lbl}</span>: <b className="text-rose-700">{num(v)}</b>{i < arr.length - 1 ? ' · ' : ''}
+                            <span className="text-blue-700 font-semibold">{lbl}</span>: <span className="text-rose-700"><Call n={v} /></span>{i < arr.length - 1 ? ' · ' : ''}
                           </span>
                         ))}
                       </td>
@@ -294,7 +300,7 @@ function SupplyView() {
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         <SumCard icon={Users}     label="مدربين فون كول" value={num(totals.trainers)} tone="bg-white border-gray-200 text-gray-800" />
         <SumCard icon={Clock}     label="ساعات / أسبوع" value={num(totals.weekly_hours)} tone="bg-white border-gray-200 text-gray-800" />
-        <SumCard icon={PhoneCall} label="سعة / شهر (مكالمات)" value={num(totals.monthly_calls)} tone="bg-emerald-50 border-emerald-200 text-emerald-800" />
+        <SumCard icon={PhoneCall} label="سعة / شهر (مكالمات)" value={<Call n={totals.monthly_calls} />} tone="bg-emerald-50 border-emerald-200 text-emerald-800" />
       </div>
 
       {/* per-section capacity */}
@@ -305,12 +311,12 @@ function SupplyView() {
               <span className="font-black text-base">{s.label}</span>
               <span className="text-[11px] opacity-80">{s.trainers} مدرب · {num(s.weekly_hours)}س/أسبوع</span>
             </div>
-            <div className="text-[12px] mb-1">إجمالي السعة: <b>{num(s.monthly_calls)}</b> مكالمة/شهر</div>
+            <div className="text-[12px] mb-1">إجمالي السعة: <Call n={s.monthly_calls} /> <span className="opacity-70">مكالمة/شهر</span></div>
             <div className="space-y-0.5">
               {Object.entries(s.capacity_by_side_pair || {}).map(([lbl, v]) => (
                 <div key={lbl} className="flex items-center justify-between text-[11px] bg-white/60 rounded px-2 py-0.5">
                   <span className="font-semibold text-blue-700">{lbl}</span>
-                  <span className="font-black">{num(v)}</span>
+                  <span className="font-black"><Call n={v} /></span>
                 </div>
               ))}
             </div>
@@ -320,6 +326,7 @@ function SupplyView() {
 
       <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-2.5 text-[12px] text-emerald-800">
         السعة = صافي ساعات عمل كل مدرب فون كول × <b>4 مكالمات/ساعة</b> × <b>4 أسابيع</b> = مكالمات/شهر، موزّعة على أزواج أيام عمله.
+        <br /><b>أرقام السعة معروضة بالطالب (÷7)</b> بالحجم الكبير + عدد المكالمات الفعلي بين قوسين.
       </div>
 
       {/* trainers table */}
@@ -340,12 +347,12 @@ function SupplyView() {
                   <td className="px-3 py-2 font-mono text-[12px] text-gray-800 whitespace-nowrap" dir="ltr">{t.name}</td>
                   <td className="px-3 py-2"><span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold ${SEC_TONE[t.section]}`}>{t.section_label}</span></td>
                   <td className="px-3 py-2 text-center font-bold">{num(t.weekly_hours)}</td>
-                  <td className="px-3 py-2 text-center font-black text-emerald-700">{num(t.monthly_calls)}</td>
+                  <td className="px-3 py-2 text-center text-emerald-700"><Call n={t.monthly_calls} /></td>
                   <td className="px-3 py-2 text-xs text-gray-500 whitespace-nowrap">{(t.work_days || []).join('، ') || '—'}</td>
                   <td className="px-3 py-2 text-xs whitespace-nowrap">
                     {(t.by_pair || []).filter(p => p.monthly_calls > 0).map((p, idx, arr) => (
                       <span key={p.pair_key} className="inline-block">
-                        <span className="text-blue-700 font-semibold">{p.side_pair}</span>: <b className="text-emerald-700">{num(p.monthly_calls)}</b>{idx < arr.length - 1 ? ' · ' : ''}
+                        <span className="text-blue-700 font-semibold">{p.side_pair}</span>: <span className="text-emerald-700"><Call n={p.monthly_calls} /></span>{idx < arr.length - 1 ? ' · ' : ''}
                       </span>
                     ))}
                   </td>
@@ -420,9 +427,9 @@ function BalanceView() {
 
       {/* summary */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <SumCard icon={PhoneCall} label="طلب / شهر" value={num(totals.demand_monthly)} tone="bg-white border-gray-200 text-gray-800" />
-        <SumCard icon={Clock}     label="سعة / شهر" value={num(totals.supply_monthly)} tone="bg-white border-gray-200 text-gray-800" />
-        <SumCard icon={Scale}     label="إجمالي الجلسات الناقصة" value={num(missCounts.sessions)} tone="bg-rose-50 border-rose-200 text-rose-800" />
+        <SumCard icon={PhoneCall} label="طلب / شهر" value={<Call n={totals.demand_monthly} />} tone="bg-white border-gray-200 text-gray-800" />
+        <SumCard icon={Clock}     label="سعة / شهر" value={<Call n={totals.supply_monthly} />} tone="bg-white border-gray-200 text-gray-800" />
+        <SumCard icon={Scale}     label="إجمالي الجلسات الناقصة" value={<Call n={missCounts.sessions} />} tone="bg-rose-50 border-rose-200 text-rose-800" />
         <SumCard icon={UserCheck} label="مدربين محتاج توظيفهم (ذروة الأسبوع)" value={num(totals.trainers_needed)} tone="bg-amber-50 border-amber-200 text-amber-800" />
       </div>
 
@@ -430,6 +437,7 @@ function BalanceView() {
       <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5 text-[12px] text-blue-800 space-y-1">
         <div><b>إجمالي الجلسات الناقصة</b> = مجموع (المطلوب − الموجود) لكل مجموعة في القائمة تحت — الجلسات اللي لسه محتاجة تتعمل فعلًا (بيتغيّر مع الفلاتر). جدول الأقسام تحته بيوضّح ميزان السعة (طلب مقابل سعة لكل زوج أيام).</div>
         <div><b>الاحتياج الفعلي للتوظيف</b> = بموديل «ذروة الأسبوع» (توزيع طلب كل مجموعة على أسابيع كورسها) — بيقارن أسبوع الذروة بالسعة الأسبوعية، فبيدّي رقم توظيف واقعي (مايضخّمش).</div>
+        <div><b>الأرقام الشهرية معروضة بالطالب (÷7)</b> بالحجم الكبير + عدد المواعيد بين قوسين (أرقام «ذروة الأسبوع» تفضل بعدد المكالمات).</div>
       </div>
 
       {/* per-section balance */}
@@ -463,11 +471,12 @@ function BalanceView() {
                 {(s.pairs || []).map((p, i) => (
                   <tr key={i} className="border-b border-current/5 last:border-0">
                     <td className="text-right py-2 font-bold text-blue-700">{p.side_pair}</td>
-                    <td className="text-center font-semibold">{num(p.demand_monthly)}</td>
-                    <td className="text-center font-semibold">{num(p.supply_monthly)}</td>
+                    <td className="text-center font-semibold"><Call n={p.demand_monthly} /></td>
+                    <td className="text-center font-semibold"><Call n={p.supply_monthly} /></td>
                     <td className="text-center">
                       <span className={`inline-block px-2 py-0.5 rounded font-black ${p.balance_monthly >= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
-                        {p.balance_monthly >= 0 ? `زيادة +${num(p.balance_monthly)}` : `عجز ${num(p.balance_monthly)}`}
+                        {p.balance_monthly >= 0 ? `زيادة +${num(per7(p.balance_monthly))}` : `عجز ${num(per7(p.balance_monthly))}`}
+                        <span className="text-[9px] font-normal opacity-60"> ({num(p.balance_monthly)})</span>
                       </span>
                     </td>
                     <td className="text-center text-gray-600">
@@ -491,7 +500,7 @@ function BalanceView() {
       <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 p-4 border-b border-gray-100">
           <span className="font-black text-base text-gray-800">مجموعات فون كولها ناقص</span>
-          <span className="text-[11px] text-gray-400">(الموجود أقل من المطلوب = طلاب × 7{(from || to) ? ' · ضمن الفترة المختارة' : ''} · الرقم الكبير في «ناقص» = ÷7، كل طالب = 7 مواعيد)</span>
+          <span className="text-[11px] text-gray-400">(الموجود أقل من المطلوب{(from || to) ? ' · ضمن الفترة المختارة' : ''} · الأرقام <b>بالطالب (÷7)</b> بالحجم الكبير + عدد المواعيد بين قوسين)</span>
           <div className="mr-auto flex items-center gap-1">
             {[['all', `الكل (${num(missCounts.total)})`], ['partial', `ناقص جزئيًا (${num(missCounts.partial)})`], ['zero', `بدون نهائي (${num(missCounts.zero)})`]].map(([k, lbl]) => (
               <button key={k} onClick={() => setMissFilter(k)}
@@ -502,7 +511,7 @@ function BalanceView() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-right" style={{ minWidth: '900px' }}>
             <thead><tr className="bg-gray-50 border-b border-gray-100 text-[11px] text-gray-500">
-              {['المجموعة', 'المدرب الأساسي', 'القسم', 'الطلاب', 'مطلوب (×7)', 'موجود', 'ناقص', 'أول محاضرة', 'يوم الفون كول'].map(h =>
+              {['المجموعة', 'المدرب الأساسي', 'القسم', 'الطلاب', 'مطلوب', 'موجود', 'ناقص', 'أول محاضرة', 'يوم الفون كول'].map(h =>
                 <th key={h} className="px-3 py-2.5 font-semibold whitespace-nowrap">{h}</th>)}
             </tr></thead>
             <tbody className="divide-y divide-gray-50">
@@ -516,8 +525,8 @@ function BalanceView() {
                   <td className="px-3 py-2 text-xs text-gray-600 whitespace-nowrap" dir="ltr">{g.main_trainer || '—'}</td>
                   <td className="px-3 py-2"><span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold ${SEC_TONE[g.section]}`}>{g.section_label}</span></td>
                   <td className="px-3 py-2 text-center font-bold">{g.students}</td>
-                  <td className="px-3 py-2 text-center text-gray-600">{num(g.required)}</td>
-                  <td className="px-3 py-2 text-center font-semibold">{g.zero ? <span className="text-rose-700 font-black">0</span> : num(g.actual)}</td>
+                  <td className="px-3 py-2 text-center text-gray-600"><Call n={g.required} /></td>
+                  <td className="px-3 py-2 text-center font-semibold">{g.zero ? <span className="text-rose-700 font-black">0</span> : <Call n={g.actual} />}</td>
                   <td className="px-3 py-2 text-center">
                     <span className="font-black text-rose-700 text-base">{num(Math.round(g.missing / 7))}</span>
                     <span className="text-[10px] text-gray-400 mr-1">({num(g.missing)} جلسة)</span>
@@ -725,7 +734,7 @@ function TrainerGroups({ groups }) {
         <input type="date" value={lt} onChange={e => setLt(e.target.value)} className="px-1.5 py-1 rounded border border-gray-200 bg-gray-50 text-gray-700" title="أول محاضرة إلى" />
         {anyLocal && <button onClick={() => { setDp('all'); setSt('all'); setLf(''); setLt(''); }} className="text-rose-500 font-bold hover:underline flex items-center gap-0.5"><X size={11} /> مسح</button>}
         <span className="mr-auto text-gray-500">
-          {filtered.length} مجموعة · {num(subStudents)} طالب · طلب <b className="text-rose-700">{num(subDemand)}</b>/شهر
+          {filtered.length} مجموعة · {num(subStudents)} طالب · طلب <span className="text-rose-700"><Call n={subDemand} /></span>/شهر
         </span>
       </div>
 
@@ -752,7 +761,7 @@ function TrainerGroups({ groups }) {
               <td className="py-1 text-center text-gray-500">{g.main_pair}</td>
               <td className="py-1 text-center text-blue-700 font-semibold">{g.side_pair}</td>
               <td className="py-1 text-center text-gray-400" dir="ltr">{g.first_date || '—'} → {g.last_date || '—'}</td>
-              <td className="py-1 text-center font-black text-rose-700">{num(g.demand_month)}</td>
+              <td className="py-1 text-center text-rose-700"><Call n={g.demand_month} /></td>
             </tr>
           ))}
         </tbody>
