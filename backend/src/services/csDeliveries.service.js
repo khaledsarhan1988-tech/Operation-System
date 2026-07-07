@@ -70,13 +70,20 @@ function coordStrHasName(coordStr, targetNorm) {
 
 // phone_norm → [{ group_name, dept_type, coordinators }] for groups still active.
 function buildActiveGroupMap() {
+  // Active memberships = clients in a group with an active batch (status='نشطة')
+  // OR in a group that has NO batches row at all ("orphan" groups — a live group
+  // present in the trainees sheet but missing from the batches sheet; e.g. renamed
+  // then dropped on a sync). Using a LEFT JOIN + orphan clause instead of an INNER
+  // JOIN so such a membership isn't lost (same principle as the ENDED-groups rule).
+  // Orphans have no dept_type/coordinators → they fall back like ended groups do.
   const rows = db.prepare(`
     SELECT c.phone AS phone, c.group_name AS group_name, c.line AS line,
            b.dept_type AS dept_type, b.coordinators AS coordinators
       FROM clients c
-      JOIN batches b
-        ON b.group_name = c.group_name AND b.line = c.line
-     WHERE b.status = 'نشطة'
+      LEFT JOIN batches b
+        ON b.group_name = c.group_name AND b.line = c.line AND b.status = 'نشطة'
+     WHERE b.id IS NOT NULL
+        OR NOT EXISTS (SELECT 1 FROM batches bb WHERE bb.group_name = c.group_name AND bb.line = c.line)
   `).all();
   const map = new Map();
   for (const r of rows) {
