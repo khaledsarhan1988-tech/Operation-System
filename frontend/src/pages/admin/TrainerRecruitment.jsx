@@ -1,7 +1,7 @@
 'use client';
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { UserPlus, PhoneCall, Users, Search, ChevronDown, ChevronLeft, GraduationCap, Filter, X, Clock, Scale, UserCheck, ArrowLeftRight } from 'lucide-react';
+import { UserPlus, PhoneCall, Users, Search, ChevronDown, ChevronLeft, GraduationCap, Filter, X, Clock, Scale, UserCheck, ArrowLeftRight, Split } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import EmptyState from '../../components/ui/EmptyState';
@@ -89,11 +89,13 @@ export default function TrainerRecruitment() {
         <TabBtn active={view === 'supply'} onClick={() => setView('supply')} icon={Clock} label="السعة" />
         <TabBtn active={view === 'balance'} onClick={() => setView('balance')} icon={Scale} label="الميزان" />
         <TabBtn active={view === 'cross'} onClick={() => setView('cross')} icon={ArrowLeftRight} label="خارج القسم" />
+        <TabBtn active={view === 'independence'} onClick={() => setView('independence')} icon={Split} label="استقلال الأقسام" />
       </div>
 
       {view === 'supply' && <SupplyView />}
       {view === 'balance' && <BalanceView />}
       {view === 'cross' && <CrossSectionView />}
+      {view === 'independence' && <IndependenceView />}
 
       {view === 'demand' && (<>
       {/* Global filters */}
@@ -691,6 +693,100 @@ function CrossSectionView() {
           ملاحظة: {num(data.params.unresolved_sessions)} جلسة جانبية قسم مدرّبها غير محدّد (حسابات تجريبية / CS / مدربون أساسيون يغطّون) — مستبعدة من الكشف.
         </div>
       )}
+    </div>
+  );
+}
+
+// «استقلال الأقسام» — ideal-capacity model: dedicated phone-call trainers each
+// main-lecture section needs to be self-sufficient (students÷28 on the inverse pair).
+function IndependenceView() {
+  const [section, setSection] = useState('all');
+  const [dayPair, setDayPair] = useState('all');
+  const [mainDayPair, setMainDayPair] = useState('all');
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['trainer-recruitment-independence', section, dayPair, mainDayPair],
+    queryFn: () => api.get('/reports/trainer-recruitment-independence', {
+      params: { section, day_pair: effDayPair(dayPair, mainDayPair) === 'all' ? undefined : effDayPair(dayPair, mainDayPair) },
+    }).then(r => r.data),
+    staleTime: 60 * 1000,
+  });
+
+  const totals = data?.totals || {};
+  const sections = data?.sections || [];
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-white rounded-2xl border border-gray-100 p-4 flex flex-wrap items-center gap-3 text-sm">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-gray-500">القسم</span>
+          <select value={section} onChange={e => setSection(e.target.value)} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
+            {Object.entries(SECTIONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-gray-500">يوم المحاضرات الأساسية</span>
+          <select value={mainDayPair} onChange={e => { setMainDayPair(e.target.value); if (e.target.value !== 'all') setDayPair('all'); }} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
+            {Object.entries(MAIN_DAY_PAIRS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-gray-500">يوم الفون كول</span>
+          <select value={dayPair} onChange={e => { setDayPair(e.target.value); if (e.target.value !== 'all') setMainDayPair('all'); }} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
+            {Object.entries(DAY_PAIRS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <SumCard icon={Users}        label="مدربين أساسيين" value={num(totals.main_trainers)} tone="bg-white border-gray-200 text-gray-800" />
+        <SumCard icon={GraduationCap} label="مجموعات (سعة مثالية)" value={num(totals.groups)} tone="bg-white border-gray-200 text-gray-800" />
+        <SumCard icon={Users}        label="طلاب (سعة مثالية)" value={num(totals.students)} tone="bg-white border-gray-200 text-gray-800" />
+        <SumCard icon={UserPlus}     label="مدربين فون كول للاستقلال" value={num(totals.trainers_needed)} tone="bg-rose-50 border-rose-200 text-rose-800" />
+      </div>
+
+      <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5 text-[12px] text-blue-800 space-y-1">
+        <div><b>الفكرة:</b> كل قسم محاضرات أساسية يبقى ليه <b>مدربين فون كول خاصين بيه</b> يغطّوا طلابه بالكامل — من غير ما ياخد من أقسام تانية (اللي تبويب «خارج القسم» بيكشفه حاليًا).</div>
+        <div><b>السعة المثالية:</b> لكل مدرب أساسي، مجموعاته/يوم = ⌊ساعات شيفته الصافية ÷ مدة المجموعة (عام 1.5س / شبه وخاص 1س)⌋ × <b>8 طلاب</b> → على الزوج العكسي → <b>مدربين الفون كول = الطلاب ÷ 28</b>.</div>
+      </div>
+
+      {isLoading ? (
+        <div className="text-center py-10 text-gray-400">جارٍ التحميل…</div>
+      ) : sections.length === 0 ? (
+        <EmptyState title="لا توجد بيانات" />
+      ) : sections.map(s => (
+        <div key={s.section} className={`rounded-2xl border p-4 ${SEC_TONE[s.section] || 'border-gray-200 bg-white'}`}>
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <span className="font-black text-base">{s.label}</span>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
+              <span><b>{s.main_trainers}</b> مدرب أساسي · <b>{num(s.total_students)}</b> طالب</span>
+              <span className="font-black px-2 py-0.5 rounded bg-rose-100 text-rose-800">محتاج {num(s.total_trainers_needed)} مدرب فون كول للاستقلال</span>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[12px]" style={{ minWidth: '560px' }}>
+              <thead><tr className="text-[10px] opacity-70 border-b border-current/10">
+                <th className="text-right py-1.5 font-semibold">أيام المحاضرات الأساسية</th>
+                <th className="py-1.5 font-semibold">مجموعات</th>
+                <th className="py-1.5 font-semibold">طلاب</th>
+                <th className="py-1.5 font-semibold">أيام الفون كول (عكسي)</th>
+                <th className="py-1.5 font-semibold">مدربين فون كول (÷28)</th>
+              </tr></thead>
+              <tbody>
+                {(s.rows || []).map((r, i) => (
+                  <tr key={i} className="border-b border-current/5 last:border-0">
+                    <td className="text-right py-2 font-bold">{r.main_pair}</td>
+                    <td className="text-center font-semibold">{num(r.groups)}</td>
+                    <td className="text-center font-semibold">{num(r.students)}</td>
+                    <td className="text-center font-bold text-blue-700">{r.side_pair}</td>
+                    <td className="text-center"><span className="inline-block px-2 py-0.5 rounded font-black bg-rose-100 text-rose-800">{num(r.trainers_needed)}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

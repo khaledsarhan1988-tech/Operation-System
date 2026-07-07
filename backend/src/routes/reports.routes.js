@@ -8894,4 +8894,113 @@ router.get('/trainer-recruitment-cross-section', (req, res) => {
   }
 });
 
+// ─── GET /api/reports/trainer-recruitment-independence ───────────────────────
+// «توظيف المدربين» — «استقلال الأقسام» tab. Owner's IDEAL-CAPACITY model: how many
+// DEDICATED phone-call trainers each MAIN-lecture section needs to be self-sufficient
+// (no borrowing from other sections). Per (section × main day-pair):
+//   groups/day per active main trainer on the pair = ⌊ net shift hours ÷ group-dur ⌋
+//     (group-dur: general 1.5h, semi/private 1h; net = shift − breaks; e.g. Weam
+//      5h−0.5=4.5 → 3). Trainer counts on a pair only if the shift covers BOTH days.
+//   students = groups × 8  →  mapped to the INVERSE (phone-call) day-pair
+//   phone-call trainers needed = students ÷ 28 (28 students per trainer per pair)
+// Isolated: reads only team_members; does NOT touch any other endpoint/tab.
+router.get('/trainer-recruitment-independence', (req, res) => {
+  try {
+    const STUDENTS_PER_GROUP    = 8;
+    const STUDENTS_PER_TRAINER  = 28;
+    const GROUP_DUR = { general: 1.5, semi: 1, private: 1 };   // main-lecture hours per group
+    const sectionFilter = ['general', 'semi', 'private'].includes(req.query.section) ? req.query.section : 'all';
+    const DAYPAIR_SIDE = { sat_tue: 'سبت + ثلاثاء', sun_wed: 'أحد + أربعاء', mon_thu: 'إثنين + خميس' };
+    const wantSideLabel = DAYPAIR_SIDE[req.query.day_pair] || null;
+
+    const SEC = ['general', 'semi', 'private'];
+    const SEC_LABEL = { general: 'عام', semi: 'شبه خاص', private: 'خاص' };
+    const MAIN_SECS = new Set(SEC);
+    const PAIRS = { sat_tue: ['saturday', 'tuesday'], sun_wed: ['sunday', 'wednesday'], mon_thu: ['monday', 'thursday'] };
+    const PAIR_KEYS = ['sat_tue', 'sun_wed', 'mon_thu'];
+    const PAIR_LABEL = { sat_tue: 'سبت + ثلاثاء', sun_wed: 'أحد + أربعاء', mon_thu: 'إثنين + خميس' };
+    const INVERSE = { sat_tue: 'mon_thu', sun_wed: 'sat_tue', mon_thu: 'sun_wed' };   // main pair → phone-call (side) pair
+    const today = new Date(Date.now() + 2 * 3600 * 1000).toISOString().slice(0, 10);
+
+    // net teaching hours a shift offers on a specific day (shift span − breaks that apply to that day)
+    const netHoursOnDay = (sh, day) => {
+      if (!sh.days.includes(day)) return 0;
+      let net = sh.endMin - sh.startMin;
+      for (const r of (sh.rests || [])) {
+        const rd = (r.days && r.days.length) ? r.days : sh.days;
+        if (rd.includes(day)) net -= (r.endMin - r.startMin);
+      }
+      return Math.max(0, net) / 60;
+    };
+
+    const members = db.prepare(
+      `SELECT name, section, shifts_json, shift, shift_start, shift_end, shift_rests, voice_notes, work_days, shift_start_date, shift_end_date,
+              shift2, shift2_start, shift2_end, shift2_rests, shift2_voice_notes, shift2_work_days, shift2_start_date, shift2_end_date, employment_type
+         FROM team_members WHERE status='active' AND (job_title IS NULL OR job_title <> 'تيم ليدر')`
+    ).all();
+
+    // capacity groups per (section, main day-pair) + which trainers contribute (for a count)
+    const groupsCap = {}; SEC.forEach(s => groupsCap[s] = { sat_tue: 0, sun_wed: 0, mon_thu: 0 });
+    const trainerSet = {}; SEC.forEach(s => trainerSet[s] = new Set());
+    const detail = [];   // per-trainer contribution rows (for drill-down / audit)
+    for (const t of members) {
+      for (const sh of parseTeamShifts(t)) {
+        const active = (!sh.startDate || sh.startDate <= today) && (!sh.endDate || sh.endDate >= today);
+        if (!active) continue;
+        const sec = MAIN_SECS.has(sh.section) ? sh.section : (MAIN_SECS.has(String(t.section || '').toLowerCase()) ? String(t.section).toLowerCase() : null);
+        if (!sec) continue;                                 // only main-lecture shifts
+        const dur = GROUP_DUR[sec];
+        for (const pk of PAIR_KEYS) {
+          const days = PAIRS[pk];
+          if (!days.every(d => sh.days.includes(d))) continue;   // must cover BOTH days of the pair
+          const slots = Math.min(...days.map(d => Math.floor(netHoursOnDay(sh, d) / dur)));
+          if (slots > 0) {
+            groupsCap[sec][pk] += slots;
+            trainerSet[sec].add(t.name);
+            detail.push({ name: t.name, section: sec, main_pair: PAIR_LABEL[pk], groups: slots, students: slots * STUDENTS_PER_GROUP });
+          }
+        }
+      }
+    }
+
+    const sections = SEC.map(sec => {
+      const rows = PAIR_KEYS.map(mainPk => {
+        const g = groupsCap[sec][mainPk];
+        const students = g * STUDENTS_PER_GROUP;
+        const sidePk = INVERSE[mainPk];
+        return {
+          main_pair: PAIR_LABEL[mainPk], side_pair: PAIR_LABEL[sidePk],
+          groups: g, students,
+          trainers_needed: +(students / STUDENTS_PER_TRAINER).toFixed(1),
+        };
+      }).filter(r => !wantSideLabel || r.side_pair === wantSideLabel);
+      const total_students = rows.reduce((a, r) => a + r.students, 0);
+      const total_groups = rows.reduce((a, r) => a + r.groups, 0);
+      return {
+        section: sec, label: SEC_LABEL[sec],
+        main_trainers: trainerSet[sec].size,
+        total_groups, total_students,
+        total_trainers_needed: +(total_students / STUDENTS_PER_TRAINER).toFixed(1),
+        rows,
+      };
+    }).filter(s => sectionFilter === 'all' || s.section === sectionFilter);
+
+    const totals = {
+      main_trainers: [...new Set([].concat(...SEC.filter(s => sectionFilter === 'all' || s === sectionFilter).map(s => [...trainerSet[s]])))].length,
+      groups: sections.reduce((a, s) => a + s.total_groups, 0),
+      students: sections.reduce((a, s) => a + s.total_students, 0),
+      trainers_needed: +sections.reduce((a, s) => a + s.total_trainers_needed, 0).toFixed(1),
+    };
+
+    return res.json({
+      params: { students_per_group: STUDENTS_PER_GROUP, students_per_trainer: STUDENTS_PER_TRAINER, group_duration: GROUP_DUR, section: sectionFilter, day_pair: req.query.day_pair || 'all' },
+      totals, sections,
+      detail: detail.filter(d => (sectionFilter === 'all' || d.section === sectionFilter)),
+    });
+  } catch (err) {
+    console.error('[reports] trainer-recruitment-independence:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
