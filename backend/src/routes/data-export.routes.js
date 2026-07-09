@@ -325,4 +325,33 @@ router.get('/sales-dups', (req, res) => {
   }
 });
 
+// ─── CODE AUDIT DIAGNOSTIC (read-only, small JSON) ───────────────────────────
+// Surfaces outlier client codes (≥ 1,000,000 — phone-sized values wrongly saved
+// as a code) that poison the next-code auto-suggestion, plus what the corrected
+// next code should be. Read-only.
+router.get('/code-audit', (req, res) => {
+  try {
+    const MAX_REAL = 1000000;
+    const maxCC = db.prepare(`SELECT MAX(CAST(code AS INTEGER)) m FROM cs_client_codes WHERE CAST(code AS INTEGER) < ?`).get(MAX_REAL).m || 0;
+    const maxSR = db.prepare(`SELECT MAX(CAST(code AS INTEGER)) m FROM cs_sales_register WHERE code IS NOT NULL AND CAST(code AS INTEGER) < ?`).get(MAX_REAL).m || 0;
+    const outlierCodes = db.prepare(`
+      SELECT id, code, client_name, mobile_no, substr(created_at,1,19) AS created_at
+        FROM cs_client_codes WHERE CAST(code AS INTEGER) >= ?
+       ORDER BY CAST(code AS INTEGER) DESC LIMIT 200`).all(MAX_REAL);
+    const outlierSales = db.prepare(`
+      SELECT id, code, client_name, courses, price, source, substr(created_at,1,19) AS created_at
+        FROM cs_sales_register WHERE code IS NOT NULL AND CAST(code AS INTEGER) >= ?
+       ORDER BY CAST(code AS INTEGER) DESC LIMIT 200`).all(MAX_REAL);
+    res.json({
+      generated_at: new Date().toISOString(),
+      max_real_code: Math.max(maxCC, maxSR),
+      corrected_next_code: String(Math.max(maxCC, maxSR) + 1),
+      outlier_client_codes: outlierCodes,
+      outlier_sales_codes: outlierSales,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;

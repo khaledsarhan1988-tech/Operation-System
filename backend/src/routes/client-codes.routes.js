@@ -57,10 +57,15 @@ router.get('/list', (req, res) => {
 });
 
 // ─── NEXT CODE (suggestion = highest numeric code + 1) ───────────────────────
+// Real client codes are ~5 digits (…24793). We IGNORE outlier codes ≥ 1,000,000
+// (e.g. a phone number mistakenly saved into the code column — 10 digits ≈ 1e9),
+// otherwise one bad value poisons the suggestion and every new code cascades into
+// the billions. 1,000,000 leaves huge headroom for the real sequence.
+const MAX_REAL_CODE = 1000000;
 router.get('/next-code', (req, res) => {
   try {
-    const a = db.prepare(`SELECT MAX(CAST(code AS INTEGER)) m FROM cs_client_codes`).get().m || 0;
-    const b = db.prepare(`SELECT MAX(CAST(code AS INTEGER)) m FROM cs_sales_register WHERE code IS NOT NULL`).get().m || 0;
+    const a = db.prepare(`SELECT MAX(CAST(code AS INTEGER)) m FROM cs_client_codes WHERE CAST(code AS INTEGER) < ?`).get(MAX_REAL_CODE).m || 0;
+    const b = db.prepare(`SELECT MAX(CAST(code AS INTEGER)) m FROM cs_sales_register WHERE code IS NOT NULL AND CAST(code AS INTEGER) < ?`).get(MAX_REAL_CODE).m || 0;
     return res.json({ next: String(Math.max(a, b) + 1) });
   } catch (err) {
     console.error('[client-codes/next-code]', err);
