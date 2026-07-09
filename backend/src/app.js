@@ -3111,6 +3111,31 @@ initDb().then(db => {
     }
     db._raw.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_cs_client_codes_reqid ON cs_client_codes(client_request_id) WHERE client_request_id IS NOT NULL`);
 
+    // ── One-time: remap 4 poisoned client codes back to the real sequence ─────
+    // A phone number was saved as a code on an operation (id 10118), which pushed
+    // the next-code auto-suggestion into the billions; the next 4 codes cascaded
+    // (…656→…659). Owner-approved remap to 24794–24797. Guarded + idempotent: a row
+    // is only touched if it STILL has the exact junk code AND the target is free,
+    // so re-running (or running after a manual UI fix) is a no-op.
+    try {
+      const remap = [
+        ['1024948656', '24794'], ['1024948657', '24795'],
+        ['1024948658', '24796'], ['1024948659', '24797'],
+      ];
+      let fixed = 0;
+      for (const [junk, good] of remap) {
+        const row   = db._raw.prepare('SELECT id FROM cs_client_codes WHERE code = ?').get(junk);
+        const taken = db._raw.prepare('SELECT id FROM cs_client_codes WHERE code = ?').get(good);
+        if (row && !taken) {
+          db._raw.run(`UPDATE cs_client_codes SET code = ?, updated_at = datetime('now','+2 hours') WHERE id = ?`, good, row.id);
+          fixed++;
+        }
+      }
+      if (fixed) console.log(`✅ Migration: remapped ${fixed} poisoned client code(s) to the real sequence`);
+    } catch (e) {
+      console.error('client-code remap migration error:', e.message);
+    }
+
     saveNow();
     console.log('✅ Migration: cs_sales_register + cs_sales_installments + cs_membership_prices + cs_client_codes tables ready');
   } catch (e) {
