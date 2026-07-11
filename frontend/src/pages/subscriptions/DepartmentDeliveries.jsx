@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { GraduationCap, Search, Users, RefreshCw } from 'lucide-react';
+import { GraduationCap, Search, Users, RefreshCw, BarChart3 } from 'lucide-react';
 import api from '../../api/axios';
 import { useAuth } from '../../auth/AuthContext';
 import PageHero from '../../components/ui/PageHero';
 import SectionCard from '../../components/ui/SectionCard';
+import DeptAnalyticsModal from './DeptAnalyticsModal';
 
 /**
  * Enrollment — Department Deliveries (تسليمات الأقسام) as ONE page with a tab
@@ -60,6 +61,7 @@ export default function DepartmentDeliveries() {
   const [remMin, setRemMin] = useState('');
   const [remMax, setRemMax] = useState('');
   const [page, setPage] = useState(1);
+  const [showAnalytics, setShowAnalytics] = useState(false);
 
   const meta = DEPT_META[activeDept] || { label: activeDept, color: 'violet' };
 
@@ -139,7 +141,14 @@ export default function DepartmentDeliveries() {
       />
 
       {user?.role === 'admin' && (
-        <div className="mt-4 flex justify-end">
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            onClick={() => setShowAnalytics(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-white border border-violet-200 text-violet-700 hover:bg-violet-50"
+          >
+            <BarChart3 className="w-4 h-4" />
+            تحليلات القسم
+          </button>
           <button
             onClick={() => ingestAll.mutate()}
             disabled={ingestAll.isPending}
@@ -149,6 +158,10 @@ export default function DepartmentDeliveries() {
             {ingestAll.isPending ? 'جاري تحديث البيانات...' : 'تحديث البيانات (استيراد شامل)'}
           </button>
         </div>
+      )}
+
+      {showAnalytics && (
+        <DeptAnalyticsModal dept={activeDept} onClose={() => setShowAnalytics(false)} />
       )}
 
       {/* Department tabs */}

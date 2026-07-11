@@ -992,6 +992,25 @@ router.get('/enr-groups/activity', requireRole('admin'), (req, res) => {
   } catch (e) { console.error('GET /cs/enr-groups/activity:', e.message); res.status(400).json({ ok: false, error: e.message }); }
 });
 
+/**
+ * GET /api/cs/deliveries/analytics?dept=General|Private|Semi&grad_from=&grad_to=
+ * Per-department analytics: clients with remaining levels (+ upcoming-group flag +
+ * last group/level) and how many graduate in a date range. Admin only.
+ */
+router.get('/deliveries/analytics', requireRole('admin'), (req, res) => {
+  try {
+    const svc = require('../services/csDeliveriesReport.service');
+    res.json({ ok: true, ...svc.getDeptAnalytics({
+      dept: (req.query.dept || '').trim(),
+      gradFrom: (req.query.grad_from || '').trim(),
+      gradTo: (req.query.grad_to || '').trim(),
+    }) });
+  } catch (e) {
+    console.error('GET /cs/deliveries/analytics error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
 // ─── ENROLLMENT (manual data-entry grid) ──────────────────────────────────────
 
 /** GET /api/cs/enrollment?dept=General — rows for the department grid. */
