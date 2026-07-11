@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { X, GraduationCap, Users, CalendarCheck } from 'lucide-react';
+import { X, GraduationCap, Users, CalendarCheck, Search } from 'lucide-react';
 import api from '../../api/axios';
 
 /**
@@ -18,6 +18,13 @@ export default function DeptAnalyticsModal({ dept, onClose }) {
   const [gradFrom, setGradFrom] = useState('');
   const [gradTo, setGradTo] = useState('');
 
+  // Client-list filters (applied client-side on the loaded rows).
+  const [fSearch, setFSearch] = useState('');
+  const [fUpcoming, setFUpcoming] = useState('');   // '' | 'yes' | 'no'
+  const [fRemMin, setFRemMin] = useState('');
+  const [fRemMax, setFRemMax] = useState('');
+  const [fLevel, setFLevel] = useState('');
+
   const q = useQuery({
     queryKey: ['dept-analytics', dept, gradFrom, gradTo],
     queryFn: () => api.get('/cs/deliveries/analytics', {
@@ -28,6 +35,27 @@ export default function DeptAnalyticsModal({ dept, onClose }) {
   const data = q.data || {};
   const clients = data.clients || [];
   const graduating = data.graduating || [];
+
+  // Distinct levels present (for the level dropdown), sorted.
+  const levels = [...new Set(clients.map(c => c.last_level).filter(Boolean))]
+    .sort((a, b) => String(a).localeCompare(String(b), 'ar'));
+
+  const remMin = fRemMin === '' ? null : Number(fRemMin);
+  const remMax = fRemMax === '' ? null : Number(fRemMax);
+  const filteredClients = clients.filter(c => {
+    if (fSearch) {
+      const s = fSearch.trim().toLowerCase();
+      if (!(String(c.name || '').toLowerCase().includes(s) || String(c.phone || '').includes(s))) return false;
+    }
+    if (fUpcoming === 'yes' && !c.in_upcoming) return false;
+    if (fUpcoming === 'no' && c.in_upcoming) return false;
+    if (remMin != null && (c.remaining == null || c.remaining < remMin)) return false;
+    if (remMax != null && (c.remaining == null || c.remaining > remMax)) return false;
+    if (fLevel && c.last_level !== fLevel) return false;
+    return true;
+  });
+  const anyFilter = fSearch || fUpcoming || fRemMin !== '' || fRemMax !== '' || fLevel;
+  const clearFilters = () => { setFSearch(''); setFUpcoming(''); setFRemMin(''); setFRemMax(''); setFLevel(''); };
 
   const Stat = ({ icon: Icon, label, value, cls }) => (
     <div className={`flex items-center gap-3 rounded-xl border px-4 py-3 ${cls}`}>
@@ -106,7 +134,43 @@ export default function DeptAnalyticsModal({ dept, onClose }) {
 
           {/* Q3 — clients with remaining levels: upcoming? + last group + level */}
           <div>
-            <div className="text-sm font-semibold text-slate-700 mb-2">العملاء الذين لهم مستويات متبقية ({clients.length})</div>
+            <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+              <div className="text-sm font-semibold text-slate-700">
+                العملاء الذين لهم مستويات متبقية ({anyFilter ? `${filteredClients.length} من ${clients.length}` : clients.length})
+              </div>
+            </div>
+
+            {/* Filters */}
+            <div className="flex flex-wrap items-center gap-2 mb-2">
+              <div className="relative">
+                <Search className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input value={fSearch} onChange={e => setFSearch(e.target.value)} placeholder="ابحث بالاسم أو الموبايل..."
+                  className="pr-8 pl-3 py-1.5 text-xs border border-slate-200 rounded-lg w-56 focus:outline-none focus:ring-2 focus:ring-violet-200" />
+              </div>
+              <select value={fUpcoming} onChange={e => setFUpcoming(e.target.value)}
+                className="py-1.5 px-2 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-violet-200">
+                <option value="">مجموعة قادمة: الكل</option>
+                <option value="yes">على مجموعة قادمة</option>
+                <option value="no">بلا مجموعة قادمة</option>
+              </select>
+              <select value={fLevel} onChange={e => setFLevel(e.target.value)}
+                className="py-1.5 px-2 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-violet-200 max-w-[10rem]">
+                <option value="">كل المستويات</option>
+                {levels.map(l => <option key={l} value={l}>{l}</option>)}
+              </select>
+              <div className="flex items-center gap-1 text-xs text-slate-500">
+                <span>المتبقّي:</span>
+                <input type="number" min="0" value={fRemMin} onChange={e => setFRemMin(e.target.value)} placeholder="من"
+                  className="w-14 py-1.5 px-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-200" />
+                <span>→</span>
+                <input type="number" min="0" value={fRemMax} onChange={e => setFRemMax(e.target.value)} placeholder="إلى"
+                  className="w-14 py-1.5 px-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-200" />
+              </div>
+              {anyFilter && (
+                <button onClick={clearFilters} className="px-3 py-1.5 text-xs rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200">مسح الفلاتر</button>
+              )}
+            </div>
+
             <div className="overflow-x-auto border border-slate-100 rounded-xl">
               <table className="w-full text-xs text-right">
                 <thead><tr className="text-slate-500 border-b border-slate-100 bg-slate-50">
@@ -118,7 +182,7 @@ export default function DeptAnalyticsModal({ dept, onClose }) {
                   <th className="px-2 py-2.5 font-medium">آخر محاضرة</th>
                 </tr></thead>
                 <tbody>
-                  {clients.map((c, i) => (
+                  {filteredClients.map((c, i) => (
                     <tr key={(c.phone || i) + ''} className="border-b border-slate-50 hover:bg-slate-50/60">
                       <td className="px-2 py-2"><div className="text-slate-800">{c.name || '—'}</div><div className="text-slate-400 font-mono" dir="ltr">{c.phone}</div></td>
                       <td className="px-2 py-2 text-center">
@@ -134,8 +198,10 @@ export default function DeptAnalyticsModal({ dept, onClose }) {
                       <td className="px-2 py-2 font-mono text-slate-500" dir="ltr">{c.last_date || '—'}</td>
                     </tr>
                   ))}
-                  {!q.isLoading && clients.length === 0 && (
-                    <tr><td colSpan={6} className="px-2 py-8 text-center text-slate-400">لا يوجد عملاء لهم مستويات متبقية</td></tr>
+                  {!q.isLoading && filteredClients.length === 0 && (
+                    <tr><td colSpan={6} className="px-2 py-8 text-center text-slate-400">
+                      {clients.length === 0 ? 'لا يوجد عملاء لهم مستويات متبقية' : 'لا يوجد عملاء مطابقون للفلاتر'}
+                    </td></tr>
                   )}
                 </tbody>
               </table>
