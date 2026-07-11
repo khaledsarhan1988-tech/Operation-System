@@ -8942,6 +8942,7 @@ router.get('/trainer-recruitment-independence', (req, res) => {
     // capacity groups per (section, main day-pair) + which trainers contribute (for a count)
     const groupsCap = {}; SEC.forEach(s => groupsCap[s] = { sat_tue: 0, sun_wed: 0, mon_thu: 0 });
     const trainerSet = {}; SEC.forEach(s => trainerSet[s] = new Set());
+    const trainerPair = {}; SEC.forEach(s => trainerPair[s] = { sat_tue: new Set(), sun_wed: new Set(), mon_thu: new Set() });
     const detail = [];   // per-trainer contribution rows (for drill-down / audit)
     for (const t of members) {
       for (const sh of parseTeamShifts(t)) {
@@ -8957,6 +8958,7 @@ router.get('/trainer-recruitment-independence', (req, res) => {
           if (slots > 0) {
             groupsCap[sec][pk] += slots;
             trainerSet[sec].add(t.name);
+            trainerPair[sec][pk].add(t.name);
             detail.push({ name: t.name, section: sec, main_pair: PAIR_LABEL[pk], groups: slots, students: slots * STUDENTS_PER_GROUP });
           }
         }
@@ -8970,6 +8972,7 @@ router.get('/trainer-recruitment-independence', (req, res) => {
         const sidePk = INVERSE[mainPk];
         return {
           main_pair: PAIR_LABEL[mainPk], side_pair: PAIR_LABEL[sidePk],
+          main_trainers: trainerPair[sec][mainPk].size,
           groups: g, students,
           trainers_needed: +(students / STUDENTS_PER_TRAINER).toFixed(1),
         };

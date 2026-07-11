@@ -767,6 +767,7 @@ function IndependenceView() {
             <table className="w-full text-[12px]" style={{ minWidth: '560px' }}>
               <thead><tr className="text-[10px] opacity-70 border-b border-current/10">
                 <th className="text-right py-1.5 font-semibold">أيام المحاضرات الأساسية</th>
+                <th className="py-1.5 font-semibold">مدربين أساسيين</th>
                 <th className="py-1.5 font-semibold">مجموعات</th>
                 <th className="py-1.5 font-semibold">طلاب</th>
                 <th className="py-1.5 font-semibold">أيام الفون كول (عكسي)</th>
@@ -776,6 +777,7 @@ function IndependenceView() {
                 {(s.rows || []).map((r, i) => (
                   <tr key={i} className="border-b border-current/5 last:border-0">
                     <td className="text-right py-2 font-bold">{r.main_pair}</td>
+                    <td className="text-center font-black">{num(r.main_trainers)}</td>
                     <td className="text-center font-semibold">{num(r.groups)}</td>
                     <td className="text-center font-semibold">{num(r.students)}</td>
                     <td className="text-center font-bold text-blue-700">{r.side_pair}</td>
