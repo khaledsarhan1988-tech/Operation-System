@@ -47,6 +47,14 @@ const STATUS_MAP = {
   'بانتظار تسجيل المتدربين': 'waiting_trainees',
 };
 
+// Placement-test placeholder groups (تحديد مستوى / Placement Test) are NOT real
+// destination groups — excluded from the next-group pickers only (owner decision
+// 2026-07-11). Deliberately LOCAL, not in the shared IGNORED_GROUP_PATTERNS:
+// adding them there would change deliveries/EnrGroups level counts.
+const PLACEMENT_PATTERNS = [/placem/i, /تحديد مستو/];
+const isPlacementGroup = (name) =>
+  PLACEMENT_PATTERNS.some(re => re.test(String(name == null ? '' : name)));
+
 /**
  * Next-group options = groups whose REAL batches.status is one of the two
  * "waiting" states (بانتظار تسجيل المتدربين / المحاضرات) — i.e. groups that
@@ -68,6 +76,7 @@ function getNextGroupOptions({ dept, line }) {
   const seen = new Map();
   for (const r of rows) {
     if (isIgnoredGroup(r.group_name)) continue;
+    if (isPlacementGroup(r.group_name)) continue;
     const key = canonGroupKey(r.group_name) + '|' + String(r.line || '');
     if (!seen.has(key)) seen.set(key, r);
   }
