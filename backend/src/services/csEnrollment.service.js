@@ -424,12 +424,25 @@ function getOptions(dept, level, line = 'Ahmed Hassan') {
     if (filtered.length) teachers = filtered;
   }
 
+  // Group codes = groups that haven't started yet (real batches.status waiting
+  // states: بانتظار تسجيل المتدربين / المحاضرات), scoped to this dept + line.
+  // Reuses the Enr Groups transition definition — same list as SystemReports.
+  let groupCodes = [];
+  try {
+    const { getNextGroupOptions } = require('./csEnrTransition.service');
+    groupCodes = getNextGroupOptions({ dept, line }).items
+      .map(i => ({ code: i.group_name, status: i.status }));
+  } catch (e) {
+    console.error('getOptions group_codes error:', e.message);
+  }
+
   return {
     days: DAYS,
     statuses: STATUSES,
     levels: LEVELS,
     coordinators,
     teachers: teachers.map(t => t.name),
+    group_codes: groupCodes,
   };
 }
 

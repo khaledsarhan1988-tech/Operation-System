@@ -201,6 +201,7 @@ export default function Enrollment() {
   const [editing, setEditing] = useState(null);   // row id | 'new' | null
   const [form, setForm] = useState(EMPTY);
   const [studentRow, setStudentRow] = useState(null);   // row whose roster drawer is open
+  const [groupCodeManual, setGroupCodeManual] = useState(false);   // كود المجموعة: قائمة ↔ كتابة يدوية
   const meta = DEPT_META[activeDept] || { label: activeDept, color: 'violet' };
 
   const optionsQ = useQuery({
@@ -281,9 +282,9 @@ export default function Enrollment() {
     return genBadge(status, !eligible ? 'محتاج 7 طلاب أو أكثر' : '');
   };
 
-  const startEdit = (row) => { setEditing(row.id); setForm({ ...EMPTY, ...row }); };
-  const startNew  = () => { setEditing('new'); setForm(EMPTY); };
-  const cancel    = () => { setEditing(null); setForm(EMPTY); };
+  const startEdit = (row) => { setEditing(row.id); setForm({ ...EMPTY, ...row }); setGroupCodeManual(false); };
+  const startNew  = () => { setEditing('new'); setForm(EMPTY); setGroupCodeManual(false); };
+  const cancel    = () => { setEditing(null); setForm(EMPTY); setGroupCodeManual(false); };
   const save      = () => saveMut.mutate(editing === 'new' ? { ...form } : { ...form, id: editing });
   const switchTab = (d) => { setActiveDept(d); cancel(); };
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }));
@@ -342,6 +343,52 @@ export default function Enrollment() {
             className="w-full min-w-24 px-1.5 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-violet-300" />
           {ready && slotsQ.isFetching && <div className="text-[10px] text-slate-400 mt-0.5">جاري حساب المواعيد...</div>}
           {ready && slotsQ.data && slots.length === 0 && <div className="text-[10px] text-rose-500 mt-0.5">مفيش مواعيد متاحة للمدرب في الأيام دي</div>}
+        </td>
+      );
+    }
+    // Group-code cell — dropdown of this dept's NOT-YET-STARTED groups (real
+    // batches waiting statuses, same list as the Enr Groups transition screen),
+    // with a toggle to free-text entry for codes not in Batches yet.
+    if (c.k === 'group_code') {
+      const STATUS_LBL = { waiting_trainees: 'بانتظار متدربين', waiting_lectures: 'بانتظار محاضرات' };
+      const codes = opts.group_codes || [];
+      // Keep the row's current value selectable even if its group has since started.
+      const list = (form.group_code && !codes.some(g => g.code === form.group_code))
+        ? [{ code: form.group_code, status: null }, ...codes]
+        : codes;
+      return (
+        <td key={c.k} className="px-2 py-1 min-w-56 align-top">
+          {groupCodeManual ? (
+            <input
+              value={form.group_code ?? ''}
+              onChange={(e) => setF('group_code', e.target.value)}
+              placeholder="اكتب كود المجموعة..."
+              className="w-full px-1.5 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-violet-300"
+            />
+          ) : (
+            <select
+              value={form.group_code ?? ''}
+              onChange={(e) => setF('group_code', e.target.value)}
+              className="w-full px-1 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-violet-300"
+            >
+              <option value="">—</option>
+              {list.map(g => (
+                <option key={g.code} value={g.code}>
+                  {g.code}{g.status && STATUS_LBL[g.status] ? ` — ${STATUS_LBL[g.status]}` : ''}
+                </option>
+              ))}
+            </select>
+          )}
+          <button
+            type="button"
+            onClick={() => setGroupCodeManual(m => !m)}
+            className="mt-1 text-[10px] text-violet-600 hover:text-violet-800 underline"
+          >
+            {groupCodeManual ? 'اختيار من القائمة' : 'كتابة يدوية'}
+          </button>
+          {!groupCodeManual && codes.length === 0 && (
+            <div className="text-[10px] text-slate-400 mt-0.5">لا توجد مجموعات بانتظار البدء في القسم</div>
+          )}
         </td>
       );
     }
