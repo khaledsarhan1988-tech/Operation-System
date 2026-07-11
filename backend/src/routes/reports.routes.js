@@ -8906,7 +8906,7 @@ router.get('/trainer-recruitment-cross-section', (req, res) => {
 // Isolated: reads only team_members; does NOT touch any other endpoint/tab.
 router.get('/trainer-recruitment-independence', (req, res) => {
   try {
-    const STUDENTS_PER_GROUP    = 8;
+    const STUDENTS_PER_GROUP    = { general: 8, semi: 2, private: 1 };   // owner: عام 8 / شبه خاص 2 / خاص 1
     const STUDENTS_PER_TRAINER  = 28;
     const GROUP_DUR = { general: 1.5, semi: 1, private: 1 };   // main-lecture hours per group
     const sectionFilter = ['general', 'semi', 'private'].includes(req.query.section) ? req.query.section : 'all';
@@ -8922,11 +8922,12 @@ router.get('/trainer-recruitment-independence', (req, res) => {
     const INVERSE = { sat_tue: 'mon_thu', sun_wed: 'sat_tue', mon_thu: 'sun_wed' };   // main pair → phone-call (side) pair
     const today = new Date(Date.now() + 2 * 3600 * 1000).toISOString().slice(0, 10);
 
-    // net teaching hours a shift offers on a specific day (shift span − breaks that apply to that day)
+    // net teaching hours a shift offers on a specific day = shift span − breaks − voice-notes
+    // (owner: voice-note time hosts NO groups, so it's excluded like a break).
     const netHoursOnDay = (sh, day) => {
       if (!sh.days.includes(day)) return 0;
       let net = sh.endMin - sh.startMin;
-      for (const r of (sh.rests || [])) {
+      for (const r of [...(sh.rests || []), ...(sh.voiceNotes || [])]) {
         const rd = (r.days && r.days.length) ? r.days : sh.days;
         if (rd.includes(day)) net -= (r.endMin - r.startMin);
       }
@@ -8966,7 +8967,7 @@ router.get('/trainer-recruitment-independence', (req, res) => {
             if (!ti) { ti = { name: t.name, days: new Set(), groups: 0, pairs: new Set() }; trainerBySec[sec].set(t.name, ti); }
             sh.days.forEach(d => ti.days.add(d));
             ti.groups += slots; ti.pairs.add(PAIR_LABEL[pk]);
-            detail.push({ name: t.name, section: sec, main_pair: PAIR_LABEL[pk], groups: slots, students: slots * STUDENTS_PER_GROUP });
+            detail.push({ name: t.name, section: sec, main_pair: PAIR_LABEL[pk], groups: slots, students: slots * STUDENTS_PER_GROUP[sec] });
           }
         }
       }
@@ -8975,7 +8976,7 @@ router.get('/trainer-recruitment-independence', (req, res) => {
     const sections = SEC.map(sec => {
       const rows = PAIR_KEYS.map(mainPk => {
         const g = groupsCap[sec][mainPk];
-        const students = g * STUDENTS_PER_GROUP;
+        const students = g * STUDENTS_PER_GROUP[sec];
         const sidePk = INVERSE[mainPk];
         return {
           main_pair: PAIR_LABEL[mainPk], side_pair: PAIR_LABEL[sidePk],
