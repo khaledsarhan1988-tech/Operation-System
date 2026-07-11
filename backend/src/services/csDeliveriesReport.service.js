@@ -52,6 +52,26 @@ function makeLectureMeta() {
   };
 }
 
+// "M/D/YYYY" → sortable YYYYMMDD (0 if unparseable). SAME as csDeliveries.salesDateKey.
+function salesDateKey(s) {
+  const m = String(s == null ? '' : s).match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  return m ? (parseInt(m[3], 10) * 10000 + parseInt(m[1], 10) * 100 + parseInt(m[2], 10)) : 0;
+}
+
+// Per-phone recency in كشف العملاء = the latest sale entry_date (tiebreak: highest
+// row id = most recently added). Drives the "newest → oldest" client ordering.
+function buildRecencyMap() {
+  const map = new Map();   // pn → { dateKey, id }
+  for (const r of db.prepare(`SELECT mobile_no AS m, entry_date AS d, id FROM cs_sales_register WHERE mobile_no IS NOT NULL AND TRIM(mobile_no) <> ''`).all()) {
+    const pn = csPrimaryPhone(r.m);
+    if (!pn) continue;
+    const dk = salesDateKey(r.d);
+    const cur = map.get(pn);
+    if (!cur || dk > cur.dateKey || (dk === cur.dateKey && r.id > cur.id)) map.set(pn, { dateKey: dk, id: r.id });
+  }
+  return map;
+}
+
 // Parse the level label (e.g. "General 4", "Conversation 3", "Starter 2") from a
 // group name. Reads the family + number before the first "(".
 function parseLevel(name) {
@@ -80,6 +100,7 @@ function getDeptAnalytics({ dept, gradFrom, gradTo }) {
 
   const ctx = csDel.buildBalanceContext();        // { salesMap, activeMap, inactiveMap }
   const lectMeta = makeLectureMeta();
+  const recency = buildRecencyMap();              // pn → newest-in-كشف-العملاء key
 
   // Upcoming = registered in a WAITING batch group (not started), keyed by phone.
   const waitingPhones = new Set();
@@ -150,8 +171,11 @@ function getDeptAnalytics({ dept, gradFrom, gradTo }) {
     }
   }
 
-  withRemaining.sort((a, b) => (b.remaining - a.remaining) || String(a.name || '').localeCompare(String(b.name || ''), 'ar'));
-  graduating.sort((a, b) => String(a.grad_date || '').localeCompare(String(b.grad_date || '')));
+  // Order clients by newest → oldest in كشف العملاء (latest sale date, then latest id).
+  const rk = (pn) => recency.get(pn) || { dateKey: 0, id: 0 };
+  const byRecency = (a, b) => { const A = rk(a.phone), B = rk(b.phone); return (B.dateKey - A.dateKey) || (B.id - A.id) || String(a.name || '').localeCompare(String(b.name || ''), 'ar'); };
+  withRemaining.sort(byRecency);
+  graduating.sort(byRecency);
 
   return {
     dept,
