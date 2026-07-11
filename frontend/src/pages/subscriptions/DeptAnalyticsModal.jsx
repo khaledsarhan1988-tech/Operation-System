@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { X, GraduationCap, Users, CalendarCheck, Search } from 'lucide-react';
+import { X, GraduationCap, Users, CalendarCheck, Search, Download } from 'lucide-react';
 import api from '../../api/axios';
+import { downloadCsv } from '../../utils/csv';
 
 /**
  * Department Deliveries — analytics modal (per dept). Answers:
@@ -24,6 +25,8 @@ export default function DeptAnalyticsModal({ dept, onClose }) {
   const [fRemMin, setFRemMin] = useState('');
   const [fRemMax, setFRemMax] = useState('');
   const [fLevel, setFLevel] = useState('');
+  const [fLastFrom, setFLastFrom] = useState('');
+  const [fLastTo, setFLastTo] = useState('');
 
   const q = useQuery({
     queryKey: ['dept-analytics', dept, gradFrom, gradTo],
@@ -52,10 +55,24 @@ export default function DeptAnalyticsModal({ dept, onClose }) {
     if (remMin != null && (c.remaining == null || c.remaining < remMin)) return false;
     if (remMax != null && (c.remaining == null || c.remaining > remMax)) return false;
     if (fLevel && c.last_level !== fLevel) return false;
+    if (fLastFrom && (!c.last_date || c.last_date < fLastFrom)) return false;
+    if (fLastTo && (!c.last_date || c.last_date > fLastTo)) return false;
     return true;
   });
-  const anyFilter = fSearch || fUpcoming || fRemMin !== '' || fRemMax !== '' || fLevel;
-  const clearFilters = () => { setFSearch(''); setFUpcoming(''); setFRemMin(''); setFRemMax(''); setFLevel(''); };
+  const anyFilter = fSearch || fUpcoming || fRemMin !== '' || fRemMax !== '' || fLevel || fLastFrom || fLastTo;
+  const clearFilters = () => {
+    setFSearch(''); setFUpcoming(''); setFRemMin(''); setFRemMax(''); setFLevel(''); setFLastFrom(''); setFLastTo('');
+  };
+
+  const exportCsv = () => {
+    const headers = ['العميل', 'الموبايل', 'المتبقّي', 'مجموعة قادمة؟', 'آخر مجموعة', 'المستوى', 'آخر محاضرة'];
+    const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+    const rows = filteredClients.map(c => [
+      c.name, c.phone, c.remaining, c.in_upcoming ? 'نعم' : 'لا', c.last_group, c.last_level, c.last_date,
+    ]);
+    const csv = [headers, ...rows].map(r => r.map(esc).join(',')).join('\n');
+    downloadCsv(csv, `تحليلات-${dept}-متبقي-مستويات.csv`);
+  };
 
   const Stat = ({ icon: Icon, label, value, cls }) => (
     <div className={`flex items-center gap-3 rounded-xl border px-4 py-3 ${cls}`}>
@@ -138,6 +155,10 @@ export default function DeptAnalyticsModal({ dept, onClose }) {
               <div className="text-sm font-semibold text-slate-700">
                 العملاء الذين لهم مستويات متبقية ({anyFilter ? `${filteredClients.length} من ${clients.length}` : clients.length})
               </div>
+              <button onClick={exportCsv} disabled={!filteredClients.length}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40">
+                <Download className="w-3.5 h-3.5" /> تصدير Excel ({filteredClients.length})
+              </button>
             </div>
 
             {/* Filters */}
@@ -165,6 +186,14 @@ export default function DeptAnalyticsModal({ dept, onClose }) {
                 <span>→</span>
                 <input type="number" min="0" value={fRemMax} onChange={e => setFRemMax(e.target.value)} placeholder="إلى"
                   className="w-14 py-1.5 px-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-200" />
+              </div>
+              <div className="flex items-center gap-1 text-xs text-slate-500">
+                <span className="whitespace-nowrap">آخر محاضرة:</span>
+                <input type="date" value={fLastFrom} onChange={e => setFLastFrom(e.target.value)}
+                  className="py-1.5 px-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-200" dir="ltr" />
+                <span>→</span>
+                <input type="date" value={fLastTo} onChange={e => setFLastTo(e.target.value)}
+                  className="py-1.5 px-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-200" dir="ltr" />
               </div>
               {anyFilter && (
                 <button onClick={clearFilters} className="px-3 py-1.5 text-xs rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200">مسح الفلاتر</button>
