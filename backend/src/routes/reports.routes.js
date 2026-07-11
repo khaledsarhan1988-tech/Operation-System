@@ -8943,6 +8943,9 @@ router.get('/trainer-recruitment-independence', (req, res) => {
     const groupsCap = {}; SEC.forEach(s => groupsCap[s] = { sat_tue: 0, sun_wed: 0, mon_thu: 0 });
     const trainerSet = {}; SEC.forEach(s => trainerSet[s] = new Set());
     const trainerPair = {}; SEC.forEach(s => trainerPair[s] = { sat_tue: new Set(), sun_wed: new Set(), mon_thu: new Set() });
+    const trainerBySec = {}; SEC.forEach(s => trainerBySec[s] = new Map());   // name → { days, groups, pairs } (for the drill-down)
+    const DAY_AR = { saturday: 'سبت', sunday: 'أحد', monday: 'إثنين', tuesday: 'ثلاثاء', wednesday: 'أربعاء', thursday: 'خميس', friday: 'جمعة' };
+    const DAY_ORDER = ['saturday', 'sunday', 'monday', 'tuesday', 'wednesday', 'thursday'];
     const detail = [];   // per-trainer contribution rows (for drill-down / audit)
     for (const t of members) {
       for (const sh of parseTeamShifts(t)) {
@@ -8959,6 +8962,10 @@ router.get('/trainer-recruitment-independence', (req, res) => {
             groupsCap[sec][pk] += slots;
             trainerSet[sec].add(t.name);
             trainerPair[sec][pk].add(t.name);
+            let ti = trainerBySec[sec].get(t.name);
+            if (!ti) { ti = { name: t.name, days: new Set(), groups: 0, pairs: new Set() }; trainerBySec[sec].set(t.name, ti); }
+            sh.days.forEach(d => ti.days.add(d));
+            ti.groups += slots; ti.pairs.add(PAIR_LABEL[pk]);
             detail.push({ name: t.name, section: sec, main_pair: PAIR_LABEL[pk], groups: slots, students: slots * STUDENTS_PER_GROUP });
           }
         }
@@ -8985,6 +8992,11 @@ router.get('/trainer-recruitment-independence', (req, res) => {
         total_groups, total_students,
         total_trainers_needed: +(total_students / STUDENTS_PER_TRAINER).toFixed(1),
         rows,
+        trainers_detail: [...trainerBySec[sec].values()].map(ti => ({
+          name: ti.name,
+          days: DAY_ORDER.filter(d => ti.days.has(d)).map(d => DAY_AR[d]),
+          groups: ti.groups, pairs: [...ti.pairs],
+        })).sort((a, b) => b.groups - a.groups),
       };
     }).filter(s => sectionFilter === 'all' || s.section === sectionFilter);
 

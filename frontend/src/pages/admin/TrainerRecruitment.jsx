@@ -703,6 +703,7 @@ function IndependenceView() {
   const [section, setSection] = useState('all');
   const [dayPair, setDayPair] = useState('all');
   const [mainDayPair, setMainDayPair] = useState('all');
+  const [showTrainers, setShowTrainers] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['trainer-recruitment-independence', section, dayPair, mainDayPair],
@@ -739,11 +740,47 @@ function IndependenceView() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <SumCard icon={Users}        label="مدربين أساسيين" value={num(totals.main_trainers)} tone="bg-white border-gray-200 text-gray-800" />
+        <SumCard icon={Users}        label="مدربين أساسيين" value={num(totals.main_trainers)} tone="bg-white border-gray-200 text-gray-800" onClick={() => setShowTrainers(v => !v)} />
         <SumCard icon={GraduationCap} label="مجموعات (سعة مثالية)" value={num(totals.groups)} tone="bg-white border-gray-200 text-gray-800" />
         <SumCard icon={Users}        label="طلاب (سعة مثالية)" value={num(totals.students)} tone="bg-white border-gray-200 text-gray-800" />
         <SumCard icon={UserPlus}     label="مدربين فون كول للاستقلال" value={num(totals.trainers_needed)} tone="bg-rose-50 border-rose-200 text-rose-800" />
       </div>
+
+      {showTrainers && (
+        <div className="bg-white rounded-2xl border border-gray-100 p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="font-black text-sm text-gray-800">مدربي المحاضرات الأساسية + أيام شيفتهم السارية</span>
+            <button onClick={() => setShowTrainers(false)} className="text-gray-400 hover:text-gray-600"><X size={16} /></button>
+          </div>
+          {sections.map(s => (
+            <div key={s.section}>
+              <div className={`text-[11px] font-black mb-1 inline-block px-2 py-0.5 rounded-full border ${SEC_TONE[s.section]}`}>{s.label} · {s.trainers_detail?.length || 0} مدرب</div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-[12px] text-right" style={{ minWidth: '520px' }}>
+                  <thead><tr className="text-[10px] text-gray-400 border-b border-gray-100">
+                    <th className="py-1 font-semibold text-right">المدرب</th>
+                    <th className="py-1 font-semibold">أيام الشيفت السارية</th>
+                    <th className="py-1 font-semibold">مجموعات/يوم (سعة)</th>
+                  </tr></thead>
+                  <tbody>
+                    {(s.trainers_detail || []).map((t, i) => (
+                      <tr key={i} className="border-b border-gray-50 last:border-0">
+                        <td className="py-1.5 font-mono text-gray-700" dir="ltr">{t.name}</td>
+                        <td className="py-1.5 text-center">
+                          {(t.days || []).map((d, di) => (
+                            <span key={di} className="inline-block text-[10px] px-1.5 py-0.5 mx-0.5 rounded bg-blue-50 text-blue-700 border border-blue-100">{d}</span>
+                          ))}
+                        </td>
+                        <td className="py-1.5 text-center font-black">{num(t.groups)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5 text-[12px] text-blue-800 space-y-1">
         <div><b>الفكرة:</b> كل قسم محاضرات أساسية يبقى ليه <b>مدربين فون كول خاصين بيه</b> يغطّوا طلابه بالكامل — من غير ما ياخد من أقسام تانية (اللي تبويب «خارج القسم» بيكشفه حاليًا).</div>
@@ -868,10 +905,10 @@ function TrainerGroups({ groups }) {
   );
 }
 
-function SumCard({ icon: Icon, label, value, tone }) {
+function SumCard({ icon: Icon, label, value, tone, onClick }) {
   return (
-    <div className={`rounded-xl border px-4 py-3 ${tone}`}>
-      <div className="flex items-center gap-1.5 text-[11px] font-bold opacity-80 mb-1"><Icon size={13} />{label}</div>
+    <div onClick={onClick} className={`rounded-xl border px-4 py-3 ${tone} ${onClick ? 'cursor-pointer hover:brightness-95 transition' : ''}`}>
+      <div className="flex items-center gap-1.5 text-[11px] font-bold opacity-80 mb-1"><Icon size={13} />{label}{onClick && <ChevronDown size={12} className="opacity-50" />}</div>
       <div className="text-2xl font-black">{value}</div>
     </div>
   );
