@@ -236,7 +236,17 @@ async function runIngestionAll({ lineFolderName = 'Ahmed Hassan', onlyDept = nul
   for (const df of deptFolders) {
     if (onlyDept && df.dept !== onlyDept) continue;
 
+    // Files directly in the dept folder + one level of subfolders — some dept
+    // folders nest everything in a same-named child (e.g. "Private 2 in 1/
+    // Private 2 in 1/P General 4.xlsx"), which made the whole dept ingest 0 rows.
     const allFiles = await drive.listFilesInFolder(df.id);
+    try {
+      for (const sub of await drive.listSubfoldersInFolder(df.id)) {
+        allFiles.push(...await drive.listFilesInFolder(sub.id));
+      }
+    } catch (e) {
+      console.error(`cs-levels: subfolder listing failed for "${df.folderName}":`, e.message);
+    }
     const xlsxFiles = allFiles.filter(f => /\.xlsx?$/i.test(f.name));
 
     const folderResult = { folderName: df.folderName, dept: df.dept, files: [] };

@@ -195,6 +195,21 @@ async function listFilesInFolder(folderId) {
  * which handles both new uploads (createdTime = now, modifiedTime = old local time)
  * and Drive overwrites (modifiedTime updates, createdTime stays).
  */
+// Direct SUBFOLDERS of a folder (listFilesInFolder deliberately excludes
+// folders). Needed because some dept folders nest their files one level down
+// (e.g. "Private 2 in 1/Private 2 in 1/P General 4.xlsx").
+async function listSubfoldersInFolder(folderId) {
+  const drive = getDriveClient();
+  const res = await drive.files.list({
+    q: `'${folderId}' in parents and trashed=false and mimeType = '${FOLDER_MIME}'`,
+    fields: 'files(id, name)',
+    pageSize: 50,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+  });
+  return res.data.files || [];
+}
+
 async function getLatestFileInFolder(folderId) {
   const files = await listFilesInFolder(folderId);
   return files.length > 0 ? files[0] : null;
@@ -338,6 +353,7 @@ module.exports = {
   getOrCreateDatePath,
   prepareDayFolders,
   listFilesInFolder,
+  listSubfoldersInFolder,
   getLatestFileInFolder,
   getLatestFilesForDay,
   downloadFile,

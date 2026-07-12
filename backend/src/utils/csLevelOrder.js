@@ -97,7 +97,10 @@ function parseFileName(fname) {
   // strip it (repeatedly, for combos like "Private 2 in 1 …") before matching.
   // Without this the anchored patterns below return null and the WHOLE file is
   // skipped — the entire Private/Semi completed-levels never ingested (0 rows).
-  base = base.replace(/^(?:(?:private|semi|2\s*in\s*1)[\s_-]+)+/i, '');
+  // "p" alone covers the Semi folder's "P General 4.xlsx" naming. Safe: it only
+  // strips when followed by a separator, so "Private…" is eaten by its own
+  // alternative and no track keyword starts with "p ".
+  base = base.replace(/^(?:(?:private|semi|p|2\s*in\s*1|2n1)[\s_-]+)+/i, '');
 
   // Conversation: "CON 1" / "Conversation 1" / "Con_1" / "Con1"
   let m = base.match(/^(?:con(?:versation)?)[\s_-]*([1-5])$/i);
