@@ -90,7 +90,14 @@ function levelAtOrder(order) {
  */
 function parseFileName(fname) {
   if (!fname) return null;
-  const base = String(fname).replace(/\.xlsx?$/i, '').trim();
+  let base = String(fname).replace(/\.xlsx?$/i, '').trim();
+  // Dept-prefixed file names — the Private folder names its files
+  // "Private General 4" / "Private CON 3" (and Semi may use "2 in 1 …").
+  // The dept comes from the parent FOLDER, so the prefix carries no level info;
+  // strip it (repeatedly, for combos like "Private 2 in 1 …") before matching.
+  // Without this the anchored patterns below return null and the WHOLE file is
+  // skipped — the entire Private/Semi completed-levels never ingested (0 rows).
+  base = base.replace(/^(?:(?:private|semi|2\s*in\s*1)[\s_-]+)+/i, '');
 
   // Conversation: "CON 1" / "Conversation 1" / "Con_1" / "Con1"
   let m = base.match(/^(?:con(?:versation)?)[\s_-]*([1-5])$/i);
