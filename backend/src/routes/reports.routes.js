@@ -8230,9 +8230,9 @@ router.get('/trainer-recruitment', (req, res) => {
         GROUP BY group_name, line`
     ).all(...lineP).filter(g => !isInternal(g.group_name) && dowFromName(g.group_name) !== null);
 
-    // ── main trainer per group (current sheet): dominant trainer on main lectures ──
+    // ── main trainer per group (current sheet): the group's CURRENT teacher ──
     const mainRows = db.prepare(
-      `SELECT l.group_name, l.line, l.trainer, COUNT(*) c
+      `SELECT l.group_name, l.line, l.trainer, COUNT(*) c, MAX(l.date) mx
          FROM lectures l
          INNER JOIN (SELECT group_name, line, date(MAX(synced_at)) sd
                        FROM lectures WHERE session_type='main' GROUP BY group_name, line) ls
@@ -8240,12 +8240,31 @@ router.get('/trainer-recruitment', (req, res) => {
         WHERE l.session_type='main' AND COALESCE(l.trainer,'')<>''${line ? ' AND l.line = ?' : ''}
         GROUP BY l.group_name, l.line, l.trainer`
     ).all(...lineP);
-    const grpTrainer = new Map();   // group|line → { trainer, c }
+    // A trainer who LEFT (team_members.status ≠ active) must not surface as needing
+    // phone-call recruitment; their groups follow the CURRENT trainer instead.
+    // Match by FULL name (whitespace removed, parenthetical role kept) so distinct
+    // people/roles that share a bare name are NOT confused — e.g. active
+    // "Esra Mohamed (semi)" vs inactive "Esraa Mohamed(z.c)". A trainer counts as
+    // departed only if their exact name matches an inactive member and NO active one.
+    const keyFull = s => String(s || '').replace(/\s+/g, '').toLowerCase();
+    const activeTm = new Set(), inactiveTm = new Set();
+    for (const t of db.prepare(`SELECT name, status FROM team_members`).all()) {
+      const k = keyFull(t.name); if (!k) continue;
+      if (String(t.status) === 'active') activeTm.add(k); else inactiveTm.add(k);
+    }
+    const isDepartedTrainer = name => { const k = keyFull(name); return inactiveTm.has(k) && !activeTm.has(k); };
+
+    // Group's main trainer = trainer of its LATEST current-sheet main lecture (the
+    // current teacher), skipping CS-staff and departed trainers. So a group whose
+    // trainer changed mid-course moves to the new active trainer.
+    const grpTrainer = new Map();   // group|line → { trainer, mx, c }
     for (const r of mainRows) {
-      if (isCsStaff(r.trainer)) continue;   // skip CS staff mislabeled as trainer
+      if (isCsStaff(r.trainer)) continue;          // CS staff mislabeled as trainer
+      if (isDepartedTrainer(r.trainer)) continue;  // trainer who left the team
       const key = r.group_name + '|' + r.line;
+      const mx  = r.mx || '';
       const cur = grpTrainer.get(key);
-      if (!cur || r.c > cur.c) grpTrainer.set(key, { trainer: r.trainer, c: r.c });
+      if (!cur || mx > cur.mx || (mx === cur.mx && r.c > cur.c)) grpTrainer.set(key, { trainer: r.trainer, mx, c: r.c });
     }
     // trainee-count fallback from clients
     const cliRows = db.prepare(
