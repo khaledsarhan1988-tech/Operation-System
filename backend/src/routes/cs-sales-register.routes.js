@@ -192,15 +192,12 @@ router.get('/list', (req, res) => {
 
     const rows = db.prepare(`
       SELECT *,
+        -- Total Paid = the GROSS money the client actually paid (direct + all
+        -- installments) — for transfers too (owner decision 2026-06-24): the list
+        -- column must match the modal's إجمالي المدفوع. The consumed-level loss is
+        -- NOT subtracted here anymore; it lives in the balance math only.
         (IFNULL(total_paid_same_month, 0)
          + (SELECT IFNULL(SUM(amount), 0) FROM cs_sales_installments WHERE sale_id = cs_sales_register.id)
-         -- Model 2: a transfer's installments are the full payment ledger (old + new
-         -- payments). The consumed level is a loss, so subtract it; the old price is
-         -- NOT added back as credit (old payments are already in the installments).
-         -- total paid = direct + installments - consumedValue (= new price when fully paid).
-         + (CASE WHEN op_type = 'transfer'
-              THEN - IFNULL(IFNULL(price, 0) * IFNULL(transfer_consumed_levels, 0) / NULLIF(transfer_total_levels, 0), 0)
-              ELSE 0 END)
         ) AS total_paid_calc,
         COUNT(*) OVER() AS _total
       FROM cs_sales_register
