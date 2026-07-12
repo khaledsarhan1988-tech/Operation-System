@@ -614,6 +614,13 @@ function fmt12(m) {
   return `${String(h12).padStart(2,'0')}:${String(mm).padStart(2,'0')} ${ampm}`;
 }
 
+// A customer-service (CS) staff name mistakenly written in the lecture `trainer`
+// column (e.g. "Amira semi cs", "Yassmen cs", "Ahmed Abdelal Cs Semi") — never a
+// real teaching trainer. Used to skip such names when picking a group's dominant
+// main trainer so the group falls to its real trainer (or is excluded as
+// trainer-less) instead of surfacing the CS name in the trainer-recruitment tabs.
+const isCsStaff = name => /\bcs\b/i.test(String(name || ''));
+
 // ─── parseTeamShifts ─────────────────────────────────────────────────────────
 // Returns ALL configured shifts for a team_member row, normalized into the
 // shape every shift-consuming check expects:
@@ -8235,6 +8242,7 @@ router.get('/trainer-recruitment', (req, res) => {
     ).all(...lineP);
     const grpTrainer = new Map();   // group|line → { trainer, c }
     for (const r of mainRows) {
+      if (isCsStaff(r.trainer)) continue;   // skip CS staff mislabeled as trainer
       const key = r.group_name + '|' + r.line;
       const cur = grpTrainer.get(key);
       if (!cur || r.c > cur.c) grpTrainer.set(key, { trainer: r.trainer, c: r.c });
@@ -8587,6 +8595,7 @@ router.get('/trainer-recruitment-balance', (req, res) => {
         WHERE l.session_type='main' AND COALESCE(l.trainer,'')<>''${line ? ' AND l.line = ?' : ''}
         GROUP BY l.group_name, l.line, l.trainer`
     ).all(...lineP)) {
+      if (isCsStaff(r.trainer)) continue;   // skip CS staff mislabeled as trainer
       const k = baseGroupOf(r.group_name) + '|' + r.line;
       const m = mainAgg.get(k) || new Map(); m.set(r.trainer, (m.get(r.trainer) || 0) + r.c); mainAgg.set(k, m);
     }
@@ -8837,6 +8846,7 @@ router.get('/trainer-recruitment-cross-section', (req, res) => {
     ).all(...lineP)) {
       const k = baseGroupOf(r.group_name) + '|' + r.line;
       if (!grp.has(k)) continue;
+      if (isCsStaff(r.trainer)) continue;   // skip CS staff mislabeled as trainer
       const m = mainAgg.get(k) || new Map(); m.set(r.trainer, (m.get(r.trainer) || 0) + r.c); mainAgg.set(k, m);
     }
     const mainTrainerOf = k => { const m = mainAgg.get(k); if (!m) return null; let best = null, bc = -1; for (const [t, c] of m) if (c > bc) { bc = c; best = t; } return best; };
