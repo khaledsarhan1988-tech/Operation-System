@@ -7806,7 +7806,7 @@ router.get('/phone-call-gap', (req, res) => {
     for (const g of groups) {
       const trainees = g.tc || cliMap.get(g.group_name + '|' + g.line) || 0;
       if (!trainees) continue;
-      const sec = sectionOf(g.dept);
+      const sec = groupSec(g.group_name, g.line, g.dept);
       const required = trainees * PER_STUDENT;
       const actual = sideMap.get(g.group_name + '|' + g.line) || 0;
       const gap = Math.max(0, required - actual);
@@ -8203,6 +8203,11 @@ router.get('/trainer-recruitment', (req, res) => {
       if (s.includes('priv') || s.includes('خاص')) return 'private';
       return 'general';
     };
+    // Group section is LINE-AWARE: in the «Dardasha» line dept_type is unreliable
+    // (labels _P_D/_SP_D groups as General) → derive from the name suffix
+    // (_SP/_SP_D=semi, _P_D/_KP_D=private, else general). Other lines use dept_type.
+    const dardashaSec = name => { const s = String(name || '').toLowerCase(); if (/_sp/.test(s)) return 'semi'; if (/_k?p_d|_k?p\b|kp/.test(s)) return 'private'; return 'general'; };
+    const groupSec = (name, line, dept) => String(line) === 'Dardasha' ? dardashaSec(name) : sectionOf(dept);
     const SEC = ['general', 'semi', 'private'];
     const SEC_LABEL = { general: 'عام', semi: 'شبه خاص', private: 'خاص' };
 
@@ -8280,7 +8285,7 @@ router.get('/trainer-recruitment', (req, res) => {
       if (/\(z\.?[cm]\)/i.test(trainer)) continue;         // defensive: skip zoom trainers
       const trainees = g.tc || cliMap.get(key) || 0;
       if (!trainees) continue;
-      const sec = sectionOf(g.dept);
+      const sec = groupSec(g.group_name, g.line, g.dept);
       const dow = dowFromName(g.group_name);
       const pk  = sidePairKey(dow) || '6,2';
       if (wantSideKey && pk !== wantSideKey) continue;     // day-pair filter (phone-call pair)
@@ -8533,6 +8538,9 @@ router.get('/trainer-recruitment-balance', (req, res) => {
     const dowFromName = name => { const m = String(name).match(/^[A-Za-z]{3,4}_\d{1,2}_([A-Za-z]{3})/); if (!m) return null; const d = DAY_NUM[m[1].toLowerCase()]; return d === undefined ? null : d; };
     const sidePairKey = d => (d === 6 || d === 2) ? '1,4' : (d === 0 || d === 3) ? '6,2' : (d === 1 || d === 4) ? '0,3' : null;
     const sectionOf = dt => { const s = String(dt || '').toLowerCase(); if (s.includes('semi') || s.includes('شبه')) return 'semi'; if (s.includes('priv') || s.includes('خاص')) return 'private'; return 'general'; };
+    // LINE-AWARE group section: «Dardasha» line's dept_type is unreliable → use name suffix (_SP/_SP_D=semi, _P_D/_KP_D=private).
+    const dardashaSec = name => { const s = String(name || '').toLowerCase(); if (/_sp/.test(s)) return 'semi'; if (/_k?p_d|_k?p\b|kp/.test(s)) return 'private'; return 'general'; };
+    const groupSec = (name, line, dept) => String(line) === 'Dardasha' ? dardashaSec(name) : sectionOf(dept);
     const isoWeek = iso => { const d = new Date(iso + 'T12:00:00Z'); const y = d.getUTCFullYear(); const onejan = new Date(Date.UTC(y, 0, 1)); return y + '-' + String(Math.ceil((((d - onejan) / 86400000) + onejan.getUTCDay() + 1) / 7)).padStart(2, '0'); };
     const unionMin = ivs => { if (!ivs.length) return 0; ivs.sort((a, b) => a[0] - b[0]); let tot = 0, cs = ivs[0][0], ce = ivs[0][1]; for (let i = 1; i < ivs.length; i++) { const [s, e] = ivs[i]; if (s > ce) { tot += ce - cs; cs = s; ce = e; } else ce = Math.max(ce, e); } return tot + (ce - cs); };
 
@@ -8594,7 +8602,7 @@ router.get('/trainer-recruitment-balance', (req, res) => {
       const sp = spanMap.get(key);
       const firstDate = (sp && sp.mn) || g.sd || null;
       if (!firstInRange(firstDate)) continue;                 // date filter (round start) — scopes the whole tab
-      const sec = sectionOf(g.dept);
+      const sec = groupSec(g.group_name, g.line, g.dept);
       const pk = sidePairKey(dowFromName(g.group_name)) || '6,2';
       if (wantPairKey && pk !== wantPairKey) continue;
       const required = trainees * PER_STUDENT;
@@ -8742,6 +8750,9 @@ router.get('/trainer-recruitment-cross-section', (req, res) => {
     const sidePairKey = d => (d === 6 || d === 2) ? '1,4' : (d === 0 || d === 3) ? '6,2' : (d === 1 || d === 4) ? '0,3' : null;
     const mainPairLabel = d => (d === 6 || d === 2) ? 'سبت + ثلاثاء' : (d === 0 || d === 3) ? 'أحد + أربعاء' : (d === 1 || d === 4) ? 'إثنين + خميس' : '—';
     const sectionOf = dt => { const s = String(dt || '').toLowerCase(); if (s.includes('semi') || s.includes('شبه')) return 'semi'; if (s.includes('priv') || s.includes('خاص')) return 'private'; return 'general'; };
+    // LINE-AWARE group section: «Dardasha» line's dept_type is unreliable → use name suffix (_SP/_SP_D=semi, _P_D/_KP_D=private).
+    const dardashaSec = name => { const s = String(name || '').toLowerCase(); if (/_sp/.test(s)) return 'semi'; if (/_k?p_d|_k?p\b|kp/.test(s)) return 'private'; return 'general'; };
+    const groupSec = (name, line, dept) => String(line) === 'Dardasha' ? dardashaSec(name) : sectionOf(dept);
     const baseGroupOf = g => { const s = String(g || ''); const i = s.lastIndexOf(')'); return (i >= 0 ? s.slice(0, i + 1) : s).replace(/\s+/g, '').toLowerCase(); };
     const stripName = s => String(s || '').replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
     // phone-call trainer section from the side-trainer name suffix (fallback)
@@ -8810,7 +8821,7 @@ router.get('/trainer-recruitment-cross-section', (req, res) => {
       const dow = dowFromName(g.group_name); if (dow === null) continue;
       const pk = sidePairKey(dow) || '6,2';
       grp.set(baseGroupOf(g.group_name) + '|' + g.line, {
-        group_name: g.group_name, line: g.line, section: sectionOf(g.dept),
+        group_name: g.group_name, line: g.line, section: groupSec(g.group_name, g.line, g.dept),
         side_key: pk, side_pair: PAIR_LABEL[pk], main_pair: mainPairLabel(dow),
       });
     }
