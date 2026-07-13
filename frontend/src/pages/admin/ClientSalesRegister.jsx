@@ -31,6 +31,7 @@ const EMPTY_FORM = {
   khaled_deduction: '', new_prices: '', new_courses: '', balance: '', noted1: '',
   noted2: '', tamkeen: '', installment_date: '', note: '',
   op_type: '', transfer_consumed_levels: '', transfer_total_levels: '',
+  transfer_from_phone: '', transfer_from_code: '',
 };
 // Parse the level count from a course code: "6L GAC" → 6, "3L PAC 2P" → 3.
 function parseLevels(code) {
@@ -145,9 +146,10 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [installments, setInstallments] = useState([]);
   const [error, setError] = useState('');
-  const [mode, setMode] = useState('normal'); // 'normal' | 'upgrade' | 'transfer'
+  const [mode, setMode] = useState('normal'); // 'normal' | 'upgrade' | 'transfer' | 'client_transfer'
   const isUpgrade = mode === 'upgrade';
   const isTransfer = mode === 'transfer';
+  const isClientTransfer = mode === 'client_transfer'; // نقل لعميل آخر (cross-client)
 
   // Load the row being edited. refetchOnWindowFocus is OFF so switching windows
   // (e.g. to screenshot) does NOT refetch and clobber in-progress edits.
@@ -190,7 +192,8 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
       setInstallments(insts);
       // Determine mode: op_type wins; else infer upgrade from new_courses/noted2.
       const op = (s.op_type || '').toLowerCase();
-      if (op === 'transfer') setMode('transfer');
+      if (op === 'client_transfer') setMode('client_transfer');
+      else if (op === 'transfer') setMode('transfer');
       else if (op === 'upgrade') setMode('upgrade');
       else if ((s.new_courses && String(s.new_courses).trim()) || (s.noted2 || '') === 'Upgraded') setMode('upgrade');
       else setMode('normal');
@@ -235,6 +238,17 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
     keepPreviousData: true,
   });
   const codeMatches = codeSug?.rows || [];
+
+  // Sender autocomplete for «نقل لعميل آخر» — pick the SENDING client so their real
+  // phone (which drives the deliveries sender-cap) is filled exactly, never mistyped.
+  const [fromFocus, setFromFocus] = useState(false);
+  const { data: fromSug } = useQuery({
+    queryKey: ['client-codes', 'from-search', form.transfer_from_code],
+    queryFn: () => api.get('/client-codes/list', { params: { q: form.transfer_from_code, limit: 8 } }).then(r => r.data),
+    enabled: open && isClientTransfer && String(form.transfer_from_code || '').trim().length >= 1,
+    keepPreviousData: true,
+  });
+  const fromMatches = fromSug?.rows || [];
 
   if (!open) return null;
 
@@ -324,6 +338,18 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
     return next;
   });
 
+  // Client-transfer («نقل لعميل آخر») helpers.
+  // Old membership (the SENDER's) → auto-fill its total levels from the code.
+  const applyClientOldCourse = (v) => setForm(f => {
+    const next = { ...f, courses: v };
+    const lv = parseLevels(v);
+    if (lv) next.transfer_total_levels = String(lv);
+    return next;
+  });
+  // The transfer fee is the ONLY money on this row: it's both the charge (price)
+  // and what's paid, so the balance lands on 0 and total-paid = the fee.
+  const applyClientFee = (v) => setForm(f => ({ ...f, price: v, total_paid_same_month: v }));
+
   // Derived paid amount + remaining balance (read-only display).
   const totals = calcPaidBalance(form, installments, mode);
 
@@ -404,7 +430,7 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                 accent="emerald"
                 actions={
                   <div className="flex items-center gap-1 bg-gray-100 rounded-xl p-1">
-                    {[['normal', 'عادي'], ['upgrade', 'ترقية'], ['transfer', 'تحويل']].map(([m, lbl]) => (
+                    {[['normal', 'عادي'], ['upgrade', 'ترقية'], ['transfer', 'تحويل'], ['client_transfer', 'نقل لعميل آخر']].map(([m, lbl]) => (
                       <button key={m} type="button" onClick={() => setMode(m)}
                         className={`px-3 py-1 text-xs font-black rounded-lg transition ${mode === m ? 'bg-emerald-600 text-white shadow' : 'text-gray-600 hover:bg-gray-200'}`}>
                         {lbl}
@@ -452,22 +478,66 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                   {F({ k: 'mobile_no', label: 'الموبايل' })}
                   {F({ k: 'agent_name', label: 'الموظف (Agent)', list: 'agents' })}
                   {F({ k: 'department', label: 'القسم (Department)', list: 'departments' })}
-                  {/* Main course/price: transfer & upgrade use the NEW membership */}
-                  {isTransfer
-                    ? F({ k: 'new_courses', label: 'العضوية الجديدة (Courses)', select: newCourseOptions, onChange: applyTransferNewCourse })
-                    : isUpgrade
-                      ? F({ k: 'new_courses', label: 'العضوية الحالية (Courses)', select: newCourseOptions, onChange: applyNewCourse })
-                      : F({ k: 'courses', label: 'الكورس (Courses)', select: courseOptions, onChange: applyCourse })}
-                  {isTransfer
-                    ? F({ k: 'new_prices', label: 'السعر الجديد (Price)', type: 'number', onChange: (v) => setTr({ new_prices: v }) })
-                    : isUpgrade
-                      ? F({ k: 'new_prices', label: 'السعر (Price)', type: 'number' })
-                      : F({ k: 'price', label: 'السعر (Price)', type: 'number' })}
-                  {isTransfer
-                    ? F({ k: 'courses', label: 'محوّل من (العضوية القديمة)', select: courseOptions, onChange: applyTransferOldCourse })
-                    : isUpgrade
-                      ? F({ k: 'courses', label: 'بدأ بـ (الكورس الأصلي)', select: courseOptions, onChange: applyCourse })
-                      : null}
+                  {/* Main course/price: transfer & upgrade use the NEW membership;
+                      client_transfer = the RECEIVED membership + the transfer fee. */}
+                  {isClientTransfer
+                    ? F({ k: 'new_courses', label: 'العضوية المنقولة (Courses)', select: newCourseOptions })
+                    : isTransfer
+                      ? F({ k: 'new_courses', label: 'العضوية الجديدة (Courses)', select: newCourseOptions, onChange: applyTransferNewCourse })
+                      : isUpgrade
+                        ? F({ k: 'new_courses', label: 'العضوية الحالية (Courses)', select: newCourseOptions, onChange: applyNewCourse })
+                        : F({ k: 'courses', label: 'الكورس (Courses)', select: courseOptions, onChange: applyCourse })}
+                  {isClientTransfer
+                    ? F({ k: 'price', label: 'رسوم النقل (Price)', type: 'number', onChange: applyClientFee })
+                    : isTransfer
+                      ? F({ k: 'new_prices', label: 'السعر الجديد (Price)', type: 'number', onChange: (v) => setTr({ new_prices: v }) })
+                      : isUpgrade
+                        ? F({ k: 'new_prices', label: 'السعر (Price)', type: 'number' })
+                        : F({ k: 'price', label: 'السعر (Price)', type: 'number' })}
+                  {isClientTransfer
+                    ? F({ k: 'courses', label: 'العضوية القديمة (المُرسِل)', select: courseOptions, onChange: applyClientOldCourse })
+                    : isTransfer
+                      ? F({ k: 'courses', label: 'محوّل من (العضوية القديمة)', select: courseOptions, onChange: applyTransferOldCourse })
+                      : isUpgrade
+                        ? F({ k: 'courses', label: 'بدأ بـ (الكورس الأصلي)', select: courseOptions, onChange: applyCourse })
+                        : null}
+                  {/* Sender identity (client_transfer): autocomplete fills the sender's real phone */}
+                  {isClientTransfer && (
+                    <div className="relative">
+                      <label className="block text-[11px] font-bold text-gray-500 mb-1">المُرسِل — ابحث بالكود/الاسم/الموبايل</label>
+                      <input
+                        type="text"
+                        value={form.transfer_from_code ?? ''}
+                        onChange={(e) => set('transfer_from_code', e.target.value)}
+                        onFocus={() => setFromFocus(true)}
+                        onBlur={() => setTimeout(() => setFromFocus(false), 150)}
+                        autoComplete="off"
+                        className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none"
+                      />
+                      {fromFocus && fromMatches.length > 0 && (
+                        <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-lg max-h-52 overflow-auto">
+                          {fromMatches.map((c) => (
+                            <button
+                              type="button"
+                              key={c.id}
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => {
+                                setForm((f) => ({ ...f, transfer_from_code: c.code, transfer_from_phone: c.mobile_no || f.transfer_from_phone }));
+                                setFromFocus(false);
+                              }}
+                              className="block w-full text-right px-3 py-2 hover:bg-sky-50 text-sm border-b border-gray-50 last:border-0"
+                            >
+                              <span className="font-black text-gray-800 font-mono">{c.code}</span>
+                              <span className="text-gray-600"> — {c.client_name || '—'}</span>
+                              {c.mobile_no ? <span className="text-gray-400 text-xs"> · {c.mobile_no}</span> : null}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {isClientTransfer && F({ k: 'transfer_from_phone', label: 'موبايل المُرسِل (يُملأ تلقائيًا)' })}
+                  {isClientTransfer && F({ k: 'installment_date', label: 'تاريخ النقل (Date)', date: true })}
                   {isTransfer && F({ k: 'price', label: 'المدفوع في القديمة', type: 'number', onChange: (v) => setTr({ price: v }) })}
                   {isTransfer && F({ k: 'installment_date', label: 'تاريخ التحويل (Date)', date: true })}
                   {F({ k: 'months', label: 'الشهر (Months)', list: 'months' })}
@@ -481,7 +551,38 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
 
               <SectionCard title="الإجماليات والخصومات" icon={DollarSign} accent="amber">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {isTransfer ? (
+                  {isClientTransfer ? (
+                    <>
+                      {/* Client transfer: sender's levels → moved to the receiver. The
+                          fee is the only money; balance is 0. */}
+                      <div>
+                        <label className="block text-[11px] font-bold text-gray-500 mb-1">إجمالي ليفلات القديمة (تلقائي من الكود)</label>
+                        <input type="number" value={form.transfer_total_levels ?? ''}
+                          onChange={(e) => set('transfer_total_levels', e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-gray-500 mb-1">عدد الليفلات اللي استهلكها المُرسِل</label>
+                        <input type="number" value={form.transfer_consumed_levels ?? ''}
+                          onChange={(e) => set('transfer_consumed_levels', e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-gray-500 mb-1">الليفلات المنقولة للمستقبِل — تلقائي</label>
+                        <input type="number" readOnly
+                          value={Math.max(0, (Number(form.transfer_total_levels) || 0) - (Number(form.transfer_consumed_levels) || 0))}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-100 text-gray-700 font-bold outline-none" />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-gray-500 mb-1">الرصيد المتبقي — تلقائي</label>
+                        <input type="number" readOnly value={Math.round((totals.balance || 0) * 100) / 100}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-100 text-gray-800 font-bold outline-none" />
+                      </div>
+                      <div className="sm:col-span-2 lg:col-span-4 text-[11px] text-gray-500 bg-amber-50 rounded-xl p-2">
+                        المُرسِل هيظهر في «تسليمات الأقسام» بالليفلات اللي استهلكها بس، والمستقبِل بالليفلات المنقولة. الفلوس = رسوم النقل فقط (قيمة العضوية الأصلية اتسجّلت مرة واحدة على المُرسِل).
+                      </div>
+                    </>
+                  ) : isTransfer ? (
                     <>
                       {/* Transfer: levels consumed + auto credit/required/balance */}
                       <div>

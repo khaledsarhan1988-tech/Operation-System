@@ -79,6 +79,7 @@ const SALE_FIELDS = [
   'khaled_deduction', 'months', 'total_price', 'total_paid_same_month',
   'installment_date', 'note', 'new_courses', 'new_prices', 'balance',
   'op_type', 'transfer_consumed_levels', 'transfer_total_levels',
+  'transfer_from_phone', 'transfer_from_code',
 ];
 const NUMERIC_FIELDS = new Set([
   'price', 'chrismss_discount_ah', 'chrismss_discount_dar', 'refund_deduction',

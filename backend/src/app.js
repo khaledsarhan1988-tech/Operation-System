@@ -3101,6 +3101,11 @@ initDb().then(db => {
       // Idempotency key for CREATE: lets a retried save (after a gateway 502 that had
       // actually committed) update the same row instead of inserting a duplicate.
       addCol('client_request_id', 'TEXT');
+      // Cross-client transfer ("نقل لعميل آخر"): on the RECEIVER's row, who the
+      // membership levels came FROM (phone drives the deliveries sender-cap; code is
+      // for display). op_type='client_transfer'.
+      addCol('transfer_from_phone', 'TEXT');
+      addCol('transfer_from_code', 'TEXT');
     }
     // A client_request_id may appear at most once → a retried create can never
     // produce a duplicate money row. Partial index so legacy NULLs are allowed.

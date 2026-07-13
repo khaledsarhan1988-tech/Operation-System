@@ -222,11 +222,16 @@ function classifySalesCourse(raw) {     // → { include, track, months }
 function buildSalesMembershipMap() {
   const rows = db.prepare(`
     SELECT mobile_no AS m, client_name AS name, courses AS c, entry_date AS d, noted1, noted2, price,
-           op_type, new_courses, transfer_consumed_levels
+           op_type, new_courses, transfer_consumed_levels, transfer_total_levels,
+           transfer_from_phone AS from_phone
       FROM cs_sales_register
      WHERE mobile_no IS NOT NULL AND TRIM(mobile_no) <> ''
   `).all();
   const scratch = new Map();   // pn -> { name, mems:[{track,months,key,refunded}], lastRefundKey }
+  // Cross-client transfers ("نقل لعميل آخر"): the RECEIVER's row gains the moved
+  // levels; the SENDER (transfer_from_phone) must LOSE them. We collect the sender
+  // reductions here and apply them after every membership is tallied.
+  const senderCaps = [];   // { phone, track, amount }
   for (const r of rows) {
     if (salesYear(r.d) < 2025) continue;
     const pn = csPrimaryPhone(r.m);
@@ -237,6 +242,22 @@ function buildSalesMembershipMap() {
     if (salesIsRefundRow(r)) { s.lastRefundKey = Math.max(s.lastRefundKey, salesDateKey(r.d)); continue; }
     const key = salesDateKey(r.d);
     const refunded = salesNotedRefunded(r);
+    // CROSS-CLIENT TRANSFER ("نقل لعميل آخر"): this row belongs to the RECEIVER.
+    // They gain the moved levels = (total − consumed) on the received membership's
+    // track; the SENDER (transfer_from_phone) is capped by the same amount on the
+    // OLD membership's track (applied after the tally). No membership value is
+    // (re)booked as revenue here — only the transfer fee (handled by the money code).
+    if (String(r.op_type || '').toLowerCase() === 'client_transfer') {
+      const total    = Number(r.transfer_total_levels) || 0;
+      const consumed = Number(r.transfer_consumed_levels) || 0;
+      const moved    = Math.max(0, total - consumed);
+      const oldCl    = classifySalesCourse(r.c);
+      const recvCl   = classifySalesCourse(r.new_courses).include ? classifySalesCourse(r.new_courses) : oldCl;
+      if (recvCl.track && moved > 0) s.mems.push({ track: recvCl.track, months: moved, key, refunded });
+      const fromPn = csPrimaryPhone(r.from_phone);
+      if (fromPn && oldCl.track && moved > 0) senderCaps.push({ phone: fromPn, track: oldCl.track, amount: moved });
+      continue;
+    }
     // TRANSFER: the old track keeps only the CONSUMED levels; the new membership
     // (new_courses) lands on the new track. So the client shows on both depts.
     if (String(r.op_type || '').toLowerCase() === 'transfer') {
@@ -277,6 +298,16 @@ function buildSalesMembershipMap() {
       };
     }
     map.set(pn, { name: s.name, byTrack });
+  }
+  // Apply cross-client transfer reductions: the sender loses the moved levels on
+  // the old track (floored at 0). Done after the tally so it works regardless of
+  // row order (the sender's own membership rows may come after the transfer row).
+  for (const cap of senderCaps) {
+    const entry = map.get(cap.phone);
+    if (entry && entry.byTrack[cap.track]) {
+      const b = entry.byTrack[cap.track];
+      b.months = Math.max(0, (b.months || 0) - cap.amount);
+    }
   }
   return map;
 }
