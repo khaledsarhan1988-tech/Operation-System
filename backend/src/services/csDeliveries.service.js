@@ -125,8 +125,80 @@ function makeGroupLectureMeta() {
   };
 }
 
+// ── Deleted-group detection (owner 2026-07-13) ─────────────────────────────
+// A group can be OPENED (a group name + clients land in cs_completed_levels)
+// then DELETED before it ever runs. Such a level was never really consumed, so
+// it must NOT count against the client's paid levels. We detect deletion from
+// the system's OWN 2026 signals — NOT fuzzy name-matching against any file.
+// A completed-level group (canonical key K) is treated as DELETED only when
+// EVERYTHING about it is gone:
+//   • no current main lectures            (lectures table)
+//   • schedule-ledger net ≤ 0             (schedule_change_log: every added main
+//     lecture was later deleted — nothing survives under any name variant)
+//   • has a deletion record               (net alone isn't enough; require proof)
+//   • no active clients now               (clients table)
+//   • its clients did NOT continue in a same-slot live group (rename guard)
+// Coverage: `lectures` + `schedule_change_log` span 2026 only, so this reliably
+// flags 2026 deletions and leaves older groups untouched (can't be confirmed).
+const delCanon = (s) => canonGroupKey(cleanGroupCode(s)).toLowerCase();
+const DEL_MON = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+function groupStrongKey(s) {
+  const b = String(s == null ? '' : s).split('(')[0].toLowerCase().replace(/[_\s]+/g, ' ').trim();
+  let mon = null, rest = b;
+  const mm = b.match(/^([a-z]{3,})/);
+  if (mm) { let m3 = mm[1].slice(0, 3); if (m3 === 'jnu') m3 = 'jun'; if (m3 === 'jly') m3 = 'jul'; if (DEL_MON[m3]) { mon = DEL_MON[m3]; rest = b.slice(mm[1].length); } }
+  const dm = rest.match(/\b(\d{1,2})\b/); const day = dm ? +dm[1] : null;
+  const tm = b.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)/); let time = null;
+  if (tm) { let h = (+tm[1]) % 12; if (tm[3] === 'pm') h += 12; time = h * 100 + (tm[2] ? +tm[2] : 0); }
+  const fm = b.match(/(conversation|conv|con|general|gen|starter|str)\s*_?\s*(\d+)/);
+  let fam = null, lvl = null;
+  if (fm) { fam = /^con/.test(fm[1]) ? 'C' : /^(gen|general)/.test(fm[1]) ? 'G' : 'S'; lvl = +fm[2]; }
+  if (mon == null || day == null || time == null || fam == null || lvl == null) return null;
+  return `${mon}-${day}-${time}-${fam}${lvl}`;
+}
+// Set of canonical keys for groups that were opened then deleted. Memoized for a
+// few seconds so back-to-back map builds in one request don't rescan (the report
+// layer already has its own longer TTL cache, busted on sync).
+let _delKeysCache = null, _delKeysAt = 0;
+function buildDeletedGroupKeys() {
+  if (_delKeysCache && (Date.now() - _delKeysAt) < 15000) return _delKeysCache;
+  // Detection needs the 2026 ledger; if it isn't present (older deploy) skip
+  // exclusion entirely rather than break deliveries.
+  const hasLedger = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='schedule_change_log'`).get();
+  if (!hasLedger) { _delKeysCache = new Set(); _delKeysAt = Date.now(); return _delKeysCache; }
+  const lec = new Map(), add = new Map(), del = new Map(), active = new Set();
+  for (const r of db.prepare(`SELECT group_name g, COUNT(*) c FROM lectures WHERE session_type='main' AND group_name IS NOT NULL GROUP BY group_name`).all()) { const k = delCanon(r.g); lec.set(k, (lec.get(k) || 0) + r.c); }
+  for (const r of db.prepare(`SELECT group_name g, change_type ct, COUNT(*) c FROM schedule_change_log WHERE session_type='main' AND change_type IN ('added','deleted') AND group_name IS NOT NULL GROUP BY group_name, change_type`).all()) { const k = delCanon(r.g); const m = r.ct === 'added' ? add : del; m.set(k, (m.get(k) || 0) + r.c); }
+  const byStrong = new Map();
+  const addRoster = (name, phone) => { const pn = csPrimaryPhone(phone); if (!pn) return; const sk = groupStrongKey(name); if (!sk) return; const k = delCanon(name); if (!byStrong.has(sk)) byStrong.set(sk, new Map()); const m = byStrong.get(sk); if (!m.has(k)) m.set(k, new Set()); m.get(k).add(pn); };
+  for (const r of db.prepare(`SELECT phone, group_name FROM clients WHERE group_name IS NOT NULL AND TRIM(group_name) <> ''`).all()) { active.add(delCanon(r.group_name)); addRoster(r.group_name, r.phone); }
+  const rosterByCanon = new Map();
+  for (const r of db.prepare(`SELECT group_name_raw g, client_phone_norm p FROM cs_completed_levels WHERE group_name_raw IS NOT NULL AND TRIM(group_name_raw) <> ''`).all()) {
+    const clean = cleanGroupCode(r.g); if (!clean || isIgnoredGroup(clean)) continue;
+    const k = delCanon(r.g); addRoster(r.g, r.p);
+    if (!rosterByCanon.has(k)) rosterByCanon.set(k, { phones: new Set(), strong: groupStrongKey(r.g) });
+    const pn = csPrimaryPhone(r.p); if (pn) rosterByCanon.get(k).phones.add(pn);
+  }
+  const deleted = new Set();
+  for (const [k, info] of rosterByCanon) {
+    if ((lec.get(k) || 0) > 0) continue;                    // has current lectures → real
+    if (active.has(k)) continue;                            // has active clients → real
+    if ((del.get(k) || 0) <= 0) continue;                   // no deletion evidence → don't touch
+    if ((add.get(k) || 0) - (del.get(k) || 0) > 0) continue; // lectures survive under a variant → real
+    if (info.strong && byStrong.has(info.strong)) {         // rename guard: clients continued same-slot
+      const slot = byStrong.get(info.strong); let has = 0, cont = 0;
+      for (const p of info.phones) { has++; for (const [kk, ph] of slot) { if (kk !== k && ph.has(p)) { cont++; break; } } }
+      if (has > 0 && cont / has >= 0.5) continue;            // renamed → keep
+    }
+    deleted.add(k);
+  }
+  _delKeysCache = deleted; _delKeysAt = Date.now();
+  return deleted;
+}
+
 // phone_norm → Set(group_name_raw) from completed-level Drive files.
 function buildInactiveGroupMap() {
+  const deleted = buildDeletedGroupKeys();
   const rows = db.prepare(`
     SELECT client_phone_norm AS pn, group_name_raw AS g
       FROM cs_completed_levels
@@ -137,6 +209,7 @@ function buildInactiveGroupMap() {
     if (!r.pn) continue;
     const code = cleanGroupCode(r.g);     // strip status suffix + dedupe same group across levels
     if (!code || isIgnoredGroup(code)) continue;   // skip empty + placeholder groups (Free Slots, …)
+    if (deleted.has(delCanon(r.g))) continue;      // skip groups that were opened then DELETED (never consumed)
     if (!map.has(r.pn)) map.set(r.pn, new Set());
     map.get(r.pn).add(code);
   }
@@ -688,4 +761,5 @@ function setDeliveryStatus({ phone, status, note, userId, userName }) {
 module.exports = {
   getDepartmentDeliveries, setDeliveryStatus, DEPTS, STATUSES,
   buildBalanceContext, membershipBalance, getRenewalNeeded,
+  buildDeletedGroupKeys,   // exposed for the audit harness + verification
 };
