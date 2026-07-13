@@ -93,7 +93,7 @@ function buildListWhere(scope, query) {
 
   if (scope.role === 'admin') {
     if (scope.management !== 'All') {
-      wheres.push('(t.management = ? OR t.management = "All" OR t.management IS NULL)');
+      wheres.push("(t.management = ? OR t.management = 'All' OR t.management IS NULL)");
       params.push(scope.management);
     }
   } else if (scope.role === 'leader') {

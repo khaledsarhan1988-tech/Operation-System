@@ -6493,7 +6493,14 @@ router.get('/attendance-absence', (req, res) => {
 router.get('/attendance-absence/segments', (req, res) => {
   const { from_date, to_date, coordinator } = req.query;
   if (!coordinator || !String(coordinator).trim()) return res.json({ coordinator: coordinator || null, segments: [] });
-  const line  = lineFilter(req);
+  // Use the SAME line scope as the /attendance-absence row this drills into:
+  // honor an explicit ?line= (and a non-admin's own tenant line) but NOT
+  // lineFilter's coordinator→line auto-detect. For a coordinator whose name
+  // exists in >1 line (e.g. «gehad» in both Ahmed Hassan & Dardasha) the
+  // auto-detect locked segments to her users-record line and dropped all her
+  // activity in the OTHER line, so the drill-down came back empty while the row
+  // (all lines, for an admin) had real numbers.
+  const line  = lineFilter({ user: req.user, query: { line: req.query.line } });
   const lineL = buildLineFilter('l', line);
   const lineA = buildLineFilter('a', line);
   const safe  = String(coordinator).replace(/'/g, "''").trim();
@@ -7678,11 +7685,13 @@ router.get('/quality-diagnostic', (req, res) => {
     // ═══════════════════════════════════════════════════════════════
     // FILE FRESHNESS — when was each table last touched?
     // ═══════════════════════════════════════════════════════════════
+    // Table is `excel_syncs` (id, file_type, rows_imported, created_at, …); alias
+    // to the field names the frontend expects (last_synced_at / records_imported).
     const fileFreshness = db.prepare(`
-      SELECT file_type, last_synced_at, records_imported
-      FROM excel_sync_log
-      WHERE id IN (SELECT MAX(id) FROM excel_sync_log GROUP BY file_type)
-      ORDER BY last_synced_at DESC
+      SELECT file_type, created_at AS last_synced_at, rows_imported AS records_imported
+      FROM excel_syncs
+      WHERE id IN (SELECT MAX(id) FROM excel_syncs GROUP BY file_type)
+      ORDER BY created_at DESC
     `).all();
 
     return res.json({
