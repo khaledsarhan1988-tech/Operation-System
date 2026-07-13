@@ -3,19 +3,21 @@
 /**
  * Department Deliveries (تسليمات الأقسام).
  *
- * A per-department reporting view built ON TOP of the existing cs_* data —
- * it does NOT ingest anything new. For each client (keyed by normalized
- * phone) it combines:
- *   - cs_subscriptions          → membership count + dept + paid months
- *   - clients ∩ batches (نشطة)  → active groups + coordinator
- *   - cs_completed_levels       → inactive (past) groups from the Drive level folders
- *   - csClientPlan              → remaining levels (paid − completed)
- *   - cs_client_delivery_status → the MANUAL status (churned/postponed/exit_level/refund/active)
+ * A per-department reporting view built ON TOP of existing data — it does NOT
+ * ingest anything new. For each client (keyed by normalized phone) it combines:
+ *   - cs_sales_register (كشف العملاء, 2025+) → memberships + paid months per track
+ *       (course-code classification; explicit transfer keeps a consumed/new split;
+ *        client_transfer moves levels between clients; otherwise a valid
+ *        new_courses IS the final membership — owner decisions 2026-06-20→07-13)
+ *   - clients ⟕ batches (نشطة + orphans)     → active groups + coordinator
+ *   - cs_completed_levels                    → inactive (past) groups (Drive level folders)
+ *   - csClientPlan                           → pacing (completed count / last level date)
+ *   - cs_client_delivery_status              → the MANUAL status (churned/postponed/exit_level/refund/active)
  *
- * Department placement rule (agreed with user):
- *   resolved_dept = active group's dept_type when the client has an active group,
- *   otherwise the client's most-recent subscription dept. A client appears on
- *   exactly ONE department page.
+ * Department placement (owner decision 2026-06-22): population per dept tab =
+ * clients holding a live (non-refunded) membership in THAT track — a client can
+ * appear on MORE THAN ONE tab (e.g. after a dept transfer: old dept keeps the
+ * consumed levels, the new dept holds the new membership).
  *
  * No writes here except setDeliveryStatus (the manual status).
  */
@@ -307,6 +309,10 @@ function buildSalesMembershipMap() {
     if (entry && entry.byTrack[cap.track]) {
       const b = entry.byTrack[cap.track];
       b.months = Math.max(0, (b.months || 0) - cap.amount);
+      // Keep the breakdown consistent with the capped total (audit invariant:
+      // paid_months == Σ months_list) — the sender's original per-purchase list
+      // no longer reflects what they hold after the transfer.
+      b.list = b.months > 0 ? [b.months] : [];
     }
   }
   return map;
