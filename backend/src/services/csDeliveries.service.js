@@ -147,9 +147,14 @@ function buildInactiveGroupMap() {
 // Z P 1/2/3/6/9 L A). "Z P 6 L K" is NOT a membership (already excluded).
 function buildIntensiveSet() {
   const set = new Set();
-  for (const r of db.prepare(`SELECT mobile_no AS m, courses AS c, entry_date AS d FROM cs_sales_register WHERE mobile_no IS NOT NULL AND TRIM(mobile_no) <> ''`).all()) {
+  for (const r of db.prepare(`SELECT mobile_no AS m, courses AS c, new_courses AS nc, entry_date AS d FROM cs_sales_register WHERE mobile_no IS NOT NULL AND TRIM(mobile_no) <> ''`).all()) {
     if (salesYear(r.d) < 2025) continue;
-    if (/^\s*Z\s*P\b/i.test(String(r.c || '')) && classifySalesCourse(r.c).include) {
+    // Same final-membership principle as buildSalesMembershipMap: when the row
+    // carries a valid NEW course, that's the client's effective membership —
+    // so an upgrade INTO a "Z P … L A" code makes them intensive (and out of one
+    // makes them regular).
+    const effRaw = classifySalesCourse(r.nc).include ? r.nc : r.c;
+    if (/^\s*Z\s*P\b/i.test(String(effRaw || '')) && classifySalesCourse(effRaw).include) {
       const pn = csPrimaryPhone(r.m);
       if (pn) set.add(pn);
     }
@@ -242,7 +247,14 @@ function buildSalesMembershipMap() {
       if (newCl.include) s.mems.push({ track: newCl.track, months: newCl.months, key, refunded });
       continue;
     }
-    const cl = classifySalesCourse(r.c);
+    // UPGRADE / unmarked dept-change (owner decision 2026-07-13): a non-transfer
+    // row carrying a VALID new course means the client's FINAL membership is the
+    // NEW code — its track AND months win; the old course is just "بدأ بـ".
+    // (Same principle as the documented upgrade rule; explicit transfers above
+    // keep the consumed-levels split instead.) Live audit found 121 rows counted
+    // on the WRONG dept + 138 counted with the OLD months before this rule.
+    const newCl = classifySalesCourse(r.new_courses);
+    const cl = newCl.include ? newCl : classifySalesCourse(r.c);
     if (!cl.include) continue;
     s.mems.push({ track: cl.track, months: cl.months, key, refunded });
   }
