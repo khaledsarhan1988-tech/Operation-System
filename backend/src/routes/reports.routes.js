@@ -3986,20 +3986,20 @@ router.get('/trainer-utilization', (req, res) => {
     // section. Otherwise → split the trainer across EVERY distinct section in
     // their shifts (a trainer who moved sections shows a row per section).
     const out = [];
+    const outMinByTrainer = new Map();   // merged-record id → out-of-shift minutes
     for (const t of trainerRows) {
       const secs = activeSection
         ? [activeSection]
         : [...new Set(parseTeamShifts(t).map(sh => shiftSection(sh, t)))];
-      // out-of-shift is per-trainer; attach to the FIRST emitted row only so it
-      // isn't double-counted across a trainer's per-section rows. Suppressed
-      // under a section filter (it belongs to no single section).
+      // out-of-shift is per-trainer; attached AFTER the zero-activity filter
+      // (below) so it can't bind to a row that gets dropped. Suppressed under
+      // a section filter (it belongs to no single section).
       const outMin = activeSection ? 0 : outOfShiftMinForTrainer(t);
-      let first = true;
+      if (outMin > 0) outMinByTrainer.set(t.id, outMin);
       for (const sec of secs) {
         const row = buildRow(t, sec);
-        row.out_of_shift_min = first ? outMin : 0;
-        row.out_of_shift_hours = Math.round((first ? outMin : 0) / 60);
-        first = false;
+        row.out_of_shift_min = 0;
+        row.out_of_shift_hours = 0;
         out.push(row);
       }
     }
@@ -4009,6 +4009,15 @@ router.get('/trainer-utilization', (req, res) => {
     const outFiltered = out
       .filter(t => (t.totals.available_min || 0) > 0 || (t.totals.booked_min || 0) > 0)
       .sort((a, b) => a.name.localeCompare(b.name, 'ar') || String(a.section).localeCompare(String(b.section)));
+    // Attach each trainer's out-of-shift minutes to their FIRST SURVIVING row —
+    // attaching before the filter bound them to the first emitted row, and when
+    // that row was an ended-section record (zero activity) it got dropped and the
+    // minutes silently vanished from the page (e.g. Hassan Yasser's 270min that
+    // only the dashboard endpoint showed).
+    for (const [tid, outMin] of outMinByTrainer) {
+      const row = outFiltered.find(r => r.id === tid);
+      if (row) { row.out_of_shift_min = outMin; row.out_of_shift_hours = Math.round(outMin / 60); }
+    }
 
     return res.json({ dates, holiday_dates, trainers: outFiltered });
   } catch (err) {
@@ -7750,6 +7759,9 @@ router.get('/phone-call-gap', (req, res) => {
       if (s.includes('priv') || s.includes('خاص')) return 'private';
       return 'general';
     };
+    // LINE-AWARE group section: «Dardasha» line's dept_type is unreliable → use name suffix (_SP/_SP_D=semi, _P_D/_KP_D=private).
+    const dardashaSec = name => { const s = String(name || '').toLowerCase(); if (/_sp/.test(s)) return 'semi'; if (/_k?p_d|_k?p\b|kp/.test(s)) return 'private'; return 'general'; };
+    const groupSec = (name, line, dept) => String(line) === 'Dardasha' ? dardashaSec(name) : sectionOf(dept);
     // ISO-week key (YYYY-WW) — used to distribute each group's demand across the
     // weeks of its course, so the "trainers needed" reflects the PEAK weekly load
     // vs weekly capacity (a scheduling-aware capacity check), not a naive total.
