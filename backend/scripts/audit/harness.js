@@ -57,6 +57,7 @@ async function bootServer(snapshotPath = SNAP) {
     requireRole: () => (_q, _r, n) => n(),
     requireAnyRole: () => (_q, _r, n) => n(),
     requireSuperAdmin: (_q, _r, n) => n(),
+    requirePageOrManagement: () => (_q, _r, n) => n(),
   } };
 
   require(path.join(BACKEND, 'src/config/database')).initDb();
@@ -81,6 +82,10 @@ async function bootServer(snapshotPath = SNAP) {
   mount('/api/clients-finance', 'clients-finance.routes');
   mount('/api/remarks', 'remarks.routes');
   mount('/api/holidays', 'holidays.routes');
+  mount('/api/todos', 'todos.routes');
+  mount('/api/drive', 'drive.routes');
+  mount('/api/admin', 'admin.routes');
+  mount('/api/remarks-monitor', 'remarks-monitor.routes');
 
   const srv = await new Promise(r => { const s = app.listen(0, () => r(s)); });
   const port = srv.address().port;
