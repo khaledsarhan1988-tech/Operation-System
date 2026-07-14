@@ -55,7 +55,7 @@ function TrainerColumnCard({ section, onSelect }) {
             <button
               key={m.id}
               type="button"
-              onClick={() => onSelect(m, theme, section.label)}
+              onClick={() => onSelect(m, theme, section.label, section.key)}
               className="w-full text-right px-4 py-3 hover:bg-gray-50 focus:bg-gray-50 focus:outline-none transition-colors cursor-pointer group"
             >
               <div className="flex items-center gap-2 min-w-0 mb-2">
@@ -120,10 +120,10 @@ function Stat({ theme, icon: Icon, value, label }) {
 // ─── TRAINER DETAIL MODAL ─────────────────────────────────────────────────────
 // The per-group breakdown behind a trainer's 3 aggregate numbers.
 function TrainerDetailModal({ selected, onClose }) {
-  const { member, theme, sectionLabel } = selected;
+  const { member, theme, sectionLabel, sectionKey } = selected;
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['trainer-org-chart', 'detail', member.id],
-    queryFn: async () => (await api.get(`/reports/trainer-org-chart/trainer/${member.id}`)).data,
+    queryKey: ['trainer-org-chart', 'detail', member.id, sectionKey],
+    queryFn: async () => (await api.get(`/reports/trainer-org-chart/trainer/${member.id}`, { params: { section: sectionKey } })).data,
   });
   const groups = data?.groups || [];
   const totals = data?.totals || { groups: 0, students: 0, lectures: 0 };
@@ -334,12 +334,12 @@ function LeaveMode({ members, mode }) {
   const [toSection, setToSection] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
-  const sel = members.find((m) => m.name === trainer);
+  const sel = members.find((m) => m.key === trainer);
   const destOptions = ['general', 'semi', 'private'].filter((s) => s !== sel?.section);
   const { data: sim, isFetching, error, refetch } = useQuery({
     queryKey: ['tr-sim', mode, trainer, toSection, from, to],
     queryFn: async () => (await api.get('/reports/trainer-org-chart/sim/leave', {
-      params: { trainer, mode, to_section: mode === 'transfer' ? toSection : '', date_from: mode === 'temporary' ? from : '', date_to: mode === 'temporary' ? to : '' },
+      params: { key: trainer, mode, to_section: mode === 'transfer' ? toSection : '', date_from: mode === 'temporary' ? from : '', date_to: mode === 'temporary' ? to : '' },
     })).data,
     enabled: false,
   });
@@ -348,7 +348,7 @@ function LeaveMode({ members, mode }) {
       <SimCard>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <SimSelect label="المحاضر" value={trainer} onChange={(v) => { setTrainer(v); setToSection(''); }}
-            options={members.map((m) => ({ value: m.name, label: `${m.name} (${m.section_label})` }))} placeholder="— اختار —" />
+            options={members.map((m) => ({ value: m.key, label: `${m.name} (${m.section_label})` }))} placeholder="— اختار —" />
           {mode === 'transfer' && (
             <SimSelect label="ينتقل إلى" value={toSection} onChange={setToSection} disabled={!trainer}
               options={destOptions.map((s) => ({ value: s, label: SIM_SECTION_LABEL[s] }))} placeholder="— اختار قسم —" />
@@ -374,11 +374,11 @@ function LeaveMode({ members, mode }) {
 function SwapMode({ members }) {
   const [a, setA] = useState('');
   const [b, setB] = useState('');
-  const aM = members.find((m) => m.name === a);
+  const aM = members.find((m) => m.key === a);
   const bOptions = aM ? members.filter((m) => m.section !== aM.section) : members;
   const { data: sim, isFetching, error, refetch } = useQuery({
     queryKey: ['tr-sim-swap', a, b],
-    queryFn: async () => (await api.get('/reports/trainer-org-chart/sim/swap', { params: { trainerA: a, trainerB: b } })).data,
+    queryFn: async () => (await api.get('/reports/trainer-org-chart/sim/swap', { params: { keyA: a, keyB: b } })).data,
     enabled: false,
   });
   const Half = ({ p }) => (
@@ -407,9 +407,9 @@ function SwapMode({ members }) {
       <SimCard>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <SimSelect label="المحاضر الأول" value={a} onChange={(v) => { setA(v); setB(''); }}
-            options={members.map((m) => ({ value: m.name, label: `${m.name} (${m.section_label})` }))} placeholder="— اختار —" />
+            options={members.map((m) => ({ value: m.key, label: `${m.name} (${m.section_label})` }))} placeholder="— اختار —" />
           <SimSelect label="المحاضر التاني (قسم مختلف)" value={b} onChange={setB} disabled={!a}
-            options={bOptions.map((m) => ({ value: m.name, label: `${m.name} (${m.section_label})` }))} placeholder="— اختار —" />
+            options={bOptions.map((m) => ({ value: m.key, label: `${m.name} (${m.section_label})` }))} placeholder="— اختار —" />
           <SimRunBtn onClick={() => refetch()} disabled={!a || !b || isFetching} busy={isFetching} />
         </div>
       </SimCard>
@@ -477,11 +477,11 @@ function GroupsMode({ members }) {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [picked, setPicked] = useState([]);
-  const fromM = members.find((m) => m.name === from);
-  const toOptions = from ? members.filter((m) => m.name !== from) : members;
+  const fromM = members.find((m) => m.key === from);
+  const toOptions = from ? members.filter((m) => m.key !== from) : members;
   const { data: detail } = useQuery({
-    queryKey: ['tr-sim-detail', fromM?.id],
-    queryFn: async () => (await api.get(`/reports/trainer-org-chart/trainer/${fromM.id}`)).data,
+    queryKey: ['tr-sim-detail', from],
+    queryFn: async () => (await api.get(`/reports/trainer-org-chart/trainer/${fromM.id}`, { params: { section: fromM.section } })).data,
     enabled: !!fromM?.id,
   });
   const avail = detail?.groups || [];
@@ -489,7 +489,7 @@ function GroupsMode({ members }) {
   const toggle = (g) => { const k = `${g.group_name}|${g.line}`; setPicked((p) => p.includes(k) ? p.filter((x) => x !== k) : [...p, k]); };
   const { mutate, data: res, isPending, error } = useMutation({
     mutationFn: () => api.post('/reports/trainer-org-chart/sim/groups', {
-      fromTrainer: from, toTrainer: to,
+      fromKey: from, toKey: to,
       groups: picked.map((k) => { const [gn, ln] = k.split('|'); return { group_name: gn, line: ln }; }),
     }),
   });
@@ -499,9 +499,9 @@ function GroupsMode({ members }) {
       <SimCard>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <SimSelect label="من محاضر" value={from} onChange={(v) => { setFrom(v); setTo(''); }}
-            options={members.map((m) => ({ value: m.name, label: `${m.name} (${m.section_label})` }))} placeholder="— اختار —" />
+            options={members.map((m) => ({ value: m.key, label: `${m.name} (${m.section_label})` }))} placeholder="— اختار —" />
           <SimSelect label="إلى محاضر" value={to} onChange={setTo} disabled={!from}
-            options={toOptions.map((m) => ({ value: m.name, label: `${m.name} (${m.section_label})` }))} placeholder="— اختار —" />
+            options={toOptions.map((m) => ({ value: m.key, label: `${m.name} (${m.section_label})` }))} placeholder="— اختار —" />
           <SimRunBtn onClick={() => mutate()} disabled={!from || !to || picked.length === 0 || isPending} busy={isPending} />
         </div>
         {from && avail.length > 0 && (
@@ -644,7 +644,7 @@ export default function TrainerOrgChart() {
             <TrainerColumnCard
               key={s.key}
               section={s}
-              onSelect={(member, theme, sectionLabel) => setSelected({ member, theme, sectionLabel })}
+              onSelect={(member, theme, sectionLabel, sectionKey) => setSelected({ member, theme, sectionLabel, sectionKey })}
             />
           ))}
         </div>

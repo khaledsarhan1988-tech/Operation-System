@@ -9100,103 +9100,100 @@ router.get('/trainer-recruitment-independence', (req, res) => {
 //                     falling back to the group's client count when the batch
 //                     row is missing (ended/orphan group), like /phone-call-gap
 //   • lecture_count → DISTINCT (group|date|time) main sessions
+// A group's TEACHING section. `batches.dept_type` is reliable for the main line
+// (Ahmed Hassan) but NOT for Dardasha (names carry _P_D/_SP_D yet dept_type says
+// 'General'), so Dardasha uses the name suffix; other lines use dept_type,
+// falling back to the name suffix when the batch row is missing. Matches the
+// constitution's groupSec rule. Trainers are split PER-GROUP-SECTION — a trainer
+// who teaches general + private groups appears in BOTH columns (e.g. Alaa Gamal:
+// a general shift + a private shift), each column showing only that section's
+// groups. Using team_members.section (a single fixed column) was WRONG.
+const _TR_DEPT_MAP = { private: 'private', general: 'general', semi: 'semi' };
+function trGroupSection(name, line, deptType) {
+  const s = String(name || '').replace(/\s+/g, '').toLowerCase();
+  const bySuffix = () => /_sp/.test(s) ? 'semi' : (/_kp|_p(?![a-z])/.test(s) ? 'private' : 'general');
+  if (String(line) === 'Dardasha') return bySuffix();
+  return _TR_DEPT_MAP[String(deptType || '').toLowerCase()] || bySuffix();
+}
+// Shared builder: every education main-lecture trainer, their active/scheduled
+// groups bucketed by the group's OWN section. Reused by the card + detail + sim.
+function buildTrainerOrgData(line) {
+  const lineL = buildLineFilter('l', line);
+  const stripKey  = s => String(s || '').replace(/\([^)]*\)/g, '').trim().replace(/\s+/g, ' ').toLowerCase();
+  const normGroup = s => String(s || '').replace(/\s+/g, '').toLowerCase();
+
+  const trainersRaw = db.prepare(
+    `SELECT id, name FROM team_members
+      WHERE department='education' AND status='active' AND (job_title IS NULL OR job_title <> 'تيم ليدر')
+        AND LOWER(section) IN ('general','semi','private')`
+  ).all();
+
+  const lecRows = db.prepare(
+    `SELECT l.group_name, l.line, l.date, l.time, l.trainer
+       FROM lectures l
+       INNER JOIN (SELECT group_name, line, date(MAX(synced_at)) sd
+                     FROM lectures WHERE session_type='main' GROUP BY group_name, line) ls
+         ON l.group_name = ls.group_name AND l.line = ls.line AND date(l.synced_at) = ls.sd
+      WHERE l.session_type='main' AND l.status IN ('مؤكدة','مجدولة')
+        ${notInternalGroup('l.group_name')}
+        ${lineL}`
+  ).all();
+
+  const activeSet = new Set();
+  for (const r of db.prepare(
+    `SELECT DISTINCT group_name, line FROM lectures
+      WHERE session_type='main' AND status IN ('مؤكدة','مجدولة') AND date >= date('now','+2 hours')`
+  ).all()) activeSet.add(normGroup(r.group_name) + '|' + r.line);
+
+  // trainee_count + dept_type per group (batches), client-count fallback.
+  const batchMap = new Map();
+  for (const b of db.prepare(`SELECT group_name, line, MAX(trainee_count) tc, MAX(dept_type) dt FROM batches GROUP BY group_name, line`).all())
+    batchMap.set(normGroup(b.group_name) + '|' + b.line, { tc: b.tc || 0, dt: b.dt });
+  const cliMap = new Map();
+  for (const r of db.prepare(`SELECT group_name, line, COUNT(DISTINCT phone) c FROM clients GROUP BY group_name, line`).all())
+    cliMap.set(normGroup(r.group_name) + '|' + r.line, r.c || 0);
+  const studentsOf = gk => (batchMap.get(gk)?.tc) ?? cliMap.get(gk) ?? 0;
+
+  // trainer-key → section → { groups:Map<gk,{group_name,line,lectures:Set}> }
+  const byTrainer = new Map();
+  for (const l of lecRows) {
+    const tk = stripKey(l.trainer); if (!tk) continue;
+    const gk = normGroup(l.group_name) + '|' + l.line;
+    if (!activeSet.has(gk)) continue;
+    const sec = trGroupSection(l.group_name, l.line, batchMap.get(gk)?.dt);
+    let secMap = byTrainer.get(tk); if (!secMap) { secMap = new Map(); byTrainer.set(tk, secMap); }
+    let gm = secMap.get(sec); if (!gm) { gm = new Map(); secMap.set(sec, gm); }
+    let g = gm.get(gk); if (!g) { g = { gk, group_name: l.group_name, line: l.line, lectures: new Set() }; gm.set(gk, g); }
+    g.lectures.add(l.date + '|' + l.time);
+  }
+  return { trainersRaw, byTrainer, stripKey, studentsOf };
+}
+
 router.get('/trainer-org-chart', (req, res) => {
   try {
-    const line = lineFilter(req);
-    const lineL = buildLineFilter('l', line);
-    // Name key: strip (…) suffixes, collapse whitespace, lowercase — matches how
-    // the rest of the system links lectures.trainer ↔ team_members.name.
-    const stripKey  = s => String(s || '').replace(/\([^)]*\)/g, '').trim().replace(/\s+/g, ' ').toLowerCase();
-    const normGroup = s => String(s || '').replace(/\s+/g, '').toLowerCase();
-
+    const { trainersRaw, byTrainer, stripKey, studentsOf } = buildTrainerOrgData(lineFilter(req));
     const SECTIONS = [
       { key: 'general', label: 'عام' },
       { key: 'semi',    label: 'شبه خاص' },
       { key: 'private', label: 'خاص' },
     ];
+    // Dedup trainers by name (a trainer split into twin records shows once).
+    const uniq = new Map();
+    for (const t of trainersRaw) { const nk = stripKey(t.name); if (nk && !uniq.has(nk)) uniq.set(nk, t); }
 
-    // 1) Trainers — education, active, non-leader.
-    const trainersRaw = db.prepare(
-      `SELECT id, name, section, job_title FROM team_members
-        WHERE department='education' AND status='active'
-          AND (job_title IS NULL OR job_title <> 'تيم ليدر')`
-    ).all();
-
-    // 2) Current-sheet MAIN lectures (delivered/scheduled, non-internal).
-    const lecRows = db.prepare(
-      `SELECT l.group_name, l.line, l.date, l.time, l.trainer
-         FROM lectures l
-         INNER JOIN (SELECT group_name, line, date(MAX(synced_at)) sd
-                       FROM lectures WHERE session_type='main' GROUP BY group_name, line) ls
-           ON l.group_name = ls.group_name AND l.line = ls.line AND date(l.synced_at) = ls.sd
-        WHERE l.session_type='main' AND l.status IN ('مؤكدة','مجدولة')
-          ${notInternalGroup('l.group_name')}
-          ${lineL}`
-    ).all();
-
-    // 3) ACTIVE-or-SCHEDULED groups (النشطة أو المجدولة) = groups with an
-    //    UPCOMING main lecture (date >= today). This captures exactly what the
-    //    owner asked for:
-    //      • نشطة  (running)   → has past مؤكدة + future مجدولة lectures
-    //      • مجدولة (not started yet) → all its lectures are future مجدولة
-    //      • ended groups have no future lecture → correctly excluded.
-    //    We scope every card to these; without it a trainer who taught for
-    //    months shows every historical group they ever ran (the current-sheet
-    //    join only de-dupes phantom rows, it does NOT drop ended groups). NOTE:
-    //    we deliberately do NOT use batches.status — the Drive batches sheet is
-    //    trimmed to only the latest handful of rows (~27), so it's not a
-    //    reliable active/scheduled signal here; the lecture schedule itself is.
-    const activeSet = new Set();
-    for (const r of db.prepare(
-      `SELECT DISTINCT group_name, line FROM lectures
-        WHERE session_type='main' AND status IN ('مؤكدة','مجدولة')
-          AND date >= date('now','+2 hours')`
-    ).all()) {
-      activeSet.add(normGroup(r.group_name) + '|' + r.line);
-    }
-    // trainee_count per (group|line) + client-count fallback (batches is small,
-    // so most students come from the clients roster).
-    const traineeMap = new Map();
-    for (const b of db.prepare(`SELECT group_name, line, trainee_count FROM ${DEDUP_BATCHES} b`).all()) {
-      traineeMap.set(normGroup(b.group_name) + '|' + b.line, b.trainee_count || 0);
-    }
-    const cliMap = new Map();
-    for (const r of db.prepare(`SELECT group_name, line, COUNT(DISTINCT phone) c FROM clients GROUP BY group_name, line`).all()) {
-      cliMap.set(normGroup(r.group_name) + '|' + r.line, r.c || 0);
-    }
-
-    // Aggregate distinct ACTIVE groups + their sessions per trainer-name-key.
-    const byTrainer = new Map(); // tkey → { groups:Set<gk>, lectures:Set }
-    for (const l of lecRows) {
-      const tk = stripKey(l.trainer);
-      if (!tk) continue;
-      const gk = normGroup(l.group_name) + '|' + l.line;
-      if (!activeSet.has(gk)) continue;   // active groups only
-      let agg = byTrainer.get(tk);
-      if (!agg) { agg = { groups: new Set(), lectures: new Set() }; byTrainer.set(tk, agg); }
-      agg.groups.add(gk);
-      agg.lectures.add(gk + '|' + l.date + '|' + l.time);
-    }
-    const countsFor = (tk) => {
-      const agg = byTrainer.get(tk);
-      if (!agg) return { group_count: 0, student_count: 0, lecture_count: 0 };
-      let students = 0;
-      for (const gk of agg.groups) students += (traineeMap.get(gk) ?? cliMap.get(gk) ?? 0);
-      return { group_count: agg.groups.size, student_count: students, lecture_count: agg.lectures.size };
+    const countsForSec = (nk, sec) => {
+      const gm = byTrainer.get(nk)?.get(sec);
+      if (!gm) return { group_count: 0, student_count: 0, lecture_count: 0 };
+      let students = 0, lectures = 0;
+      for (const g of gm.values()) { students += studentsOf(g.gk); lectures += g.lectures.size; }
+      return { group_count: gm.size, student_count: students, lecture_count: lectures };
     };
 
-    // Build columns — merge trainer records by (name-key) within each section.
     const sections = SECTIONS.map(s => {
-      const seen = new Map(); // nameKey → first team_member row in this section
-      for (const t of trainersRaw) {
-        if (String(t.section || '').toLowerCase() !== s.key) continue;
-        const nk = stripKey(t.name);
-        if (!nk || seen.has(nk)) continue;
-        seen.set(nk, t);
-      }
-      const members = [...seen.entries()].map(([nk, t]) => ({
-        id: t.id, name: t.name, job_title: t.job_title, ...countsFor(nk),
-      })).sort((a, b) => b.group_count - a.group_count || String(a.name).localeCompare(String(b.name)));
+      const members = [...uniq.entries()]
+        .map(([nk, t]) => ({ id: t.id, name: t.name, ...countsForSec(nk, s.key) }))
+        .filter(m => m.group_count > 0)   // trainer shown in a column only if they teach there
+        .sort((a, b) => b.group_count - a.group_count || String(a.name).localeCompare(String(b.name)));
       return {
         key: s.key, label: s.label, members,
         total_groups:   members.reduce((a, m) => a + m.group_count, 0),
@@ -9219,61 +9216,31 @@ router.get('/trainer-org-chart', (req, res) => {
 // only) so the rows sum to the card's counts. Read-only.
 router.get('/trainer-org-chart/trainer/:id', (req, res) => {
   try {
-    const line = lineFilter(req);
-    const lineL = buildLineFilter('l', line);
-    const stripKey  = s => String(s || '').replace(/\([^)]*\)/g, '').trim().replace(/\s+/g, ' ').toLowerCase();
-    const normGroup = s => String(s || '').replace(/\s+/g, '').toLowerCase();
-
     const member = db.prepare(`SELECT id, name, section FROM team_members WHERE id = ?`).get(req.params.id);
     if (!member) return res.status(404).json({ error: 'trainer not found' });
-    const tk = stripKey(member.name);
 
-    // ACTIVE-or-SCHEDULED groups = groups with an upcoming main lecture.
-    const activeSet = new Set();
-    for (const r of db.prepare(
-      `SELECT DISTINCT group_name, line FROM lectures
-        WHERE session_type='main' AND status IN ('مؤكدة','مجدولة')
-          AND date >= date('now','+2 hours')`
-    ).all()) activeSet.add(normGroup(r.group_name) + '|' + r.line);
+    // Reuse the shared builder so the rows sum EXACTLY to the card counts.
+    // Optional ?section= restricts to the column the user clicked (a trainer
+    // split across sections shows only that section's groups); default = all.
+    const { byTrainer, stripKey, studentsOf } = buildTrainerOrgData(lineFilter(req));
+    const nk = stripKey(member.name);
+    const secMap = byTrainer.get(nk);
+    const want = String(req.query.section || '').toLowerCase();
+    const secKeys = ['general', 'semi', 'private'].includes(want) ? [want] : ['general', 'semi', 'private'];
 
-    // Current-sheet MAIN lectures (delivered/scheduled, non-internal).
-    const lecRows = db.prepare(
-      `SELECT l.group_name, l.line, l.date, l.time, l.trainer
-         FROM lectures l
-         INNER JOIN (SELECT group_name, line, date(MAX(synced_at)) sd
-                       FROM lectures WHERE session_type='main' GROUP BY group_name, line) ls
-           ON l.group_name = ls.group_name AND l.line = ls.line AND date(l.synced_at) = ls.sd
-        WHERE l.session_type='main' AND l.status IN ('مؤكدة','مجدولة')
-          ${notInternalGroup('l.group_name')}
-          ${lineL}`
-    ).all();
-
-    const traineeMap = new Map();
-    for (const b of db.prepare(`SELECT group_name, line, trainee_count FROM ${DEDUP_BATCHES} b`).all()) {
-      traineeMap.set(normGroup(b.group_name) + '|' + b.line, b.trainee_count || 0);
+    const list = [];
+    if (secMap) for (const sec of secKeys) {
+      const gm = secMap.get(sec); if (!gm) continue;
+      for (const g of gm.values()) {
+        const dates = [...g.lectures].map(x => x.split('|')[0]).filter(Boolean).sort();
+        list.push({
+          group_name: g.group_name, line: g.line, section: sec,
+          students: studentsOf(g.gk), lectures: g.lectures.size,
+          start_date: dates[0] || null, end_date: dates[dates.length - 1] || null,
+        });
+      }
     }
-    const cliMap = new Map();
-    for (const r of db.prepare(`SELECT group_name, line, COUNT(DISTINCT phone) c FROM clients GROUP BY group_name, line`).all()) {
-      cliMap.set(normGroup(r.group_name) + '|' + r.line, r.c || 0);
-    }
-
-    const groups = new Map(); // gk → { group_name, line, lectures:Set, mind, maxd }
-    for (const l of lecRows) {
-      if (stripKey(l.trainer) !== tk) continue;
-      const gk = normGroup(l.group_name) + '|' + l.line;
-      if (!activeSet.has(gk)) continue;
-      let g = groups.get(gk);
-      if (!g) { g = { group_name: l.group_name, line: l.line, lectures: new Set(), mind: l.date, maxd: l.date }; groups.set(gk, g); }
-      g.lectures.add(l.date + '|' + l.time);
-      if (l.date && (!g.mind || l.date < g.mind)) g.mind = l.date;
-      if (l.date && (!g.maxd || l.date > g.maxd)) g.maxd = l.date;
-    }
-
-    const list = [...groups.entries()].map(([gk, g]) => ({
-      group_name: g.group_name, line: g.line,
-      students: traineeMap.get(gk) ?? cliMap.get(gk) ?? 0,
-      lectures: g.lectures.size, start_date: g.mind || null, end_date: g.maxd || null,
-    })).sort((a, b) => b.lectures - a.lectures || String(a.group_name).localeCompare(String(b.group_name)));
+    list.sort((a, b) => b.lectures - a.lectures || String(a.group_name).localeCompare(String(b.group_name)));
 
     return res.json({
       trainer: { id: member.id, name: member.name, section: member.section },
@@ -9304,64 +9271,29 @@ const _TRAINER_SEC_LABEL = { general: 'عام', semi: 'شبه خاص', private: 
 const _trStripKey  = s => String(s || '').replace(/\([^)]*\)/g, '').trim().replace(/\s+/g, ' ').toLowerCase();
 const _trNormGroup = s => String(s || '').replace(/\s+/g, '').toLowerCase();
 
-// Build every active education trainer keyed by name → { id, name, section,
-// groups:[{gk, group_name, line, students, lectures}] }. SAME scope as the
-// org-chart card (active/scheduled groups, current sheet, main, name match).
+// Every education main-lecture trainer, split PER SECTION using the group's OWN
+// section (via the shared org-chart builder) — a trainer who teaches general +
+// private groups appears as TWO entries, one per section, each holding only that
+// section's groups. So the sim matches the cards exactly (Alaa Gamal shows in
+// both عام and خاص). Keyed by `nameKey|section`.
 function buildTrainerSimContext(line) {
-  const lineL = buildLineFilter('l', line);
-
-  const activeSet = new Set();
-  for (const r of db.prepare(
-    `SELECT DISTINCT group_name, line FROM lectures
-      WHERE session_type='main' AND status IN ('مؤكدة','مجدولة') AND date >= date('now','+2 hours')`
-  ).all()) activeSet.add(_trNormGroup(r.group_name) + '|' + r.line);
-
-  const traineeMap = new Map();
-  for (const b of db.prepare(`SELECT group_name, line, trainee_count FROM ${DEDUP_BATCHES} b`).all())
-    traineeMap.set(_trNormGroup(b.group_name) + '|' + b.line, b.trainee_count || 0);
-  const cliMap = new Map();
-  for (const r of db.prepare(`SELECT group_name, line, COUNT(DISTINCT phone) c FROM clients GROUP BY group_name, line`).all())
-    cliMap.set(_trNormGroup(r.group_name) + '|' + r.line, r.c || 0);
-
-  const lecRows = db.prepare(
-    `SELECT l.group_name, l.line, l.date, l.time, l.trainer
-       FROM lectures l
-       INNER JOIN (SELECT group_name, line, date(MAX(synced_at)) sd
-                     FROM lectures WHERE session_type='main' GROUP BY group_name, line) ls
-         ON l.group_name = ls.group_name AND l.line = ls.line AND date(l.synced_at) = ls.sd
-      WHERE l.session_type='main' AND l.status IN ('مؤكدة','مجدولة')
-        ${notInternalGroup('l.group_name')}
-        ${lineL}`
-  ).all();
-
-  const byTrainer = new Map(); // tkey → Map<gk, {gk, group_name, line, lectures:Set}>
-  for (const l of lecRows) {
-    const tk = _trStripKey(l.trainer); if (!tk) continue;
-    const gk = _trNormGroup(l.group_name) + '|' + l.line;
-    if (!activeSet.has(gk)) continue;
-    let gm = byTrainer.get(tk); if (!gm) { gm = new Map(); byTrainer.set(tk, gm); }
-    let g = gm.get(gk); if (!g) { g = { gk, group_name: l.group_name, line: l.line, lectures: new Set() }; gm.set(gk, g); }
-    g.lectures.add(l.date + '|' + l.time);
+  const { trainersRaw, byTrainer, stripKey, studentsOf } = buildTrainerOrgData(line);
+  const uniq = new Map();
+  for (const t of trainersRaw) { const nk = stripKey(t.name); if (nk && !uniq.has(nk)) uniq.set(nk, t); }
+  const entries = new Map(); // `nk|sec` → { key, nk, id, name, section, groups:[] }
+  for (const [nk, t] of uniq) {
+    const secMap = byTrainer.get(nk); if (!secMap) continue;
+    for (const [sec, gm] of secMap) {
+      if (!_TRAINER_SEC_LABEL[sec]) continue; // only general/semi/private
+      const groups = [...gm.values()].map(g => ({
+        gk: g.gk, group_name: g.group_name, line: g.line,
+        students: studentsOf(g.gk), lectures: g.lectures.size,
+      }));
+      if (!groups.length) continue;
+      entries.set(nk + '|' + sec, { key: nk + '|' + sec, nk, id: t.id, name: t.name, section: sec, groups });
+    }
   }
-
-  const trainers = new Map(); // tkey → { id, name, section, groups:[] }
-  // Only the 3 main-lecture sections (عام/شبه خاص/خاص) — phone_call_* sections
-  // and line-neutral 'all' rows are NOT main-lecture trainers, matching the card.
-  for (const t of db.prepare(
-    `SELECT id, name, section FROM team_members
-      WHERE department='education' AND status='active' AND (job_title IS NULL OR job_title <> 'تيم ليدر')
-        AND LOWER(section) IN ('general','semi','private')`
-  ).all()) {
-    const tk = _trStripKey(t.name); if (!tk || trainers.has(tk)) continue;
-    const gm = byTrainer.get(tk) || new Map();
-    const groups = [...gm.values()].map(g => ({
-      gk: g.gk, group_name: g.group_name, line: g.line,
-      students: traineeMap.get(g.gk) ?? cliMap.get(g.gk) ?? 0,
-      lectures: g.lectures.size,
-    }));
-    trainers.set(tk, { id: t.id, name: t.name, section: String(t.section || '').toLowerCase(), groups });
-  }
-  return trainers;
+  return entries;
 }
 
 const _grpStats = groups => ({
@@ -9390,13 +9322,14 @@ function distributeTrainerGroups(sourceGroups, recipients) {
   return { assignments, recipients: state };
 }
 
-// Flat list of all trainers (for the frontend dropdowns).
+// Flat list of all trainer×section entries (for the frontend dropdowns). A
+// trainer split across sections appears once per section (key = nameKey|section).
 router.get('/trainer-org-chart/sim/members', (req, res) => {
   try {
     const ctx = buildTrainerSimContext(lineFilter(req));
     const members = [...ctx.values()].map(t => {
       const s = _grpStats(t.groups);
-      return { id: t.id, name: t.name, section: t.section, section_label: _TRAINER_SEC_LABEL[t.section] || t.section, group_count: s.groups, student_count: s.students, lecture_count: s.lectures };
+      return { key: t.key, id: t.id, name: t.name, section: t.section, section_label: _TRAINER_SEC_LABEL[t.section] || t.section, group_count: s.groups, student_count: s.students, lecture_count: s.lectures };
     }).sort((a, b) => a.section.localeCompare(b.section) || b.group_count - a.group_count);
     return res.json({ members });
   } catch (err) {
@@ -9405,16 +9338,16 @@ router.get('/trainer-org-chart/sim/members', (req, res) => {
   }
 });
 
-// MODE: leave / transfer / temporary — a trainer's groups spill onto the rest of
-// their section. `mode` + optional to_section (transfer) / dates (temporary) are
-// echoed back for display; the redistribution is identical.
+// MODE: leave / transfer / temporary — a trainer's groups (IN ONE SECTION) spill
+// onto the rest of that section. `key`=nameKey|section identifies the entry.
+// `mode` + optional to_section (transfer) / dates (temporary) are echoed for
+// display; the redistribution is identical.
 router.get('/trainer-org-chart/sim/leave', (req, res) => {
   try {
     const ctx = buildTrainerSimContext(lineFilter(req));
-    const src = ctx.get(_trStripKey(req.query.trainer));
+    const src = ctx.get(String(req.query.key || ''));
     if (!src) return res.status(404).json({ error: 'المحاضر غير موجود' });
-    const srcKey = _trStripKey(src.name);
-    const recipients = [...ctx.values()].filter(t => t.section === src.section && _trStripKey(t.name) !== srcKey);
+    const recipients = [...ctx.values()].filter(t => t.section === src.section && t.key !== src.key);
     const { assignments, recipients: recs } = distributeTrainerGroups(src.groups, recipients);
     const toSection = String(req.query.to_section || '').toLowerCase();
     return res.json({
@@ -9436,16 +9369,15 @@ router.get('/trainer-org-chart/sim/leave', (req, res) => {
 router.get('/trainer-org-chart/sim/swap', (req, res) => {
   try {
     const ctx = buildTrainerSimContext(lineFilter(req));
-    const a = ctx.get(_trStripKey(req.query.trainerA));
-    const b = ctx.get(_trStripKey(req.query.trainerB));
+    const a = ctx.get(String(req.query.keyA || ''));
+    const b = ctx.get(String(req.query.keyB || ''));
     if (!a || !b) return res.status(404).json({ error: 'أحد المحاضرين غير موجود' });
     if (a.section === b.section) return res.status(400).json({ error: 'لازم يكونوا في قسمين مختلفين' });
-    const kA = _trStripKey(a.name), kB = _trStripKey(b.name);
-    // A leaves section A; recipients = section-A trainers (minus A) + B arriving.
-    const recA = [...ctx.values()].filter(t => t.section === a.section && _trStripKey(t.name) !== kA);
+    // A leaves section A; recipients = section-A entries (minus A) + B arriving.
+    const recA = [...ctx.values()].filter(t => t.section === a.section && t.key !== a.key);
     recA.push({ name: b.name + ' (قادم)', groups: [] });
     const planA = distributeTrainerGroups(a.groups, recA);
-    const recB = [...ctx.values()].filter(t => t.section === b.section && _trStripKey(t.name) !== kB);
+    const recB = [...ctx.values()].filter(t => t.section === b.section && t.key !== b.key);
     recB.push({ name: a.name + ' (قادم)', groups: [] });
     const planB = distributeTrainerGroups(b.groups, recB);
     return res.json({
@@ -9468,7 +9400,7 @@ router.get('/trainer-org-chart/sim/add-new', (req, res) => {
     const section = String(req.query.section || '').toLowerCase();
     if (!name || !_TRAINER_SEC_LABEL[section]) return res.status(400).json({ error: 'الاسم والقسم مطلوبان' });
     const ctx = buildTrainerSimContext(lineFilter(req));
-    const existing = [...ctx.values()].filter(t => t.section === section && _trStripKey(t.name) !== _trStripKey(name));
+    const existing = [...ctx.values()].filter(t => t.section === section && t.nk !== _trStripKey(name));
     const totalGroups = existing.reduce((a, t) => a + t.groups.length, 0);
     const target = Math.floor(totalGroups / (existing.length + 1)); // newcomer's fair share
     // Donors sorted by load desc; peel their smallest-student groups off first.
@@ -9501,12 +9433,12 @@ router.get('/trainer-org-chart/sim/add-new', (req, res) => {
 // MODE: groups — move SPECIFIC groups from one trainer to another.
 router.post('/trainer-org-chart/sim/groups', (req, res) => {
   try {
-    const { fromTrainer, toTrainer, groups } = req.body || {};
-    if (!fromTrainer || !toTrainer || !Array.isArray(groups) || !groups.length)
+    const { fromKey, toKey, groups } = req.body || {};
+    if (!fromKey || !toKey || !Array.isArray(groups) || !groups.length)
       return res.status(400).json({ error: 'من محاضر + إلى محاضر + مجموعات مطلوبة' });
     const ctx = buildTrainerSimContext(lineFilter(req));
-    const from = ctx.get(_trStripKey(fromTrainer));
-    const to = ctx.get(_trStripKey(toTrainer));
+    const from = ctx.get(String(fromKey));
+    const to = ctx.get(String(toKey));
     if (!from || !to) return res.status(404).json({ error: 'أحد المحاضرين غير موجود' });
     const wanted = new Set(groups.map(g => _trNormGroup(g.group_name) + '|' + g.line));
     const moving = from.groups.filter(g => wanted.has(g.gk));
