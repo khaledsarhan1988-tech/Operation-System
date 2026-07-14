@@ -1141,4 +1141,52 @@ router.delete('/enrollment/:id', requireRole('admin', 'leader', 'agent'), (req, 
   }
 });
 
+// ─── DELETED GROUPS REVIEW (owner-gated exclusion) ────────────────────────────
+// Suggestions = completed-level groups with NO match in the All-Batches reference.
+// The owner confirms the truly-deleted ones; only confirmed groups are excluded
+// from consumed-level counts (in buildInactiveGroupMap). Admin only.
+
+router.get('/deleted-groups/suggestions', requireRole('admin'), (req, res) => {
+  try {
+    const includeDecided = req.query.include_decided === '1';
+    const list = require('../services/csDeletedGroups.service').getSuggestions({ includeDecided });
+    res.json({ ok: true, count: list.length, suggestions: list });
+  } catch (e) {
+    console.error('GET /cs/deleted-groups/suggestions error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+router.get('/deleted-groups', requireRole('admin'), (req, res) => {
+  try {
+    res.json({ ok: true, groups: require('../services/csDeletedGroups.service').listDeleted() });
+  } catch (e) {
+    console.error('GET /cs/deleted-groups error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+router.post('/deleted-groups/decide', requireRole('admin'), (req, res) => {
+  try {
+    const { canon_key, label, dept, status, note } = req.body || {};
+    const r = require('../services/csDeletedGroups.service').setDeletedStatus({
+      canonKey: canon_key, label, dept, status, note,
+      userId: req.user?.id, userName: req.user?.full_name || req.user?.username,
+    });
+    res.json({ ok: true, ...r });
+  } catch (e) {
+    console.error('POST /cs/deleted-groups/decide error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+router.delete('/deleted-groups/:canonKey', requireRole('admin'), (req, res) => {
+  try {
+    res.json({ ok: true, ...require('../services/csDeletedGroups.service').clearDecision(req.params.canonKey) });
+  } catch (e) {
+    console.error('DELETE /cs/deleted-groups/:canonKey error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
 module.exports = router;

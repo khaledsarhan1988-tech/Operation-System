@@ -30,6 +30,7 @@ const drive = require('./googleDrive.service');
 const { csPrimaryPhone } = require('../utils/csPhoneNormalize');
 const { parseFileName, orderOf } = require('../utils/csLevelOrder');
 const { matchClientByPhone } = require('./csIngestMembership.service');
+const { canonKey, slotKey } = require('../utils/csBatchMatch');
 
 const ROOT_SUBFOLDER = 'Customer subscription to groups';
 
@@ -60,6 +61,66 @@ async function findDeptFolders({ lineFolderName = 'Ahmed Hassan' } = {}) {
     throw new Error(`No dept folders (A-H Genaral / A-H Private / Private 2 in 1) found`);
   }
   return found;
+}
+
+// ─── All Batches reference ingest ──────────────────────────────────────────────
+// The "All Batches …" Excel lives directly inside the "Customer subscription to
+// groups" folder (same folder whose subfolders hold the level files). It lists
+// EVERY group (نشطة / إنتهت / منتظرة) — the reference for "did this group really
+// exist". We mirror it into cs_all_batches_ref with canon_key + slot_key each sync.
+async function findCustomerSubFolderId({ lineFolderName = 'Ahmed Hassan' } = {}) {
+  const rootId = drive.getRootFolderId();
+  const lineFolder = await drive.findFolderByName(rootId, lineFolderName);
+  if (!lineFolder) throw new Error(`Line folder "${lineFolderName}" not found`);
+  const subFolder = await drive.findFolderByName(lineFolder.id, ROOT_SUBFOLDER);
+  if (!subFolder) throw new Error(`Folder "${ROOT_SUBFOLDER}" not found inside "${lineFolderName}"`);
+  return subFolder.id;
+}
+
+function parseAllBatchesBuffer(buf) {
+  const wb = XLSX.read(buf, { type: 'buffer' });
+  const aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, defval: '' });
+  // Locate columns by header (المجموعة / الحالة / المدرب); fall back to known layout.
+  let ci = { group: 1, status: 3, trainer: 4 }, hdr = 0;
+  for (let i = 0; i < Math.min(6, aoa.length); i++) {
+    const cells = (aoa[i] || []).map(c => String(c || '').trim());
+    const gi = cells.findIndex(c => /مجموع/.test(c));
+    if (gi >= 0) { hdr = i; ci = { group: gi, status: cells.findIndex(c => /حال/.test(c)), trainer: cells.findIndex(c => /مدرب|مدرّب/.test(c)) }; break; }
+  }
+  const out = [];
+  for (let i = hdr + 1; i < aoa.length; i++) {
+    const nm = ci.group >= 0 ? aoa[i][ci.group] : '';
+    if (!nm || !String(nm).trim()) continue;
+    out.push({
+      group: String(nm),
+      status: ci.status >= 0 ? String(aoa[i][ci.status] || '') : '',
+      trainer: ci.trainer >= 0 ? String(aoa[i][ci.trainer] || '') : '',
+    });
+  }
+  return out;
+}
+
+async function ingestAllBatchesRef({ lineFolderName = 'Ahmed Hassan' } = {}) {
+  const subId = await findCustomerSubFolderId({ lineFolderName });
+  const files = await drive.listFilesInFolder(subId);
+  const cands = files.filter(f => /all\s*batches/i.test(f.name) && /\.xlsx?$/i.test(f.name));
+  if (!cands.length) throw new Error('No "All Batches" file found in the Customer subscription folder');
+  // latest by modifiedTime (falls back to name order)
+  const file = cands.sort((a, b) => String(b.modifiedTime || b.name).localeCompare(String(a.modifiedTime || a.name)))[0];
+  const buf = await drive.downloadFile(file.id);
+  const rows = parseAllBatchesBuffer(buf);
+
+  const now = nowCairo();
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM cs_all_batches_ref').run();
+    const ins = db.prepare(`INSERT INTO cs_all_batches_ref
+      (group_name_raw, status, trainer_col, canon_key, slot_key, source_file, synced_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`);
+    for (const r of rows) ins.run(r.group, r.status || null, r.trainer || null, canonKey(r.group), slotKey(r.group), file.name, now);
+  });
+  tx();
+  saveNow();
+  return { file: file.name, rows: rows.length };
 }
 
 // ─── Excel parsing ────────────────────────────────────────────────────────────
@@ -275,6 +336,17 @@ async function runIngestionAll({ lineFolderName = 'Ahmed Hassan', onlyDept = nul
     result.folders.push(folderResult);
   }
 
+  // Refresh the All-Batches reference from the same Customer-subscription folder
+  // (best-effort — a failure here must NOT fail the level ingest).
+  if (!dryRun) {
+    try {
+      result.all_batches_ref = await ingestAllBatchesRef({ lineFolderName });
+    } catch (e) {
+      console.error('cs-levels: All Batches ref ingest failed:', e.message);
+      result.all_batches_ref = { error: e.message };
+    }
+  }
+
   if (!dryRun) saveNow();
   result.duration_ms = Date.now() - t0;
   return result;
@@ -286,4 +358,6 @@ module.exports = {
   parseLevelBuffer,
   findDeptFolders,
   normalizeDate,
+  ingestAllBatchesRef,
+  parseAllBatchesBuffer,
 };

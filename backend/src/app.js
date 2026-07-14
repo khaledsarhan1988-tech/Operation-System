@@ -2649,6 +2649,47 @@ initDb().then(db => {
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_lvl_track    ON cs_completed_levels(track)`);
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_lvl_dept     ON cs_completed_levels(dept)`);
 
+    // ── Reference: "All Batches" sheet (every group ever — نشطة/إنتهت/منتظرة) ──
+    // Synced from the "All Batches …" Excel inside the "Customer subscription to
+    // groups" Drive folder. Used to tell whether a completed-level group really
+    // existed (matched) or was deleted by management (no match). canon_key drops
+    // the (trainer) paren + spaces; slot_key = month-dayOfWeek-time-level (day-of-
+    // month dropped) so a group recorded with a slightly different date still matches.
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS cs_all_batches_ref (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_name_raw    TEXT,
+        status            TEXT,
+        trainer_col       TEXT,
+        canon_key         TEXT,
+        slot_key          TEXT,
+        source_file       TEXT,
+        synced_at         TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_abr_canon ON cs_all_batches_ref(canon_key)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_abr_slot  ON cs_all_batches_ref(slot_key)`);
+
+    // ── Owner-confirmed DELETED groups (the review gate) ──
+    // A completed-level group is excluded from consumed-level counts ONLY when it
+    // appears here with status='confirmed'. The owner reviews the suggested list
+    // (completed-level groups with NO match in cs_all_batches_ref) and confirms the
+    // ones truly deleted. keyed by canon_key so all name variants of one group map
+    // to a single decision. NO automation writes 'confirmed' — the human is the gate.
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS cs_deleted_groups (
+        canon_key         TEXT PRIMARY KEY,
+        label             TEXT,
+        dept              TEXT,
+        status            TEXT NOT NULL DEFAULT 'confirmed',   -- 'confirmed' | 'rejected'
+        marked_by         INTEGER,
+        marked_by_name    TEXT,
+        note              TEXT,
+        marked_at         TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        updated_at        TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+      )
+    `);
+
     db._raw.run(`
       CREATE TABLE IF NOT EXISTS cs_client_coordinator (
         id                    INTEGER PRIMARY KEY AUTOINCREMENT,

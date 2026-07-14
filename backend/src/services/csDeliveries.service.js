@@ -126,7 +126,12 @@ function makeGroupLectureMeta() {
 }
 
 // phone_norm → Set(group_name_raw) from completed-level Drive files.
+// Groups the OWNER has confirmed as deleted (cs_deleted_groups, status=confirmed)
+// are dropped — they were opened then removed by management, so they never counted
+// as a consumed level. ONLY owner-confirmed keys are excluded (human is the gate).
 function buildInactiveGroupMap() {
+  let deletedKeys = new Set();
+  try { deletedKeys = require('./csDeletedGroups.service').getConfirmedKeys(); } catch (_) { /* optional */ }
   const rows = db.prepare(`
     SELECT client_phone_norm AS pn, group_name_raw AS g
       FROM cs_completed_levels
@@ -137,6 +142,7 @@ function buildInactiveGroupMap() {
     if (!r.pn) continue;
     const code = cleanGroupCode(r.g);     // strip status suffix + dedupe same group across levels
     if (!code || isIgnoredGroup(code)) continue;   // skip empty + placeholder groups (Free Slots, …)
+    if (deletedKeys.size && deletedKeys.has(canonGroupKey(code).toLowerCase())) continue;   // owner-confirmed deleted
     if (!map.has(r.pn)) map.set(r.pn, new Set());
     map.get(r.pn).add(code);
   }

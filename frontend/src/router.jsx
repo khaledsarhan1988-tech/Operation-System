@@ -74,6 +74,7 @@ import CsMyClients from './pages/subscriptions/CsMyClients';
 import CsClientProfile from './pages/subscriptions/CsClientProfile';
 import CsDashboard from './pages/subscriptions/CsDashboard';
 import DepartmentDeliveries from './pages/subscriptions/DepartmentDeliveries';
+import DeletedGroupsReview from './pages/admin/DeletedGroupsReview';
 import Enrollment from './pages/subscriptions/Enrollment';
 import EnrGroups from './pages/subscriptions/EnrGroups';
 
@@ -233,6 +234,7 @@ const router = createBrowserRouter([
       { path: 'deliveries/:dept',   element: <DepartmentDeliveries /> },
       { path: 'enrollment',         element: <Enrollment /> },
       { path: 'enr-groups',         element: <PrivateRoute allowedRoles={['admin']}><EnrGroups /></PrivateRoute> },
+      { path: 'deleted-groups',     element: <PrivateRoute allowedRoles={['admin']}><DeletedGroupsReview /></PrivateRoute> },
     ],
   },
 

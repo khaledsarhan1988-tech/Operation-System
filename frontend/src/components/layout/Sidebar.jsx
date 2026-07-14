@@ -208,6 +208,7 @@ function getAdminLinks(user) {
   // Enr Groups — admin-only, group-oriented view sitting right under Enrollment.
   const enrGroupsLink = [
     { to: '/subscriptions/enr-groups', label: 'Enr Groups', icon: GraduationCap, color: 'emerald' },
+    ...(user?.role === 'admin' ? [{ to: '/subscriptions/deleted-groups', label: 'مراجعة المجموعات المحذوفة', icon: AlertTriangle, color: 'rose' }] : []),
   ];
 
   return [...base, ...reports, ...monitoring, ...financeSection, ...employeeSalaries, ...DELIVERIES_LINKS, ...enrGroupsLink];
