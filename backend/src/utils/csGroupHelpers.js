@@ -15,6 +15,8 @@ const IGNORED_GROUP_PATTERNS = [
   /grammar/i,                  // correct spelling, just in case
   /comp[ae]ns/i,               // "..._Compensation" / "compensation _ s1_g2" — makeup sessions
   /تعويض/,                     // Arabic compensation/makeup session (owner decision 2026-06-18)
+  /placem/i,                   // "placement test" / "Placemnent Test" — level-placement, not a real level (owner 2026-07-14)
+  /تحديد مستو/,                 // Arabic "تحديد مستوى/مستوي" placement session (owner 2026-07-14)
 ];
 
 const isIgnoredGroup = (name) => {

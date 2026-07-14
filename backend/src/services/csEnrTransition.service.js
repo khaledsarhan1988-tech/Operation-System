@@ -48,12 +48,10 @@ const STATUS_MAP = {
 };
 
 // Placement-test placeholder groups (تحديد مستوى / Placement Test) are NOT real
-// destination groups — excluded from the next-group pickers only (owner decision
-// 2026-07-11). Deliberately LOCAL, not in the shared IGNORED_GROUP_PATTERNS:
-// adding them there would change deliveries/EnrGroups level counts.
-const PLACEMENT_PATTERNS = [/placem/i, /تحديد مستو/];
-const isPlacementGroup = (name) =>
-  PLACEMENT_PATTERNS.some(re => re.test(String(name == null ? '' : name)));
+// level groups. As of 2026-07-14 the owner confirmed they must NOT be counted as
+// a consumed level ANYWHERE, so the patterns moved into the shared
+// IGNORED_GROUP_PATTERNS — isIgnoredGroup() now covers them (deliveries,
+// EnrGroups, analytics, and these pickers all exclude them consistently).
 
 /**
  * Next-group options = groups whose REAL batches.status is one of the two
@@ -75,8 +73,7 @@ function getNextGroupOptions({ dept, line }) {
 
   const seen = new Map();
   for (const r of rows) {
-    if (isIgnoredGroup(r.group_name)) continue;
-    if (isPlacementGroup(r.group_name)) continue;
+    if (isIgnoredGroup(r.group_name)) continue;   // covers placement/تحديد مستوى too (2026-07-14)
     const key = canonGroupKey(r.group_name) + '|' + String(r.line || '');
     if (!seen.has(key)) seen.set(key, r);
   }
