@@ -293,20 +293,44 @@ function RedistPanel({ sim }) {
       </div>
       <div className="p-4 space-y-4">
         <div>
-          <div className="text-[11px] font-bold text-gray-500 mb-2">توزيع المجموعات</div>
+          <div className="text-[11px] font-bold text-gray-500 mb-2 flex items-center justify-between">
+            <span>توزيع المجموعات</span>
+            {sim.needs_scheduling_count > 0 && (
+              <span className="text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 font-bold">
+                {sim.needs_scheduling_count} محتاجة جدولة
+              </span>
+            )}
+          </div>
           {sim.assignments.length === 0 ? (
             <p className="text-sm text-gray-400 italic text-center py-3">لا توجد مجموعات للتوزيع</p>
           ) : (
-            <ul className="space-y-1 max-h-64 overflow-y-auto">
+            <ul className="space-y-1 max-h-72 overflow-y-auto">
               {sim.assignments.map((a, i) => (
-                <li key={i} className="text-xs flex items-center justify-between gap-2 py-1 px-2 rounded hover:bg-gray-50">
-                  <span className="truncate flex-1 text-gray-700" title={a.group_name}>{a.group_name}</span>
-                  <span className="flex items-center gap-1 flex-shrink-0">
-                    <span className={`${th.accent} font-semibold`}>{a.students}👥</span>
-                    <ArrowRight className="w-3 h-3 text-gray-400" />
-                    <span className="font-bold text-gray-800">{a.recipient || 'بدون مستلم'}</span>
-                  </span>
-                </li>
+                a.needs_scheduling ? (
+                  <li key={i} className="text-xs py-1.5 px-2 rounded bg-amber-50 border border-amber-200">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate flex-1 text-gray-800 font-semibold" title={a.group_name}>{a.group_name}</span>
+                      <span className="flex items-center gap-1 text-amber-700 font-bold flex-shrink-0"><AlertCircle className="w-3 h-3" />محتاجة جدولة</span>
+                    </div>
+                    {a.suggestions && a.suggestions.length > 0 ? (
+                      <div className="mt-1 text-[10px] text-emerald-700 flex items-start gap-1">
+                        <Sparkles className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                        <span>متاح في {a.suggestions[0].section_label}: <b>{a.suggestions.map((s) => s.name).join('، ')}</b></span>
+                      </div>
+                    ) : (
+                      <div className="mt-1 text-[10px] text-gray-400">مفيش محاضر متاح — لا في القسم ولا في القسم المقابل</div>
+                    )}
+                  </li>
+                ) : (
+                  <li key={i} className="text-xs flex items-center justify-between gap-2 py-1 px-2 rounded hover:bg-gray-50">
+                    <span className="truncate flex-1 text-gray-700" title={a.group_name}>{a.group_name}</span>
+                    <span className="flex items-center gap-1 flex-shrink-0">
+                      <span className={`${th.accent} font-semibold`}>{a.students}👥</span>
+                      <ArrowRight className="w-3 h-3 text-gray-400" />
+                      <span className="font-bold text-gray-800">{a.recipient}</span>
+                    </span>
+                  </li>
+                )
               ))}
             </ul>
           )}
@@ -388,12 +412,27 @@ function SwapMode({ members }) {
         <p className="text-xs text-white/80 mt-0.5">{p.before.groups} مجموعة تتوزّع على {p.recipients.length} محاضر</p>
       </div>
       <div className="p-3">
+        {p.needs_scheduling_count > 0 && (
+          <div className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2 font-bold">{p.needs_scheduling_count} محتاجة جدولة</div>
+        )}
         <ul className="space-y-1 max-h-52 overflow-y-auto mb-3">
           {p.assignments.map((x, i) => (
-            <li key={i} className="text-xs flex items-center justify-between gap-2 py-1 px-2 rounded hover:bg-gray-50">
-              <span className="truncate flex-1 text-gray-700" title={x.group_name}>{x.group_name}</span>
-              <span className="flex items-center gap-1"><ArrowRight className="w-3 h-3 text-gray-400" /><b className="text-gray-800">{x.recipient || '—'}</b></span>
-            </li>
+            x.needs_scheduling ? (
+              <li key={i} className="text-xs py-1.5 px-2 rounded bg-amber-50 border border-amber-200">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate flex-1 text-gray-800 font-semibold" title={x.group_name}>{x.group_name}</span>
+                  <span className="text-amber-700 font-bold flex items-center gap-1"><AlertCircle className="w-3 h-3" />محتاجة جدولة</span>
+                </div>
+                {x.suggestions && x.suggestions.length > 0 ? (
+                  <div className="mt-1 text-[10px] text-emerald-700">💡 متاح في {x.suggestions[0].section_label}: <b>{x.suggestions.map((s) => s.name).join('، ')}</b></div>
+                ) : <div className="mt-1 text-[10px] text-gray-400">مفيش محاضر متاح</div>}
+              </li>
+            ) : (
+              <li key={i} className="text-xs flex items-center justify-between gap-2 py-1 px-2 rounded hover:bg-gray-50">
+                <span className="truncate flex-1 text-gray-700" title={x.group_name}>{x.group_name}</span>
+                <span className="flex items-center gap-1"><ArrowRight className="w-3 h-3 text-gray-400" /><b className="text-gray-800">{x.recipient}</b></span>
+              </li>
+            )
           ))}
         </ul>
         {p.recipients.map((r, i) => (
@@ -573,7 +612,7 @@ function TrainerSimulationHub() {
         </div>
         <div>
           <h2 className="text-lg font-bold text-gray-800">محاكاة توزيع المحاضرين</h2>
-          <p className="text-xs text-gray-500 mt-0.5">كل السيناريوهات بريفيو فقط — مفيش حفظ في قاعدة البيانات. التوزيع يوازن عدد المجموعات (الأقل حملًا ياخد الأول).</p>
+          <p className="text-xs text-gray-500 mt-0.5">بريفيو فقط بلا حفظ. التوزيع بيوازن عدد المجموعات <b>مع مراعاة مواعيد وأيام شيفت المحاضر وعدم التعارض</b> — المجموعة اللي مفيش لها محاضر متاح تظهر «محتاجة جدولة» + اقتراح من القسم المقابل (خاص↔شبه خاص).</p>
         </div>
       </header>
 

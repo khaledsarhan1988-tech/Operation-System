@@ -9117,16 +9117,43 @@ function trGroupSection(name, line, deptType) {
 }
 // Shared builder: every education main-lecture trainer, their active/scheduled
 // groups bucketed by the group's OWN section. Reused by the card + detail + sim.
+// ALSO returns scheduling info for the sim: each trainer's active SHIFTS
+// (day/time/section from shifts_json) + BUSY slots (day|time of every lecture
+// they teach) + each group's own slots — so distribution can respect shift
+// coverage + avoid double-booking.
+const _DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+function _dayOfIso(iso) { try { const n = new Date(iso + 'T12:00:00Z').getUTCDay(); return Number.isNaN(n) ? null : _DAY_NAMES[n]; } catch { return null; } }
+// Modal (most-common) value of a number array — used to pick a group's CANONICAL
+// start time. A group's stacked lectures carry slightly different/stale times
+// (18:00, 18:21, 22:00…); matching on every raw time would make almost nothing
+// schedulable, so we collapse to the group's typical time per day.
+function _modeOf(arr) { const c = new Map(); let best = arr[0], bestN = -1; for (const x of arr) { const n = (c.get(x) || 0) + 1; c.set(x, n); if (n > bestN || (n === bestN && x < best)) { bestN = n; best = x; } } return best; }
 function buildTrainerOrgData(line) {
   const lineL = buildLineFilter('l', line);
   const stripKey  = s => String(s || '').replace(/\([^)]*\)/g, '').trim().replace(/\s+/g, ' ').toLowerCase();
   const normGroup = s => String(s || '').replace(/\s+/g, '').toLowerCase();
+  const today = db.prepare(`SELECT date('now','+2 hours') d`).get().d;
 
   const trainersRaw = db.prepare(
-    `SELECT id, name FROM team_members
+    `SELECT * FROM team_members
       WHERE department='education' AND status='active' AND (job_title IS NULL OR job_title <> 'تيم ليدر')
         AND LOWER(section) IN ('general','semi','private')`
   ).all();
+
+  // Active shifts per trainer name-key (merge twin records). Each shift:
+  // { daysSet, startMin, endMin, section }. Only shifts covering `today`.
+  const shiftsByKey = new Map();
+  for (const t of trainersRaw) {
+    const nk = stripKey(t.name); if (!nk) continue;
+    const shs = parseTeamShifts(t)
+      .filter(sh => (!sh.startDate || sh.startDate <= today) && (!sh.endDate || sh.endDate >= today))
+      .map(sh => ({
+        daysSet: new Set((sh.days || []).map(d => String(d).toLowerCase())),
+        startMin: sh.startMin, endMin: sh.endMin,
+        section: (sh.section || String(t.section || '').toLowerCase()),
+      }));
+    shiftsByKey.set(nk, (shiftsByKey.get(nk) || []).concat(shs));
+  }
 
   const lecRows = db.prepare(
     `SELECT l.group_name, l.line, l.date, l.time, l.trainer
@@ -9154,8 +9181,10 @@ function buildTrainerOrgData(line) {
     cliMap.set(normGroup(r.group_name) + '|' + r.line, r.c || 0);
   const studentsOf = gk => (batchMap.get(gk)?.tc) ?? cliMap.get(gk) ?? 0;
 
-  // trainer-key → section → { groups:Map<gk,{group_name,line,lectures:Set}> }
+  // Pass 1: bucket lectures per trainer×section×group + collect each group's raw
+  // (day, time) samples so we can derive a CANONICAL slot per group.
   const byTrainer = new Map();
+  const groupSamples = new Map(); // gk → { timesByDay: Map<day,[min]> }
   for (const l of lecRows) {
     const tk = stripKey(l.trainer); if (!tk) continue;
     const gk = normGroup(l.group_name) + '|' + l.line;
@@ -9163,10 +9192,52 @@ function buildTrainerOrgData(line) {
     const sec = trGroupSection(l.group_name, l.line, batchMap.get(gk)?.dt);
     let secMap = byTrainer.get(tk); if (!secMap) { secMap = new Map(); byTrainer.set(tk, secMap); }
     let gm = secMap.get(sec); if (!gm) { gm = new Map(); secMap.set(sec, gm); }
-    let g = gm.get(gk); if (!g) { g = { gk, group_name: l.group_name, line: l.line, lectures: new Set() }; gm.set(gk, g); }
+    let g = gm.get(gk); if (!g) { g = { gk, group_name: l.group_name, line: l.line, lectures: new Set(), slots: new Set() }; gm.set(gk, g); }
     g.lectures.add(l.date + '|' + l.time);
+    const dn = _dayOfIso(l.date), tm = parseTime12(l.time);
+    if (dn && tm >= 0) {
+      let s = groupSamples.get(gk); if (!s) { s = new Map(); groupSamples.set(gk, s); }
+      (s.get(dn) || s.set(dn, []).get(dn)).push(tm);
+    }
   }
-  return { trainersRaw, byTrainer, stripKey, studentsOf };
+  // Canonical slots per group = each teaching day × that day's MODAL start time.
+  const groupSlotMap = new Map(); // gk → Set<'day|min'>
+  for (const [gk, timesByDay] of groupSamples) {
+    const slots = new Set();
+    for (const [day, times] of timesByDay) slots.add(day + '|' + _modeOf(times));
+    groupSlotMap.set(gk, slots);
+  }
+  // Attach slots to each group object + build each trainer's BUSY slot set.
+  const busyByKey = new Map();
+  for (const [tk, secMap] of byTrainer) {
+    for (const gm of secMap.values()) {
+      for (const g of gm.values()) {
+        g.slots = groupSlotMap.get(g.gk) || new Set();
+        let bs = busyByKey.get(tk); if (!bs) { bs = new Set(); busyByKey.set(tk, bs); }
+        for (const s of g.slots) bs.add(s);
+      }
+    }
+  }
+  return { trainersRaw, byTrainer, stripKey, studentsOf, shiftsByKey, busyByKey };
+}
+
+// Does a trainer's shift set cover a group slot ('day|timeMin') in a section?
+function _slotCovered(slot, shifts, wantSection) {
+  const i = slot.indexOf('|'); const day = slot.slice(0, i); const tm = +slot.slice(i + 1);
+  return shifts.some(sh => sh.section === wantSection && sh.daysSet.has(day) && sh.startMin <= tm && tm < sh.endMin);
+}
+// Can a trainer (name-key nk) take `group` in `wantSection`? Every group slot
+// must be covered by one of their shifts in that section AND free of conflict
+// (their existing lectures + anything already assigned this run = extraBusy).
+function trainerCanTake(nk, group, wantSection, shiftsByKey, busyByKey, extraBusy) {
+  if (!group.slots || group.slots.size === 0) return false; // unknown schedule → can't safely place
+  const shifts = shiftsByKey.get(nk) || [];
+  const busy = busyByKey.get(nk);
+  for (const slot of group.slots) {
+    if (!_slotCovered(slot, shifts, wantSection)) return false;
+    if ((busy && busy.has(slot)) || (extraBusy && extraBusy.has(slot))) return false;
+  }
+  return true;
 }
 
 router.get('/trainer-org-chart', (req, res) => {
@@ -9276,8 +9347,9 @@ const _trNormGroup = s => String(s || '').replace(/\s+/g, '').toLowerCase();
 // private groups appears as TWO entries, one per section, each holding only that
 // section's groups. So the sim matches the cards exactly (Alaa Gamal shows in
 // both عام and خاص). Keyed by `nameKey|section`.
+const _CROSS_SEC = { private: 'semi', semi: 'private' }; // general has no pairing
 function buildTrainerSimContext(line) {
-  const { trainersRaw, byTrainer, stripKey, studentsOf } = buildTrainerOrgData(line);
+  const { trainersRaw, byTrainer, stripKey, studentsOf, shiftsByKey, busyByKey } = buildTrainerOrgData(line);
   const uniq = new Map();
   for (const t of trainersRaw) { const nk = stripKey(t.name); if (nk && !uniq.has(nk)) uniq.set(nk, t); }
   const entries = new Map(); // `nk|sec` → { key, nk, id, name, section, groups:[] }
@@ -9287,13 +9359,13 @@ function buildTrainerSimContext(line) {
       if (!_TRAINER_SEC_LABEL[sec]) continue; // only general/semi/private
       const groups = [...gm.values()].map(g => ({
         gk: g.gk, group_name: g.group_name, line: g.line,
-        students: studentsOf(g.gk), lectures: g.lectures.size,
+        students: studentsOf(g.gk), lectures: g.lectures.size, slots: [...g.slots],
       }));
       if (!groups.length) continue;
       entries.set(nk + '|' + sec, { key: nk + '|' + sec, nk, id: t.id, name: t.name, section: sec, groups });
     }
   }
-  return entries;
+  return { entries, shiftsByKey, busyByKey };
 }
 
 const _grpStats = groups => ({
@@ -9302,32 +9374,57 @@ const _grpStats = groups => ({
   lectures: groups.reduce((a, g) => a + (g.lectures || 0), 0),
 });
 
-// Greedy load-balance: assign each source group to the recipient with the fewest
-// groups (tie → fewest students). Returns { assignments, recipients }.
-// `recipients` is a list of { name, groups:[...] } — copied, not mutated.
-function distributeTrainerGroups(sourceGroups, recipients) {
+// SCHEDULE-AWARE greedy distribution. Each source group goes to the least-loaded
+// recipient (tie → fewest students) whose SHIFT covers the group's day/time slots
+// in `wantSection` AND who is free at those slots (no double-booking, incl. groups
+// already assigned this run). A group with NO available recipient is flagged
+// `needs_scheduling` (recipient=null) — the owner's rule: don't force it onto a
+// conflicting/off-shift trainer. `recipients` = [{ nk, name, groups }].
+function distributeTrainerGroups(sourceGroups, recipients, wantSection, shiftsByKey, busyByKey) {
   const state = recipients.map(r => {
     const s = _grpStats(r.groups);
-    return { name: r.name, before_groups: s.groups, before_students: s.students, after_groups: s.groups, after_students: s.students };
+    return { nk: r.nk, name: r.name, before_groups: s.groups, before_students: s.students, after_groups: s.groups, after_students: s.students, extraBusy: new Set() };
   });
   const assignments = [];
   const src = [...sourceGroups].sort((a, b) => (b.students || 0) - (a.students || 0));
   for (const g of src) {
-    if (!state.length) { assignments.push({ group_name: g.group_name, line: g.line, students: g.students, lectures: g.lectures, recipient: null }); continue; }
-    state.sort((a, b) => a.after_groups - b.after_groups || a.after_students - b.after_students);
-    const r = state[0];
+    const gg = { slots: new Set(g.slots || []) };
+    const cands = state.filter(r => r.nk && trainerCanTake(r.nk, gg, wantSection, shiftsByKey, busyByKey, r.extraBusy));
+    if (!cands.length) {
+      assignments.push({ group_name: g.group_name, line: g.line, students: g.students, lectures: g.lectures, slots: g.slots, recipient: null, needs_scheduling: true });
+      continue;
+    }
+    cands.sort((a, b) => a.after_groups - b.after_groups || a.after_students - b.after_students);
+    const r = cands[0];
     r.after_groups++; r.after_students += (g.students || 0);
+    (g.slots || []).forEach(s => r.extraBusy.add(s));
     assignments.push({ group_name: g.group_name, line: g.line, students: g.students, lectures: g.lectures, recipient: r.name });
   }
-  return { assignments, recipients: state };
+  return { assignments, recipients: state.map(r => ({ name: r.name, before_groups: r.before_groups, before_students: r.before_students, after_groups: r.after_groups, after_students: r.after_students })) };
+}
+
+// For groups that couldn't be placed in their own section, suggest available
+// trainers in the PAIRED section (private↔semi only) — shift covers the slot +
+// no conflict. Mutates each needy assignment, adding `.suggestions`.
+function attachCrossSectionSuggestions(assignments, fromSection, entries, shiftsByKey, busyByKey) {
+  const opp = _CROSS_SEC[fromSection];
+  const needy = assignments.filter(a => a.needs_scheduling);
+  if (!opp || !needy.length) { needy.forEach(a => { a.suggestions = []; }); return; }
+  const oppTrainers = [...entries.values()].filter(e => e.section === opp);
+  for (const a of needy) {
+    const gg = { slots: new Set(a.slots || []) };
+    a.suggestions = oppTrainers
+      .filter(e => trainerCanTake(e.nk, gg, opp, shiftsByKey, busyByKey, null))
+      .map(e => ({ name: e.name, section_label: _TRAINER_SEC_LABEL[opp] }));
+  }
 }
 
 // Flat list of all trainer×section entries (for the frontend dropdowns). A
 // trainer split across sections appears once per section (key = nameKey|section).
 router.get('/trainer-org-chart/sim/members', (req, res) => {
   try {
-    const ctx = buildTrainerSimContext(lineFilter(req));
-    const members = [...ctx.values()].map(t => {
+    const { entries } = buildTrainerSimContext(lineFilter(req));
+    const members = [...entries.values()].map(t => {
       const s = _grpStats(t.groups);
       return { key: t.key, id: t.id, name: t.name, section: t.section, section_label: _TRAINER_SEC_LABEL[t.section] || t.section, group_count: s.groups, student_count: s.students, lecture_count: s.lectures };
     }).sort((a, b) => a.section.localeCompare(b.section) || b.group_count - a.group_count);
@@ -9344,17 +9441,22 @@ router.get('/trainer-org-chart/sim/members', (req, res) => {
 // display; the redistribution is identical.
 router.get('/trainer-org-chart/sim/leave', (req, res) => {
   try {
-    const ctx = buildTrainerSimContext(lineFilter(req));
-    const src = ctx.get(String(req.query.key || ''));
+    const { entries, shiftsByKey, busyByKey } = buildTrainerSimContext(lineFilter(req));
+    const src = entries.get(String(req.query.key || ''));
     if (!src) return res.status(404).json({ error: 'المحاضر غير موجود' });
-    const recipients = [...ctx.values()].filter(t => t.section === src.section && t.key !== src.key);
-    const { assignments, recipients: recs } = distributeTrainerGroups(src.groups, recipients);
+    const recipients = [...entries.values()].filter(t => t.section === src.section && t.key !== src.key);
+    const { assignments, recipients: recs } = distributeTrainerGroups(src.groups, recipients, src.section, shiftsByKey, busyByKey);
+    // For groups nobody in-section can take: suggest available trainers in the
+    // paired section (private↔semi only) whose shift covers the slot + free.
+    attachCrossSectionSuggestions(assignments, src.section, entries, shiftsByKey, busyByKey);
     const toSection = String(req.query.to_section || '').toLowerCase();
     return res.json({
       mode: req.query.mode || 'leave',
       source: { name: src.name, section: src.section, section_label: _TRAINER_SEC_LABEL[src.section] || src.section, before: _grpStats(src.groups) },
       target: (toSection && _TRAINER_SEC_LABEL[toSection]) ? { section_key: toSection, section_label: _TRAINER_SEC_LABEL[toSection] } : null,
       date_from: req.query.date_from || null, date_to: req.query.date_to || null,
+      needs_scheduling_count: assignments.filter(a => a.needs_scheduling).length,
+      cross_section: _CROSS_SEC[src.section] ? _TRAINER_SEC_LABEL[_CROSS_SEC[src.section]] : null,
       assignments, recipients: recs,
     });
   } catch (err) {
@@ -9368,22 +9470,24 @@ router.get('/trainer-org-chart/sim/leave', (req, res) => {
 // trainer from the other section.
 router.get('/trainer-org-chart/sim/swap', (req, res) => {
   try {
-    const ctx = buildTrainerSimContext(lineFilter(req));
-    const a = ctx.get(String(req.query.keyA || ''));
-    const b = ctx.get(String(req.query.keyB || ''));
+    const { entries, shiftsByKey, busyByKey } = buildTrainerSimContext(lineFilter(req));
+    const a = entries.get(String(req.query.keyA || ''));
+    const b = entries.get(String(req.query.keyB || ''));
     if (!a || !b) return res.status(404).json({ error: 'أحد المحاضرين غير موجود' });
     if (a.section === b.section) return res.status(400).json({ error: 'لازم يكونوا في قسمين مختلفين' });
-    // A leaves section A; recipients = section-A entries (minus A) + B arriving.
-    const recA = [...ctx.values()].filter(t => t.section === a.section && t.key !== a.key);
-    recA.push({ name: b.name + ' (قادم)', groups: [] });
-    const planA = distributeTrainerGroups(a.groups, recA);
-    const recB = [...ctx.values()].filter(t => t.section === b.section && t.key !== b.key);
-    recB.push({ name: a.name + ' (قادم)', groups: [] });
-    const planB = distributeTrainerGroups(b.groups, recB);
+    // Each leaver's groups redistribute over their OWN section's trainers
+    // (schedule-aware). The incoming trainer has no shift in the destination yet,
+    // so groups needing coverage there are flagged needs_scheduling + suggestions.
+    const recA = [...entries.values()].filter(t => t.section === a.section && t.key !== a.key);
+    const planA = distributeTrainerGroups(a.groups, recA, a.section, shiftsByKey, busyByKey);
+    attachCrossSectionSuggestions(planA.assignments, a.section, entries, shiftsByKey, busyByKey);
+    const recB = [...entries.values()].filter(t => t.section === b.section && t.key !== b.key);
+    const planB = distributeTrainerGroups(b.groups, recB, b.section, shiftsByKey, busyByKey);
+    attachCrossSectionSuggestions(planB.assignments, b.section, entries, shiftsByKey, busyByKey);
     return res.json({
       mode: 'swap',
-      a: { name: a.name, section_label: _TRAINER_SEC_LABEL[a.section] || a.section, before: _grpStats(a.groups), assignments: planA.assignments, recipients: planA.recipients },
-      b: { name: b.name, section_label: _TRAINER_SEC_LABEL[b.section] || b.section, before: _grpStats(b.groups), assignments: planB.assignments, recipients: planB.recipients },
+      a: { name: a.name, section_label: _TRAINER_SEC_LABEL[a.section] || a.section, before: _grpStats(a.groups), assignments: planA.assignments, recipients: planA.recipients, needs_scheduling_count: planA.assignments.filter(x => x.needs_scheduling).length },
+      b: { name: b.name, section_label: _TRAINER_SEC_LABEL[b.section] || b.section, before: _grpStats(b.groups), assignments: planB.assignments, recipients: planB.recipients, needs_scheduling_count: planB.assignments.filter(x => x.needs_scheduling).length },
     });
   } catch (err) {
     console.error('[reports] trainer-sim/swap:', err);
@@ -9399,8 +9503,8 @@ router.get('/trainer-org-chart/sim/add-new', (req, res) => {
     const name = String(req.query.name || '').trim();
     const section = String(req.query.section || '').toLowerCase();
     if (!name || !_TRAINER_SEC_LABEL[section]) return res.status(400).json({ error: 'الاسم والقسم مطلوبان' });
-    const ctx = buildTrainerSimContext(lineFilter(req));
-    const existing = [...ctx.values()].filter(t => t.section === section && t.nk !== _trStripKey(name));
+    const { entries } = buildTrainerSimContext(lineFilter(req));
+    const existing = [...entries.values()].filter(t => t.section === section && t.nk !== _trStripKey(name));
     const totalGroups = existing.reduce((a, t) => a + t.groups.length, 0);
     const target = Math.floor(totalGroups / (existing.length + 1)); // newcomer's fair share
     // Donors sorted by load desc; peel their smallest-student groups off first.
@@ -9436,9 +9540,9 @@ router.post('/trainer-org-chart/sim/groups', (req, res) => {
     const { fromKey, toKey, groups } = req.body || {};
     if (!fromKey || !toKey || !Array.isArray(groups) || !groups.length)
       return res.status(400).json({ error: 'من محاضر + إلى محاضر + مجموعات مطلوبة' });
-    const ctx = buildTrainerSimContext(lineFilter(req));
-    const from = ctx.get(String(fromKey));
-    const to = ctx.get(String(toKey));
+    const { entries } = buildTrainerSimContext(lineFilter(req));
+    const from = entries.get(String(fromKey));
+    const to = entries.get(String(toKey));
     if (!from || !to) return res.status(404).json({ error: 'أحد المحاضرين غير موجود' });
     const wanted = new Set(groups.map(g => _trNormGroup(g.group_name) + '|' + g.line));
     const moving = from.groups.filter(g => wanted.has(g.gk));
