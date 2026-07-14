@@ -185,16 +185,21 @@ function parseLevelBuffer(buf) {
 
 // ─── Upsert ───────────────────────────────────────────────────────────────────
 
+// Identity is now the GROUP (group_key = canonKey), so a client who REPEATS a
+// level in two different groups gets two rows (both counted). Rename-twins (same
+// group, different coordinator suffix → same key) still collapse. Rows without a
+// group name fall back to a track+level key so they dedupe as before.
 const _upsertLevelStmt = () => db.prepare(`
   INSERT INTO cs_completed_levels (
     client_id, client_phone_norm, client_name_raw,
     track, level_number, level_order,
     drive_file_id, drive_file_name, drive_folder, dept,
-    group_name_raw, registration_date, synced_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  ON CONFLICT(client_phone_norm, track, level_number) DO UPDATE SET
+    group_name_raw, group_key, registration_date, synced_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(client_phone_norm, track, level_number, group_key) DO UPDATE SET
     client_id         = excluded.client_id,
     client_name_raw   = COALESCE(excluded.client_name_raw, client_name_raw),
+    level_order       = excluded.level_order,
     drive_file_id     = excluded.drive_file_id,
     drive_file_name   = excluded.drive_file_name,
     drive_folder      = excluded.drive_folder,
@@ -257,11 +262,12 @@ async function ingestOneFile({ file, folderName, dept }) {
     if (!phoneNorm) { skippedNoPhone++; continue; }
 
     const clientId = matchClientByPhone(phoneNorm);
+    const gKey = canonKey(r.groupRaw) || `${parsed.track}-${parsed.level}`.toLowerCase();
     stmt.run(
       clientId, phoneNorm, r.name || null,
       parsed.track, parsed.level, parsed.order,
       file.id, file.name, folderName, dept,
-      r.groupRaw || null, normalizeDate(r.regDate),
+      r.groupRaw || null, gKey, normalizeDate(r.regDate),
       now,
     );
     inserted++;

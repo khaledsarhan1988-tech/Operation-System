@@ -2624,6 +2624,44 @@ initDb().then(db => {
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_sub_date     ON cs_subscriptions(subscription_date)`);
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_sub_source   ON cs_subscriptions(source)`);
 
+    // MIGRATION (2026-07-14): a client can REPEAT a level in two different groups
+    // (e.g. General 4 in May_11 AND Jun_14 — the file lists him twice). The old
+    // UNIQUE(phone, track, level_number) collapsed those to ONE row → the repeat
+    // group wasn't counted → remaining_levels overstated. Switch identity to the
+    // GROUP: add group_key (canonical group id) + UNIQUE(phone, group_key), so
+    // repeats (different date → different key) are separate rows while rename-twins
+    // (same key) still collapse. Existing rows are preserved unchanged — the repeat
+    // rows come back on the next level-sync (new ON CONFLICT), so the deploy itself
+    // changes NO number.
+    try {
+      const _t = db._raw.exec(`SELECT sql FROM sqlite_master WHERE type='table' AND name='cs_completed_levels'`);
+      const _sql = _t[0]?.values?.[0]?.[0] || '';
+      if (_sql && !_sql.includes('group_key')) {
+        const { canonKey } = require('./utils/csBatchMatch');
+        db._raw.run(`CREATE TABLE cs_completed_levels_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER, client_phone_norm TEXT,
+          client_name_raw TEXT, track TEXT NOT NULL, level_number INTEGER NOT NULL, level_order INTEGER NOT NULL,
+          drive_file_id TEXT, drive_file_name TEXT, drive_folder TEXT, dept TEXT,
+          group_name_raw TEXT, group_key TEXT, registration_date TEXT,
+          synced_at TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+          UNIQUE(client_phone_norm, track, level_number, group_key)
+        )`);
+        const _rows = db.prepare(`SELECT * FROM cs_completed_levels`).all();
+        const _ins = db.prepare(`INSERT OR IGNORE INTO cs_completed_levels_new
+          (client_id, client_phone_norm, client_name_raw, track, level_number, level_order,
+           drive_file_id, drive_file_name, drive_folder, dept, group_name_raw, group_key, registration_date, synced_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+        db.transaction(() => {
+          for (const r of _rows) _ins.run(r.client_id, r.client_phone_norm, r.client_name_raw, r.track, r.level_number, r.level_order,
+            r.drive_file_id, r.drive_file_name, r.drive_folder, r.dept, r.group_name_raw, canonKey(r.group_name_raw), r.registration_date, r.synced_at);
+        })();
+        db._raw.run(`DROP TABLE cs_completed_levels`);
+        db._raw.run(`ALTER TABLE cs_completed_levels_new RENAME TO cs_completed_levels`);
+        saveNow();
+        console.log(`✅ Migration: cs_completed_levels → per-group uniqueness (${_rows.length} rows preserved)`);
+      }
+    } catch (e) { console.error('cs_completed_levels group_key migration error:', e.message); }
+
     db._raw.run(`
       CREATE TABLE IF NOT EXISTS cs_completed_levels (
         id                    INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2638,9 +2676,10 @@ initDb().then(db => {
         drive_folder          TEXT,                              -- 'A-H Genaral'|'A-H Private'|'Private 2 in 1'
         dept                  TEXT,                              -- derived from drive_folder
         group_name_raw        TEXT,
+        group_key             TEXT,                              -- canonical group id (canonKey) — splits repeats of a level
         registration_date     TEXT,
         synced_at             TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
-        UNIQUE(client_phone_norm, track, level_number)
+        UNIQUE(client_phone_norm, track, level_number, group_key)
       )
     `);
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_lvl_client   ON cs_completed_levels(client_id)`);
@@ -2648,6 +2687,7 @@ initDb().then(db => {
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_lvl_order    ON cs_completed_levels(level_order)`);
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_lvl_track    ON cs_completed_levels(track)`);
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_lvl_dept     ON cs_completed_levels(dept)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_lvl_gkey     ON cs_completed_levels(group_key)`);
 
     // ── Reference: "All Batches" sheet (every group ever — نشطة/إنتهت/منتظرة) ──
     // Synced from the "All Batches …" Excel inside the "Customer subscription to
