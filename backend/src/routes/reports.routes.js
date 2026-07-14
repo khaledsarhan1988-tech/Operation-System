@@ -9080,4 +9080,136 @@ router.get('/trainer-recruitment-independence', (req, res) => {
   }
 });
 
+// ─── GET /reports/trainer-org-chart ───────────────────────────────────────────
+// Org-chart-style view of MAIN-LECTURE TRAINERS grouped into the 3 teaching
+// sections (عام / شبه خاص / خاص). Same visual idea as the customer-services org
+// chart, but for education trainers instead of coordinators. Read-only — NO
+// payroll/occupancy impact (a display over lectures + team_members).
+//
+// Per section column: active team_members (department='education', section=col).
+// Team leaders (job_title='تيم ليدر') are administrative → excluded, exactly like
+// every occupancy report. Records sharing (name+section) — RENAME / split twins —
+// are merged to one card so a trainer isn't listed twice in the same column.
+//
+// Per trainer, 3 counts attributed BY NAME (stripParens on lectures.trainer = col
+// E ↔ stripParens on team_members.name, per the constitution) from the CURRENT
+// sheet only (latest sync per group), MAIN lectures, status IN (مؤكدة/مجدولة),
+// internal groups excluded:
+//   • group_count   → DISTINCT (group_name|line) the trainer teaches now
+//   • student_count → SUM(trainee_count) across those groups (DEDUP_BATCHES),
+//                     falling back to the group's client count when the batch
+//                     row is missing (ended/orphan group), like /phone-call-gap
+//   • lecture_count → DISTINCT (group|date|time) main sessions
+router.get('/trainer-org-chart', (req, res) => {
+  try {
+    const line = lineFilter(req);
+    const lineL = buildLineFilter('l', line);
+    // Name key: strip (…) suffixes, collapse whitespace, lowercase — matches how
+    // the rest of the system links lectures.trainer ↔ team_members.name.
+    const stripKey  = s => String(s || '').replace(/\([^)]*\)/g, '').trim().replace(/\s+/g, ' ').toLowerCase();
+    const normGroup = s => String(s || '').replace(/\s+/g, '').toLowerCase();
+
+    const SECTIONS = [
+      { key: 'general', label: 'عام' },
+      { key: 'semi',    label: 'شبه خاص' },
+      { key: 'private', label: 'خاص' },
+    ];
+
+    // 1) Trainers — education, active, non-leader.
+    const trainersRaw = db.prepare(
+      `SELECT id, name, section, job_title FROM team_members
+        WHERE department='education' AND status='active'
+          AND (job_title IS NULL OR job_title <> 'تيم ليدر')`
+    ).all();
+
+    // 2) Current-sheet MAIN lectures (delivered/scheduled, non-internal).
+    const lecRows = db.prepare(
+      `SELECT l.group_name, l.line, l.date, l.time, l.trainer
+         FROM lectures l
+         INNER JOIN (SELECT group_name, line, date(MAX(synced_at)) sd
+                       FROM lectures WHERE session_type='main' GROUP BY group_name, line) ls
+           ON l.group_name = ls.group_name AND l.line = ls.line AND date(l.synced_at) = ls.sd
+        WHERE l.session_type='main' AND l.status IN ('مؤكدة','مجدولة')
+          ${notInternalGroup('l.group_name')}
+          ${lineL}`
+    ).all();
+
+    // 3) ACTIVE-or-SCHEDULED groups (النشطة أو المجدولة) = groups with an
+    //    UPCOMING main lecture (date >= today). This captures exactly what the
+    //    owner asked for:
+    //      • نشطة  (running)   → has past مؤكدة + future مجدولة lectures
+    //      • مجدولة (not started yet) → all its lectures are future مجدولة
+    //      • ended groups have no future lecture → correctly excluded.
+    //    We scope every card to these; without it a trainer who taught for
+    //    months shows every historical group they ever ran (the current-sheet
+    //    join only de-dupes phantom rows, it does NOT drop ended groups). NOTE:
+    //    we deliberately do NOT use batches.status — the Drive batches sheet is
+    //    trimmed to only the latest handful of rows (~27), so it's not a
+    //    reliable active/scheduled signal here; the lecture schedule itself is.
+    const activeSet = new Set();
+    for (const r of db.prepare(
+      `SELECT DISTINCT group_name, line FROM lectures
+        WHERE session_type='main' AND status IN ('مؤكدة','مجدولة')
+          AND date >= date('now','+2 hours')`
+    ).all()) {
+      activeSet.add(normGroup(r.group_name) + '|' + r.line);
+    }
+    // trainee_count per (group|line) + client-count fallback (batches is small,
+    // so most students come from the clients roster).
+    const traineeMap = new Map();
+    for (const b of db.prepare(`SELECT group_name, line, trainee_count FROM ${DEDUP_BATCHES} b`).all()) {
+      traineeMap.set(normGroup(b.group_name) + '|' + b.line, b.trainee_count || 0);
+    }
+    const cliMap = new Map();
+    for (const r of db.prepare(`SELECT group_name, line, COUNT(DISTINCT phone) c FROM clients GROUP BY group_name, line`).all()) {
+      cliMap.set(normGroup(r.group_name) + '|' + r.line, r.c || 0);
+    }
+
+    // Aggregate distinct ACTIVE groups + their sessions per trainer-name-key.
+    const byTrainer = new Map(); // tkey → { groups:Set<gk>, lectures:Set }
+    for (const l of lecRows) {
+      const tk = stripKey(l.trainer);
+      if (!tk) continue;
+      const gk = normGroup(l.group_name) + '|' + l.line;
+      if (!activeSet.has(gk)) continue;   // active groups only
+      let agg = byTrainer.get(tk);
+      if (!agg) { agg = { groups: new Set(), lectures: new Set() }; byTrainer.set(tk, agg); }
+      agg.groups.add(gk);
+      agg.lectures.add(gk + '|' + l.date + '|' + l.time);
+    }
+    const countsFor = (tk) => {
+      const agg = byTrainer.get(tk);
+      if (!agg) return { group_count: 0, student_count: 0, lecture_count: 0 };
+      let students = 0;
+      for (const gk of agg.groups) students += (traineeMap.get(gk) ?? cliMap.get(gk) ?? 0);
+      return { group_count: agg.groups.size, student_count: students, lecture_count: agg.lectures.size };
+    };
+
+    // Build columns — merge trainer records by (name-key) within each section.
+    const sections = SECTIONS.map(s => {
+      const seen = new Map(); // nameKey → first team_member row in this section
+      for (const t of trainersRaw) {
+        if (String(t.section || '').toLowerCase() !== s.key) continue;
+        const nk = stripKey(t.name);
+        if (!nk || seen.has(nk)) continue;
+        seen.set(nk, t);
+      }
+      const members = [...seen.entries()].map(([nk, t]) => ({
+        id: t.id, name: t.name, job_title: t.job_title, ...countsFor(nk),
+      })).sort((a, b) => b.group_count - a.group_count || String(a.name).localeCompare(String(b.name)));
+      return {
+        key: s.key, label: s.label, members,
+        total_groups:   members.reduce((a, m) => a + m.group_count, 0),
+        total_students: members.reduce((a, m) => a + m.student_count, 0),
+        total_lectures: members.reduce((a, m) => a + m.lecture_count, 0),
+      };
+    });
+
+    return res.json({ sections, viewer_role: req.user?.role || null });
+  } catch (err) {
+    console.error('[reports] trainer-org-chart:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

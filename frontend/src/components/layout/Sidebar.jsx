@@ -108,6 +108,7 @@ const REPORT_LINKS = [
       { to: '/admin/reports/phone-call-gap',         label: 'فجوة الفون كول',            icon: PhoneCall, color: 'rose'   },
       { to: '/admin/reports/trainer-details',        label: 'تفاصيل المدربين',           icon: Users,     color: 'amber'  },
       { to: '/admin/reports/trainer-recruitment',    label: 'توظيف المدربين',            icon: UserPlus,  color: 'rose'   },
+      { to: '/admin/reports/trainer-org-chart',      label: 'الهيكل التنظيمي للمحاضرين', icon: Network,   color: 'indigo' },
     ],
   },
   { to: '/admin/reports/quality',               label: 'nav.qualityReports',     icon: ShieldCheck,   color: 'green',   management: 'Quality' },
@@ -253,6 +254,7 @@ export default function Sidebar({ mobile, onClose }) {
         { to: '/reports/phone-call-gap',         label: 'فجوة الفون كول',            icon: PhoneCall, color: 'rose'   },
         { to: '/reports/trainer-details',        label: 'تفاصيل المدربين',           icon: Users,     color: 'amber'  },
         { to: '/reports/trainer-recruitment',    label: 'توظيف المدربين',            icon: UserPlus,  color: 'rose'   },
+        { to: '/reports/trainer-org-chart',      label: 'الهيكل التنظيمي للمحاضرين', icon: Network,   color: 'indigo' },
       );
     }
     // تسليمات الأقسام grants — the two CS pages live on the role-neutral
