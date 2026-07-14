@@ -9212,4 +9212,82 @@ router.get('/trainer-org-chart', (req, res) => {
   }
 });
 
+// ─── GET /reports/trainer-org-chart/trainer/:id ───────────────────────────────
+// Drill-down for one trainer card: the per-group breakdown BEHIND the 3 aggregate
+// numbers. Same scope/definitions as the parent endpoint (current-sheet MAIN
+// lectures, مؤكدة/مجدولة, internal groups excluded, ACTIVE-or-SCHEDULED groups
+// only) so the rows sum to the card's counts. Read-only.
+router.get('/trainer-org-chart/trainer/:id', (req, res) => {
+  try {
+    const line = lineFilter(req);
+    const lineL = buildLineFilter('l', line);
+    const stripKey  = s => String(s || '').replace(/\([^)]*\)/g, '').trim().replace(/\s+/g, ' ').toLowerCase();
+    const normGroup = s => String(s || '').replace(/\s+/g, '').toLowerCase();
+
+    const member = db.prepare(`SELECT id, name, section FROM team_members WHERE id = ?`).get(req.params.id);
+    if (!member) return res.status(404).json({ error: 'trainer not found' });
+    const tk = stripKey(member.name);
+
+    // ACTIVE-or-SCHEDULED groups = groups with an upcoming main lecture.
+    const activeSet = new Set();
+    for (const r of db.prepare(
+      `SELECT DISTINCT group_name, line FROM lectures
+        WHERE session_type='main' AND status IN ('مؤكدة','مجدولة')
+          AND date >= date('now','+2 hours')`
+    ).all()) activeSet.add(normGroup(r.group_name) + '|' + r.line);
+
+    // Current-sheet MAIN lectures (delivered/scheduled, non-internal).
+    const lecRows = db.prepare(
+      `SELECT l.group_name, l.line, l.date, l.time, l.trainer
+         FROM lectures l
+         INNER JOIN (SELECT group_name, line, date(MAX(synced_at)) sd
+                       FROM lectures WHERE session_type='main' GROUP BY group_name, line) ls
+           ON l.group_name = ls.group_name AND l.line = ls.line AND date(l.synced_at) = ls.sd
+        WHERE l.session_type='main' AND l.status IN ('مؤكدة','مجدولة')
+          ${notInternalGroup('l.group_name')}
+          ${lineL}`
+    ).all();
+
+    const traineeMap = new Map();
+    for (const b of db.prepare(`SELECT group_name, line, trainee_count FROM ${DEDUP_BATCHES} b`).all()) {
+      traineeMap.set(normGroup(b.group_name) + '|' + b.line, b.trainee_count || 0);
+    }
+    const cliMap = new Map();
+    for (const r of db.prepare(`SELECT group_name, line, COUNT(DISTINCT phone) c FROM clients GROUP BY group_name, line`).all()) {
+      cliMap.set(normGroup(r.group_name) + '|' + r.line, r.c || 0);
+    }
+
+    const groups = new Map(); // gk → { group_name, line, lectures:Set, mind, maxd }
+    for (const l of lecRows) {
+      if (stripKey(l.trainer) !== tk) continue;
+      const gk = normGroup(l.group_name) + '|' + l.line;
+      if (!activeSet.has(gk)) continue;
+      let g = groups.get(gk);
+      if (!g) { g = { group_name: l.group_name, line: l.line, lectures: new Set(), mind: l.date, maxd: l.date }; groups.set(gk, g); }
+      g.lectures.add(l.date + '|' + l.time);
+      if (l.date && (!g.mind || l.date < g.mind)) g.mind = l.date;
+      if (l.date && (!g.maxd || l.date > g.maxd)) g.maxd = l.date;
+    }
+
+    const list = [...groups.entries()].map(([gk, g]) => ({
+      group_name: g.group_name, line: g.line,
+      students: traineeMap.get(gk) ?? cliMap.get(gk) ?? 0,
+      lectures: g.lectures.size, start_date: g.mind || null, end_date: g.maxd || null,
+    })).sort((a, b) => b.lectures - a.lectures || String(a.group_name).localeCompare(String(b.group_name)));
+
+    return res.json({
+      trainer: { id: member.id, name: member.name, section: member.section },
+      groups: list,
+      totals: {
+        groups: list.length,
+        students: list.reduce((a, x) => a + x.students, 0),
+        lectures: list.reduce((a, x) => a + x.lectures, 0),
+      },
+    });
+  } catch (err) {
+    console.error('[reports] trainer-org-chart detail:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
