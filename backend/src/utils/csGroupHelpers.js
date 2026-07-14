@@ -21,7 +21,13 @@ const IGNORED_GROUP_PATTERNS = [
 
 const isIgnoredGroup = (name) => {
   const s = String(name == null ? '' : name);
-  return IGNORED_GROUP_PATTERNS.some(re => re.test(s));
+  if (IGNORED_GROUP_PATTERNS.some(re => re.test(s))) return true;
+  // Space/underscore/typo-insensitive catch (owner 2026-07-14, emphatic): a
+  // placement test or a compensation/تعويض session must NEVER count as a group,
+  // however it's written — "place ment test", "placment", "comp ensation",
+  // "تعويض سيشن", "تحديد مستوي", etc. Strip every non-letter, then match.
+  const compact = s.toLowerCase().replace(/[^a-z؀-ۿ]/g, '');
+  return /plac.{0,3}ment|placem|comp[ae]ns|تعويض|تحديدمستو/.test(compact);
 };
 
 // Normalize a coordinator/user name for comparison: drop any "(...)" suffix,

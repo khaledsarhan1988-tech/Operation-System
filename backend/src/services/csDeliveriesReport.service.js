@@ -18,6 +18,7 @@
 
 const db = require('../config/database');
 const { csPrimaryPhone } = require('../utils/csPhoneNormalize');
+const { isIgnoredGroup } = require('../utils/csGroupHelpers');
 const csDel = require('./csDeliveries.service');
 
 const DEPTS = ['General', 'Private', 'Semi'];
@@ -105,11 +106,14 @@ function getDeptAnalytics({ dept, gradFrom, gradTo }) {
   // Upcoming = registered in a WAITING batch group (not started), keyed by phone.
   const waitingPhones = new Set();
   for (const r of db.prepare(`
-    SELECT c.phone AS phone
+    SELECT c.phone AS phone, c.group_name AS group_name
       FROM clients c
       JOIN batches b ON b.group_name = c.group_name AND b.line = c.line
      WHERE b.status IN ('بانتظار تسجيل المتدربين', 'بانتظار تسجيل المحاضرات')
-  `).all()) { const pn = csPrimaryPhone(r.phone); if (pn) waitingPhones.add(pn); }
+  `).all()) {
+    if (isIgnoredGroup(r.group_name)) continue;   // placement/تعويض are not real upcoming groups
+    const pn = csPrimaryPhone(r.phone); if (pn) waitingPhones.add(pn);
+  }
 
   // Upcoming = moved to a next group via the Enr Groups transition screen.
   const movedPhones = new Set();
