@@ -9290,4 +9290,239 @@ router.get('/trainer-org-chart/trainer/:id', (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// TRAINER DISTRIBUTION SIMULATION (محاكاة توزيع المحاضرين) — preview only, no writes
+// ───────────────────────────────────────────────────────────────────────────────
+// Same idea as the customer-services coordinator simulation, but with TRAINER
+// logic instead of coordinator logic: a trainer has no student-capacity band
+// (80–120) — the unit of work is the GROUPS they teach. When a trainer leaves /
+// moves / is temporarily absent, their active groups are redistributed over the
+// other trainers in the same SECTION, balancing by group count (least-loaded
+// trainer takes the next group; ties break on student count). All modes are
+// read-only previews (nothing is persisted).
+const _TRAINER_SEC_LABEL = { general: 'عام', semi: 'شبه خاص', private: 'خاص' };
+const _trStripKey  = s => String(s || '').replace(/\([^)]*\)/g, '').trim().replace(/\s+/g, ' ').toLowerCase();
+const _trNormGroup = s => String(s || '').replace(/\s+/g, '').toLowerCase();
+
+// Build every active education trainer keyed by name → { id, name, section,
+// groups:[{gk, group_name, line, students, lectures}] }. SAME scope as the
+// org-chart card (active/scheduled groups, current sheet, main, name match).
+function buildTrainerSimContext(line) {
+  const lineL = buildLineFilter('l', line);
+
+  const activeSet = new Set();
+  for (const r of db.prepare(
+    `SELECT DISTINCT group_name, line FROM lectures
+      WHERE session_type='main' AND status IN ('مؤكدة','مجدولة') AND date >= date('now','+2 hours')`
+  ).all()) activeSet.add(_trNormGroup(r.group_name) + '|' + r.line);
+
+  const traineeMap = new Map();
+  for (const b of db.prepare(`SELECT group_name, line, trainee_count FROM ${DEDUP_BATCHES} b`).all())
+    traineeMap.set(_trNormGroup(b.group_name) + '|' + b.line, b.trainee_count || 0);
+  const cliMap = new Map();
+  for (const r of db.prepare(`SELECT group_name, line, COUNT(DISTINCT phone) c FROM clients GROUP BY group_name, line`).all())
+    cliMap.set(_trNormGroup(r.group_name) + '|' + r.line, r.c || 0);
+
+  const lecRows = db.prepare(
+    `SELECT l.group_name, l.line, l.date, l.time, l.trainer
+       FROM lectures l
+       INNER JOIN (SELECT group_name, line, date(MAX(synced_at)) sd
+                     FROM lectures WHERE session_type='main' GROUP BY group_name, line) ls
+         ON l.group_name = ls.group_name AND l.line = ls.line AND date(l.synced_at) = ls.sd
+      WHERE l.session_type='main' AND l.status IN ('مؤكدة','مجدولة')
+        ${notInternalGroup('l.group_name')}
+        ${lineL}`
+  ).all();
+
+  const byTrainer = new Map(); // tkey → Map<gk, {gk, group_name, line, lectures:Set}>
+  for (const l of lecRows) {
+    const tk = _trStripKey(l.trainer); if (!tk) continue;
+    const gk = _trNormGroup(l.group_name) + '|' + l.line;
+    if (!activeSet.has(gk)) continue;
+    let gm = byTrainer.get(tk); if (!gm) { gm = new Map(); byTrainer.set(tk, gm); }
+    let g = gm.get(gk); if (!g) { g = { gk, group_name: l.group_name, line: l.line, lectures: new Set() }; gm.set(gk, g); }
+    g.lectures.add(l.date + '|' + l.time);
+  }
+
+  const trainers = new Map(); // tkey → { id, name, section, groups:[] }
+  // Only the 3 main-lecture sections (عام/شبه خاص/خاص) — phone_call_* sections
+  // and line-neutral 'all' rows are NOT main-lecture trainers, matching the card.
+  for (const t of db.prepare(
+    `SELECT id, name, section FROM team_members
+      WHERE department='education' AND status='active' AND (job_title IS NULL OR job_title <> 'تيم ليدر')
+        AND LOWER(section) IN ('general','semi','private')`
+  ).all()) {
+    const tk = _trStripKey(t.name); if (!tk || trainers.has(tk)) continue;
+    const gm = byTrainer.get(tk) || new Map();
+    const groups = [...gm.values()].map(g => ({
+      gk: g.gk, group_name: g.group_name, line: g.line,
+      students: traineeMap.get(g.gk) ?? cliMap.get(g.gk) ?? 0,
+      lectures: g.lectures.size,
+    }));
+    trainers.set(tk, { id: t.id, name: t.name, section: String(t.section || '').toLowerCase(), groups });
+  }
+  return trainers;
+}
+
+const _grpStats = groups => ({
+  groups: groups.length,
+  students: groups.reduce((a, g) => a + (g.students || 0), 0),
+  lectures: groups.reduce((a, g) => a + (g.lectures || 0), 0),
+});
+
+// Greedy load-balance: assign each source group to the recipient with the fewest
+// groups (tie → fewest students). Returns { assignments, recipients }.
+// `recipients` is a list of { name, groups:[...] } — copied, not mutated.
+function distributeTrainerGroups(sourceGroups, recipients) {
+  const state = recipients.map(r => {
+    const s = _grpStats(r.groups);
+    return { name: r.name, before_groups: s.groups, before_students: s.students, after_groups: s.groups, after_students: s.students };
+  });
+  const assignments = [];
+  const src = [...sourceGroups].sort((a, b) => (b.students || 0) - (a.students || 0));
+  for (const g of src) {
+    if (!state.length) { assignments.push({ group_name: g.group_name, line: g.line, students: g.students, lectures: g.lectures, recipient: null }); continue; }
+    state.sort((a, b) => a.after_groups - b.after_groups || a.after_students - b.after_students);
+    const r = state[0];
+    r.after_groups++; r.after_students += (g.students || 0);
+    assignments.push({ group_name: g.group_name, line: g.line, students: g.students, lectures: g.lectures, recipient: r.name });
+  }
+  return { assignments, recipients: state };
+}
+
+// Flat list of all trainers (for the frontend dropdowns).
+router.get('/trainer-org-chart/sim/members', (req, res) => {
+  try {
+    const ctx = buildTrainerSimContext(lineFilter(req));
+    const members = [...ctx.values()].map(t => {
+      const s = _grpStats(t.groups);
+      return { id: t.id, name: t.name, section: t.section, section_label: _TRAINER_SEC_LABEL[t.section] || t.section, group_count: s.groups, student_count: s.students, lecture_count: s.lectures };
+    }).sort((a, b) => a.section.localeCompare(b.section) || b.group_count - a.group_count);
+    return res.json({ members });
+  } catch (err) {
+    console.error('[reports] trainer-sim/members:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// MODE: leave / transfer / temporary — a trainer's groups spill onto the rest of
+// their section. `mode` + optional to_section (transfer) / dates (temporary) are
+// echoed back for display; the redistribution is identical.
+router.get('/trainer-org-chart/sim/leave', (req, res) => {
+  try {
+    const ctx = buildTrainerSimContext(lineFilter(req));
+    const src = ctx.get(_trStripKey(req.query.trainer));
+    if (!src) return res.status(404).json({ error: 'المحاضر غير موجود' });
+    const srcKey = _trStripKey(src.name);
+    const recipients = [...ctx.values()].filter(t => t.section === src.section && _trStripKey(t.name) !== srcKey);
+    const { assignments, recipients: recs } = distributeTrainerGroups(src.groups, recipients);
+    const toSection = String(req.query.to_section || '').toLowerCase();
+    return res.json({
+      mode: req.query.mode || 'leave',
+      source: { name: src.name, section: src.section, section_label: _TRAINER_SEC_LABEL[src.section] || src.section, before: _grpStats(src.groups) },
+      target: (toSection && _TRAINER_SEC_LABEL[toSection]) ? { section_key: toSection, section_label: _TRAINER_SEC_LABEL[toSection] } : null,
+      date_from: req.query.date_from || null, date_to: req.query.date_to || null,
+      assignments, recipients: recs,
+    });
+  } catch (err) {
+    console.error('[reports] trainer-sim/leave:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// MODE: swap — two trainers from different sections trade places. Each one's
+// groups redistribute over (their old section minus them) PLUS the incoming
+// trainer from the other section.
+router.get('/trainer-org-chart/sim/swap', (req, res) => {
+  try {
+    const ctx = buildTrainerSimContext(lineFilter(req));
+    const a = ctx.get(_trStripKey(req.query.trainerA));
+    const b = ctx.get(_trStripKey(req.query.trainerB));
+    if (!a || !b) return res.status(404).json({ error: 'أحد المحاضرين غير موجود' });
+    if (a.section === b.section) return res.status(400).json({ error: 'لازم يكونوا في قسمين مختلفين' });
+    const kA = _trStripKey(a.name), kB = _trStripKey(b.name);
+    // A leaves section A; recipients = section-A trainers (minus A) + B arriving.
+    const recA = [...ctx.values()].filter(t => t.section === a.section && _trStripKey(t.name) !== kA);
+    recA.push({ name: b.name + ' (قادم)', groups: [] });
+    const planA = distributeTrainerGroups(a.groups, recA);
+    const recB = [...ctx.values()].filter(t => t.section === b.section && _trStripKey(t.name) !== kB);
+    recB.push({ name: a.name + ' (قادم)', groups: [] });
+    const planB = distributeTrainerGroups(b.groups, recB);
+    return res.json({
+      mode: 'swap',
+      a: { name: a.name, section_label: _TRAINER_SEC_LABEL[a.section] || a.section, before: _grpStats(a.groups), assignments: planA.assignments, recipients: planA.recipients },
+      b: { name: b.name, section_label: _TRAINER_SEC_LABEL[b.section] || b.section, before: _grpStats(b.groups), assignments: planB.assignments, recipients: planB.recipients },
+    });
+  } catch (err) {
+    console.error('[reports] trainer-sim/swap:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// MODE: add-new — a new trainer joins a section; existing trainers hand over
+// groups until the newcomer reaches the section's average group load. Groups are
+// pulled from the most-loaded trainers first.
+router.get('/trainer-org-chart/sim/add-new', (req, res) => {
+  try {
+    const name = String(req.query.name || '').trim();
+    const section = String(req.query.section || '').toLowerCase();
+    if (!name || !_TRAINER_SEC_LABEL[section]) return res.status(400).json({ error: 'الاسم والقسم مطلوبان' });
+    const ctx = buildTrainerSimContext(lineFilter(req));
+    const existing = [...ctx.values()].filter(t => t.section === section && _trStripKey(t.name) !== _trStripKey(name));
+    const totalGroups = existing.reduce((a, t) => a + t.groups.length, 0);
+    const target = Math.floor(totalGroups / (existing.length + 1)); // newcomer's fair share
+    // Donors sorted by load desc; peel their smallest-student groups off first.
+    const donors = existing.map(t => ({ name: t.name, groups: [...t.groups].sort((x, y) => (x.students || 0) - (y.students || 0)), before_groups: t.groups.length, before_students: _grpStats(t.groups).students }));
+    const assignments = [];
+    let taken = 0;
+    // Round-robin from the currently most-loaded donor until newcomer hits target.
+    while (taken < target) {
+      donors.sort((x, y) => (y.groups.length) - (x.groups.length));
+      const d = donors[0];
+      if (!d || d.groups.length <= 1) break; // never strip a donor below 1 group
+      const g = d.groups.pop(); // hand over a group
+      assignments.push({ group_name: g.group_name, line: g.line, students: g.students, lectures: g.lectures, from_trainer: d.name });
+      taken++;
+    }
+    const donorRows = donors.map(d => ({ name: d.name, before_groups: d.before_groups, before_students: d.before_students, after_groups: d.groups.length, after_students: _grpStats(d.groups).students }));
+    return res.json({
+      mode: 'add-new',
+      newcomer: { name, section, section_label: _TRAINER_SEC_LABEL[section] },
+      target_groups: target,
+      newcomer_after: { groups: assignments.length, students: assignments.reduce((a, g) => a + (g.students || 0), 0) },
+      assignments, donors: donorRows,
+    });
+  } catch (err) {
+    console.error('[reports] trainer-sim/add-new:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// MODE: groups — move SPECIFIC groups from one trainer to another.
+router.post('/trainer-org-chart/sim/groups', (req, res) => {
+  try {
+    const { fromTrainer, toTrainer, groups } = req.body || {};
+    if (!fromTrainer || !toTrainer || !Array.isArray(groups) || !groups.length)
+      return res.status(400).json({ error: 'من محاضر + إلى محاضر + مجموعات مطلوبة' });
+    const ctx = buildTrainerSimContext(lineFilter(req));
+    const from = ctx.get(_trStripKey(fromTrainer));
+    const to = ctx.get(_trStripKey(toTrainer));
+    if (!from || !to) return res.status(404).json({ error: 'أحد المحاضرين غير موجود' });
+    const wanted = new Set(groups.map(g => _trNormGroup(g.group_name) + '|' + g.line));
+    const moving = from.groups.filter(g => wanted.has(g.gk));
+    const fromAfter = from.groups.filter(g => !wanted.has(g.gk));
+    const toAfter = [...to.groups, ...moving];
+    return res.json({
+      mode: 'groups',
+      from: { name: from.name, section_label: _TRAINER_SEC_LABEL[from.section] || from.section, before: _grpStats(from.groups), after: _grpStats(fromAfter) },
+      to:   { name: to.name,   section_label: _TRAINER_SEC_LABEL[to.section]   || to.section,   before: _grpStats(to.groups),   after: _grpStats(toAfter) },
+      moved: moving.map(g => ({ group_name: g.group_name, line: g.line, students: g.students, lectures: g.lectures })),
+      missing: groups.length - moving.length,
+    });
+  } catch (err) {
+    console.error('[reports] trainer-sim/groups:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
