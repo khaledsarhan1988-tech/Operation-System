@@ -26,6 +26,7 @@ const db = require('../config/database');
 const { saveNow } = require('../config/database');
 const { csPrimaryPhone } = require('../utils/csPhoneNormalize');
 const { IGNORED_GROUP_PATTERNS, isIgnoredGroup, normName } = require('../utils/csGroupHelpers');
+const { canonKey: bmCanon, slotKey: bmSlot } = require('../utils/csBatchMatch');
 
 const DEPTS = ['General', 'Private', 'Semi'];
 const STATUSES = ['active', 'churned', 'postponed', 'exit_level', 'refund'];
@@ -55,6 +56,25 @@ function cleanGroupCode(raw) {
 
 // IGNORED_GROUP_PATTERNS / isIgnoredGroup / normName now come from
 // ../utils/csGroupHelpers (shared with csEnrGroups & csEnrTransition).
+
+// Drop inactive (past) groups that are really the client's CURRENT group under
+// a stale name. Two signals, both per-client: exact canon (month-normalized,
+// case-insensitive) OR same SLOT (month+weekday+time+level) as an active group.
+// A level lasts ~a month, so one client can never consume the same level twice
+// in the same slot — a renamed group (Jul_20 → Jul_13(Israa), owner case
+// 01014885850) or a wrong day-of-month in the level file would otherwise count
+// twice (once active + once past). MUST be used identically by membershipBalance
+// AND the page loop so the audit invariant (balance == page) holds.
+function dropActiveTwins(activeGroups, inactiveList) {
+  if (!inactiveList.length || !activeGroups.length) return inactiveList;
+  const keys = new Set(activeGroups.map(bmCanon));
+  const slots = new Set(activeGroups.map(bmSlot).filter(Boolean));
+  return inactiveList.filter(g => {
+    if (keys.has(bmCanon(g))) return false;
+    const sk = bmSlot(g);
+    return !(sk && slots.has(sk));
+  });
+}
 
 // Does a (possibly comma-separated) coordinator string contain this person?
 // Coordinator names are stored inconsistently: users.full_name 'Radwa Gamal' vs
@@ -407,10 +427,9 @@ function membershipBalance(ctx, phone, dept) {
   if (!tm || tm.excludedRefund) return UNKNOWN;   // no / refunded membership in this dept → '—'
 
   // groups_taken mirrors deliveries EXACTLY: every active group + every inactive
-  // (past) group not already counted as active (canonical-key dedup). Each = 1 level.
+  // (past) group not already counted as active (canon+slot dedup). Each = 1 level.
   const activeGroups = (ctx.activeMap.get(pn) || []).map(a => a.group_name);
-  const activeKeys = new Set(activeGroups.map(canonGroupKey));
-  const inactiveGroups = [...(ctx.inactiveMap.get(pn) || [])].filter(g => !activeKeys.has(canonGroupKey(g)));
+  const inactiveGroups = dropActiveTwins(activeGroups, [...(ctx.inactiveMap.get(pn) || [])]);
   const groupsTaken = activeGroups.length + inactiveGroups.length;
 
   const paid = tm.months;
@@ -582,9 +601,8 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user,
   const inactiveMap = buildInactiveGroupMap();
   const groupLectureMeta = makeGroupLectureMeta();
   for (const it of items) {
-    const activeKeys = new Set(it.active_groups.map(canonGroupKey));
     const inactiveAll = [...(inactiveMap.get(it.phone) || [])];
-    it.inactive_groups = inactiveAll.filter(g => !activeKeys.has(canonGroupKey(g)));
+    it.inactive_groups = dropActiveTwins(it.active_groups, inactiveAll);
 
     // Per active group: lecture count + first/last lecture date (from `lectures`).
     // Aligned with it.active_groups order so the UI can show them side-by-side.
