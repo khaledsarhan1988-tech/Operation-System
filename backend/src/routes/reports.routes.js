@@ -9151,6 +9151,12 @@ function buildTrainerOrgData(line) {
         daysSet: new Set((sh.days || []).map(d => String(d).toLowerCase())),
         startMin: sh.startMin, endMin: sh.endMin,
         section: (sh.section || String(t.section || '').toLowerCase()),
+        // Rests + voice notes are OCCUPIED time (owner rule) — a slot inside
+        // either makes the trainer unavailable. Each block may be day-scoped
+        // (empty days = every work-day of the shift).
+        blocks: [...(sh.rests || []), ...(sh.voiceNotes || [])]
+          .filter(b => b.s != null && b.e != null)
+          .map(b => ({ s: b.s, e: b.e, days: new Set((b.days || []).map(d => String(d).toLowerCase())) })),
       }));
     shiftsByKey.set(nk, (shiftsByKey.get(nk) || []).concat(shs));
   }
@@ -9222,9 +9228,15 @@ function buildTrainerOrgData(line) {
 }
 
 // Does a trainer's shift set cover a group slot ('day|timeMin') in a section?
+// A slot inside a REST or VOICE-NOTE block of the covering shift does NOT count
+// (owner rule: voice notes/rests are occupied time — the trainer isn't free).
+// Day-scoped blocks apply on their listed days only; no days = every work-day.
 function _slotCovered(slot, shifts, wantSection) {
   const i = slot.indexOf('|'); const day = slot.slice(0, i); const tm = +slot.slice(i + 1);
-  return shifts.some(sh => sh.section === wantSection && sh.daysSet.has(day) && sh.startMin <= tm && tm < sh.endMin);
+  return shifts.some(sh =>
+    sh.section === wantSection && sh.daysSet.has(day) && sh.startMin <= tm && tm < sh.endMin
+    && !(sh.blocks || []).some(b => (b.days.size === 0 || b.days.has(day)) && b.s <= tm && tm < b.e)
+  );
 }
 // Can a trainer (name-key nk) take `group` in `wantSection`? Every group slot
 // must be covered by one of their shifts in that section AND free of conflict
