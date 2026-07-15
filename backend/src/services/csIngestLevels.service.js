@@ -352,9 +352,15 @@ async function runIngestionAll({ lineFolderName = 'Ahmed Hassan', onlyDept = nul
       result.all_batches_ref = { error: e.message };
     }
     // One-time membership-history backfill (local seed + Drive daily-files walk).
+    // FIRE-AND-FORGET: the Drive walk can take several minutes and the browser
+    // aborts at 60s (owner saw a scary ❌ although the server kept going —
+    // 2026-07-15). The button returns immediately; progress lands in the logs.
     // No-op once done; ongoing coverage comes from the daily trainees sync hook.
     try {
-      result.group_history = await require('./csClientGroupHistory.service').ensureBackfilled();
+      require('./csClientGroupHistory.service').ensureBackfilled()
+        .then(r => console.log('[groupHistory] backfill:', JSON.stringify(r)))
+        .catch(e => console.error('[groupHistory] backfill failed:', e.message));
+      result.group_history = { started_in_background: true };
     } catch (e) {
       console.error('cs-levels: group-history backfill failed:', e.message);
       result.group_history = { error: e.message };

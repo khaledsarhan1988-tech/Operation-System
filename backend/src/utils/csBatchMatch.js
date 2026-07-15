@@ -27,7 +27,20 @@ function cleanGroupCode(raw) {
   return s;
 }
 
-const canonKey = (s) => cleanGroupCode(s).split('(')[0].replace(/\s/g, '').toLowerCase();
+// Known month typos seen in the real sheets (e.g. the SAME group appears as
+// "Jnu_14_…" in some daily files and "Jun_14_…" in others — without this it
+// counted as TWO consumed levels for the same client, live bug 2026-07-15).
+// Normalized at the canon level so every consumer dedupes identically.
+// Also full month names → 3-letter, so "June_13_…" and "Jun_13_…" (same real
+// group, different spelling across sheets) share one canon.
+const MONTH_TYPOS = {
+  jnu: 'jun', jly: 'jul', juy: 'jul', jule: 'jul', fep: 'feb', dce: 'dec', agu: 'aug',
+  january: 'jan', february: 'feb', march: 'mar', april: 'apr', june: 'jun', july: 'jul',
+  august: 'aug', sept: 'sep', september: 'sep', october: 'oct', november: 'nov', december: 'dec',
+};
+const fixMonthTypo = (k) => k.replace(/^([a-z]+)/, (m) => MONTH_TYPOS[m] || m);
+
+const canonKey = (s) => fixMonthTypo(cleanGroupCode(s).split('(')[0].replace(/\s/g, '').toLowerCase());
 
 const MON = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
 const DOW = ['sat', 'sun', 'mon', 'tue', 'wed', 'thu', 'fri'];

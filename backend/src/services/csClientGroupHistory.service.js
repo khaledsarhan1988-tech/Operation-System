@@ -135,12 +135,16 @@ async function backfillFromDrive({ from = BACKFILL_FROM, to = null, lines = null
   return out;
 }
 
-// One-time orchestration (safe to call on every ingest): seed local sources if
-// the table is empty, and run the Drive walk once (marker = any drive_backfill row).
+// One-time orchestration (safe to call on every ingest). Markers are per SOURCE:
+// the daily_sync hook fills the table within hours of a deploy, so a plain
+// "table is empty" check would skip the local seed forever (live bug 2026-07-15:
+// absence/clients seed never ran → pre-June groups like an Apr G3 stayed
+// uncounted). Local seed runs while no absence/clients rows exist; the Drive
+// walk runs while no drive_backfill rows exist.
 async function ensureBackfilled() {
   const out = {};
-  const total = db.prepare(`SELECT COUNT(*) c FROM cs_client_group_history`).get().c;
-  if (total === 0) out.local = backfillFromLocal();
+  const hasLocal = db.prepare(`SELECT 1 FROM cs_client_group_history WHERE source IN ('absence_backfill','clients_seed') LIMIT 1`).get();
+  if (!hasLocal) out.local = backfillFromLocal();
   const hasDrive = db.prepare(`SELECT 1 FROM cs_client_group_history WHERE source='drive_backfill' LIMIT 1`).get();
   if (!hasDrive) out.drive = await backfillFromDrive({});
   out.total_rows = db.prepare(`SELECT COUNT(*) c FROM cs_client_group_history`).get().c;

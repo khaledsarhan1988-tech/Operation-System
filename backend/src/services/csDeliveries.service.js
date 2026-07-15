@@ -137,17 +137,31 @@ function makeGroupLectureMeta() {
 // are dropped — they were opened then removed by management, so they never counted
 // as a consumed level. ONLY owner-confirmed keys are excluded (human is the gate).
 function buildInactiveGroupMap() {
+  // One canon function for EVERYTHING here (dedup, deleted-keys, live-batch):
+  // csBatchMatch.canonKey also normalizes month spellings/typos, so "Jnu_14_…"
+  // and "Jun_14_…" (same real group, typo'd in some daily sheets) count ONCE
+  // (live bug 2026-07-15: a client showed 7 taken instead of 6).
+  const { canonKey: canonOf, slotKey: slotOf } = require('../utils/csBatchMatch');
   let deletedKeys = new Set();
   try { deletedKeys = require('./csDeletedGroups.service').getConfirmedKeys(); } catch (_) { /* optional */ }
   const map = new Map();            // pn → Set(code)  (returned)
   const canons = new Map();         // pn → Set(canon) (dedup guard)
+  const slots = new Map();          // pn → Set(slot)  (2nd dedup guard)
   const add = (pn, code) => {
-    const ck = canonGroupKey(code).toLowerCase();
+    const ck = canonOf(code);
     if (deletedKeys.size && deletedKeys.has(ck)) return;         // owner-confirmed deleted
     let cs = canons.get(pn);
-    if (!cs) { cs = new Set(); canons.set(pn, cs); map.set(pn, new Set()); }
+    if (!cs) { cs = new Set(); canons.set(pn, cs); slots.set(pn, new Set()); map.set(pn, new Set()); }
     if (cs.has(ck)) return;                                       // one entry per real group
+    // SLOT guard: the SAME real group can be written with a wrong day-of-month
+    // in one source (level file says Jun_20, the sheets say Jun_13 — owner-
+    // confirmed case). A level lasts ~a month, so one client can never take the
+    // same level twice at the same month+weekday+time slot — same slot within
+    // one client ⇒ same group. (Repeats live in different months/slots.)
+    const sk = slotOf(code);
+    if (sk && slots.get(pn).has(sk)) return;
     cs.add(ck);
+    if (sk) slots.get(pn).add(sk);
     map.get(pn).add(code);
   };
 
@@ -164,18 +178,20 @@ function buildInactiveGroupMap() {
 
   try {
     // ENDED = no row on the current batches sheet (it only holds نشطة/بانتظار).
+    // Keys recomputed via canonOf (NOT the stored group_key) so rows written
+    // before a canon-normalization change still dedupe/compare correctly.
     const liveBatch = new Set(
       db.prepare(`SELECT group_name FROM batches WHERE group_name IS NOT NULL`).all()
-        .map(b => canonGroupKey(b.group_name).toLowerCase())
+        .map(b => canonOf(b.group_name))
     );
     for (const r of db.prepare(`
-      SELECT client_phone_norm AS pn, group_name_raw AS g, group_key AS gk
+      SELECT client_phone_norm AS pn, group_name_raw AS g
         FROM cs_client_group_history
     `).all()) {
-      if (!r.pn || !r.gk) continue;
-      if (liveBatch.has(r.gk)) continue;             // group still active/waiting → active path owns it
+      if (!r.pn) continue;
       const code = cleanGroupCode(r.g);
       if (!code || isIgnoredGroup(code)) continue;
+      if (liveBatch.has(canonOf(code))) continue;    // group still active/waiting → active path owns it
       add(r.pn, code);
     }
   } catch (_) { /* table may not exist on older deploys */ }
