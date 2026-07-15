@@ -125,27 +125,61 @@ function makeGroupLectureMeta() {
   };
 }
 
-// phone_norm → Set(group_name_raw) from completed-level Drive files.
+// phone_norm → Set(group codes) of PAST (consumed-level) groups. Two sources:
+//   1) cs_completed_levels — the Drive level files (authoritative up to May 2026)
+//   2) cs_client_group_history — permanent roster memory from the daily trainees
+//      sheets; counts ONLY groups that already ENDED (dropped off the batches
+//      sheet). Active/waiting groups stay on the active path. This closes the
+//      gap where a June+ group ends and vanishes from both sources (owner
+//      2026-07-14: a member of a group counts even if he was absent).
+// Per-phone dedup is by CANON key, so name variants of one group count once.
 // Groups the OWNER has confirmed as deleted (cs_deleted_groups, status=confirmed)
 // are dropped — they were opened then removed by management, so they never counted
 // as a consumed level. ONLY owner-confirmed keys are excluded (human is the gate).
 function buildInactiveGroupMap() {
   let deletedKeys = new Set();
   try { deletedKeys = require('./csDeletedGroups.service').getConfirmedKeys(); } catch (_) { /* optional */ }
-  const rows = db.prepare(`
+  const map = new Map();            // pn → Set(code)  (returned)
+  const canons = new Map();         // pn → Set(canon) (dedup guard)
+  const add = (pn, code) => {
+    const ck = canonGroupKey(code).toLowerCase();
+    if (deletedKeys.size && deletedKeys.has(ck)) return;         // owner-confirmed deleted
+    let cs = canons.get(pn);
+    if (!cs) { cs = new Set(); canons.set(pn, cs); map.set(pn, new Set()); }
+    if (cs.has(ck)) return;                                       // one entry per real group
+    cs.add(ck);
+    map.get(pn).add(code);
+  };
+
+  for (const r of db.prepare(`
     SELECT client_phone_norm AS pn, group_name_raw AS g
       FROM cs_completed_levels
      WHERE group_name_raw IS NOT NULL AND TRIM(group_name_raw) != ''
-  `).all();
-  const map = new Map();
-  for (const r of rows) {
+  `).all()) {
     if (!r.pn) continue;
     const code = cleanGroupCode(r.g);     // strip status suffix + dedupe same group across levels
     if (!code || isIgnoredGroup(code)) continue;   // skip empty + placeholder groups (Free Slots, …)
-    if (deletedKeys.size && deletedKeys.has(canonGroupKey(code).toLowerCase())) continue;   // owner-confirmed deleted
-    if (!map.has(r.pn)) map.set(r.pn, new Set());
-    map.get(r.pn).add(code);
+    add(r.pn, code);
   }
+
+  try {
+    // ENDED = no row on the current batches sheet (it only holds نشطة/بانتظار).
+    const liveBatch = new Set(
+      db.prepare(`SELECT group_name FROM batches WHERE group_name IS NOT NULL`).all()
+        .map(b => canonGroupKey(b.group_name).toLowerCase())
+    );
+    for (const r of db.prepare(`
+      SELECT client_phone_norm AS pn, group_name_raw AS g, group_key AS gk
+        FROM cs_client_group_history
+    `).all()) {
+      if (!r.pn || !r.gk) continue;
+      if (liveBatch.has(r.gk)) continue;             // group still active/waiting → active path owns it
+      const code = cleanGroupCode(r.g);
+      if (!code || isIgnoredGroup(code)) continue;
+      add(r.pn, code);
+    }
+  } catch (_) { /* table may not exist on older deploys */ }
+
   return map;
 }
 

@@ -295,6 +295,12 @@ function syncTrainees(buffer, line) {
     rows.forEach(r => insert.run(r.name, r.phone, r.email, r.group_name, r.via_company, r.registration_time, line));
   });
   run();
+  // Permanent membership memory: `clients` is REPLACED above, so record this
+  // roster in cs_client_group_history too (never deleted) — deliveries counts
+  // ended groups from it. Best-effort: must never break the upload.
+  try {
+    require('./csClientGroupHistory.service').upsertRoster(rows, { line, source: 'daily_sync' });
+  } catch (e) { console.error('[clientGroupHistory]', e.message); }
   // Roster changed → recompute auto-absences (students added/removed from groups)
   // Auto-absent refresh is best-effort — never let a failure here break the upload.
   try { regenerateAutoAbsents(line); }

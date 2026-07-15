@@ -2710,6 +2710,30 @@ initDb().then(db => {
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_abr_canon ON cs_all_batches_ref(canon_key)`);
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_abr_slot  ON cs_all_batches_ref(slot_key)`);
 
+    // ── Cumulative client↔group membership history (never deleted) ──
+    // The daily trainees sheet REPLACES `clients`, and the completed-levels Drive
+    // files stop at May 2026 — so a group that started June+ and already ENDED
+    // was counted nowhere (≥432 clients under-counted, owner 2026-07-14). This
+    // table accumulates every (client, group) membership ever seen: upserted on
+    // every daily trainees sync + backfilled from the daily Drive files and the
+    // absence tables. Deliveries counts ENDED history groups as consumed levels.
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS cs_client_group_history (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_phone_norm TEXT NOT NULL,
+        client_name_raw   TEXT,
+        group_name_raw    TEXT NOT NULL,
+        group_key         TEXT NOT NULL,           -- canonKey identity
+        line              TEXT,
+        source            TEXT,                    -- 'daily_sync'|'drive_backfill'|'absence_backfill'|'clients_seed'
+        first_seen        TEXT,
+        last_seen         TEXT,
+        UNIQUE(client_phone_norm, group_key)
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_cgh_phone ON cs_client_group_history(client_phone_norm)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_cgh_gkey  ON cs_client_group_history(group_key)`);
+
     // ── Owner-confirmed DELETED groups (the review gate) ──
     // A completed-level group is excluded from consumed-level counts ONLY when it
     // appears here with status='confirmed'. The owner reviews the suggested list

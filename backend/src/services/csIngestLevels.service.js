@@ -351,6 +351,14 @@ async function runIngestionAll({ lineFolderName = 'Ahmed Hassan', onlyDept = nul
       console.error('cs-levels: All Batches ref ingest failed:', e.message);
       result.all_batches_ref = { error: e.message };
     }
+    // One-time membership-history backfill (local seed + Drive daily-files walk).
+    // No-op once done; ongoing coverage comes from the daily trainees sync hook.
+    try {
+      result.group_history = await require('./csClientGroupHistory.service').ensureBackfilled();
+    } catch (e) {
+      console.error('cs-levels: group-history backfill failed:', e.message);
+      result.group_history = { error: e.message };
+    }
   }
 
   if (!dryRun) saveNow();

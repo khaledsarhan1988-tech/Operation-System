@@ -1141,6 +1141,25 @@ router.delete('/enrollment/:id', requireRole('admin', 'leader', 'agent'), (req, 
   }
 });
 
+// ─── CLIENT↔GROUP MEMBERSHIP HISTORY ─────────────────────────────────────────
+// Explicit backfill trigger (also runs automatically once via ingest/levels).
+// Re-runnable: upserts are idempotent; `force_drive=1` re-walks the Drive files.
+router.post('/history/backfill', requireRole('admin'), async (req, res) => {
+  try {
+    const svc = require('../services/csClientGroupHistory.service');
+    const out = { local: svc.backfillFromLocal() };
+    if ((req.body?.force_drive ?? req.query?.force_drive) === '1') {
+      out.drive = await svc.backfillFromDrive({ from: req.body?.from, to: req.body?.to });
+    } else {
+      out.ensure = await svc.ensureBackfilled();
+    }
+    res.json({ ok: true, ...out });
+  } catch (e) {
+    console.error('POST /cs/history/backfill error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ─── DELETED GROUPS REVIEW (owner-gated exclusion) ────────────────────────────
 // Suggestions = completed-level groups with NO match in the All-Batches reference.
 // The owner confirms the truly-deleted ones; only confirmed groups are excluded
