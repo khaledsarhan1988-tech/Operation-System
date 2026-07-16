@@ -69,6 +69,7 @@ export default function RefundCalculatorSection() {
   const [discountPct, setDiscountPct]   = useState('');
   const [placement, setPlacement]       = useState('');
   const [adminFee, setAdminFee]         = useState('');
+  const [otherFees, setOtherFees]       = useState('');
 
   const { data, isFetching } = useQuery({
     queryKey: ['cs-sales', 'refund-search', q],
@@ -88,7 +89,7 @@ export default function RefundCalculatorSection() {
         // Re-open a saved refund → restore the EXACT calc that produced it.
         setMVal(saved.mVal ?? ''); setMMonths(saved.mMonths ?? ''); setTPaid(saved.tPaid ?? '');
         setConsumed(saved.consumed ?? ''); setSessions(saved.sessions ?? ''); setSessionPrice(saved.sessionPrice ?? '');
-        setDiscountPct(saved.discountPct ?? ''); setPlacement(saved.placement ?? ''); setAdminFee(saved.adminFee ?? '');
+        setDiscountPct(saved.discountPct ?? ''); setPlacement(saved.placement ?? ''); setAdminFee(saved.adminFee ?? ''); setOtherFees(saved.otherFees ?? '');
       } else {
         // Fresh calc from a membership operation.
         const eff = (row.new_courses && String(row.new_courses).trim()) ? row.new_courses : row.courses;
@@ -96,7 +97,7 @@ export default function RefundCalculatorSection() {
         setMVal(val ? String(val) : '');
         setMMonths(levelsOf(eff) ? String(levelsOf(eff)) : '');
         setTPaid(num(row.total_paid_calc) ? String(num(row.total_paid_calc)) : '');
-        setConsumed(''); setSessions(''); setSessionPrice(''); setDiscountPct(''); setPlacement(''); setAdminFee('');
+        setConsumed(''); setSessions(''); setSessionPrice(''); setDiscountPct(''); setPlacement(''); setAdminFee(''); setOtherFees('');
         reqIdRef.current = (globalThis.crypto?.randomUUID?.() || `refund-${Date.now()}-${Math.random().toString(36).slice(2)}`);
       }
       setSeededId(row.id);
@@ -108,7 +109,7 @@ export default function RefundCalculatorSection() {
   const levelValue    = num(consumed) * perLevel;
   const sessionValue  = num(sessions) * num(sessionPrice);
   const discountValue = num(tPaid) * (num(discountPct) / 100);
-  const totalDeduction = levelValue + sessionValue + discountValue + num(placement) + num(adminFee);
+  const totalDeduction = levelValue + sessionValue + discountValue + num(placement) + num(adminFee) + num(otherFees);
   const refund = num(tPaid) - totalDeduction;
 
   const save = useMutation({
@@ -119,7 +120,7 @@ export default function RefundCalculatorSection() {
       const neg = -r2(refund); // refund stored as a NEGATIVE amount (like the other refund rows)
       // Calc kept in the dedicated (hidden) column → the operation stays clean; the
       // note is left empty so the row looks like any other refund.
-      const refund_details = JSON.stringify({ mVal, mMonths, tPaid, consumed, sessions, sessionPrice, discountPct, placement, adminFee });
+      const refund_details = JSON.stringify({ mVal, mMonths, tPaid, consumed, sessions, sessionPrice, discountPct, placement, adminFee, otherFees });
       return api.post('/cs-sales-register', {
         code: picked.code, client_name: picked.client_name, mobile_no: picked.mobile_no,
         courses: 'Refund', price: neg, total_paid_same_month: neg, balance: 0,
@@ -206,6 +207,7 @@ export default function RefundCalculatorSection() {
             <Box label="قيمة الخصم — تلقائي" value={fmt(discountValue)} readOnly />
             <Box label="تحديد مستوى" value={placement} onChange={setPlacement} />
             <Box label="مصاريف إدارية" value={adminFee} onChange={setAdminFee} />
+            <Box label="مصاريف أخرى" value={otherFees} onChange={setOtherFees} />
             <Box label="إجمالي الخصم — تلقائي" value={fmt(totalDeduction)} readOnly tone="amber" />
             <div className="col-span-2">
               <label className="block text-[11px] font-black text-emerald-700 mb-1">إجمالي الاسترداد — تلقائي</label>
@@ -259,12 +261,12 @@ export function RefundReviewModal({ row, onClose }) {
   const g = (k) => (d && d[k] != null ? d[k] : '');
   const mVal = g('mVal'), mMonths = g('mMonths'), tPaid = g('tPaid');
   const consumed = g('consumed'), sessions = g('sessions'), sessionPrice = g('sessionPrice');
-  const discountPct = g('discountPct'), placement = g('placement'), adminFee = g('adminFee');
+  const discountPct = g('discountPct'), placement = g('placement'), adminFee = g('adminFee'), otherFees = g('otherFees');
   const perLevel = num(mMonths) > 0 ? num(mVal) / num(mMonths) : 0;
   const levelValue = num(consumed) * perLevel;
   const sessionValue = num(sessions) * num(sessionPrice);
   const discountValue = num(tPaid) * (num(discountPct) / 100);
-  const totalDeduction = levelValue + sessionValue + discountValue + num(placement) + num(adminFee);
+  const totalDeduction = levelValue + sessionValue + discountValue + num(placement) + num(adminFee) + num(otherFees);
   const refund = num(tPaid) - totalDeduction;
   return (
     <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose} dir="rtl">
@@ -299,6 +301,7 @@ export function RefundReviewModal({ row, onClose }) {
               <Box label="قيمة الخصم" value={fmt(discountValue)} readOnly />
               <Box label="تحديد مستوى" value={fmt(placement)} readOnly />
               <Box label="مصاريف إدارية" value={fmt(adminFee)} readOnly />
+              <Box label="مصاريف أخرى" value={fmt(otherFees)} readOnly />
               <Box label="إجمالي الخصم" value={fmt(totalDeduction)} readOnly tone="amber" />
               <div className="col-span-2">
                 <label className="block text-[11px] font-black text-emerald-700 mb-1">إجمالي الاسترداد</label>
