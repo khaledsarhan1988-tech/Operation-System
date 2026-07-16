@@ -1,5 +1,6 @@
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './AuthContext';
+import { hasPageGrant } from '../utils/pageGrants';
 
 const ROLE_HIERARCHY = { admin: 3, leader: 2, agent: 1 };
 
@@ -69,11 +70,10 @@ export default function PrivateRoute({ children, minRole, allowedRoles, superAdm
   // Per-PAGE grant — allow a non-admin to reach a specific page when their
   // users.extra_pages list includes this page key (admins always pass). Lets a
   // CS agent see e.g. the trainer-occupancy pages without changing their role.
-  if (requirePage) {
-    const pages = String(user.extra_pages || '').split(',').map(s => s.trim()).filter(Boolean);
-    if (user.role !== 'admin' && !pages.includes(requirePage)) {
-      return <Navigate to={ROLE_HOME[user.role] || '/login'} replace />;
-    }
+  // hasPageGrant resolves the `occupancy-trainers` umbrella into its individual
+  // trainer pages (backward-compat) and always passes admins.
+  if (requirePage && !hasPageGrant(user, requirePage)) {
+    return <Navigate to={ROLE_HOME[user.role] || '/login'} replace />;
   }
 
   return children;

@@ -11,6 +11,7 @@ import {
   Link as LinkIcon, GitBranch, PhoneCall, UserPlus,
 } from 'lucide-react';
 import UserAvatar from '../ui/UserAvatar';
+import { expandGrants } from '../../utils/pageGrants';
 
 // ─── COLOR PALETTE ─────────────────────────────────────────────────────────
 // Each link gets a brand color used for its icon container — this gives the
@@ -241,36 +242,41 @@ export default function Sidebar({ mobile, onClose }) {
   // pages a user was given without changing their role. Links point to the
   // /agent-mounted copies (guarded by requirePage in the router). Admins already
   // get these via getAdminLinks (management-scoped), so skip them here.
-  const grantedPages = String(user?.extra_pages || '').split(',').map(s => s.trim()).filter(Boolean);
+  // expandGrants resolves the `occupancy-trainers` umbrella into each trainer
+  // page key, so a user holding the umbrella OR an individual key sees the link.
+  const grants = expandGrants(user?.extra_pages);
   const grantedLinks = [];
   if (user?.role !== 'admin') {
-    if (grantedPages.includes('occupancy-trainers')) {
-      grantedLinks.push(
-        // Labels + order MUST mirror the admin "الإشغال والمدربين" group exactly
-        // (same i18n keys, same sequence) so agent ↔ admin look identical.
-        { type: 'section', label: 'الإشغال والمدربين' },
-        { to: '/reports/trainer-utilization',    label: 'nav.trainerUtilization',   icon: Activity,  color: 'teal'   },
-        { to: '/reports/find-available-trainer', label: 'nav.findAvailableTrainer', icon: Sparkles,  color: 'cyan'   },
-        { to: '/reports/trainer-dashboard',      label: 'nav.trainerDashboard',     icon: BarChart3, color: 'indigo' },
-        { to: '/reports/phone-call-gap',         label: 'فجوة الفون كول',            icon: PhoneCall, color: 'rose'   },
-        { to: '/reports/trainer-details',        label: 'تفاصيل المدربين',           icon: Users,     color: 'amber'  },
-        { to: '/reports/trainer-recruitment',    label: 'توظيف المدربين',            icon: UserPlus,  color: 'rose'   },
-        { to: '/reports/trainer-org-chart',      label: 'الهيكل التنظيمي للمحاضرين', icon: Network,   color: 'indigo' },
-      );
+    // الإشغال والمدربين — one link per granted page (labels/order mirror the
+    // admin group exactly so agent ↔ admin look identical).
+    const trainerLinks = [
+      { key: 'trainer-utilization',    to: '/reports/trainer-utilization',    label: 'nav.trainerUtilization',   icon: Activity,  color: 'teal'   },
+      { key: 'find-available-trainer', to: '/reports/find-available-trainer', label: 'nav.findAvailableTrainer', icon: Sparkles,  color: 'cyan'   },
+      { key: 'trainer-dashboard',      to: '/reports/trainer-dashboard',      label: 'nav.trainerDashboard',     icon: BarChart3, color: 'indigo' },
+      { key: 'trainer-work-history',   to: '/reports/trainer-work-history',   label: 'سجل عمل المدربين',          icon: FileText,  color: 'slate'  },
+      { key: 'phone-call-gap',         to: '/reports/phone-call-gap',         label: 'فجوة الفون كول',            icon: PhoneCall, color: 'rose'   },
+      { key: 'trainer-details',        to: '/reports/trainer-details',        label: 'تفاصيل المدربين',           icon: Users,     color: 'amber'  },
+      { key: 'trainer-recruitment',    to: '/reports/trainer-recruitment',    label: 'توظيف المدربين',            icon: UserPlus,  color: 'rose'   },
+      { key: 'trainer-org-chart',      to: '/reports/trainer-org-chart',      label: 'الهيكل التنظيمي للمحاضرين', icon: Network,   color: 'indigo' },
+    ].filter(l => grants.has(l.key)).map(({ key, ...l }) => l);
+    if (trainerLinks.length) {
+      grantedLinks.push({ type: 'section', label: 'الإشغال والمدربين' }, ...trainerLinks);
     }
     // تسليمات الأقسام grants — the two CS pages live on the role-neutral
     // /subscriptions/* routes, so a granted user of any role can reach them.
-    if (grantedPages.includes('cs-deliveries') || grantedPages.includes('cs-enrollment')) {
+    if (grants.has('cs-deliveries') || grants.has('cs-enrollment') || grants.has('enr-groups')) {
       grantedLinks.push({ type: 'section', label: 'تسليمات الأقسام' });
-      if (grantedPages.includes('cs-deliveries'))
+      if (grants.has('cs-deliveries'))
         grantedLinks.push({ to: '/subscriptions/cs-department', label: 'Customer Services Department', icon: GraduationCap, color: 'violet' });
-      if (grantedPages.includes('cs-enrollment'))
+      if (grants.has('cs-enrollment'))
         grantedLinks.push({ to: '/subscriptions/enrollment', label: 'Enrollment', icon: GraduationCap, color: 'cyan' });
+      if (grants.has('enr-groups'))
+        grantedLinks.push({ to: '/subscriptions/enr-groups', label: 'Enr Groups', icon: GraduationCap, color: 'emerald' });
     }
     // كشف العملاء grant — the page lives on the role-neutral /reports mount
     // (guarded by requirePage="sales-register"), so a granted user of any role
     // reaches it. Same label/icon as the admin sidebar link for consistency.
-    if (grantedPages.includes('sales-register')) {
+    if (grants.has('sales-register')) {
       grantedLinks.push({ to: '/reports/sales-register', label: 'كشف العملاء', icon: Wallet, color: 'emerald' });
     }
   }

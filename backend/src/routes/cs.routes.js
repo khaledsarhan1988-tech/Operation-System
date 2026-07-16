@@ -13,7 +13,7 @@
 const express = require('express');
 const db = require('../config/database');
 const { authenticate } = require('../middleware/auth');
-const { requireRole } = require('../middleware/roles');
+const { requireRole, requirePageOrManagement } = require('../middleware/roles');
 
 const router = express.Router();
 router.use(authenticate);
@@ -854,13 +854,20 @@ router.patch('/deliveries/:phone/status', requireRole('admin', 'leader', 'agent'
 
 // ─── ENR GROUPS (مجموعات الـ Enrollment) ──────────────────────────────────────
 
+// Enr Groups access guard: any admin OR a user granted the 'enr-groups' page.
+// requirePageOrManagement with no requiredMgmt → any admin passes (same as the
+// old requireRole('admin')) PLUS extra_pages grant holders. Applied to every
+// /enr-groups route below so a scoped non-admin can use the page without full
+// admin rights. (Owner decision 2026-07-04.)
+const enrGuard = requirePageOrManagement('enr-groups');
+
 /**
  * GET /api/cs/enr-groups?dept=General|Private|Semi&q=&page=&page_size=
  * Group-oriented view: every ACTIVE group that has STARTED (≥1 registered main
  * lecture), with the clients inside it and the group's first/last lecture dates.
- * Admin only.
+ * Admin, OR granted 'enr-groups'.
  */
-router.get('/enr-groups', requireRole('admin'), (req, res) => {
+router.get('/enr-groups', enrGuard, (req, res) => {
   try {
     const svc = require('../services/csEnrGroups.service');
     const result = svc.getEnrGroups({
@@ -885,43 +892,43 @@ router.get('/enr-groups', requireRole('admin'), (req, res) => {
 const enrTx = () => require('../services/csEnrTransition.service');
 
 /** Next-group options = active groups that haven't started (optionally per dept). */
-router.get('/enr-groups/next-options', requireRole('admin'), (req, res) => {
+router.get('/enr-groups/next-options', enrGuard, (req, res) => {
   try { res.json({ ok: true, ...enrTx().getNextGroupOptions({ dept: req.query.dept, line: req.query.line }) }); }
   catch (e) { console.error('GET /cs/enr-groups/next-options:', e.message); res.status(400).json({ ok: false, error: e.message }); }
 });
 
 /** Ended/historical groups (left batches but have transition activity). */
-router.get('/enr-groups/ended', requireRole('admin'), (req, res) => {
+router.get('/enr-groups/ended', enrGuard, (req, res) => {
   try { res.json({ ok: true, ...enrTx().getEndedGroups({ q: req.query.q }) }); }
   catch (e) { console.error('GET /cs/enr-groups/ended:', e.message); res.status(400).json({ ok: false, error: e.message }); }
 });
 
 /** Transition context for one current group: clients + moved/disposition status. */
-router.get('/enr-groups/transition', requireRole('admin'), (req, res) => {
+router.get('/enr-groups/transition', enrGuard, (req, res) => {
   try { res.json({ ok: true, ...enrTx().getTransition({ group: req.query.group, line: req.query.line, dept: req.query.dept }) }); }
   catch (e) { console.error('GET /cs/enr-groups/transition:', e.message); res.status(400).json({ ok: false, error: e.message }); }
 });
 
 /** «محتاج تجديد» — clients whose membership is at/near its end (remaining ≤ 1). */
-router.get('/enr-groups/renewals', requireRole('admin'), (req, res) => {
+router.get('/enr-groups/renewals', enrGuard, (req, res) => {
   try { res.json({ ok: true, ...require('../services/csDeliveries.service').getRenewalNeeded({ dept: req.query.dept }) }); }
   catch (e) { console.error('GET /cs/enr-groups/renewals:', e.message); res.status(400).json({ ok: false, error: e.message }); }
 });
 
 /** Search كشف العملاء (cs_sales_register) to add brand-new members. */
-router.get('/enr-groups/sales-search', requireRole('admin'), (req, res) => {
+router.get('/enr-groups/sales-search', enrGuard, (req, res) => {
   try { res.json({ ok: true, ...enrTx().searchSalesRegister({ q: req.query.q, limit: req.query.limit }) }); }
   catch (e) { console.error('GET /cs/enr-groups/sales-search:', e.message); res.status(400).json({ ok: false, error: e.message }); }
 });
 
 /** Roster of a next group. */
-router.get('/enr-groups/next-roster', requireRole('admin'), (req, res) => {
+router.get('/enr-groups/next-roster', enrGuard, (req, res) => {
   try { res.json({ ok: true, ...enrTx().getNextRoster({ nextGroup: req.query.next_group, nextLine: req.query.next_line }) }); }
   catch (e) { console.error('GET /cs/enr-groups/next-roster:', e.message); res.status(400).json({ ok: false, error: e.message }); }
 });
 
 /** Add members to a next group's roster. */
-router.post('/enr-groups/next-members', requireRole('admin'), (req, res) => {
+router.post('/enr-groups/next-members', enrGuard, (req, res) => {
   try {
     res.json({ ok: true, ...enrTx().addNextMembers({
       nextGroup: req.body?.next_group, nextLine: req.body?.next_line,
@@ -931,13 +938,13 @@ router.post('/enr-groups/next-members', requireRole('admin'), (req, res) => {
   } catch (e) { console.error('POST /cs/enr-groups/next-members:', e.message); res.status(400).json({ ok: false, error: e.message }); }
 });
 
-router.delete('/enr-groups/next-members/:id', requireRole('admin'), (req, res) => {
+router.delete('/enr-groups/next-members/:id', enrGuard, (req, res) => {
   try { res.json({ ok: true, ...enrTx().removeNextMember({ id: req.params.id, user: req.user }) }); }
   catch (e) { console.error('DELETE /cs/enr-groups/next-members:', e.message); res.status(400).json({ ok: false, error: e.message }); }
 });
 
 /** Set a disposition for a not-moved client (optional first follow-up/note entry). */
-router.post('/enr-groups/disposition', requireRole('admin'), (req, res) => {
+router.post('/enr-groups/disposition', enrGuard, (req, res) => {
   try {
     const b = req.body || {};
     const entry = (b.followup_date || b.followup_time || b.followup_method || b.note) ? {
@@ -951,7 +958,7 @@ router.post('/enr-groups/disposition', requireRole('admin'), (req, res) => {
 });
 
 /** Add a follow-up/note entry to an existing disposition. */
-router.post('/enr-groups/disposition/:id/entry', requireRole('admin'), (req, res) => {
+router.post('/enr-groups/disposition/:id/entry', enrGuard, (req, res) => {
   try {
     const b = req.body || {};
     res.json({ ok: true, ...enrTx().addDispositionEntry({
@@ -961,18 +968,18 @@ router.post('/enr-groups/disposition/:id/entry', requireRole('admin'), (req, res
   } catch (e) { console.error('POST /cs/enr-groups/disposition/:id/entry:', e.message); res.status(400).json({ ok: false, error: e.message }); }
 });
 
-router.delete('/enr-groups/disposition/entry/:entryId', requireRole('admin'), (req, res) => {
+router.delete('/enr-groups/disposition/entry/:entryId', enrGuard, (req, res) => {
   try { res.json({ ok: true, ...enrTx().removeDispositionEntry({ entryId: req.params.entryId, user: req.user }) }); }
   catch (e) { console.error('DELETE /cs/enr-groups/disposition/entry:', e.message); res.status(400).json({ ok: false, error: e.message }); }
 });
 
-router.delete('/enr-groups/disposition/:id', requireRole('admin'), (req, res) => {
+router.delete('/enr-groups/disposition/:id', enrGuard, (req, res) => {
   try { res.json({ ok: true, ...enrTx().clearDisposition({ id: req.params.id, user: req.user }) }); }
   catch (e) { console.error('DELETE /cs/enr-groups/disposition:', e.message); res.status(400).json({ ok: false, error: e.message }); }
 });
 
 /** The three disposition lists (postponed/no_answer/unsuccessful) for the tabs. */
-router.get('/enr-groups/dispositions', requireRole('admin'), (req, res) => {
+router.get('/enr-groups/dispositions', enrGuard, (req, res) => {
   try {
     res.json({ ok: true, ...enrTx().getDispositions({
       type: req.query.type, q: req.query.q, dept: req.query.dept,
@@ -982,7 +989,7 @@ router.get('/enr-groups/dispositions', requireRole('admin'), (req, res) => {
 });
 
 /** Activity log (audit) for Enr Groups — global or per-group. */
-router.get('/enr-groups/activity', requireRole('admin'), (req, res) => {
+router.get('/enr-groups/activity', enrGuard, (req, res) => {
   try {
     res.json({ ok: true, ...enrTx().getActivityLog({
       group: req.query.group, line: req.query.line, q: req.query.q,

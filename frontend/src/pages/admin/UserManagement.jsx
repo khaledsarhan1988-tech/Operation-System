@@ -29,10 +29,20 @@ const EMPTY_FORM = {
 // `value` is the page key stored in users.extra_pages; it must match the
 // requirePage gate / grantedLinks mapping in router.jsx + Sidebar.jsx.
 const GRANTABLE_PAGES = [
-  { value: 'occupancy-trainers', label: 'الإشغال والمدربين' },
-  { value: 'cs-deliveries',      label: 'تسليمات الأقسام — Customer Services Department' },
-  { value: 'cs-enrollment',      label: 'تسليمات الأقسام — Enrollment' },
-  { value: 'sales-register',     label: 'كشف العملاء' },
+  // الإشغال والمدربين — umbrella (grants all trainer pages) + each page on its own.
+  { value: 'occupancy-trainers',     label: 'الإشغال والمدربين — كل الصفحات' },
+  { value: 'trainer-utilization',    label: 'الإشغال والمدربين — إشغال المدربين' },
+  { value: 'trainer-dashboard',      label: 'الإشغال والمدربين — لوحة المدربين' },
+  { value: 'find-available-trainer', label: 'الإشغال والمدربين — ابحث عن مدرب' },
+  { value: 'trainer-work-history',   label: 'الإشغال والمدربين — سجل عمل المدربين' },
+  { value: 'phone-call-gap',         label: 'الإشغال والمدربين — فجوة الفون كول' },
+  { value: 'trainer-details',        label: 'الإشغال والمدربين — تفاصيل المدربين' },
+  { value: 'trainer-recruitment',    label: 'الإشغال والمدربين — توظيف المدربين' },
+  { value: 'trainer-org-chart',      label: 'الإشغال والمدربين — الهيكل التنظيمي للمحاضرين' },
+  { value: 'cs-deliveries',          label: 'تسليمات الأقسام — Customer Services Department' },
+  { value: 'cs-enrollment',          label: 'تسليمات الأقسام — Enrollment' },
+  { value: 'enr-groups',             label: 'تسليمات الأقسام — Enr Groups' },
+  { value: 'sales-register',         label: 'كشف العملاء' },
 ];
 
 // Sections a LEADER can manage. Matches users.department values used by the
