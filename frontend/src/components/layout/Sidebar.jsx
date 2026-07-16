@@ -133,7 +133,9 @@ function getAdminLinks(user) {
     // 'حالة قاعدة البيانات' pinned as the 2nd item, right after the profile (super-admin only).
     ...(isSuperAdmin ? [{ to: '/admin/db-status', label: 'nav.dbStatus', icon: Database, color: 'blue' }] : []),
     // { to: '/admin', label: 'nav.dashboard', icon: LayoutDashboard, end: true, color: 'blue' }, // hidden per user request — route /admin still works
-    { to: '/admin/users',        label: 'nav.users',         icon: UserCog,         color: 'indigo' },
+    // User management (add/delete/grant) — SUPER-ADMIN only ("مسؤول"). Hidden
+    // from department managers ("مدير"); backend also enforces requireSuperAdmin.
+    ...(isSuperAdmin ? [{ to: '/admin/users', label: 'nav.users', icon: UserCog, color: 'indigo' }] : []),
     // Excel upload + Drive sync — Super Admin (management='All') only.
     // Department managers don't see these in the sidebar AND backend rejects them.
     ...(isSuperAdmin ? [

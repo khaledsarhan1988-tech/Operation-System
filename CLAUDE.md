@@ -257,6 +257,7 @@ node -e "
 
 ### أمان
 - أي endpoint يأخذ قيمًا من `req.query`/`req.body` في SQL لازم **parameterized** (`?` + bind). (مثال: ثغرة `GET /api/team` التي أُصلحت.)
+- **إدارة المستخدمين = سوبر-أدمن فقط «مسؤول» (2026-07-04، قرار Owner):** إضافة/تعديل/منح-صلاحيات/تفعيل-إيقاف/حذف مستخدم مقصورة على `requireSuperAdmin` (`role='admin'` **و** `management='All'`). كان الراوتر `admin.routes.js` كله على `requireRole('leader')` (فمشرف + أي admin بما فيهم «مدير» أدمن-القسم كانوا يقدروا). الآن الـ4 endpoints للكتابة `POST /users` + `PUT /users/:id` (يشمل منح `extra_pages` وتغيير الأدوار) + `PATCH /users/:id/status` + `DELETE /users/:id` عليها `requireSuperAdmin` → «مدير»/«مشرف» = 403. **خريطة الأدوار (label):** «مسؤول» = admin+All (سوبر)، «مدير» = admin+إدارة محددة، «مشرف» = leader (`resolveRoleKey`/`isSuperAdmin = management==='All'`). **الفرونت:** لينك «إدارة المستخدمين» في `Sidebar.getAdminLinks` متغلّف بـ `isSuperAdmin`، ومسارَي `/admin/users` + `/leader/users` بـ `<PrivateRoute superAdmin>`. **`GET /api/admin/users` (القائمة) تُركت على `requireRole('leader')` عمدًا** لأنها مستخدمة في `SystemReports` + `TargetsManagement` (قوائم مستخدمين) — القراءة غير حساسة والكتابة هي المحكومة. متحقَّق: `node --check` + `@babel/parser` + اختبار الحارس (مسؤول يعدّي، مدير/مشرف/وكيل 403).
 
 ### منح صفحة لمستخدم بدون تغيير دوره (`extra_pages`) — قرار Owner 2026-06-08
 - عمود `extra_pages` (CSV من مفاتيح الصفحات) على جدول `users`. يسمح للأدمن يفتح صفحة محددة لـ agent **من غير ما يحوّله أدمن**.

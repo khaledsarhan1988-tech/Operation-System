@@ -65,8 +65,10 @@ function blockLeaderTouchingAdmin(req, res, { targetRole, newRole } = {}) {
   return false;
 }
 
-// POST /api/admin/users
-router.post('/users', (req, res) => {
+// POST /api/admin/users — SUPER-ADMIN only (role='admin' + management='All').
+// User creation/deletion + permission grants are locked to the top-level
+// "مسؤول"; department admins ("مدير") and leaders are blocked. (Owner 2026-07-04.)
+router.post('/users', requireSuperAdmin, (req, res) => {
   const {
     username, password, full_name, role, department,
     extra_departments, extra_managements, extra_pages,
@@ -155,7 +157,7 @@ router.post('/users', (req, res) => {
 });
 
 // PUT /api/admin/users/:id
-router.put('/users/:id', (req, res) => {
+router.put('/users/:id', requireSuperAdmin, (req, res) => {
   const { id } = req.params;
   const { username, full_name, role, department, extra_departments, extra_managements, extra_pages, language, password, is_active, management, line, start_date, end_date } = req.body;
 
@@ -343,7 +345,7 @@ router.put('/users/:id', (req, res) => {
 // (team_member_dept_history via /api/team/:id/dept-history).
 
 // PATCH /api/admin/users/:id/status — toggle active/inactive
-router.patch('/users/:id/status', (req, res) => {
+router.patch('/users/:id/status', requireSuperAdmin, (req, res) => {
   const { id } = req.params;
   if (parseInt(id) === req.user.id) return res.status(400).json({ error: 'Cannot change your own status' });
   const user = db.prepare('SELECT id, role, is_active, end_date FROM users WHERE id = ?').get(id);
@@ -383,7 +385,7 @@ router.patch('/users/:id/status', (req, res) => {
 });
 
 // DELETE /api/admin/users/:id — hard delete
-router.delete('/users/:id', (req, res) => {
+router.delete('/users/:id', requireSuperAdmin, (req, res) => {
   const { id } = req.params;
   if (parseInt(id) === req.user.id) return res.status(400).json({ error: 'Cannot delete yourself' });
   const user = db.prepare('SELECT id, role, avatar_url FROM users WHERE id = ?').get(id);
