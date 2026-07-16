@@ -199,13 +199,6 @@ function getAdminLinks(user) {
 
   // ─── تسليمات الأقسام + شجرة «Enrollment» (2026-07-04, Owner) ────────────────
   const hasMgmt = (m) => userMgmts.has('All') || userMgmts.has(m);
-  // Customer Services Department delivery — Customer-Services managers, own section.
-  const csDeliverySection = hasMgmt('Customer Services')
-    ? [
-        { type: 'section', label: 'تسليمات الأقسام' },
-        { to: '/subscriptions/cs-department', label: 'Customer Services Department', icon: GraduationCap, color: 'violet' },
-      ]
-    : [];
   // "Enrollment" department — a top-level COLLAPSIBLE tree for Enrollment
   // managers (+ super-admin):  Enrollment ▸ { تسليمات الأقسام ▸ pages,
   // الإشغال والمدربين ▸ pages }.  Level-1 header + two sub-group children, each
@@ -216,6 +209,7 @@ function getAdminLinks(user) {
     ? [
         { group: true, key: 'enrollment-dept', label: 'Enrollment', icon: GraduationCap, color: 'cyan' },
         { sub: true, group: true, key: 'enr-deliveries', label: 'تسليمات الأقسام', icon: GraduationCap, color: 'emerald', children: [
+            { to: '/subscriptions/cs-department', label: 'Customer Services Department', icon: GraduationCap, color: 'violet' },
             { to: '/subscriptions/enrollment', label: 'Enrollment', icon: GraduationCap, color: 'cyan' },
             { to: '/subscriptions/enr-groups', label: 'Enr Groups', icon: GraduationCap, color: 'emerald' },
             ...(user?.role === 'admin' ? [{ to: '/subscriptions/deleted-groups', label: 'مراجعة المجموعات المحذوفة', icon: AlertTriangle, color: 'rose' }] : []),
@@ -232,7 +226,7 @@ function getAdminLinks(user) {
       ]
     : [];
 
-  return [...base, ...reports, ...monitoring, ...financeSection, ...employeeSalaries, ...csDeliverySection, ...enrollmentTree];
+  return [...base, ...reports, ...monitoring, ...financeSection, ...employeeSalaries, ...enrollmentTree];
 }
 
 // Avatar visuals are owned by the shared UserAvatar component now.
