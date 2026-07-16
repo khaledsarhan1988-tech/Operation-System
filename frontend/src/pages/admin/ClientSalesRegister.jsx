@@ -32,7 +32,7 @@ const EMPTY_FORM = {
   khaled_deduction: '', new_prices: '', new_courses: '', balance: '', noted1: '',
   noted2: '', tamkeen: '', installment_date: '', note: '',
   op_type: '', transfer_consumed_levels: '', transfer_total_levels: '',
-  transfer_from_phone: '', transfer_from_code: '',
+  transfer_from_phone: '', transfer_from_code: '', refund_details: '',
 };
 // Parse the level count from a course code: "6L GAC" → 6, "3L PAC 2P" → 3.
 function parseLevels(code) {

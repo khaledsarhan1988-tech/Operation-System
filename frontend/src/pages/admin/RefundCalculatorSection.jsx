@@ -24,6 +24,12 @@ function parseRefundNote(note) {
   if (i < 0) return null;
   try { return JSON.parse(s.slice(i + REFUND_TAG.length)); } catch { return null; }
 }
+// Saved calc lives in the dedicated `refund_details` column now; fall back to the
+// legacy [refund] marker in `note` for refunds saved before that column existed.
+function parseRefundData(row) {
+  if (row?.refund_details) { try { return JSON.parse(row.refund_details); } catch { /* noop */ } }
+  return parseRefundNote(row?.note);
+}
 const isRefundRow = (row) => String(row?.courses || '').trim().toLowerCase() === 'refund';
 
 function Box({ label, value, onChange, readOnly, tone }) {
@@ -77,7 +83,7 @@ export default function RefundCalculatorSection() {
   const pick = (row) => {
     setPicked(row);
     if (seededId !== row.id) {
-      const saved = parseRefundNote(row.note);
+      const saved = parseRefundData(row);
       if (saved && isRefundRow(row)) {
         // Re-open a saved refund → restore the EXACT calc that produced it.
         setMVal(saved.mVal ?? ''); setMMonths(saved.mMonths ?? ''); setTPaid(saved.tPaid ?? '');
@@ -111,19 +117,14 @@ export default function RefundCalculatorSection() {
       const entryDate = `${today.getMonth() + 1}/${today.getDate()}/${today.getFullYear()}`;
       const months = `${String(today.getFullYear()).slice(2)}-${MONTH_ABBR[today.getMonth()]}`;
       const neg = -r2(refund); // refund stored as a NEGATIVE amount (like the other refund rows)
-      const summary = [
-        `استرداد — ${picked.client_name || ''}`,
-        `العضوية ${fmt(mVal)} ÷ ${mMonths || 0} شهر = ثمن الليفل ${fmt(perLevel)}`,
-        `مستهلك ${consumed || 0} ليفل = ${fmt(levelValue)} · سيشن ${sessions || 0}×${fmt(sessionPrice)} = ${fmt(sessionValue)}`,
-        `خصم ${discountPct || 0}% = ${fmt(discountValue)} · تحديد مستوى ${fmt(placement)} · إداري ${fmt(adminFee)}`,
-        `إجمالي الخصم ${fmt(totalDeduction)} → الاسترداد ${fmt(refund)}`,
-      ].join('\n');
-      const note = `${summary}\n${REFUND_TAG}${JSON.stringify({ mVal, mMonths, tPaid, consumed, sessions, sessionPrice, discountPct, placement, adminFee })}`;
+      // Calc kept in the dedicated (hidden) column → the operation stays clean; the
+      // note is left empty so the row looks like any other refund.
+      const refund_details = JSON.stringify({ mVal, mMonths, tPaid, consumed, sessions, sessionPrice, discountPct, placement, adminFee });
       return api.post('/cs-sales-register', {
         code: picked.code, client_name: picked.client_name, mobile_no: picked.mobile_no,
         courses: 'Refund', price: neg, total_paid_same_month: neg, balance: 0,
         paid_status: 'Paid', payment_way: 'Cash', department: 'Sales',
-        entry_date: entryDate, months, note, op_type: '',
+        entry_date: entryDate, months, note: '', refund_details, op_type: '',
         client_request_id: reqIdRef.current,
       }).then((r) => r.data);
     },

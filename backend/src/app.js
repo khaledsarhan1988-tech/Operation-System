@@ -3211,6 +3211,10 @@ initDb().then(db => {
       // for display). op_type='client_transfer'.
       addCol('transfer_from_phone', 'TEXT');
       addCol('transfer_from_code', 'TEXT');
+      // Refund calculator: JSON of the calc inputs, so re-opening a saved refund in
+      // the استرداد tab restores the exact boxes. Hidden from the edit form (keeps
+      // the refund operation clean — no messy note).
+      addCol('refund_details', 'TEXT');
     }
     // A client_request_id may appear at most once → a retried create can never
     // produce a duplicate money row. Partial index so legacy NULLs are allowed.
