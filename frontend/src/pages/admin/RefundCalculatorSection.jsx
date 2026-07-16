@@ -1,28 +1,37 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Search, RotateCcw, User } from 'lucide-react';
+import { useState, useRef } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Search, RotateCcw, User, Save, RefreshCw, CheckCircle, AlertTriangle } from 'lucide-react';
 import api from '../../api/axios';
 import SectionCard from '../../components/ui/SectionCard';
 
-// «استرداد» — refund calculator (display only, no save). Enter a client code or
-// phone → pick their membership operation → the boxes below auto-fill and the
-// refund updates live. Mirrors the owner's Excel formula:
-//   ثمن الليفل   = قيمة العضوية ÷ عدد الشهور
-//   قيمة الليفل  = عدد الليفل المستهلك × ثمن الليفل
-//   قيمة الخصم   = إجمالي المدفوع × نسبة الخصم%
-//   إجمالي الخصم = قيمة الليفل + قيمة السيشن + قيمة الخصم + تحديد مستوى + مصاريف إدارية
-//   الاسترداد    = إجمالي المدفوع − إجمالي الخصم
+// «استرداد» — refund calculator. Enter a client code/phone → pick their membership
+// operation → the boxes auto-fill and the refund updates live (owner's Excel
+// formula). A «حفظ» button records the refund as a normal operation dated today
+// (course "Refund", amount NEGATIVE — like the other refund rows) AND stores the
+// calc inputs in the `note` field so re-opening the saved refund shows the same
+// boxes (so you remember how it was computed). NO backend change — reuses the
+// existing POST /cs-sales-register and the `note` column.
 const num = (v) => Number(String(v ?? '').replace(/,/g, '')) || 0;
 const levelsOf = (code) => { const m = String(code ?? '').match(/(\d+)\s*L\b/i); return m ? Number(m[1]) : 0; };
-const fmt = (x) => (Math.round((Number(x) || 0) * 100) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 });
+const r2 = (x) => Math.round((Number(x) || 0) * 100) / 100;
+const fmt = (x) => r2(x).toLocaleString('en-US', { maximumFractionDigits: 2 });
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const REFUND_TAG = '[refund]'; // marker in `note` after which the calc JSON lives
+
+function parseRefundNote(note) {
+  const s = String(note || '');
+  const i = s.indexOf(REFUND_TAG);
+  if (i < 0) return null;
+  try { return JSON.parse(s.slice(i + REFUND_TAG.length)); } catch { return null; }
+}
+const isRefundRow = (row) => String(row?.courses || '').trim().toLowerCase() === 'refund';
 
 function Box({ label, value, onChange, readOnly, tone }) {
   const base = 'w-full px-3 py-2 border rounded-xl text-sm outline-none text-right';
   const cls = readOnly
     ? `${base} bg-gray-100 text-gray-800 font-bold border-gray-200`
     : `${base} border-gray-200 focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400`;
-  const toneCls = tone === 'amber' ? 'bg-amber-50 text-amber-800 border-amber-200'
-    : tone === 'green' ? 'bg-emerald-50 text-emerald-800 border-emerald-300 text-base' : '';
+  const toneCls = tone === 'amber' ? 'bg-amber-50 text-amber-800 border-amber-200' : '';
   return (
     <div>
       <label className="block text-[11px] font-bold text-gray-500 mb-1">{label}</label>
@@ -38,20 +47,22 @@ function Box({ label, value, onChange, readOnly, tone }) {
 }
 
 export default function RefundCalculatorSection() {
+  const qc = useQueryClient();
   const [q, setQ] = useState('');
   const [picked, setPicked] = useState(null);
   const [seededId, setSeededId] = useState(null);
+  const reqIdRef = useRef(null); // idempotency key for the save (per pick)
   // Editable-with-default (seeded from the picked operation, but the owner can override).
-  const [mVal, setMVal]       = useState(''); // قيمة العضوية
-  const [mMonths, setMMonths] = useState(''); // العضوية كام شهر
-  const [tPaid, setTPaid]     = useState(''); // إجمالي المدفوع
+  const [mVal, setMVal]       = useState('');
+  const [mMonths, setMMonths] = useState('');
+  const [tPaid, setTPaid]     = useState('');
   // Pure inputs.
-  const [consumed, setConsumed]         = useState(''); // عدد الليفل المستهلك
-  const [sessions, setSessions]         = useState(''); // عدد السيشن
-  const [sessionPrice, setSessionPrice] = useState(''); // ثمن السيشن
-  const [discountPct, setDiscountPct]   = useState(''); // نسبة الخصم %
-  const [placement, setPlacement]       = useState(''); // تحديد مستوى
-  const [adminFee, setAdminFee]         = useState(''); // مصاريف إدارية
+  const [consumed, setConsumed]         = useState('');
+  const [sessions, setSessions]         = useState('');
+  const [sessionPrice, setSessionPrice] = useState('');
+  const [discountPct, setDiscountPct]   = useState('');
+  const [placement, setPlacement]       = useState('');
+  const [adminFee, setAdminFee]         = useState('');
 
   const { data, isFetching } = useQuery({
     queryKey: ['cs-sales', 'refund-search', q],
@@ -61,15 +72,29 @@ export default function RefundCalculatorSection() {
   });
   const rows = data?.rows || [];
 
+  const savedRefund = picked ? isRefundRow(picked) : false; // viewing an already-saved refund
+
   const pick = (row) => {
     setPicked(row);
     if (seededId !== row.id) {
-      const eff = (row.new_courses && String(row.new_courses).trim()) ? row.new_courses : row.courses;
-      const val = (row.new_prices && num(row.new_prices)) ? num(row.new_prices) : num(row.price);
-      setMVal(val ? String(val) : '');
-      setMMonths(levelsOf(eff) ? String(levelsOf(eff)) : '');
-      setTPaid(num(row.total_paid_calc) ? String(num(row.total_paid_calc)) : '');
+      const saved = parseRefundNote(row.note);
+      if (saved && isRefundRow(row)) {
+        // Re-open a saved refund → restore the EXACT calc that produced it.
+        setMVal(saved.mVal ?? ''); setMMonths(saved.mMonths ?? ''); setTPaid(saved.tPaid ?? '');
+        setConsumed(saved.consumed ?? ''); setSessions(saved.sessions ?? ''); setSessionPrice(saved.sessionPrice ?? '');
+        setDiscountPct(saved.discountPct ?? ''); setPlacement(saved.placement ?? ''); setAdminFee(saved.adminFee ?? '');
+      } else {
+        // Fresh calc from a membership operation.
+        const eff = (row.new_courses && String(row.new_courses).trim()) ? row.new_courses : row.courses;
+        const val = (row.new_prices && num(row.new_prices)) ? num(row.new_prices) : num(row.price);
+        setMVal(val ? String(val) : '');
+        setMMonths(levelsOf(eff) ? String(levelsOf(eff)) : '');
+        setTPaid(num(row.total_paid_calc) ? String(num(row.total_paid_calc)) : '');
+        setConsumed(''); setSessions(''); setSessionPrice(''); setDiscountPct(''); setPlacement(''); setAdminFee('');
+        reqIdRef.current = (globalThis.crypto?.randomUUID?.() || `refund-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      }
       setSeededId(row.id);
+      save.reset();
     }
   };
 
@@ -80,23 +105,46 @@ export default function RefundCalculatorSection() {
   const totalDeduction = levelValue + sessionValue + discountValue + num(placement) + num(adminFee);
   const refund = num(tPaid) - totalDeduction;
 
+  const save = useMutation({
+    mutationFn: () => {
+      const today = new Date();
+      const entryDate = `${today.getMonth() + 1}/${today.getDate()}/${today.getFullYear()}`;
+      const months = `${String(today.getFullYear()).slice(2)}-${MONTH_ABBR[today.getMonth()]}`;
+      const neg = -r2(refund); // refund stored as a NEGATIVE amount (like the other refund rows)
+      const summary = [
+        `استرداد — ${picked.client_name || ''}`,
+        `العضوية ${fmt(mVal)} ÷ ${mMonths || 0} شهر = ثمن الليفل ${fmt(perLevel)}`,
+        `مستهلك ${consumed || 0} ليفل = ${fmt(levelValue)} · سيشن ${sessions || 0}×${fmt(sessionPrice)} = ${fmt(sessionValue)}`,
+        `خصم ${discountPct || 0}% = ${fmt(discountValue)} · تحديد مستوى ${fmt(placement)} · إداري ${fmt(adminFee)}`,
+        `إجمالي الخصم ${fmt(totalDeduction)} → الاسترداد ${fmt(refund)}`,
+      ].join('\n');
+      const note = `${summary}\n${REFUND_TAG}${JSON.stringify({ mVal, mMonths, tPaid, consumed, sessions, sessionPrice, discountPct, placement, adminFee })}`;
+      return api.post('/cs-sales-register', {
+        code: picked.code, client_name: picked.client_name, mobile_no: picked.mobile_no,
+        courses: 'Refund', price: neg, total_paid_same_month: neg, balance: 0,
+        paid_status: 'Paid', payment_way: 'Cash', department: 'Sales',
+        entry_date: entryDate, months, note, op_type: '',
+        client_request_id: reqIdRef.current,
+      }).then((r) => r.data);
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['cs-sales'] }); },
+  });
+
   return (
     <div className="space-y-4" dir="rtl">
       <SectionCard title="استرداد — حاسبة" icon={RotateCcw} accent="rose">
-        {/* Search */}
         <div className="relative">
           <label className="block text-[11px] font-bold text-gray-500 mb-1">ابحث بكود العميل أو رقم الموبايل</label>
           <div className="relative">
             <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               type="text" value={q} onChange={(e) => setQ(e.target.value)} autoComplete="off"
-              placeholder="مثال: 24794 أو 01001234567"
+              placeholder="مثال: 24275 أو 01001234567"
               className="w-full pr-9 pl-3 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none"
             />
           </div>
         </div>
 
-        {/* Results — pick the membership operation to refund */}
         {q.trim().length >= 1 && (
           <div className="mt-3 border border-gray-100 rounded-2xl overflow-hidden">
             {isFetching && !rows.length ? (
@@ -105,21 +153,22 @@ export default function RefundCalculatorSection() {
               <div className="p-3 text-sm text-gray-400">لا توجد نتائج</div>
             ) : (
               <div className="max-h-56 overflow-auto divide-y divide-gray-50">
-                {rows.map((r) => {
-                  const eff = (r.new_courses && String(r.new_courses).trim()) ? r.new_courses : r.courses;
-                  const active = picked && picked.id === r.id;
+                {rows.map((rw) => {
+                  const eff = (rw.new_courses && String(rw.new_courses).trim()) ? rw.new_courses : rw.courses;
+                  const active = picked && picked.id === rw.id;
+                  const refRow = isRefundRow(rw);
                   return (
                     <button
-                      key={r.id} type="button" onClick={() => pick(r)}
+                      key={rw.id} type="button" onClick={() => pick(rw)}
                       className={`w-full text-right px-3 py-2 text-sm flex items-center justify-between gap-2 transition ${active ? 'bg-rose-50' : 'hover:bg-gray-50'}`}
                     >
                       <span className="flex items-center gap-2 min-w-0">
-                        <span className="font-black text-gray-800 font-mono">{r.code}</span>
-                        <span className="text-gray-600 truncate">{r.client_name || '—'}</span>
-                        <span className="text-gray-400 text-xs">{r.mobile_no || ''}</span>
+                        <span className="font-black text-gray-800 font-mono">{rw.code}</span>
+                        <span className="text-gray-600 truncate">{rw.client_name || '—'}</span>
+                        <span className="text-gray-400 text-xs">{rw.mobile_no || ''}</span>
                       </span>
-                      <span className="text-xs text-gray-500 whitespace-nowrap">
-                        {eff || '—'} · {fmt(r.price)} ج
+                      <span className={`text-xs whitespace-nowrap ${refRow ? 'text-rose-600 font-bold' : 'text-gray-500'}`}>
+                        {refRow ? `استرداد محفوظ · ${fmt(rw.price)} ج` : `${eff || '—'} · ${fmt(rw.price)} ج`}
                       </span>
                     </button>
                   );
@@ -136,8 +185,9 @@ export default function RefundCalculatorSection() {
           icon={User}
           accent="amber"
           actions={
-            <div className="text-xs font-bold text-gray-600">
-              {picked.code} · {picked.client_name || '—'} · {picked.mobile_no || ''}
+            <div className="flex items-center gap-2 text-xs font-bold text-gray-600">
+              {savedRefund && <span className="px-2 py-0.5 rounded-lg bg-rose-100 text-rose-700">استرداد محفوظ</span>}
+              <span>{picked.code} · {picked.client_name || '—'} · {picked.mobile_no || ''}</span>
             </div>
           }
         >
@@ -164,8 +214,35 @@ export default function RefundCalculatorSection() {
               />
             </div>
           </div>
+
+          {/* Save — only for a fresh calc (not when reviewing an already-saved refund) */}
+          {!savedRefund && (
+            <div className="mt-4 flex items-center gap-3 flex-wrap">
+              <button
+                type="button"
+                onClick={() => save.mutate()}
+                disabled={save.isPending || save.isSuccess}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black text-white bg-rose-600 hover:bg-rose-700 transition disabled:opacity-50"
+              >
+                {save.isPending ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />}
+                {save.isSuccess ? 'تم الحفظ' : 'حفظ الاسترداد'}
+              </button>
+              {save.isSuccess && (
+                <span className="inline-flex items-center gap-1 text-sm font-bold text-emerald-700">
+                  <CheckCircle size={16} /> اتسجّلت عملية استرداد بمبلغ {fmt(-r2(refund))} بتاريخ النهاردة في قائمة العمليات
+                </span>
+              )}
+              {save.isError && (
+                <span className="inline-flex items-center gap-1 text-sm font-bold text-rose-700">
+                  <AlertTriangle size={16} /> {save.error?.response?.data?.error || 'فشل الحفظ'}
+                </span>
+              )}
+            </div>
+          )}
           <p className="mt-3 text-[11px] text-gray-500 bg-gray-50 rounded-xl p-2">
-            حاسبة عرض فقط — مابتسجّلش عملية في النظام. القيم العلوية اتملّت من عملية العميل وتقدر تعدّلها، والباقي تكتبه.
+            {savedRefund
+              ? 'استرداد محفوظ — دي المربعات زي ما اتحسبت وقت الحفظ (للمراجعة فقط).'
+              : 'الحفظ بيسجّل عملية «Refund» بالمبلغ بالسالب بتاريخ النهاردة، وبيحفظ الحساب ده جواها — ترجعله من البحث بأي وقت.'}
           </p>
         </SectionCard>
       )}
