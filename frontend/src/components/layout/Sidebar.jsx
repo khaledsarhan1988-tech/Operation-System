@@ -140,7 +140,7 @@ function getAdminLinks(user) {
     // { to: '/admin/control', label: 'nav.controlPanel', icon: LayoutDashboard, color: 'pink' }, // hidden per user request — route /admin/control still works
     { to: '/admin/distribution', label: 'nav.clientDistribution', icon: Shuffle,         color: 'cyan' },
     { to: '/admin/pipeline',     label: 'nav.clientPipeline',     icon: Kanban,          color: 'emerald' },
-    { to: '/admin/sales-register', label: 'كشف العملاء',          icon: Wallet,          color: 'emerald' },
+    // «كشف العملاء» moved into the owner-only «إدارة مالية» section (was here).
     // ── Collapsible group: تطوير الأداء والمهام (toggle-only header, no own page).
     //    The 4 pages below were moved here from their standalone positions.
     { group: true, key: 'perf-tasks', label: 'تطوير الأداء والمهام', icon: TrendingUp, color: 'violet' },
@@ -192,9 +192,10 @@ function getAdminLinks(user) {
   // mirrors the private salaries-definition page's access model.
   const isSalaryOwner = String(user?.username || '').toLowerCase() === 'admin';
   const employeeSalaries = isSalaryOwner ? [
-    { type: 'section', label: 'مرتبات المدربين' },
+    { type: 'section', label: 'إدارة مالية' },
     { to: '/admin/reports/trainer-salaries', label: 'تعريف أنظمة المرتبات', icon: Wallet, color: 'amber' },
     { to: '/admin/salaries/trainers',        label: 'مرتبات المدربين',      icon: Wallet, color: 'amber' },
+    { to: '/admin/sales-register',           label: 'كشف العملاء',          icon: Wallet, color: 'emerald' },
   ] : [];
 
   // ─── تسليمات الأقسام + شجرة «Enrollment» (2026-07-04, Owner) ────────────────
