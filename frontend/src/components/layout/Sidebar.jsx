@@ -99,19 +99,19 @@ const REPORT_LINKS = [
   { to: '/admin/reports/fix-report',            label: 'nav.fixReports',         icon: FileText,      color: 'orange',  management: 'Customer Services', sub: true },
   { to: '/admin/reports/attendance-absence',    label: 'nav.attendanceReports',  icon: Activity,      color: 'teal',    management: 'Customer Services', sub: true },
   { to: '/admin/reports/education',             label: 'nav.educationReports',   icon: GraduationCap, color: 'violet',  management: 'Education' },
-  // Nested sub-group "الإشغال والمدربين" (collapsible) inside Education Reports —
-  // holds the 4 trainer report pages.
-  { group: true, key: 'occupancy-trainers', label: 'الإشغال والمدربين', icon: Activity, color: 'teal', sub: true, management: 'Education',
-    children: [
-      { to: '/admin/reports/trainer-utilization',    label: 'nav.trainerUtilization',   icon: Activity,  color: 'teal'   },
-      { to: '/admin/reports/find-available-trainer', label: 'nav.findAvailableTrainer', icon: Sparkles,  color: 'cyan'   },
-      { to: '/admin/reports/trainer-dashboard',      label: 'nav.trainerDashboard',     icon: BarChart3, color: 'indigo' },
-      { to: '/admin/reports/phone-call-gap',         label: 'فجوة الفون كول',            icon: PhoneCall, color: 'rose'   },
-      { to: '/admin/reports/trainer-details',        label: 'تفاصيل المدربين',           icon: Users,     color: 'amber'  },
-      { to: '/admin/reports/trainer-recruitment',    label: 'توظيف المدربين',            icon: UserPlus,  color: 'rose'   },
-      { to: '/admin/reports/trainer-org-chart',      label: 'الهيكل التنظيمي للمحاضرين', icon: Network,   color: 'indigo' },
-    ],
-  },
+  // "الإشغال والمدربين" — moved under the Enrollment management (2026-07-04,
+  // Owner): shown to Enrollment managers (+ super-admin), NOT Education managers.
+  // Flattened into a top-level parent header + sub-links (each tagged
+  // management:'Enrollment') so the collapsible group survives the management
+  // filter even when its old Education-Reports parent is hidden.
+  { group: true, key: 'occupancy-trainers', label: 'الإشغال والمدربين', icon: Activity, color: 'teal', management: 'Enrollment' },
+  { to: '/admin/reports/trainer-utilization',    label: 'nav.trainerUtilization',   icon: Activity,  color: 'teal',   sub: true, management: 'Enrollment' },
+  { to: '/admin/reports/find-available-trainer', label: 'nav.findAvailableTrainer', icon: Sparkles,  color: 'cyan',   sub: true, management: 'Enrollment' },
+  { to: '/admin/reports/trainer-dashboard',      label: 'nav.trainerDashboard',     icon: BarChart3, color: 'indigo', sub: true, management: 'Enrollment' },
+  { to: '/admin/reports/phone-call-gap',         label: 'فجوة الفون كول',            icon: PhoneCall, color: 'rose',   sub: true, management: 'Enrollment' },
+  { to: '/admin/reports/trainer-details',        label: 'تفاصيل المدربين',           icon: Users,     color: 'amber',  sub: true, management: 'Enrollment' },
+  { to: '/admin/reports/trainer-recruitment',    label: 'توظيف المدربين',            icon: UserPlus,  color: 'rose',   sub: true, management: 'Enrollment' },
+  { to: '/admin/reports/trainer-org-chart',      label: 'الهيكل التنظيمي للمحاضرين', icon: Network,   color: 'indigo', sub: true, management: 'Enrollment' },
   { to: '/admin/reports/quality',               label: 'nav.qualityReports',     icon: ShieldCheck,   color: 'green',   management: 'Quality' },
   { to: '/admin/reports/quality-snapshots',     label: 'nav.qualitySnapshots',   icon: Snowflake,     color: 'cyan',    management: 'Quality', sub: true },
   { to: '/admin/reschedules',                    label: 'إعادة جدولة المحاضرات',     icon: CalendarClock, color: 'indigo',  management: 'Quality', sub: true },
@@ -208,13 +208,27 @@ function getAdminLinks(user) {
     { to: '/admin/salaries/trainers',        label: 'مرتبات المدربين',      icon: Wallet, color: 'amber' },
   ] : [];
 
-  // Enr Groups — admin-only, group-oriented view sitting right under Enrollment.
-  const enrGroupsLink = [
-    { to: '/subscriptions/enr-groups', label: 'Enr Groups', icon: GraduationCap, color: 'emerald' },
-    ...(user?.role === 'admin' ? [{ to: '/subscriptions/deleted-groups', label: 'مراجعة المجموعات المحذوفة', icon: AlertTriangle, color: 'rose' }] : []),
-  ];
+  // ─── تسليمات الأقسام — management-scoped (2026-07-04, Owner) ────────────────
+  //   • Customer Services Department → Customer-Services managers only.
+  //   • Enrollment + Enr Groups + مراجعة المجموعات المحذوفة → Enrollment managers.
+  //   ('All' super-admin sees everything.) Replaces the old unconditional
+  //   DELIVERIES_LINKS + enrGroupsLink spread that showed for EVERY admin.
+  const hasMgmt = (m) => userMgmts.has('All') || userMgmts.has(m);
+  const csDelivery = hasMgmt('Customer Services')
+    ? [{ to: '/subscriptions/cs-department', label: 'Customer Services Department', icon: GraduationCap, color: 'violet' }]
+    : [];
+  const enrDelivery = hasMgmt('Enrollment')
+    ? [
+        { to: '/subscriptions/enrollment', label: 'Enrollment', icon: GraduationCap, color: 'cyan' },
+        { to: '/subscriptions/enr-groups', label: 'Enr Groups', icon: GraduationCap, color: 'emerald' },
+        ...(user?.role === 'admin' ? [{ to: '/subscriptions/deleted-groups', label: 'مراجعة المجموعات المحذوفة', icon: AlertTriangle, color: 'rose' }] : []),
+      ]
+    : [];
+  const deliveriesSection = (csDelivery.length || enrDelivery.length)
+    ? [{ type: 'section', label: 'تسليمات الأقسام' }, ...csDelivery, ...enrDelivery]
+    : [];
 
-  return [...base, ...reports, ...monitoring, ...financeSection, ...employeeSalaries, ...DELIVERIES_LINKS, ...enrGroupsLink];
+  return [...base, ...reports, ...monitoring, ...financeSection, ...employeeSalaries, ...deliveriesSection];
 }
 
 // Avatar visuals are owned by the shared UserAvatar component now.

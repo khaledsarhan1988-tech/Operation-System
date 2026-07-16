@@ -61,6 +61,7 @@ const MANAGEMENT_OPTIONS = [
   { value: 'Customer Services', label: 'خدمة العملاء' },
   { value: 'Education',         label: 'التعليم' },
   { value: 'Quality',           label: 'الجودة' },
+  { value: 'Enrollment',        label: 'Enrollment' },
 ];
 
 function UserModal({ open, onClose, user, onSaved }) {
@@ -207,6 +208,7 @@ function UserModal({ open, onClose, user, onSaved }) {
               <option value="Customer Services">خدمة العملاء</option>
               <option value="Education">التعليم</option>
               <option value="Quality">الجودة</option>
+              <option value="Enrollment">Enrollment</option>
             </select>
           </div>
           {/* Additional managements — only meaningful when the primary
@@ -470,7 +472,7 @@ export default function UserManagement() {
     } },
     { key: 'department', label: t('admin.department') },
     { key: 'management', label: 'الإدارة', render: v => {
-      const map = { 'Customer Services': 'خدمة العملاء', 'Education': 'التعليم', 'Quality': 'الجودة' };
+      const map = { 'Customer Services': 'خدمة العملاء', 'Education': 'التعليم', 'Quality': 'الجودة', 'Enrollment': 'Enrollment' };
       return <span className="badge bg-accent/10 text-accent">{map[v] || v}</span>;
     }},
     { key: 'line', label: 'Line', render: v => <span className="badge bg-primary/10 text-primary">{v || 'Ahmed Hassan'}</span> },
