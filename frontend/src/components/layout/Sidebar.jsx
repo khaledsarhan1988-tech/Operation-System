@@ -276,35 +276,37 @@ export default function Sidebar({ mobile, onClose }) {
   // page key, so a user holding the umbrella OR an individual key sees the link.
   const grants = expandGrants(user?.extra_pages);
   const grantedLinks = [];
+  // Per-PAGE grants (users.extra_pages) — show the SPECIFIC pages an admin
+  // granted this user, for ANY role INCLUDING مدير/admin (Owner 2026-07-04:
+  // «لما أحدد صفحات مختارة لأي يوزر، الصفحات دي هي اللي تتفتح عنده»). Grants are
+  // ADDITIVE to whatever the role/management already shows; each link appears
+  // only if its key is in the user's extra_pages (`grants.has`).
+  const trainerLinks = [
+    { key: 'trainer-utilization',    to: '/reports/trainer-utilization',    label: 'nav.trainerUtilization',   icon: Activity,  color: 'teal'   },
+    { key: 'find-available-trainer', to: '/reports/find-available-trainer', label: 'nav.findAvailableTrainer', icon: Sparkles,  color: 'cyan'   },
+    { key: 'trainer-dashboard',      to: '/reports/trainer-dashboard',      label: 'nav.trainerDashboard',     icon: BarChart3, color: 'indigo' },
+    { key: 'trainer-work-history',   to: '/reports/trainer-work-history',   label: 'سجل عمل المدربين',          icon: FileText,  color: 'slate'  },
+    { key: 'phone-call-gap',         to: '/reports/phone-call-gap',         label: 'فجوة الفون كول',            icon: PhoneCall, color: 'rose'   },
+    { key: 'trainer-details',        to: '/reports/trainer-details',        label: 'تفاصيل المدربين',           icon: Users,     color: 'amber'  },
+    { key: 'trainer-recruitment',    to: '/reports/trainer-recruitment',    label: 'توظيف المدربين',            icon: UserPlus,  color: 'rose'   },
+    { key: 'trainer-org-chart',      to: '/reports/trainer-org-chart',      label: 'الهيكل التنظيمي للمحاضرين', icon: Network,   color: 'indigo' },
+  ].filter(l => grants.has(l.key)).map(({ key, ...l }) => l);
+  if (trainerLinks.length) {
+    grantedLinks.push({ type: 'section', label: 'صفحات ممنوحة' }, ...trainerLinks);
+  }
+  // تسليمات الأقسام grants — role-neutral /subscriptions/* routes.
+  const delGrants = [];
+  if (grants.has('cs-deliveries'))
+    delGrants.push({ to: '/subscriptions/cs-department', label: 'Customer Services Department', icon: GraduationCap, color: 'violet' });
+  if (grants.has('cs-enrollment'))
+    delGrants.push({ to: '/subscriptions/enrollment', label: 'Enrollment', icon: GraduationCap, color: 'cyan' });
+  if (grants.has('enr-groups'))
+    delGrants.push({ to: '/subscriptions/enr-groups', label: 'Enr Groups', icon: GraduationCap, color: 'emerald' });
+  if (delGrants.length) {
+    grantedLinks.push({ type: 'section', label: 'تسليمات الأقسام — ممنوحة' }, ...delGrants);
+  }
+  // كشف العملاء — Finance NON-admins only (e.g. وكيل); admins get it via getAdminLinks.
   if (user?.role !== 'admin') {
-    // الإشغال والمدربين — one link per granted page (labels/order mirror the
-    // admin group exactly so agent ↔ admin look identical).
-    const trainerLinks = [
-      { key: 'trainer-utilization',    to: '/reports/trainer-utilization',    label: 'nav.trainerUtilization',   icon: Activity,  color: 'teal'   },
-      { key: 'find-available-trainer', to: '/reports/find-available-trainer', label: 'nav.findAvailableTrainer', icon: Sparkles,  color: 'cyan'   },
-      { key: 'trainer-dashboard',      to: '/reports/trainer-dashboard',      label: 'nav.trainerDashboard',     icon: BarChart3, color: 'indigo' },
-      { key: 'trainer-work-history',   to: '/reports/trainer-work-history',   label: 'سجل عمل المدربين',          icon: FileText,  color: 'slate'  },
-      { key: 'phone-call-gap',         to: '/reports/phone-call-gap',         label: 'فجوة الفون كول',            icon: PhoneCall, color: 'rose'   },
-      { key: 'trainer-details',        to: '/reports/trainer-details',        label: 'تفاصيل المدربين',           icon: Users,     color: 'amber'  },
-      { key: 'trainer-recruitment',    to: '/reports/trainer-recruitment',    label: 'توظيف المدربين',            icon: UserPlus,  color: 'rose'   },
-      { key: 'trainer-org-chart',      to: '/reports/trainer-org-chart',      label: 'الهيكل التنظيمي للمحاضرين', icon: Network,   color: 'indigo' },
-    ].filter(l => grants.has(l.key)).map(({ key, ...l }) => l);
-    if (trainerLinks.length) {
-      grantedLinks.push({ type: 'section', label: 'الإشغال والمدربين' }, ...trainerLinks);
-    }
-    // تسليمات الأقسام grants — the two CS pages live on the role-neutral
-    // /subscriptions/* routes, so a granted user of any role can reach them.
-    if (grants.has('cs-deliveries') || grants.has('cs-enrollment') || grants.has('enr-groups')) {
-      grantedLinks.push({ type: 'section', label: 'تسليمات الأقسام' });
-      if (grants.has('cs-deliveries'))
-        grantedLinks.push({ to: '/subscriptions/cs-department', label: 'Customer Services Department', icon: GraduationCap, color: 'violet' });
-      if (grants.has('cs-enrollment'))
-        grantedLinks.push({ to: '/subscriptions/enrollment', label: 'Enrollment', icon: GraduationCap, color: 'cyan' });
-      if (grants.has('enr-groups'))
-        grantedLinks.push({ to: '/subscriptions/enr-groups', label: 'Enr Groups', icon: GraduationCap, color: 'emerald' });
-    }
-    // كشف العملاء — owner + الإدارة المالية (Finance) members. A NON-admin (e.g.
-    // a وكيل/agent) assigned to Finance reaches it on the neutral /reports mount.
     const finMgmts = [user?.management, ...String(user?.extra_managements || '').split(',')]
       .map(s => String(s || '').trim()).filter(Boolean);
     if (finMgmts.includes('Finance') || finMgmts.includes('All')) {
