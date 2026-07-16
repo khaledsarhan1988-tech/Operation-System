@@ -144,7 +144,7 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate to="dashboard" replace /> },
       { path: 'dashboard',                    element: <LeaderDashboard /> },
-      { path: 'team',                         element: <TeamOverview /> },
+      { path: 'team',                         element: <PrivateRoute requireManagement="Enrollment"><TeamOverview /></PrivateRoute> },
       { path: 'org-chart',                    element: <OrgChart /> },
       { path: 'absent-report',                element: <AbsentReport /> },
       { path: 'groups',                       element: <GroupCoverage /> },
@@ -181,7 +181,7 @@ const router = createBrowserRouter([
       { path: 'remarks-monitor',              element: <RemarksMonitor /> },
       { path: 'remarks-monitor/category',     element: <RemarksMonitorCategory /> },
       { path: 'todos',                        element: <AdminTodos /> },
-      { path: 'team',                         element: <TeamPage /> },
+      { path: 'team',                         element: <PrivateRoute requireManagement="Enrollment"><TeamPage /></PrivateRoute> },
       { path: 'org-chart',                    element: <OrgChart /> },
       { path: 'group-receiving',              element: <GroupReceiving /> },
       { path: 'profile',                      element: <Profile /> },

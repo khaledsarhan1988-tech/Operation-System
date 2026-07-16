@@ -76,7 +76,7 @@ const ENROLLMENT_LEADER_LINKS = [
 const LEADER_LINKS = [
   { to: '/leader/profile',                      label: 'صفحتي الشخصية',         icon: KeyRound,        color: 'slate' },
   { to: '/leader',                              label: 'nav.dashboard',        icon: LayoutDashboard, end: true, color: 'blue' },
-  { to: '/leader/team',                         label: 'nav.team',             icon: Users,           color: 'purple' },
+  // فريق العمل removed from leaders — restricted to مسؤول + مدير Enrollment (2026-07-04).
   { to: '/leader/org-chart',                    label: 'الهيكل التنظيمي',       icon: Network,         color: 'indigo' },
   { to: '/leader/groups',                       label: 'nav.groupCoverage',    icon: Globe,           color: 'cyan' },
   { to: '/leader/absent',                       label: 'nav.absentReport',     icon: UserX,           color: 'rose' },
@@ -95,13 +95,13 @@ const LEADER_LINKS = [
 ];
 
 const REPORT_LINKS = [
-  { to: '/admin/reports/customer-services',     label: 'nav.csReports',          icon: Headphones,    color: 'rose',    management: 'Customer Services' },
+  { to: '/admin/reports/customer-services',     label: 'إدارة خدمة العملاء',      icon: Headphones,    color: 'rose',    management: 'Customer Services' },
   { to: '/admin/reports/fix-report',            label: 'nav.fixReports',         icon: FileText,      color: 'orange',  management: 'Customer Services', sub: true },
   { to: '/admin/reports/attendance-absence',    label: 'nav.attendanceReports',  icon: Activity,      color: 'teal',    management: 'Customer Services', sub: true },
-  { to: '/admin/reports/education',             label: 'nav.educationReports',   icon: GraduationCap, color: 'violet',  management: 'Education' },
+  { to: '/admin/reports/education',             label: 'الإدارة التعليمية',       icon: GraduationCap, color: 'violet',  management: 'Education' },
   // «الإشغال والمدربين» is no longer a REPORT_LINKS entry — it moved into the
   // "Enrollment" department tree built in getAdminLinks (2026-07-04, Owner).
-  { to: '/admin/reports/quality',               label: 'nav.qualityReports',     icon: ShieldCheck,   color: 'green',   management: 'Quality' },
+  { to: '/admin/reports/quality',               label: 'إدارة الجودة',            icon: ShieldCheck,   color: 'green',   management: 'Quality' },
   { to: '/admin/reports/quality-snapshots',     label: 'nav.qualitySnapshots',   icon: Snowflake,     color: 'cyan',    management: 'Quality', sub: true },
   { to: '/admin/reschedules',                    label: 'إعادة جدولة المحاضرات',     icon: CalendarClock, color: 'indigo',  management: 'Quality', sub: true },
   { to: '/admin/schedule-changes',               label: 'كشف تلاعب الجدول',          icon: AlertTriangle, color: 'rose',    management: 'Quality', sub: true },
@@ -117,6 +117,10 @@ const managementMap = {
 
 function getAdminLinks(user) {
   const isSuperAdmin = user?.management === 'All';
+  // فريق العمل access = مسؤول (All) OR مدير Enrollment (management incl. Enrollment).
+  const _mgmts = [user?.management, ...String(user?.extra_managements || '').split(',')]
+    .map(s => String(s || '').trim()).filter(Boolean);
+  const isEnrollmentMgr = _mgmts.includes('All') || _mgmts.includes('Enrollment');
   const base = [
     { to: '/admin/profile',      label: 'صفحتي الشخصية',      icon: KeyRound,        color: 'slate' },
     // 'حالة قاعدة البيانات' pinned as the 2nd item, right after the profile (super-admin only).
@@ -134,12 +138,15 @@ function getAdminLinks(user) {
     ] : []),
     // ── Collapsible group: الفريق والهيكل التنظيمي (toggle-only header) ──
     { group: true, key: 'team-org', label: 'الفريق والهيكل التنظيمي', icon: Users, color: 'purple' },
-    { to: '/admin/team',         label: 'nav.team',          icon: Users,           color: 'purple', sub: true },
+    // فريق العمل — مسؤول + مدير Enrollment only (backend team API = requireManagement('Enrollment')).
+    ...(isEnrollmentMgr ? [{ to: '/admin/team', label: 'nav.team', icon: Users, color: 'purple', sub: true }] : []),
     { to: '/admin/org-chart',    label: 'الهيكل التنظيمي',    icon: Network,         color: 'indigo', sub: true },
     // { to: '/admin/group-receiving', label: 'استلام المجموعات', icon: ClipboardCheck, color: 'cyan' }, // hidden per user request — route still works
     // { to: '/admin/control', label: 'nav.controlPanel', icon: LayoutDashboard, color: 'pink' }, // hidden per user request — route /admin/control still works
-    { to: '/admin/distribution', label: 'nav.clientDistribution', icon: Shuffle,         color: 'cyan' },
-    { to: '/admin/pipeline',     label: 'nav.clientPipeline',     icon: Kanban,          color: 'emerald' },
+    // ── Collapsible group: إدارة العملاء (توزيع + بايبلاين), toggle-only header ──
+    { group: true, key: 'clients', label: 'إدارة العملاء', icon: Users, color: 'cyan' },
+    { to: '/admin/distribution', label: 'nav.clientDistribution', icon: Shuffle,         color: 'cyan',    sub: true },
+    { to: '/admin/pipeline',     label: 'nav.clientPipeline',     icon: Kanban,          color: 'emerald', sub: true },
     // «كشف العملاء» moved into the owner-only «إدارة مالية» section (was here).
     // ── Collapsible group: تطوير الأداء والمهام (toggle-only header, no own page).
     //    The 4 pages below were moved here from their standalone positions.
@@ -154,7 +161,7 @@ function getAdminLinks(user) {
     // Department-scoped admins (Customer Services / Quality / Education) don't see these.
     // 'إعدادات النظام' moved into the 'تطوير الأداء والمهام' group; 'حالة قاعدة
     // البيانات' moved up to the 2nd position (both above).
-    { type: 'section', label: 'nav.reportsSection' },
+    { type: 'section', label: 'الإدارات' },
   ];
   // A user's effective managements = primary + any extras assigned via
   // users.extra_managements. The sidebar shows a report's section when the
@@ -193,13 +200,15 @@ function getAdminLinks(user) {
   // NON-admins (e.g. a وكيل/agent) get it from grantedLinks (neutral /reports).
   const isSalaryOwner = String(user?.username || '').toLowerCase() === 'admin';
   const isFinance = userMgmts.has('All') || userMgmts.has('Finance');
+  // Collapsible group (click «إدارة مالية» to expand/collapse its pages), same
+  // pattern as «الفريق والهيكل التنظيمي». Children are marked sub:true.
   const employeeSalaries = (isSalaryOwner || isFinance) ? [
-    { type: 'section', label: 'إدارة مالية' },
+    { group: true, key: 'finance', label: 'الإدارة المالية', icon: Wallet, color: 'amber' },
     ...(isSalaryOwner ? [
-      { to: '/admin/reports/trainer-salaries', label: 'تعريف أنظمة المرتبات', icon: Wallet, color: 'amber' },
-      { to: '/admin/salaries/trainers',        label: 'مرتبات المدربين',      icon: Wallet, color: 'amber' },
+      { to: '/admin/reports/trainer-salaries', label: 'تعريف أنظمة المرتبات', icon: Wallet, color: 'amber', sub: true },
+      { to: '/admin/salaries/trainers',        label: 'مرتبات المدربين',      icon: Wallet, color: 'amber', sub: true },
     ] : []),
-    { to: '/admin/sales-register',           label: 'كشف العملاء',          icon: Wallet, color: 'emerald' },
+    { to: '/admin/sales-register',           label: 'كشف العملاء',          icon: Wallet, color: 'emerald', sub: true },
   ] : [];
 
   // ─── تسليمات الأقسام + شجرة «Enrollment» (2026-07-04, Owner) ────────────────
@@ -231,7 +240,9 @@ function getAdminLinks(user) {
       ]
     : [];
 
-  return [...base, ...reports, ...monitoring, ...financeSection, ...employeeSalaries, ...enrollmentTree];
+  // Order (Owner 2026-07-04): «الإدارات» = reports (خدمة العملاء/التعليمية/الجودة)
+  // + الإدارة المالية + Enrollment — all together — THEN المراقبة + Center App.
+  return [...base, ...reports, ...employeeSalaries, ...enrollmentTree, ...monitoring, ...financeSection];
 }
 
 // Avatar visuals are owned by the shared UserAvatar component now.
