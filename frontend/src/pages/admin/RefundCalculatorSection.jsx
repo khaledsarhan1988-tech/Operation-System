@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Search, RotateCcw, User, Save, RefreshCw, CheckCircle, AlertTriangle } from 'lucide-react';
+import { Search, RotateCcw, User, Save, RefreshCw, CheckCircle, AlertTriangle, X } from 'lucide-react';
 import api from '../../api/axios';
 import SectionCard from '../../components/ui/SectionCard';
 
@@ -247,6 +247,68 @@ export default function RefundCalculatorSection() {
           </p>
         </SectionCard>
       )}
+    </div>
+  );
+}
+
+// Read-only refund review shown when a saved «Refund» operation is opened from the
+// operations list (so the ✏️ button shows the calc BOXES, not the generic editor).
+export function RefundReviewModal({ row, onClose }) {
+  if (!row) return null;
+  const d = parseRefundData(row);
+  const g = (k) => (d && d[k] != null ? d[k] : '');
+  const mVal = g('mVal'), mMonths = g('mMonths'), tPaid = g('tPaid');
+  const consumed = g('consumed'), sessions = g('sessions'), sessionPrice = g('sessionPrice');
+  const discountPct = g('discountPct'), placement = g('placement'), adminFee = g('adminFee');
+  const perLevel = num(mMonths) > 0 ? num(mVal) / num(mMonths) : 0;
+  const levelValue = num(consumed) * perLevel;
+  const sessionValue = num(sessions) * num(sessionPrice);
+  const discountValue = num(tPaid) * (num(discountPct) / 100);
+  const totalDeduction = levelValue + sessionValue + discountValue + num(placement) + num(adminFee);
+  const refund = num(tPaid) - totalDeduction;
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose} dir="rtl">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="bg-gradient-to-r from-rose-600 to-rose-500 text-white px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-white/20 rounded-xl"><RotateCcw size={20} /></div>
+            <div>
+              <h2 className="text-lg font-black">تفاصيل الاسترداد</h2>
+              <p className="text-xs text-white/80">{row.code} · {row.client_name || '—'} · {row.mobile_no || ''}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-white/15 rounded-xl transition"><X size={20} /></button>
+        </div>
+        <div className="p-6 max-h-[75vh] overflow-auto">
+          {!d ? (
+            <div className="text-sm text-gray-600 bg-amber-50 rounded-xl p-3">
+              الاسترداد ده اتسجّل قبل ميزة حفظ التفاصيل، فمفيش مربعات محفوظة له. المبلغ: {fmt(row.price)}.
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+              <Box label="قيمة العضوية" value={fmt(mVal)} readOnly />
+              <Box label="العضوية كام شهر" value={mMonths} readOnly />
+              <Box label="ثمن الليفل" value={fmt(perLevel)} readOnly />
+              <Box label="عدد الليفل المستهلك" value={consumed} readOnly />
+              <Box label="قيمة الليفل" value={fmt(levelValue)} readOnly />
+              <Box label="عدد السيشن" value={sessions} readOnly />
+              <Box label="ثمن السيشن" value={fmt(sessionPrice)} readOnly />
+              <Box label="قيمة السيشن" value={fmt(sessionValue)} readOnly />
+              <Box label="إجمالي المبلغ المدفوع" value={fmt(tPaid)} readOnly />
+              <Box label="نسبة الخصم %" value={discountPct} readOnly />
+              <Box label="قيمة الخصم" value={fmt(discountValue)} readOnly />
+              <Box label="تحديد مستوى" value={fmt(placement)} readOnly />
+              <Box label="مصاريف إدارية" value={fmt(adminFee)} readOnly />
+              <Box label="إجمالي الخصم" value={fmt(totalDeduction)} readOnly tone="amber" />
+              <div className="col-span-2">
+                <label className="block text-[11px] font-black text-emerald-700 mb-1">إجمالي الاسترداد</label>
+                <input type="text" dir="ltr" readOnly value={fmt(refund)}
+                  className="w-full px-3 py-2.5 border-2 border-emerald-300 rounded-xl text-lg font-black text-emerald-800 bg-emerald-50 outline-none text-right" />
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

@@ -10,7 +10,7 @@ import PageHero from '../../components/ui/PageHero';
 import SectionCard from '../../components/ui/SectionCard';
 import MembershipPricesSection from './MembershipPricesSection';
 import ClientCodesSection from './ClientCodesSection';
-import RefundCalculatorSection from './RefundCalculatorSection';
+import RefundCalculatorSection, { RefundReviewModal } from './RefundCalculatorSection';
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 function fmtAmount(amount) {
@@ -952,6 +952,7 @@ export default function ClientSalesRegister() {
   });
   const [formOpen, setFormOpen] = useState(false);
   const [editId, setEditId] = useState(null);
+  const [refundRow, setRefundRow] = useState(null); // opening a saved refund → boxes review
   const [deleteRow, setDeleteRow] = useState(null);
   const [importOpen, setImportOpen] = useState(false);
   const [view, setView] = useState('operations'); // 'operations' | 'memberships'
@@ -1135,7 +1136,7 @@ export default function ClientSalesRegister() {
                     <td className="px-3 py-2.5 text-xs text-gray-700">{r.agent_name || '—'}</td>
                     <td className="px-3 py-2.5 text-xs text-gray-700">{r.department || '—'}</td>
                     <td className="px-3 py-2.5 text-center whitespace-nowrap">
-                      <button onClick={() => openEdit(r.id)} className="p-1.5 text-indigo-600 hover:bg-indigo-100 rounded-lg transition" title="تعديل"><Pencil size={15} /></button>
+                      <button onClick={() => (String(r.courses || '').trim().toLowerCase() === 'refund' ? setRefundRow(r) : openEdit(r.id))} className="p-1.5 text-indigo-600 hover:bg-indigo-100 rounded-lg transition" title={String(r.courses || '').trim().toLowerCase() === 'refund' ? 'تفاصيل الاسترداد' : 'تعديل'}><Pencil size={15} /></button>
                       <button onClick={() => setDeleteRow(r)} className="p-1.5 text-rose-600 hover:bg-rose-100 rounded-lg transition" title="حذف"><Trash2 size={15} /></button>
                     </td>
                   </tr>
@@ -1157,6 +1158,7 @@ export default function ClientSalesRegister() {
         onClose={() => setFormOpen(false)}
         onSaved={afterMutate}
       />
+      <RefundReviewModal row={refundRow} onClose={() => setRefundRow(null)} />
       <DeleteConfirm row={deleteRow} onClose={() => setDeleteRow(null)} onDeleted={afterMutate} />
       <ImportModal open={importOpen} onClose={() => setImportOpen(false)} onImported={afterMutate} />
     </div>
