@@ -14,13 +14,12 @@ const express = require('express');
 const db = require('../config/database');
 const { saveNow } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
-const { requireOwner } = require('../middleware/roles');
+const { requireOwnerOrManagement } = require('../middleware/roles');
 
 const router = express.Router();
-// Any admin OR a user granted the 'sales-register' page (the العضويات tab lives
-// inside كشف العملاء). requiredMgmt omitted → keeps the original any-admin gate
-// while adding the page-grant path for scoped accounts users.
-router.use(authenticate, requireOwner); // owner-only (part of كشف العملاء)
+// العضويات وأسعارها is a tab inside كشف العملاء → same access: owner OR anyone
+// (any role) in the الإدارة المالية (Finance) department.
+router.use(authenticate, requireOwnerOrManagement('Finance'));
 
 function nowTs() {
   return new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);

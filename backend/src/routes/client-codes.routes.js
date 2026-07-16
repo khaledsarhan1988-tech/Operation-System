@@ -10,12 +10,12 @@ const express = require('express');
 const db = require('../config/database');
 const { saveNow } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
-const { requireOwner } = require('../middleware/roles');
+const { requireOwnerOrManagement } = require('../middleware/roles');
 
 const router = express.Router();
-// Clients Codes lives INSIDE كشف العملاء → same access as the parent module,
-// which is now owner-only (username='admin') per owner decision.
-router.use(authenticate, requireOwner);
+// Clients Codes lives INSIDE كشف العملاء → same access as the parent module:
+// owner OR anyone (any role) in the الإدارة المالية (Finance) department.
+router.use(authenticate, requireOwnerOrManagement('Finance'));
 
 function nowTs() {
   return new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);

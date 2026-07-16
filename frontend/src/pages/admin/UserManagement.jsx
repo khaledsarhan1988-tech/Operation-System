@@ -42,7 +42,8 @@ const GRANTABLE_PAGES = [
   { value: 'cs-deliveries',          label: 'تسليمات الأقسام — Customer Services Department' },
   { value: 'cs-enrollment',          label: 'تسليمات الأقسام — Enrollment' },
   { value: 'enr-groups',             label: 'تسليمات الأقسام — Enr Groups' },
-  { value: 'sales-register',         label: 'كشف العملاء' },
+  // كشف العملاء is NOT a page-grant anymore — access is via the «الإدارة المالية»
+  // (Finance) management (requireOwnerOrManagement). Assign the user management=Finance.
 ];
 
 // Sections a LEADER can manage. Matches users.department values used by the

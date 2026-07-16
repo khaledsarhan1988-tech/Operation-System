@@ -188,13 +188,17 @@ function getAdminLinks(user) {
   // data are all left intact — only the nav links were removed. Center App
   // section above is deliberately untouched.
 
-  // Private "مرتبات الموظفين" section — owner-only (username='admin'),
-  // mirrors the private salaries-definition page's access model.
+  // «إدارة مالية» section. Salary pages stay OWNER-ONLY (username='admin').
+  // كشف العملاء opens to the owner + الإدارة المالية (Finance) admins; Finance
+  // NON-admins (e.g. a وكيل/agent) get it from grantedLinks (neutral /reports).
   const isSalaryOwner = String(user?.username || '').toLowerCase() === 'admin';
-  const employeeSalaries = isSalaryOwner ? [
+  const isFinance = userMgmts.has('All') || userMgmts.has('Finance');
+  const employeeSalaries = (isSalaryOwner || isFinance) ? [
     { type: 'section', label: 'إدارة مالية' },
-    { to: '/admin/reports/trainer-salaries', label: 'تعريف أنظمة المرتبات', icon: Wallet, color: 'amber' },
-    { to: '/admin/salaries/trainers',        label: 'مرتبات المدربين',      icon: Wallet, color: 'amber' },
+    ...(isSalaryOwner ? [
+      { to: '/admin/reports/trainer-salaries', label: 'تعريف أنظمة المرتبات', icon: Wallet, color: 'amber' },
+      { to: '/admin/salaries/trainers',        label: 'مرتبات المدربين',      icon: Wallet, color: 'amber' },
+    ] : []),
     { to: '/admin/sales-register',           label: 'كشف العملاء',          icon: Wallet, color: 'emerald' },
   ] : [];
 
@@ -288,8 +292,14 @@ export default function Sidebar({ mobile, onClose }) {
       if (grants.has('enr-groups'))
         grantedLinks.push({ to: '/subscriptions/enr-groups', label: 'Enr Groups', icon: GraduationCap, color: 'emerald' });
     }
-    // كشف العملاء is now OWNER-ONLY (owner decision) — the page grant no longer
-    // opens it, so no granted-link is emitted here (route is onlyUsername="admin").
+    // كشف العملاء — owner + الإدارة المالية (Finance) members. A NON-admin (e.g.
+    // a وكيل/agent) assigned to Finance reaches it on the neutral /reports mount.
+    const finMgmts = [user?.management, ...String(user?.extra_managements || '').split(',')]
+      .map(s => String(s || '').trim()).filter(Boolean);
+    if (finMgmts.includes('Finance') || finMgmts.includes('All')) {
+      grantedLinks.push({ type: 'section', label: 'إدارة مالية' });
+      grantedLinks.push({ to: '/reports/sales-register', label: 'كشف العملاء', icon: Wallet, color: 'emerald' });
+    }
   }
   const baseLinks = [...roleLinks, ...grantedLinks];
 

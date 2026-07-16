@@ -13,7 +13,7 @@ const ROLE_HOME = {
   enrollment_leader: '/enrollment-leader',
 };
 
-export default function PrivateRoute({ children, minRole, allowedRoles, superAdmin, requireManagement, onlyUsername, requirePage }) {
+export default function PrivateRoute({ children, minRole, allowedRoles, superAdmin, requireManagement, requireManagementAnyRole, onlyUsername, requirePage }) {
   const { user, loading } = useAuth();
   const location = useLocation();
 
@@ -56,6 +56,18 @@ export default function PrivateRoute({ children, minRole, allowedRoles, superAdm
     const mgmts = [user.management, ...String(user.extra_managements || '').split(',')]
       .map(s => String(s || '').trim()).filter(Boolean);
     if (user.role !== 'admin' || !(mgmts.includes('All') || mgmts.includes(requireManagement))) {
+      return <Navigate to={ROLE_HOME[user.role] || '/login'} replace />;
+    }
+  }
+
+  // Like requireManagement but for ANY role (not just admin), plus the owner
+  // account always passes. Used for كشف العملاء: owner + الإدارة المالية (Finance)
+  // members — including a وكيل (agent) assigned to that department.
+  if (requireManagementAnyRole) {
+    const isOwner = String(user?.username || '').toLowerCase() === 'admin';
+    const mgmts = [user.management, ...String(user.extra_managements || '').split(',')]
+      .map(s => String(s || '').trim()).filter(Boolean);
+    if (!isOwner && !(mgmts.includes('All') || mgmts.includes(requireManagementAnyRole))) {
       return <Navigate to={ROLE_HOME[user.role] || '/login'} replace />;
     }
   }

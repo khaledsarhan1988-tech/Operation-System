@@ -114,4 +114,24 @@ function requireOwner(req, res, next) {
   next();
 }
 
-module.exports = { requireRole, requireAnyRole, requireSuperAdmin, requireManagement, requirePageOrManagement, requireOwner };
+/**
+ * requireOwnerOrManagement(required) — the owner account, OR ANY role (agent /
+ * leader / admin) whose management (primary or extra) is `required` or 'All'.
+ * Unlike requireManagement (admin-only), this lets a NON-admin — e.g. a وكيل
+ * (agent) assigned to the الإدارة المالية (Finance) department — reach the page.
+ * Used for كشف العملاء: owner + anyone in the Finance department. (Owner 2026-07-04.)
+ */
+function requireOwnerOrManagement(required) {
+  return (req, res, next) => {
+    const u = req.user;
+    if (!u) return res.status(401).json({ error: 'Unauthenticated' });
+    const isOwner = (u.username && String(u.username).toLowerCase() === OWNER_USERNAME) || u.id === OWNER_ID;
+    if (isOwner) return next();
+    const mgmts = [u.management, ...String(u.extra_managements || '').split(',')]
+      .map(s => String(s || '').trim()).filter(Boolean);
+    if (mgmts.includes('All') || mgmts.includes(required)) return next();
+    return res.status(403).json({ error: 'هذه الصفحة خاصة بصاحب الحساب أو الإدارة المالية' });
+  };
+}
+
+module.exports = { requireRole, requireAnyRole, requireSuperAdmin, requireManagement, requirePageOrManagement, requireOwner, requireOwnerOrManagement };

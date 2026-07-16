@@ -133,7 +133,7 @@ const router = createBrowserRouter([
       { path: 'trainer-details',        element: <PrivateRoute requirePage="trainer-details"><TrainerDetails /></PrivateRoute> },
       { path: 'trainer-recruitment',    element: <PrivateRoute requirePage="trainer-recruitment"><TrainerRecruitment /></PrivateRoute> },
       { path: 'trainer-org-chart',      element: <PrivateRoute requirePage="trainer-org-chart"><TrainerOrgChart /></PrivateRoute> },
-      { path: 'sales-register',         element: <PrivateRoute onlyUsername="admin"><ClientSalesRegister /></PrivateRoute> },
+      { path: 'sales-register',         element: <PrivateRoute requireManagementAnyRole="Finance"><ClientSalesRegister /></PrivateRoute> },
     ],
   },
 
@@ -216,7 +216,7 @@ const router = createBrowserRouter([
       { path: 'finance/matching',              element: <PrivateRoute superAdmin><FinanceMatching /></PrivateRoute> },
       { path: 'finance/lifecycle',             element: <PrivateRoute superAdmin><FinanceLifecycle /></PrivateRoute> },
       { path: 'clients',                       element: <PrivateRoute requireManagement="Customer Services"><Clients /></PrivateRoute> },
-      { path: 'sales-register',                element: <PrivateRoute onlyUsername="admin"><ClientSalesRegister /></PrivateRoute> },
+      { path: 'sales-register',                element: <PrivateRoute requireManagementAnyRole="Finance"><ClientSalesRegister /></PrivateRoute> },
     ],
   },
 
