@@ -99,4 +99,19 @@ function requirePageOrManagement(pageKey, requiredMgmt = null) {
   };
 }
 
-module.exports = { requireRole, requireAnyRole, requireSuperAdmin, requireManagement, requirePageOrManagement };
+/**
+ * requireOwner — the single owner account only (username='admin' / id=1). Use for
+ * private, owner-exclusive pages (trainer salaries, and — per owner — كشف العملاء).
+ * Stricter than requireSuperAdmin: even another 'All' admin is blocked.
+ */
+const OWNER_USERNAME = 'admin';
+const OWNER_ID = 1;
+function requireOwner(req, res, next) {
+  const u = req.user || {};
+  if (!u) return res.status(401).json({ error: 'Unauthenticated' });
+  const isOwner = (u.username && String(u.username).toLowerCase() === OWNER_USERNAME) || u.id === OWNER_ID;
+  if (!isOwner) return res.status(403).json({ error: 'هذه الصفحة خاصة بصاحب الحساب فقط' });
+  next();
+}
+
+module.exports = { requireRole, requireAnyRole, requireSuperAdmin, requireManagement, requirePageOrManagement, requireOwner };

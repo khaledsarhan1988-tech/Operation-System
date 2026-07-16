@@ -18,7 +18,7 @@ const multer = require('multer');
 const db = require('../config/database');
 const { saveNow } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
-const { requirePageOrManagement } = require('../middleware/roles');
+const { requireOwner } = require('../middleware/roles');
 const { importSalesCsv } = require('../services/salesRegisterImport.service');
 
 const router = express.Router();
@@ -29,7 +29,9 @@ const router = express.Router();
 // Grant path: a NON-admin (e.g. an accounts data-entry user) whose
 // users.extra_pages includes 'sales-register' is allowed in WITHOUT full admin
 // rights. Mirrors the frontend route guard (requirePage="sales-register").
-router.use(authenticate, requirePageOrManagement('sales-register', 'Customer Services'));
+// Owner-only (username='admin') per owner decision — كشف العملاء is private
+// financial/PII data; grants & department-admin access were revoked.
+router.use(authenticate, requireOwner);
 
 // CSV upload (one-time historical import) — in-memory, .csv only, 30MB cap.
 const upload = multer({

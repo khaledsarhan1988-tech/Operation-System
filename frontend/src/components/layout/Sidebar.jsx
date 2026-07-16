@@ -288,12 +288,8 @@ export default function Sidebar({ mobile, onClose }) {
       if (grants.has('enr-groups'))
         grantedLinks.push({ to: '/subscriptions/enr-groups', label: 'Enr Groups', icon: GraduationCap, color: 'emerald' });
     }
-    // كشف العملاء grant — the page lives on the role-neutral /reports mount
-    // (guarded by requirePage="sales-register"), so a granted user of any role
-    // reaches it. Same label/icon as the admin sidebar link for consistency.
-    if (grants.has('sales-register')) {
-      grantedLinks.push({ to: '/reports/sales-register', label: 'كشف العملاء', icon: Wallet, color: 'emerald' });
-    }
+    // كشف العملاء is now OWNER-ONLY (owner decision) — the page grant no longer
+    // opens it, so no granted-link is emitted here (route is onlyUsername="admin").
   }
   const baseLinks = [...roleLinks, ...grantedLinks];
 
