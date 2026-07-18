@@ -17,6 +17,8 @@ const IGNORED_GROUP_PATTERNS = [
   /تعويض/,                     // Arabic compensation/makeup session (owner decision 2026-06-18)
   /placem/i,                   // "placement test" / "Placemnent Test" — level-placement, not a real level (owner 2026-07-14)
   /تحديد مستو/,                 // Arabic "تحديد مستوى/مستوي" placement session (owner 2026-07-14)
+  /(^|[^a-z])test(?:[^a-z]|$)/i, // "Test_General_5" — QA/test groups are not real groups (owner 2026-07-15).
+                               //  Standalone token only, so real words containing "test" don't match.
 ];
 
 const isIgnoredGroup = (name) => {
