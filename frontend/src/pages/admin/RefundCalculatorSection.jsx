@@ -253,21 +253,43 @@ export default function RefundCalculatorSection() {
   );
 }
 
-// Read-only refund review shown when a saved «Refund» operation is opened from the
-// operations list (so the ✏️ button shows the calc BOXES, not the generic editor).
+// Refund review/EDIT shown when a saved «Refund» operation is opened from the
+// operations list (✏️). Editable — «حفظ التعديلات» updates the SAME refund row
+// (amount re-derived as negative). Render it with key={row.id} so state re-seeds
+// per row (the parent mounts it only when a row is selected).
 export function RefundReviewModal({ row, onClose }) {
-  if (!row) return null;
-  const d = parseRefundData(row);
-  const g = (k) => (d && d[k] != null ? d[k] : '');
-  const mVal = g('mVal'), mMonths = g('mMonths'), tPaid = g('tPaid');
-  const consumed = g('consumed'), sessions = g('sessions'), sessionPrice = g('sessionPrice');
-  const discountPct = g('discountPct'), placement = g('placement'), adminFee = g('adminFee'), otherFees = g('otherFees');
+  const qc = useQueryClient();
+  const init = parseRefundData(row) || {};
+  const [mVal, setMVal]             = useState(init.mVal ?? '');
+  const [mMonths, setMMonths]       = useState(init.mMonths ?? '');
+  const [tPaid, setTPaid]           = useState(init.tPaid ?? '');
+  const [consumed, setConsumed]     = useState(init.consumed ?? '');
+  const [sessions, setSessions]     = useState(init.sessions ?? '');
+  const [sessionPrice, setSessionPrice] = useState(init.sessionPrice ?? '');
+  const [discountPct, setDiscountPct]   = useState(init.discountPct ?? '');
+  const [placement, setPlacement]   = useState(init.placement ?? '');
+  const [adminFee, setAdminFee]     = useState(init.adminFee ?? '');
+  const [otherFees, setOtherFees]   = useState(init.otherFees ?? '');
+
   const perLevel = num(mMonths) > 0 ? num(mVal) / num(mMonths) : 0;
   const levelValue = num(consumed) * perLevel;
   const sessionValue = num(sessions) * num(sessionPrice);
   const discountValue = num(tPaid) * (num(discountPct) / 100);
   const totalDeduction = levelValue + sessionValue + discountValue + num(placement) + num(adminFee) + num(otherFees);
   const refund = num(tPaid) - totalDeduction;
+
+  const save = useMutation({
+    mutationFn: () => {
+      const neg = -r2(refund);
+      const refund_details = JSON.stringify({ mVal, mMonths, tPaid, consumed, sessions, sessionPrice, discountPct, placement, adminFee, otherFees });
+      // Update the SAME row: spread its existing fields, override the money + calc.
+      return api.put(`/cs-sales-register/${row.id}`, {
+        ...row, courses: 'Refund', price: neg, total_paid_same_month: neg, balance: 0, note: '', refund_details,
+      }).then((r) => r.data);
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['cs-sales'] }); onClose(); },
+  });
+
   return (
     <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose} dir="rtl">
       <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
@@ -282,34 +304,40 @@ export function RefundReviewModal({ row, onClose }) {
           <button onClick={onClose} className="p-2 hover:bg-white/15 rounded-xl transition"><X size={20} /></button>
         </div>
         <div className="p-6 max-h-[75vh] overflow-auto">
-          {!d ? (
-            <div className="text-sm text-gray-600 bg-amber-50 rounded-xl p-3">
-              الاسترداد ده اتسجّل قبل ميزة حفظ التفاصيل، فمفيش مربعات محفوظة له. المبلغ: {fmt(row.price)}.
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            <Box label="قيمة العضوية" value={mVal} onChange={setMVal} />
+            <Box label="العضوية كام شهر" value={mMonths} onChange={setMMonths} />
+            <Box label="ثمن الليفل — تلقائي" value={fmt(perLevel)} readOnly />
+            <Box label="عدد الليفل المستهلك" value={consumed} onChange={setConsumed} />
+            <Box label="قيمة الليفل — تلقائي" value={fmt(levelValue)} readOnly />
+            <Box label="عدد السيشن" value={sessions} onChange={setSessions} />
+            <Box label="ثمن السيشن" value={sessionPrice} onChange={setSessionPrice} />
+            <Box label="قيمة السيشن — تلقائي" value={fmt(sessionValue)} readOnly />
+            <Box label="إجمالي المبلغ المدفوع" value={tPaid} onChange={setTPaid} />
+            <Box label="نسبة الخصم %" value={discountPct} onChange={setDiscountPct} />
+            <Box label="قيمة الخصم — تلقائي" value={fmt(discountValue)} readOnly />
+            <Box label="تحديد مستوى" value={placement} onChange={setPlacement} />
+            <Box label="مصاريف إدارية" value={adminFee} onChange={setAdminFee} />
+            <Box label="مصاريف أخرى" value={otherFees} onChange={setOtherFees} />
+            <Box label="إجمالي الخصم — تلقائي" value={fmt(totalDeduction)} readOnly tone="amber" />
+            <div className="col-span-2">
+              <label className="block text-[11px] font-black text-emerald-700 mb-1">إجمالي الاسترداد — تلقائي</label>
+              <input type="text" dir="ltr" readOnly value={fmt(refund)}
+                className="w-full px-3 py-2.5 border-2 border-emerald-300 rounded-xl text-lg font-black text-emerald-800 bg-emerald-50 outline-none text-right" />
             </div>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-              <Box label="قيمة العضوية" value={fmt(mVal)} readOnly />
-              <Box label="العضوية كام شهر" value={mMonths} readOnly />
-              <Box label="ثمن الليفل" value={fmt(perLevel)} readOnly />
-              <Box label="عدد الليفل المستهلك" value={consumed} readOnly />
-              <Box label="قيمة الليفل" value={fmt(levelValue)} readOnly />
-              <Box label="عدد السيشن" value={sessions} readOnly />
-              <Box label="ثمن السيشن" value={fmt(sessionPrice)} readOnly />
-              <Box label="قيمة السيشن" value={fmt(sessionValue)} readOnly />
-              <Box label="إجمالي المبلغ المدفوع" value={fmt(tPaid)} readOnly />
-              <Box label="نسبة الخصم %" value={discountPct} readOnly />
-              <Box label="قيمة الخصم" value={fmt(discountValue)} readOnly />
-              <Box label="تحديد مستوى" value={fmt(placement)} readOnly />
-              <Box label="مصاريف إدارية" value={fmt(adminFee)} readOnly />
-              <Box label="مصاريف أخرى" value={fmt(otherFees)} readOnly />
-              <Box label="إجمالي الخصم" value={fmt(totalDeduction)} readOnly tone="amber" />
-              <div className="col-span-2">
-                <label className="block text-[11px] font-black text-emerald-700 mb-1">إجمالي الاسترداد</label>
-                <input type="text" dir="ltr" readOnly value={fmt(refund)}
-                  className="w-full px-3 py-2.5 border-2 border-emerald-300 rounded-xl text-lg font-black text-emerald-800 bg-emerald-50 outline-none text-right" />
-              </div>
-            </div>
-          )}
+          </div>
+          <div className="mt-4 flex items-center gap-3 flex-wrap">
+            <button type="button" onClick={() => save.mutate()} disabled={save.isPending}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black text-white bg-rose-600 hover:bg-rose-700 transition disabled:opacity-50">
+              {save.isPending ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />} حفظ التعديلات
+            </button>
+            {save.isError && (
+              <span className="inline-flex items-center gap-1 text-sm font-bold text-rose-700">
+                <AlertTriangle size={16} /> {save.error?.response?.data?.error || 'فشل الحفظ'}
+              </span>
+            )}
+            <span className="text-[11px] text-gray-500">التعديل بيحدّث نفس عملية الاسترداد (المبلغ بيتحدّث بالسالب تلقائي).</span>
+          </div>
         </div>
       </div>
     </div>

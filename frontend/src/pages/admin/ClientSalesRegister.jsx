@@ -1158,7 +1158,7 @@ export default function ClientSalesRegister() {
         onClose={() => setFormOpen(false)}
         onSaved={afterMutate}
       />
-      <RefundReviewModal row={refundRow} onClose={() => setRefundRow(null)} />
+      {refundRow && <RefundReviewModal key={refundRow.id} row={refundRow} onClose={() => setRefundRow(null)} />}
       <DeleteConfirm row={deleteRow} onClose={() => setDeleteRow(null)} onDeleted={afterMutate} />
       <ImportModal open={importOpen} onClose={() => setImportOpen(false)} onImported={afterMutate} />
     </div>
