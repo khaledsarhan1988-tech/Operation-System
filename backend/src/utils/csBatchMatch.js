@@ -83,4 +83,17 @@ function nameTokens(...parts) {
 // Does the name carry a real "(trainer)" paren (letters inside)?
 const hasTrainer = (g) => /\([^)]*[a-zA-Z؀-ۿ][^)]*\)/.test(String(g || ''));
 
-module.exports = { cleanGroupCode, canonKey, slotKey, parseGroup, nameTokens, hasTrainer };
+// Leading "Mon_DD" of a group name → { mon, day } (the group's nominal START).
+// null when either part is missing/unparseable.
+function groupNameDate(s) {
+  const b = String(s == null ? '' : s).split('(')[0].toLowerCase().replace(/[_\s]+/g, ' ').trim();
+  const g = parseGroup(s);
+  if (g.mon == null) return null;
+  const dm = b.replace(/^[a-z]+/, '').match(/^\s*(\d{1,2})\b/);
+  if (!dm) return null;
+  const day = +dm[1];
+  if (day < 1 || day > 31) return null;
+  return { mon: g.mon, day };
+}
+
+module.exports = { cleanGroupCode, canonKey, slotKey, parseGroup, nameTokens, hasTrainer, groupNameDate };

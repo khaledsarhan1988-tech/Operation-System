@@ -204,14 +204,55 @@ function buildInactiveGroupMap() {
       db.prepare(`SELECT group_name FROM batches WHERE group_name IS NOT NULL`).all()
         .map(b => canonOf(b.group_name))
     );
-    for (const r of db.prepare(`
-      SELECT client_phone_norm AS pn, group_name_raw AS g
+    const { groupNameDate } = require('../utils/csBatchMatch');
+    const histRows = db.prepare(`
+      SELECT client_phone_norm AS pn, group_name_raw AS g, last_seen AS ls
         FROM cs_client_group_history
-    `).all()) {
+    `).all();
+    // Per group: the latest roster day ANY member was seen on — by canon AND by
+    // SLOT (a renamed group, e.g. General1 → General1_SP, keeps its slot, so the
+    // slot map proves the group really continued under its new name).
+    const groupMaxSeen = new Map(), slotMaxSeen = new Map();
+    for (const r of histRows) {
+      if (!r.ls) continue;
+      const ck = canonOf(r.g);
+      if (!groupMaxSeen.has(ck) || r.ls > groupMaxSeen.get(ck)) groupMaxSeen.set(ck, r.ls);
+      const sk = bmSlot(r.g);
+      if (sk && (!slotMaxSeen.has(sk) || r.ls > slotMaxSeen.get(sk))) slotMaxSeen.set(sk, r.ls);
+    }
+    // Nominal start date from the group NAME (Jul_4 → YYYY-07-04); year inferred
+    // as the candidate closest to the client's roster window.
+    const startISO = (code, refDate) => {
+      const d = groupNameDate(code);
+      if (!d || !refDate) return null;
+      const y = +String(refDate).slice(0, 4);
+      if (!y) return null;
+      let best = null, bestDiff = Infinity;
+      for (const yy of [y - 1, y, y + 1]) {
+        const iso = `${yy}-${String(d.mon).padStart(2, '0')}-${String(d.day).padStart(2, '0')}`;
+        const diff = Math.abs(new Date(iso) - new Date(refDate));
+        if (diff < bestDiff) { bestDiff = diff; best = iso; }
+      }
+      return best;
+    };
+    for (const r of histRows) {
       if (!r.pn) continue;
       const code = cleanGroupCode(r.g);
       if (!code || isIgnoredGroup(code)) continue;
-      if (liveBatch.has(canonOf(code))) continue;    // group still active/waiting → active path owns it
+      const ck = canonOf(code);
+      if (liveBatch.has(ck)) continue;    // group still active/waiting → active path owns it
+      // REMOVED BEFORE START (owner case 01012965657, Jul_4 group): the client
+      // vanished from the roster BEFORE the group's nominal start date while the
+      // group itself kept appearing on later sheets → he never took that level.
+      // (A client who stays enrolled counts even if absent — different case.)
+      const st = startISO(code, r.ls);
+      const groupWentOn = ((groupMaxSeen.get(ck) || '') >= st) || ((slotMaxSeen.get(bmSlot(code)) || '') >= st);
+      // GRACE: only judge groups whose start is ≥4 days in the past. Around a
+      // start date the sheets lag a day or two, so a still-enrolled client of a
+      // just-started group briefly looks "removed" — within days his roster
+      // observation moves past the start and the flag resolves itself.
+      const stale = st && (Date.now() - new Date(st).getTime()) >= 4 * 86400e3;
+      if (st && stale && r.ls && r.ls < st && groupWentOn) continue;
       add(r.pn, code);
     }
   } catch (_) { /* table may not exist on older deploys */ }
