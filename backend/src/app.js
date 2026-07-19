@@ -2734,6 +2734,24 @@ initDb().then(db => {
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_cgh_phone ON cs_client_group_history(client_phone_norm)`);
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_cgh_gkey  ON cs_client_group_history(group_key)`);
 
+    // ── Manual membership settlements (تسوية — إنهاء العضوية) ──
+    // Rare owner-approved deals (e.g. remaining 3 General levels converted to
+    // one Business level): the membership is CLOSED by agreement, so deliveries
+    // must show remaining = 0 regardless of paid-minus-taken. Per (client, dept)
+    // so a later membership in another dept is untouched. Admin-only writes.
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS cs_membership_settlements (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_phone_norm TEXT NOT NULL,
+        dept              TEXT NOT NULL,               -- General | Private | Semi
+        note              TEXT,
+        settled_by        INTEGER,
+        settled_by_name   TEXT,
+        settled_at        TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        UNIQUE(client_phone_norm, dept)
+      )
+    `);
+
     // ── Owner-confirmed DELETED groups (the review gate) ──
     // A completed-level group is excluded from consumed-level counts ONLY when it
     // appears here with status='confirmed'. The owner reviews the suggested list

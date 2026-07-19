@@ -95,6 +95,26 @@ export default function DepartmentDeliveries() {
     onError: (e) => alert('فشل تحديث الحالة: ' + (e.response?.data?.error || e.message)),
   });
 
+  // تسوية — owner-approved deal that CLOSES a membership (remaining becomes 0).
+  const settleMut = useMutation({
+    mutationFn: ({ phone, settled, note }) => settled
+      ? api.delete(`/cs/deliveries/${encodeURIComponent(phone)}/settle`, { params: { dept: activeDept } })
+      : api.put(`/cs/deliveries/${encodeURIComponent(phone)}/settle`, { dept: activeDept, note }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cs-deliveries'] }),
+    onError: (e) => alert('فشل تحديث التسوية: ' + (e.response?.data?.error || e.message)),
+  });
+  const onToggleSettle = (it) => {
+    if (it.settled) {
+      if (window.confirm(`إلغاء التسوية للعميل ${it.name || it.phone}؟ (يرجع حساب المتبقّي الطبيعي)`)) {
+        settleMut.mutate({ phone: it.phone, settled: true });
+      }
+      return;
+    }
+    const note = window.prompt(`تسوية — إنهاء عضوية ${it.name || it.phone} في ${meta.label}.\nاكتب سبب التسوية (مثال: تحويل المستويات المتبقية لمستوى Business):`);
+    if (note === null) return;   // cancelled
+    settleMut.mutate({ phone: it.phone, settled: false, note });
+  };
+
   // Admin-only: refresh the underlying data (Finance API → Membership Excel →
   // Drive levels), then reload the table. Runs the 3 imports sequentially; a
   // failure in one step is captured and does not block the others.
@@ -353,11 +373,32 @@ export default function DepartmentDeliveries() {
                     ) : <span className="text-slate-300">—</span>}
                   </td>
                   <td className="px-3 py-3 text-center">
-                    <span className={`inline-flex items-center justify-center min-w-7 px-2 py-0.5 rounded-full text-xs font-semibold ${
-                      it.remaining_levels > 0 ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-500'
-                    }`}>
-                      {it.remaining_levels == null ? '—' : it.remaining_levels}
-                    </span>
+                    <div className="flex flex-col items-center gap-1">
+                      <span className={`inline-flex items-center justify-center min-w-7 px-2 py-0.5 rounded-full text-xs font-semibold ${
+                        it.remaining_levels > 0 ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-500'
+                      }`}>
+                        {it.remaining_levels == null ? '—' : it.remaining_levels}
+                      </span>
+                      {it.settled && (
+                        <span className="text-[10px] bg-violet-50 text-violet-700 border border-violet-200 rounded px-1.5 py-0.5 font-semibold" title="عضوية منتهية بالتسوية">
+                          تسوية ✓
+                        </span>
+                      )}
+                      {user?.role === 'admin' && it.has_subscription !== false && (
+                        <button
+                          type="button"
+                          disabled={settleMut.isPending}
+                          onClick={() => onToggleSettle(it)}
+                          className={`text-[10px] rounded px-1.5 py-0.5 border transition-colors ${
+                            it.settled
+                              ? 'text-slate-400 border-slate-200 hover:bg-slate-50'
+                              : 'text-violet-500 border-violet-200 hover:bg-violet-50'
+                          }`}
+                        >
+                          {it.settled ? 'إلغاء التسوية' : 'تسوية'}
+                        </button>
+                      )}
+                    </div>
                   </td>
                   <td className="px-3 py-3 text-center whitespace-nowrap">
                     {it.expected_remaining_label ? (

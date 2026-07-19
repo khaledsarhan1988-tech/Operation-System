@@ -476,12 +476,31 @@ function foldPhoneAliases(ctx, alias) {
   return ctx;
 }
 
+// Manual settlements (تسوية): Set('pn|dept') of memberships CLOSED by an
+// owner-approved deal (e.g. remaining levels converted to a Business level).
+// Keys are resolved through the phone-alias map so a settlement recorded under
+// either of a client's numbers lands on the primary.
+function buildSettledSet(alias) {
+  const set = new Set();
+  try {
+    for (const r of db.prepare(`SELECT client_phone_norm pn, dept FROM cs_membership_settlements`).all()) {
+      const p = csPrimaryPhone(r.pn);
+      if (!p || !DEPTS.includes(r.dept)) continue;
+      set.add(((alias && alias.get(p)) || p) + '|' + r.dept);
+    }
+  } catch (_) { /* table may not exist on older deploys */ }
+  return set;
+}
+
 function buildBalanceContext() {
-  return foldPhoneAliases({
+  const alias = buildPhoneAliasMap();
+  const ctx = foldPhoneAliases({
     salesMap: buildSalesMembershipMap(),   // كشف العملاء (2025+) → per-dept paid months
     activeMap: buildActiveGroupMap(),       // clients ∩ batches(نشطة)
     inactiveMap: buildInactiveGroupMap(),   // cs_completed_levels (past groups)
-  }, buildPhoneAliasMap());
+  }, alias);
+  ctx.settledSet = buildSettledSet(alias);  // 'pn|dept' → membership closed by settlement
+  return ctx;
 }
 
 // Per-client membership balance in ONE department, computed EXACTLY like
@@ -508,6 +527,14 @@ function membershipBalance(ctx, phone, dept) {
   const groupsTaken = activeGroups.length + inactiveGroups.length;
 
   const paid = tm.months;
+
+  // Settled (تسوية): the membership was CLOSED by an owner-approved deal —
+  // remaining is 0 by decision, whatever paid-minus-taken says. Also keeps the
+  // client out of the renewal-needed pipeline (state 'settled', not 'exhausted').
+  if (ctx.settledSet && ctx.settledSet.has(pn + '|' + dept)) {
+    return { paid_months: paid, groups_taken: groupsTaken, remaining: 0, remaining_after_move: 0, state: 'settled' };
+  }
+
   const remaining = Math.max(0, paid - groupsTaken);
   const remainingAfter = Math.max(0, paid - (groupsTaken + 1));   // simulate +1 group (the next transfer)
   // exhausted = no paid level left (a further move is unpaid); last_level = exactly
@@ -533,7 +560,7 @@ function getRenewalNeeded({ dept } = {}) {
       if (!DEPTS.includes(d)) continue;
       if (dept && DEPTS.includes(dept) && d !== dept) continue;
       const bal = membershipBalance(ctx, pn, d);
-      if (bal.state === 'unknown' || bal.remaining == null || bal.remaining > 1) continue;
+      if (bal.state === 'unknown' || bal.state === 'settled' || bal.remaining == null || bal.remaining > 1) continue;
       const key = pn + '|' + d;
       if (rows.has(key)) continue;
       rows.set(key, {
@@ -701,8 +728,11 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user,
     // taken. Uses the FILTERED group lists (Free Slots / Grammer already removed).
     const groupsTaken = (it.active_groups?.length || 0) + (it.inactive_groups?.length || 0);
     it.groups_taken = groupsTaken;
-    it.remaining_levels = (it.paid_months != null)
-      ? Math.max(0, it.paid_months - groupsTaken)
+    // Settled (تسوية) — membership closed by an owner-approved deal: remaining is
+    // 0 by decision. SAME rule as membershipBalance (audit: balance == page).
+    it.settled = ctxMaps.settledSet.has(it.phone + '|' + dept);
+    it.remaining_levels = it.settled ? 0
+      : (it.paid_months != null) ? Math.max(0, it.paid_months - groupsTaken)
       : null;
   }
 
@@ -837,8 +867,33 @@ function setDeliveryStatus({ phone, status, note, userId, userName }) {
   return { phone: pn, status, note: note || null };
 }
 
+// ── Manual settlement (تسوية — إنهاء العضوية) writes. Admin-gated at the route. ──
+function setSettlement({ phone, dept, note, userId, userName }) {
+  const pn = csPrimaryPhone(phone);
+  if (!pn) throw new Error('Invalid phone');
+  if (!DEPTS.includes(dept)) throw new Error('Invalid dept (use General | Private | Semi)');
+  db.prepare(`
+    INSERT INTO cs_membership_settlements (client_phone_norm, dept, note, settled_by, settled_by_name, settled_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now', '+2 hours'))
+    ON CONFLICT(client_phone_norm, dept) DO UPDATE SET
+      note = excluded.note, settled_by = excluded.settled_by,
+      settled_by_name = excluded.settled_by_name, settled_at = excluded.settled_at
+  `).run(pn, dept, note || null, userId || null, userName || null);
+  saveNow();
+  return { phone: pn, dept, settled: true };
+}
+
+function clearSettlement({ phone, dept }) {
+  const pn = csPrimaryPhone(phone);
+  if (!pn) throw new Error('Invalid phone');
+  db.prepare(`DELETE FROM cs_membership_settlements WHERE client_phone_norm = ? AND dept = ?`).run(pn, dept);
+  saveNow();
+  return { phone: pn, dept, settled: false };
+}
+
 module.exports = {
   getDepartmentDeliveries, setDeliveryStatus, DEPTS, STATUSES,
   buildBalanceContext, membershipBalance, getRenewalNeeded,
   buildPhoneAliasMap,   // secondary→primary phone merge (كشف العملاء mobile_no2)
+  setSettlement, clearSettlement,   // تسوية — إنهاء العضوية (owner-approved deals)
 };

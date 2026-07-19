@@ -57,6 +57,10 @@ function parseGroup(s) {
   const fm = b.match(/(conversation|conv|con|general|gen|genral|genera|starter|str)\s*_?\s*(\d+)/);
   let fam = null, lvl = null;
   if (fm) { fam = /^con/.test(fm[1]) ? 'C' : /^(gen|general|genra|genera)/.test(fm[1]) ? 'G' : 'S'; lvl = +fm[2]; }
+  // Business groups carry no level number; give them their own family so the
+  // slot key works — "Jul_18_Sat_5PM_Business" and "…_Business_P" (same real
+  // group, renamed) dedupe per client instead of counting twice.
+  else if (/(^|[^a-z])business/.test(b)) { fam = 'B'; lvl = 0; }
   return { mon, dow, time, fam, lvl };
 }
 function slotKey(s) {

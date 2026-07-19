@@ -852,6 +852,35 @@ router.patch('/deliveries/:phone/status', requireRole('admin', 'leader', 'agent'
   }
 });
 
+/**
+ * PUT /api/cs/deliveries/:phone/settle   — تسوية: close a membership by an
+ * owner-approved deal (e.g. remaining levels converted to a Business level).
+ * Body: { dept: 'General'|'Private'|'Semi', note? }. Admin only.
+ * DELETE with ?dept= reverses it.
+ */
+router.put('/deliveries/:phone/settle', requireRole('admin'), (req, res) => {
+  try {
+    const svc = require('../services/csDeliveries.service');
+    res.json({ ok: true, ...svc.setSettlement({
+      phone: req.params.phone, dept: req.body?.dept, note: req.body?.note,
+      userId: req.user?.id, userName: req.user?.full_name || req.user?.name || null,
+    }) });
+  } catch (e) {
+    console.error('PUT /cs/deliveries/:phone/settle error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+router.delete('/deliveries/:phone/settle', requireRole('admin'), (req, res) => {
+  try {
+    const svc = require('../services/csDeliveries.service');
+    res.json({ ok: true, ...svc.clearSettlement({ phone: req.params.phone, dept: req.query?.dept || req.body?.dept }) });
+  } catch (e) {
+    console.error('DELETE /cs/deliveries/:phone/settle error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
 // ─── ENR GROUPS (مجموعات الـ Enrollment) ──────────────────────────────────────
 
 // Enr Groups access guard: any admin OR a user granted the 'enr-groups' page.
