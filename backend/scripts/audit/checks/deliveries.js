@@ -46,7 +46,11 @@ module.exports = async function deliveries({ call }) {
 
         // 1. derived consistency
         if (taken !== ag + ig) derivedFails.push(`${id(dept, it)}: groups_taken ${taken} ≠ active ${ag}+inactive ${ig}`);
-        if (paid != null && rem !== Math.max(0, paid - taken)) derivedFails.push(`${id(dept, it)}: remaining ${rem} ≠ max(0,${paid}−${taken})`);
+        // Settled (تسوية) memberships are CLOSED by an owner-approved deal —
+        // remaining is 0 by decision, not by paid-minus-taken.
+        if (it.settled) {
+          if (rem !== 0) derivedFails.push(`${id(dept, it)}: settled but remaining ${rem} ≠ 0`);
+        } else if (paid != null && rem !== Math.max(0, paid - taken)) derivedFails.push(`${id(dept, it)}: remaining ${rem} ≠ max(0,${paid}−${taken})`);
         if (paid != null && paid !== sumMonths) derivedFails.push(`${id(dept, it)}: paid_months ${paid} ≠ Σ months_list ${sumMonths}`);
         if (it.membership_count !== (it.months_list || []).length) derivedFails.push(`${id(dept, it)}: membership_count ${it.membership_count} ≠ months_list.len ${(it.months_list || []).length}`);
 
