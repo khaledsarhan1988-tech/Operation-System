@@ -99,9 +99,20 @@ function getDeptAnalytics({ dept, gradFrom, gradTo }) {
   gradFrom = (gradFrom || '').trim();
   gradTo = (gradTo || '').trim();
 
-  const ctx = csDel.buildBalanceContext();        // { salesMap, activeMap, inactiveMap }
+  const ctx = csDel.buildBalanceContext();        // { salesMap, activeMap, inactiveMap } (phone-aliases folded)
   const lectMeta = makeLectureMeta();
+  // Secondary→primary phone aliases (كشف العملاء mobile_no2): ctx keys are the
+  // PRIMARY phones, so every phone landing in a lookup set must resolve too.
+  const alias = csDel.buildPhoneAliasMap ? csDel.buildPhoneAliasMap() : new Map();
+  const resolvePn = (pn) => (pn && alias.get(pn)) || pn;
   const recency = buildRecencyMap();              // pn → newest-in-كشف-العملاء key
+  for (const [pn, v] of [...recency]) {           // fold alias recency into primary (newest wins)
+    const p = resolvePn(pn);
+    if (p === pn) continue;
+    const cur = recency.get(p);
+    if (!cur || v.dateKey > cur.dateKey || (v.dateKey === cur.dateKey && v.id > cur.id)) recency.set(p, v);
+    recency.delete(pn);
+  }
 
   // Upcoming = registered in a WAITING batch group (not started), keyed by phone.
   const waitingPhones = new Set();
@@ -112,14 +123,14 @@ function getDeptAnalytics({ dept, gradFrom, gradTo }) {
      WHERE b.status IN ('بانتظار تسجيل المتدربين', 'بانتظار تسجيل المحاضرات')
   `).all()) {
     if (isIgnoredGroup(r.group_name)) continue;   // placement/تعويض are not real upcoming groups
-    const pn = csPrimaryPhone(r.phone); if (pn) waitingPhones.add(pn);
+    const pn = csPrimaryPhone(r.phone); if (pn) waitingPhones.add(resolvePn(pn));
   }
 
   // Upcoming = moved to a next group via the Enr Groups transition screen.
   const movedPhones = new Set();
   try {
     for (const r of db.prepare(`SELECT client_phone AS phone FROM enr_next_members WHERE client_phone IS NOT NULL`).all()) {
-      const pn = csPrimaryPhone(r.phone); if (pn) movedPhones.add(pn);
+      const pn = csPrimaryPhone(r.phone); if (pn) movedPhones.add(resolvePn(pn));
     }
   } catch (_) { /* table may not exist yet */ }
 

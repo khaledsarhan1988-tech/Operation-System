@@ -401,12 +401,87 @@ function buildSalesMembershipMap() {
 
 // Build the three source maps ONCE; pass the context to membershipBalance() so a
 // caller iterating many clients doesn't rebuild them per row.
+// ── Phone aliases (owner 2026-07-18): one client, TWO numbers ────────────────
+// cs_client_codes.mobile_no2 (موبايل إضافي on the كشف العملاء codes tab) marks
+// the SAME person: memberships bought under either number and groups taken
+// under either number must merge into ONE client, keyed by the code's primary
+// mobile_no (e.g. عائشة 01012121347: membership 3L under the primary, two of
+// her three groups under 01210760663 — merged remaining = 0, not 2).
+function buildPhoneAliasMap() {
+  const map = new Map();   // secondaryNorm → primaryNorm
+  try {
+    for (const r of db.prepare(`
+      SELECT mobile_no, mobile_no2 FROM cs_client_codes
+       WHERE mobile_no2 IS NOT NULL AND TRIM(mobile_no2) <> ''`).all()) {
+      const p = csPrimaryPhone(r.mobile_no), s = csPrimaryPhone(r.mobile_no2);
+      if (p && s && p !== s) map.set(s, p);
+    }
+  } catch (_) { /* mobile_no2 may not exist on older DBs */ }
+  return map;
+}
+
+// Fold every alias phone's data into its primary phone across the three maps.
+// The alias key is DELETED so the client appears exactly once (the primary).
+function foldPhoneAliases(ctx, alias) {
+  if (!alias.size) return ctx;
+  for (const [s, p] of alias) {
+    // memberships — sum per track, skipping refunded sides (a refunded
+    // membership must not add months; if one side is live the merged track is live)
+    const src = ctx.salesMap.get(s);
+    if (src) {
+      const dst = ctx.salesMap.get(p);
+      if (!dst) ctx.salesMap.set(p, src);
+      else {
+        for (const d of DEPTS) {
+          const a = src.byTrack[d];
+          if (!a) continue;
+          const b = dst.byTrack[d];
+          if (!b) dst.byTrack[d] = a;
+          else if (b.excludedRefund && !a.excludedRefund) dst.byTrack[d] = a;
+          else if (!b.excludedRefund && !a.excludedRefund) {
+            b.months = (b.months || 0) + (a.months || 0);
+            b.list = [...(b.list || []), ...(a.list || [])];
+            b.count = (b.count || 0) + (a.count || 0);
+          }
+          // (a refunded, b live → keep b; both refunded → keep b)
+        }
+        if (!dst.name && src.name) dst.name = src.name;
+      }
+      ctx.salesMap.delete(s);
+    }
+    // active groups — concat
+    const act = ctx.activeMap.get(s);
+    if (act) {
+      ctx.activeMap.set(p, [...(ctx.activeMap.get(p) || []), ...act]);
+      ctx.activeMap.delete(s);
+    }
+    // past groups — union with the same canon+slot guards used everywhere,
+    // so the same group under both numbers counts ONCE
+    const ina = ctx.inactiveMap.get(s);
+    if (ina) {
+      const cur = ctx.inactiveMap.get(p) || new Set();
+      const canons = new Set([...cur].map(bmCanon));
+      const slots = new Set([...cur].map(bmSlot).filter(Boolean));
+      for (const g of ina) {
+        const ck = bmCanon(g);
+        if (canons.has(ck)) continue;
+        const sk = bmSlot(g);
+        if (sk && slots.has(sk)) continue;
+        cur.add(g); canons.add(ck); if (sk) slots.add(sk);
+      }
+      ctx.inactiveMap.set(p, cur);
+      ctx.inactiveMap.delete(s);
+    }
+  }
+  return ctx;
+}
+
 function buildBalanceContext() {
-  return {
+  return foldPhoneAliases({
     salesMap: buildSalesMembershipMap(),   // كشف العملاء (2025+) → per-dept paid months
     activeMap: buildActiveGroupMap(),       // clients ∩ batches(نشطة)
     inactiveMap: buildInactiveGroupMap(),   // cs_completed_levels (past groups)
-  };
+  }, buildPhoneAliasMap());
 }
 
 // Per-client membership balance in ONE department, computed EXACTLY like
@@ -527,9 +602,12 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user,
   // Agent is scoped to the clients they coordinate.
   const agentNorm = isAgent ? normName(user?.full_name) : null;
 
-  const activeMap     = buildActiveGroupMap();
+  // ONE folded context for the whole page (phone-aliases merged) — the SAME
+  // builder membershipBalance uses, so the audit invariant balance==page holds.
+  const ctxMaps       = buildBalanceContext();
+  const activeMap     = ctxMaps.activeMap;
   const coordFallback = buildCoordFallbackMap();
-  const salesMap      = buildSalesMembershipMap();   // كشف العملاء (2025+) = membership source
+  const salesMap      = ctxMaps.salesMap;            // كشف العملاء (2025+) = membership source
 
   const statusRows = db.prepare(`SELECT client_phone_norm AS pn, status, note FROM cs_client_delivery_status`).all();
   const statusMap = new Map(statusRows.map(r => [r.pn, { status: r.status, note: r.note }]));
@@ -598,7 +676,7 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user,
   // lazy-memoized lecture lookups, NO heavy csClientPlan call) so the new column
   // filters (coordinator / lecture dates / remaining levels) can run BEFORE
   // pagination. The heavy pacing work stays on the page slice only (below). ────
-  const inactiveMap = buildInactiveGroupMap();
+  const inactiveMap = ctxMaps.inactiveMap;   // folded — same object as the balance layer
   const groupLectureMeta = makeGroupLectureMeta();
   for (const it of items) {
     const inactiveAll = [...(inactiveMap.get(it.phone) || [])];
@@ -762,4 +840,5 @@ function setDeliveryStatus({ phone, status, note, userId, userName }) {
 module.exports = {
   getDepartmentDeliveries, setDeliveryStatus, DEPTS, STATUSES,
   buildBalanceContext, membershipBalance, getRenewalNeeded,
+  buildPhoneAliasMap,   // secondary→primary phone merge (كشف العملاء mobile_no2)
 };
