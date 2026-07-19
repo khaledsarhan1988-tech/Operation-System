@@ -23,34 +23,35 @@ const csDel = require('./csDeliveries.service');
 
 const DEPTS = ['General', 'Private', 'Semi'];
 
-// Per-group last-lecture date (current sheet only) — SAME query as the deliveries
-// makeGroupLectureMeta, so dates match the page. Memoized.
+// Per-group first/last-lecture date (current sheet only), aggregated by CANON
+// key. The same real group is spelled differently across sources — a client's
+// past-group entry can hold the bare daily-sheet name ("Jun_22_Mon_9Pm_General1")
+// while `lectures` only has trainer-suffixed variants ("…General1(Ahmed)zainab").
+// The old exact-name lookup returned NULL dates for those, so analytics picked
+// an OLDER group as آخر مجموعة (owner case 01003803926: showed May_4 Starter3
+// although his real last group was Jun_22 General1). One canon-grouped scan.
 function makeLectureMeta() {
-  const byLine = db.prepare(`
-    SELECT MIN(date) AS mn, MAX(date) AS mx
+  const { canonKey } = require('../utils/csBatchMatch');
+  const rows = db.prepare(`
+    SELECT lectures.group_name AS g, MIN(date) AS mn, MAX(date) AS mx
       FROM lectures
       INNER JOIN (SELECT group_name AS g, line AS l, date(MAX(synced_at)) AS sd
                     FROM lectures WHERE session_type='main' GROUP BY group_name, line) ls
         ON ls.g = lectures.group_name AND ls.l = lectures.line AND date(lectures.synced_at) = ls.sd
-     WHERE group_name = ? AND line = ? AND session_type='main' AND status IN ('مؤكدة','مجدولة')
-  `);
-  const anyLine = db.prepare(`
-    SELECT MIN(date) AS mn, MAX(date) AS mx
-      FROM lectures
-      INNER JOIN (SELECT group_name AS g, date(MAX(synced_at)) AS sd
-                    FROM lectures WHERE session_type='main' GROUP BY group_name) ls
-        ON ls.g = lectures.group_name AND date(lectures.synced_at) = ls.sd
-     WHERE group_name = ? AND session_type='main' AND status IN ('مؤكدة','مجدولة')
-  `);
-  const memo = new Map();
-  return (group, line) => {
-    const key = String(group) + '|' + String(line == null ? '' : line);
-    if (memo.has(key)) return memo.get(key);
-    const r = (line == null ? anyLine.get(group) : byLine.get(group, line || '')) || {};
-    const out = { start: r.mn || null, end: r.mx || null };
-    memo.set(key, out);
-    return out;
-  };
+     WHERE session_type='main' AND status IN ('مؤكدة','مجدولة')
+     GROUP BY lectures.group_name, lectures.line
+  `).all();
+  const byCanon = new Map();
+  for (const r of rows) {
+    const ck = canonKey(r.g);
+    const cur = byCanon.get(ck);
+    if (!cur) byCanon.set(ck, { start: r.mn || null, end: r.mx || null });
+    else {
+      if (r.mn && (!cur.start || r.mn < cur.start)) cur.start = r.mn;
+      if (r.mx && (!cur.end || r.mx > cur.end)) cur.end = r.mx;
+    }
+  }
+  return (group, _line) => byCanon.get(canonKey(group)) || { start: null, end: null };
 }
 
 // "M/D/YYYY" → sortable YYYYMMDD (0 if unparseable). SAME as csDeliveries.salesDateKey.
