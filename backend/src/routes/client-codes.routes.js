@@ -36,8 +36,10 @@ router.get('/list', (req, res) => {
     // Mobiles are stored without the leading zero → strip a leading zero from both
     // sides so "01555…" and "1555…" both match.
     const qz = q.replace(/^0+/, '') || q;
-    const where = q ? "WHERE code LIKE ? OR client_name LIKE ? OR LTRIM(IFNULL(mobile_no,''),'0') LIKE ?" : '';
-    const params = q ? [`%${q}%`, `%${q}%`, `%${qz}%`] : [];
+    const where = q
+      ? "WHERE code LIKE ? OR client_name LIKE ? OR LTRIM(IFNULL(mobile_no,''),'0') LIKE ? OR LTRIM(IFNULL(mobile_no2,''),'0') LIKE ?"
+      : '';
+    const params = q ? [`%${q}%`, `%${q}%`, `%${qz}%`, `%${qz}%`] : [];
     const rows = db.prepare(`
       SELECT *, COUNT(*) OVER() AS _total FROM cs_client_codes
       ${where}
@@ -127,9 +129,9 @@ router.post('/', (req, res) => {
     }
     const ts = nowTs();
     const info = db.prepare(`
-      INSERT INTO cs_client_codes (code, client_name, mobile_no, note, client_request_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(code, str(req.body.client_name), str(req.body.mobile_no), str(req.body.note), reqId, ts, ts);
+      INSERT INTO cs_client_codes (code, client_name, mobile_no, mobile_no2, note, client_request_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(code, str(req.body.client_name), str(req.body.mobile_no), str(req.body.mobile_no2), str(req.body.note), reqId, ts, ts);
     saveNow();
     return res.status(201).json(db.prepare('SELECT * FROM cs_client_codes WHERE id = ?').get(info.lastInsertRowid));
   } catch (err) {
@@ -157,9 +159,9 @@ router.put('/:id', (req, res) => {
       });
     }
     db.prepare(`
-      UPDATE cs_client_codes SET code = ?, client_name = ?, mobile_no = ?, note = ?, updated_at = ?
+      UPDATE cs_client_codes SET code = ?, client_name = ?, mobile_no = ?, mobile_no2 = ?, note = ?, updated_at = ?
       WHERE id = ?
-    `).run(code, str(req.body.client_name), str(req.body.mobile_no), str(req.body.note), nowTs(), id);
+    `).run(code, str(req.body.client_name), str(req.body.mobile_no), str(req.body.mobile_no2), str(req.body.note), nowTs(), id);
     saveNow();
     return res.json(db.prepare('SELECT * FROM cs_client_codes WHERE id = ?').get(id));
   } catch (err) {

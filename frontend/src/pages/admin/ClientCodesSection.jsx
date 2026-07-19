@@ -7,7 +7,7 @@ import api from '../../api/axios';
 import SectionCard from '../../components/ui/SectionCard';
 
 // «Clients Codes» — registry of client codes, embedded as a tab inside كشف العملاء.
-const EMPTY = { code: '', client_name: '', mobile_no: '', note: '' };
+const EMPTY = { code: '', client_name: '', mobile_no: '', mobile_no2: '', note: '' };
 
 function FormModal({ open, row, onClose, onSaved }) {
   const isEdit = !!row;
@@ -30,7 +30,7 @@ function FormModal({ open, row, onClose, onSaved }) {
   const key = open ? (row?.id ?? `new:${nextData?.next ?? ''}`) : 'closed';
   if (open && syncedKey !== key) {
     setForm(isEdit
-      ? { code: row.code ?? '', client_name: row.client_name ?? '', mobile_no: row.mobile_no ?? '', note: row.note ?? '' }
+      ? { code: row.code ?? '', client_name: row.client_name ?? '', mobile_no: row.mobile_no ?? '', mobile_no2: row.mobile_no2 ?? '', note: row.note ?? '' }
       : { ...EMPTY, code: nextData?.next ?? '' });
     if (!isEdit) reqIdRef.current = (globalThis.crypto?.randomUUID?.() || `req-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     setError(''); setPhoneWarn('');
@@ -89,6 +89,11 @@ function FormModal({ open, row, onClose, onSaved }) {
             <div>
               <label className="block text-[11px] font-bold text-gray-500 mb-1">الموبايل</label>
               <input value={form.mobile_no} onChange={(e) => set('mobile_no', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-sky-200 focus:border-sky-400 outline-none" />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-[11px] font-bold text-gray-500 mb-1">موبايل إضافي (اختياري) — البحث بيلاقي بأي رقم</label>
+              <input value={form.mobile_no2} onChange={(e) => set('mobile_no2', e.target.value)}
                 className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-sky-200 focus:border-sky-400 outline-none" />
             </div>
             <div className="sm:col-span-2">
@@ -219,7 +224,7 @@ export default function ClientCodesSection() {
                   <tr key={r.id} className="border-b border-gray-50 hover:bg-gray-50/60">
                     <td className="py-2 px-3 font-mono font-black text-gray-800">{r.code}</td>
                     <td className="py-2 px-3 text-gray-700">{r.client_name || '—'}</td>
-                    <td className="py-2 px-3 font-mono text-xs text-gray-600">{r.mobile_no || '—'}</td>
+                    <td className="py-2 px-3 font-mono text-xs text-gray-600">{r.mobile_no || '—'}{r.mobile_no2 ? <span className="text-gray-400"> · {r.mobile_no2}</span> : null}</td>
                     <td className="py-2 px-3 text-gray-500">{r.note || '—'}</td>
                     <td className="py-2 px-3">
                       <div className="flex items-center justify-end gap-2">

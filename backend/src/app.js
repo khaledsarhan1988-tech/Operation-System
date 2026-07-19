@@ -3222,6 +3222,8 @@ initDb().then(db => {
     {
       const ccols = db._raw.prepare(`PRAGMA table_info(cs_client_codes)`).all().map(c => c.name);
       if (!ccols.includes('client_request_id')) db._raw.run(`ALTER TABLE cs_client_codes ADD COLUMN client_request_id TEXT`);
+      // Optional SECOND phone per client — searching by either number finds them.
+      if (!ccols.includes('mobile_no2')) db._raw.run(`ALTER TABLE cs_client_codes ADD COLUMN mobile_no2 TEXT`);
     }
     db._raw.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_cs_client_codes_reqid ON cs_client_codes(client_request_id) WHERE client_request_id IS NOT NULL`);
 
