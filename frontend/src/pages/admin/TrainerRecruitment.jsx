@@ -39,6 +39,32 @@ const firstInRange = (first, from, to) => {
   if (to && first > to) return false;
   return true;
 };
+// «اعتبارًا من» — planning as-of date. Shifts count only if active ON that date
+// (end date inclusive = آخر يوم عمل). Empty = today. Owner rule: trainers whose
+// shift END date is coming up must be accounted for — set a future date and
+// they drop from capacity the day after their end date.
+function AsOfFilter({ value, onChange }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-xs font-bold text-gray-500">اعتبارًا من</span>
+      <input type="date" value={value} onChange={e => onChange(e.target.value)}
+        className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50 text-xs" />
+      {value && (
+        <button type="button" onClick={() => onChange('')}
+          className="text-[10px] text-amber-700 underline whitespace-nowrap">اليوم</button>
+      )}
+    </div>
+  );
+}
+// «ينتهي في…» — badge on a trainer whose counted shift(s) are all date-closed.
+function EndsBadge({ endsAt }) {
+  if (!endsAt) return null;
+  return (
+    <span className="inline-block text-[9px] px-1.5 py-0.5 mx-1 rounded bg-rose-50 text-rose-700 border border-rose-200 font-bold whitespace-nowrap" dir="rtl">
+      ينتهي {endsAt}
+    </span>
+  );
+}
 
 export default function TrainerRecruitment() {
   const [view, setView] = useState('demand');   // 'demand' (phase 1) | 'supply' (phase 2)
@@ -253,11 +279,12 @@ function SupplyView() {
   const [dayPair, setDayPair] = useState('all');
   const [mainDayPair, setMainDayPair] = useState('all');
   const [q, setQ] = useState('');
+  const [asOf, setAsOf] = useState('');
 
   const { data, isLoading } = useQuery({
-    queryKey: ['trainer-recruitment-supply', section, dayPair, mainDayPair],
+    queryKey: ['trainer-recruitment-supply', section, dayPair, mainDayPair, asOf],
     queryFn: () => api.get('/reports/trainer-recruitment-supply', {
-      params: { section, day_pair: effDayPair(dayPair, mainDayPair) === 'all' ? undefined : effDayPair(dayPair, mainDayPair) },
+      params: { section, day_pair: effDayPair(dayPair, mainDayPair) === 'all' ? undefined : effDayPair(dayPair, mainDayPair), as_of: asOf || undefined },
     }).then(r => r.data),
     staleTime: 60 * 1000,
   });
@@ -292,6 +319,7 @@ function SupplyView() {
             {Object.entries(DAY_PAIRS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
         </div>
+        <AsOfFilter value={asOf} onChange={setAsOf} />
         <div className="relative mr-auto">
           <Search className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="اسم المدرب..." className="pr-8 pl-2 py-2 rounded-lg border border-gray-200 text-xs w-44" />
@@ -346,7 +374,7 @@ function SupplyView() {
                 <tr><td colSpan={6} className="py-12"><EmptyState title="لا يوجد مدربو فون كول بهذه الفلاتر" /></td></tr>
               ) : trainers.map((t, i) => (
                 <tr key={i} className="hover:bg-gray-50/60">
-                  <td className="px-3 py-2 font-mono text-[12px] text-gray-800 whitespace-nowrap" dir="ltr">{t.name}</td>
+                  <td className="px-3 py-2 font-mono text-[12px] text-gray-800 whitespace-nowrap" dir="ltr">{t.name}<EndsBadge endsAt={t.ends_at} /></td>
                   <td className="px-3 py-2"><span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold ${SEC_TONE[t.section]}`}>{t.section_label}</span></td>
                   <td className="px-3 py-2 text-center font-bold">{num(t.weekly_hours)}</td>
                   <td className="px-3 py-2 text-center text-emerald-700"><Call n={t.monthly_calls} /></td>
@@ -378,13 +406,15 @@ function BalanceView() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [missFilter, setMissFilter] = useState('all');   // all | partial | zero
+  const [asOf, setAsOf] = useState('');
 
   const { data, isLoading } = useQuery({
-    queryKey: ['trainer-recruitment-balance', section, dayPair, mainDayPair, from, to],
+    queryKey: ['trainer-recruitment-balance', section, dayPair, mainDayPair, from, to, asOf],
     queryFn: () => api.get('/reports/trainer-recruitment-balance', {
       params: {
         section, day_pair: effDayPair(dayPair, mainDayPair) === 'all' ? undefined : effDayPair(dayPair, mainDayPair),
         from: from || undefined, to: to || undefined,
+        as_of: asOf || undefined,
       },
     }).then(r => r.data),
     staleTime: 60 * 1000,
@@ -425,6 +455,7 @@ function BalanceView() {
           <input type="date" value={to} onChange={e => setTo(e.target.value)} className="px-2 py-2 rounded-lg border border-gray-200 text-xs text-gray-700 bg-gray-50" />
           {(from || to) && <button onClick={() => { setFrom(''); setTo(''); }} className="text-[11px] text-rose-500 font-bold hover:underline">مسح</button>}
         </div>
+        <AsOfFilter value={asOf} onChange={setAsOf} />
       </div>
 
       {/* summary */}
@@ -557,11 +588,12 @@ function CrossSectionView() {
   const [q, setQ] = useState('');
   const [open, setOpen] = useState({});
   const [openChip, setOpenChip] = useState({});   // "trainer|gi|pi" → show that phone-trainer's session dates
+  const [asOf, setAsOf] = useState('');
 
   const { data, isLoading } = useQuery({
-    queryKey: ['trainer-recruitment-cross', section, dayPair, mainDayPair],
+    queryKey: ['trainer-recruitment-cross', section, dayPair, mainDayPair, asOf],
     queryFn: () => api.get('/reports/trainer-recruitment-cross-section', {
-      params: { section, day_pair: effDayPair(dayPair, mainDayPair) === 'all' ? undefined : effDayPair(dayPair, mainDayPair) },
+      params: { section, day_pair: effDayPair(dayPair, mainDayPair) === 'all' ? undefined : effDayPair(dayPair, mainDayPair), as_of: asOf || undefined },
     }).then(r => r.data),
     staleTime: 60 * 1000,
   });
@@ -594,6 +626,7 @@ function CrossSectionView() {
             {Object.entries(DAY_PAIRS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
         </div>
+        <AsOfFilter value={asOf} onChange={setAsOf} />
         <div className="relative mr-auto">
           <Search className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="اسم المدرب..." className="pr-8 pl-2 py-2 rounded-lg border border-gray-200 text-xs w-44" />
@@ -704,11 +737,12 @@ function IndependenceView() {
   const [dayPair, setDayPair] = useState('all');
   const [mainDayPair, setMainDayPair] = useState('all');
   const [showTrainers, setShowTrainers] = useState(false);
+  const [asOf, setAsOf] = useState('');
 
   const { data, isLoading } = useQuery({
-    queryKey: ['trainer-recruitment-independence', section, dayPair, mainDayPair],
+    queryKey: ['trainer-recruitment-independence', section, dayPair, mainDayPair, asOf],
     queryFn: () => api.get('/reports/trainer-recruitment-independence', {
-      params: { section, day_pair: effDayPair(dayPair, mainDayPair) === 'all' ? undefined : effDayPair(dayPair, mainDayPair) },
+      params: { section, day_pair: effDayPair(dayPair, mainDayPair) === 'all' ? undefined : effDayPair(dayPair, mainDayPair), as_of: asOf || undefined },
     }).then(r => r.data),
     staleTime: 60 * 1000,
   });
@@ -737,6 +771,7 @@ function IndependenceView() {
             {Object.entries(DAY_PAIRS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
         </div>
+        <AsOfFilter value={asOf} onChange={setAsOf} />
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -765,7 +800,7 @@ function IndependenceView() {
                   <tbody>
                     {(s.trainers_detail || []).map((t, i) => (
                       <tr key={i} className="border-b border-gray-50 last:border-0">
-                        <td className="py-1.5 font-mono text-gray-700" dir="ltr">{t.name}</td>
+                        <td className="py-1.5 font-mono text-gray-700" dir="ltr">{t.name}<EndsBadge endsAt={t.ends_at} /></td>
                         <td className="py-1.5 text-center">
                           {(t.days || []).map((d, di) => (
                             <span key={di} className="inline-block text-[10px] px-1.5 py-0.5 mx-0.5 rounded bg-blue-50 text-blue-700 border border-blue-100">{d}</span>

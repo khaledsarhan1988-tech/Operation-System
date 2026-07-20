@@ -8424,6 +8424,17 @@ router.get('/trainer-recruitment', (req, res) => {
   }
 });
 
+// «اعتبارًا من تاريخ» (as_of) — planning date for the «توظيف المدربين» tabs.
+// A shift counts only if ACTIVE on that date (end_date inclusive = آخر يوم عمل).
+// Default = today (Egypt). Owner rule (2026-07-20): trainers whose shift END
+// date is coming up must be accounted for — pick a future as_of and they drop
+// from capacity starting the day after their end date.
+const recruitAsOf = req => {
+  const q = String(req.query.as_of || '');
+  return /^\d{4}-\d{2}-\d{2}$/.test(q) ? q : new Date(Date.now() + 2 * 3600 * 1000).toISOString().slice(0, 10);
+};
+const shiftActiveOn = (sh, d) => (!sh.startDate || sh.startDate <= d) && (!sh.endDate || sh.endDate >= d);
+
 // ─── GET /api/reports/trainer-recruitment-supply ─────────────────────────────
 // «توظيف المدربين» — PHASE 2 (supply side). Phone-call (zoom) trainers' call
 // CAPACITY, from LIVE data. Per owner: capacity = each trainer's ACTUAL net
@@ -8438,6 +8449,7 @@ router.get('/trainer-recruitment-supply', (req, res) => {
     const sectionFilter   = ['general', 'semi', 'private'].includes(req.query.section) ? req.query.section : 'all';
     const DAYPAIR_KEY = { sat_tue: '6,2', sun_wed: '0,3', mon_thu: '1,4' };
     const wantPairKey = DAYPAIR_KEY[req.query.day_pair] || null;
+    const asOf = recruitAsOf(req);   // shifts must be active on this date (was: no date check at all)
 
     const SEC = ['general', 'semi', 'private'];
     const SEC_LABEL  = { general: 'عام', semi: 'شبه خاص', private: 'خاص' };
@@ -8466,7 +8478,8 @@ router.get('/trainer-recruitment-supply', (req, res) => {
     // one row per (phone-call trainer, sub-section) with net hours per day
     const raw = [];
     for (const t of members) {
-      const shifts = parseTeamShifts(t).filter(sh => String(sh.section || '').startsWith('phone_call'));
+      const shifts = parseTeamShifts(t).filter(sh =>
+        String(sh.section || '').startsWith('phone_call') && shiftActiveOn(sh, asOf));
       if (!shifts.length) continue;
       const subShifts = {};
       for (const sh of shifts) {
@@ -8489,7 +8502,11 @@ router.get('/trainer-recruitment-supply', (req, res) => {
           if (ivs.length) { const net = Math.max(0, unionMin(ivs) - unionMin(rests)) / 60; if (net > 0) dayHours[day] = net; }
         }
         const weeklyHours = Object.values(dayHours).reduce((a, b) => a + b, 0);
-        if (weeklyHours > 0) raw.push({ name: t.name, section: sub, dayHours, weeklyHours });
+        // ends_at: when EVERY counted shift is date-closed, the latest end date
+        // (badge «ينتهي في…»); any open-ended shift → null (ongoing).
+        const open = shs.some(sh => !sh.endDate);
+        const endsAt = open ? null : (shs.reduce((m, sh) => (sh.endDate > m ? sh.endDate : m), '') || null);
+        if (weeklyHours > 0) raw.push({ name: t.name, section: sub, dayHours, weeklyHours, endsAt });
       }
     }
 
@@ -8503,6 +8520,7 @@ router.get('/trainer-recruitment-supply', (req, res) => {
         name: r.name, section: r.section, section_label: SEC_LABEL[r.section],
         weekly_hours: +r.weeklyHours.toFixed(1), monthly_calls: callsOf(r.weeklyHours),
         work_days: TEACH_DAYS.filter(d => r.dayHours[d] > 0).map(d => DAY_AR[d]),
+        ends_at: r.endsAt || null,
         by_pair,
       };
     });
@@ -8537,7 +8555,7 @@ router.get('/trainer-recruitment-supply', (req, res) => {
     };
 
     return res.json({
-      params: { calls_per_hour: CALLS_PER_HOUR, weeks_per_month: WEEKS_PER_MONTH, section: sectionFilter, day_pair: req.query.day_pair || 'all' },
+      params: { calls_per_hour: CALLS_PER_HOUR, weeks_per_month: WEEKS_PER_MONTH, section: sectionFilter, day_pair: req.query.day_pair || 'all', as_of: asOf },
       totals, sections, trainers,
     });
   } catch (err) {
@@ -8569,6 +8587,7 @@ router.get('/trainer-recruitment-balance', (req, res) => {
     const line = lineFilter(req);
     const DAYPAIR_KEY = { sat_tue: '6,2', sun_wed: '0,3', mon_thu: '1,4' };
     const wantPairKey = DAYPAIR_KEY[req.query.day_pair] || null;
+    const asOf = recruitAsOf(req);   // supply shifts must be active on this date (was: no date check)
     // date filter by the group's FIRST main lecture (round start) — scopes the WHOLE tab
     const fromDate = req.query.from || null, toDate = req.query.to || null;
     const hasDateF = !!(fromDate || toDate);
@@ -8689,7 +8708,8 @@ router.get('/trainer-recruitment-balance', (req, res) => {
     const capDayHours = {}; SEC.forEach(s => capDayHours[s] = {});
     const capTrainers = {}; SEC.forEach(s => capTrainers[s] = new Set());
     for (const t of members) {
-      const shifts = parseTeamShifts(t).filter(sh => String(sh.section || '').startsWith('phone_call'));
+      const shifts = parseTeamShifts(t).filter(sh =>
+        String(sh.section || '').startsWith('phone_call') && shiftActiveOn(sh, asOf));
       if (!shifts.length) continue;
       const subShifts = {};
       for (const sh of shifts) { const sub = sh.section.replace('phone_call_', '').replace('phone_call', 'general') || 'general'; (subShifts[sub] = subShifts[sub] || []).push(sh); }
@@ -8827,7 +8847,7 @@ router.get('/trainer-recruitment-cross-section', (req, res) => {
 
     // ── MAIN trainer's section = their CURRENTLY-ACTIVE shift's section (owner's rule:
     // use the shift that is still ongoing today, NOT the group's dept nor the name suffix) ──
-    const today = new Date(Date.now() + 2 * 3600 * 1000).toISOString().slice(0, 10);
+    const today = recruitAsOf(req);   // «اعتبارًا من» — as_of override (default today)
     const normFull = s => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
     const MAIN_SECS = new Set(['general', 'semi', 'private']);
     const tmByFull = new Map(), tmByStrip = new Map();
@@ -8981,7 +9001,7 @@ router.get('/trainer-recruitment-independence', (req, res) => {
     const PAIR_KEYS = ['sat_tue', 'sun_wed', 'mon_thu'];
     const PAIR_LABEL = { sat_tue: 'سبت + ثلاثاء', sun_wed: 'أحد + أربعاء', mon_thu: 'إثنين + خميس' };
     const INVERSE = { sat_tue: 'mon_thu', sun_wed: 'sat_tue', mon_thu: 'sun_wed' };   // main pair → phone-call (side) pair
-    const today = new Date(Date.now() + 2 * 3600 * 1000).toISOString().slice(0, 10);
+    const today = recruitAsOf(req);   // «اعتبارًا من» — as_of override (default today)
 
     // net teaching hours a shift offers on a specific day = shift span − breaks − voice-notes
     // (owner: voice-note time hosts NO groups, so it's excluded like a break).
@@ -9028,6 +9048,10 @@ router.get('/trainer-recruitment-independence', (req, res) => {
             if (!ti) { ti = { name: t.name, days: new Set(), groups: 0, pairs: new Set() }; trainerBySec[sec].set(t.name, ti); }
             sh.days.forEach(d => ti.days.add(d));
             ti.groups += slots; ti.pairs.add(PAIR_LABEL[pk]);
+            // ends_at badge: latest end date across contributing shifts; any
+            // open-ended shift → ongoing (no badge).
+            if (!sh.endDate) ti.open = true;
+            else if (!ti.ends_at || sh.endDate > ti.ends_at) ti.ends_at = sh.endDate;
             detail.push({ name: t.name, section: sec, main_pair: PAIR_LABEL[pk], groups: slots, students: slots * STUDENTS_PER_GROUP[sec] });
           }
         }
@@ -9058,6 +9082,7 @@ router.get('/trainer-recruitment-independence', (req, res) => {
           name: ti.name,
           days: DAY_ORDER.filter(d => ti.days.has(d)).map(d => DAY_AR[d]),
           groups: ti.groups, pairs: [...ti.pairs],
+          ends_at: ti.open ? null : (ti.ends_at || null),
         })).sort((a, b) => b.groups - a.groups),
       };
     }).filter(s => sectionFilter === 'all' || s.section === sectionFilter);
@@ -9070,7 +9095,7 @@ router.get('/trainer-recruitment-independence', (req, res) => {
     };
 
     return res.json({
-      params: { students_per_group: STUDENTS_PER_GROUP, students_per_trainer: STUDENTS_PER_TRAINER, group_duration: GROUP_DUR, section: sectionFilter, day_pair: req.query.day_pair || 'all' },
+      params: { students_per_group: STUDENTS_PER_GROUP, students_per_trainer: STUDENTS_PER_TRAINER, group_duration: GROUP_DUR, section: sectionFilter, day_pair: req.query.day_pair || 'all', as_of: today },
       totals, sections,
       detail: detail.filter(d => (sectionFilter === 'all' || d.section === sectionFilter)),
     });
