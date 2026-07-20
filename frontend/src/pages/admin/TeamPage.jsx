@@ -640,6 +640,24 @@ function ExtraShiftsSection({ memberId, inputCls, labelCls }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['team-extra-shifts', memberId] }),
   });
 
+  // ── Bulk-delete saved entries ──
+  const [delSel, setDelSel] = useState(() => new Set());   // selected saved-entry ids
+  const toggleDelSel = (id) =>
+    setDelSel(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const bulkDelMut = useMutation({
+    mutationFn: (ids) => api.post(`/team/${memberId}/extra-shifts/bulk-delete`, { entry_ids: ids }).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['team-extra-shifts', memberId] });
+      setDelSel(new Set());
+    },
+    onError: (err) => setError(err.response?.data?.error || 'تعذّر الحذف الجماعي'),
+  });
+  function submitBulkDelete() {
+    const ids = [...delSel];
+    if (!ids.length) return;
+    if (confirm(`حذف ${ids.length} إدخال ساعات إضافية؟`)) bulkDelMut.mutate(ids);
+  }
+
   // Format minutes → "4 س" / "1 س 30 د" / "45 د"
   const fmtMins = (n) => {
     n = Math.max(0, Math.round(Number(n) || 0));
@@ -852,27 +870,44 @@ function ExtraShiftsSection({ memberId, inputCls, labelCls }) {
       ) : rows.length === 0 ? (
         <p className="text-xs text-gray-500 text-center py-2 italic">لا توجد ساعات إضافية مسجلة</p>
       ) : (
-        <ul className="space-y-1.5 mb-3">
-          {rows.map(r => (
-            <li key={r.id} className="bg-white border border-amber-200 rounded-lg px-3 py-2 flex items-center gap-2 text-xs">
-              <CalendarIcon size={12} className="text-amber-600 flex-shrink-0" />
-              <span className="font-bold text-gray-800">{r.date}</span>
-              {r.start_time && r.end_time ? (
-                <span className="text-gray-600">{r.start_time} → {r.end_time}</span>
-              ) : null}
-              <span className="bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded">
-                {fmtMins(r.duration_min)}
-              </span>
-              {r.notes && <span className="text-gray-500 truncate flex-1">— {r.notes}</span>}
-              <button type="button"
-                onClick={() => { if (confirm('حذف الإدخال؟')) delMut.mutate(r.id); }}
-                className="mr-auto p-1 hover:bg-red-50 rounded text-red-500"
-                title="حذف">
-                <Trash2 size={12} />
-              </button>
-            </li>
-          ))}
-        </ul>
+        <>
+          {/* Bulk-delete controls for saved entries */}
+          <div className="flex items-center gap-2 mb-2 text-xs text-gray-700">
+            <button type="button"
+              onClick={() => setDelSel(new Set(rows.map(r => r.id)))}
+              className="text-amber-700 underline">تحديد الكل</button>
+            <button type="button" onClick={() => setDelSel(new Set())}
+              className="text-gray-500 underline">إلغاء الكل</button>
+            <button type="button" onClick={submitBulkDelete}
+              disabled={bulkDelMut.isPending || delSel.size === 0}
+              className="mr-auto flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 font-bold border border-red-200 disabled:opacity-40">
+              <Trash2 size={12} />
+              {bulkDelMut.isPending ? 'جاري الحذف...' : `حذف المحدد (${delSel.size})`}
+            </button>
+          </div>
+          <ul className="space-y-1.5 mb-3">
+            {rows.map(r => (
+              <li key={r.id} className="bg-white border border-amber-200 rounded-lg px-3 py-2 flex items-center gap-2 text-xs">
+                <input type="checkbox" checked={delSel.has(r.id)} onChange={() => toggleDelSel(r.id)} />
+                <CalendarIcon size={12} className="text-amber-600 flex-shrink-0" />
+                <span className="font-bold text-gray-800">{r.date}</span>
+                {r.start_time && r.end_time ? (
+                  <span className="text-gray-600">{r.start_time} → {r.end_time}</span>
+                ) : null}
+                <span className="bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded">
+                  {fmtMins(r.duration_min)}
+                </span>
+                {r.notes && <span className="text-gray-500 truncate flex-1">— {r.notes}</span>}
+                <button type="button"
+                  onClick={() => { if (confirm('حذف الإدخال؟')) delMut.mutate(r.id); }}
+                  className="mr-auto p-1 hover:bg-red-50 rounded text-red-500"
+                  title="حذف">
+                  <Trash2 size={12} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
 
       {/* Add form */}

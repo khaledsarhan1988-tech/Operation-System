@@ -812,6 +812,28 @@ router.delete('/extra-shifts/:entryId', (req, res) => {
   }
 });
 
+// POST /api/team/:id/extra-shifts/bulk-delete — remove several entries at once.
+// Body: { entry_ids: [1,2,...] }. Scoped to the member (ids not belonging to
+// this member are ignored, not deleted). Transaction → all-or-nothing.
+router.post('/:id/extra-shifts/bulk-delete', express.json(), (req, res) => {
+  if (req.user?.role !== 'admin' && req.user?.role !== 'leader') {
+    return res.status(403).json({ error: 'صلاحية للأدمن أو القائد فقط' });
+  }
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'invalid member id' });
+  const ids = (Array.isArray(req.body?.entry_ids) ? req.body.entry_ids : [])
+    .map(x => parseInt(x, 10)).filter(n => Number.isInteger(n) && n > 0);
+  if (!ids.length) return res.status(400).json({ error: 'entry_ids (non-empty array) is required' });
+  try {
+    const stmt = db.prepare(`DELETE FROM team_member_extra_shifts WHERE id = ? AND team_member_id = ?`);
+    let deleted = 0;
+    db.transaction(() => { for (const eid of ids) deleted += stmt.run(eid, id).changes; })();
+    return res.json({ deleted, requested: ids.length });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── EXTRA SHIFTS — BULK GENERATE FROM THE LECTURE SCHEDULE ──────────────────
 // Owner pain point: a trainer who covered 20+ lectures by the hour had to be
 // entered day-by-day above. These two endpoints read the trainer's own lectures
