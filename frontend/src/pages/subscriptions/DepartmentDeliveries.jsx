@@ -37,6 +37,55 @@ const STATUS_OPTIONS = [
 ];
 const STATUS_CLS = Object.fromEntries(STATUS_OPTIONS.map(s => [s.value, s.cls]));
 
+// ─── SETTLE DIALOG (تسوية — إنهاء العضوية) ───────────────────────────────────
+// A proper dialog replacing the old window.prompt: shows who/where, takes the
+// reason, and records it (shown later on the row's badge + tooltip).
+function SettleDialog({ client, deptLabel, pending, onConfirm, onClose }) {
+  const [note, setNote] = useState('');
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={onClose} dir="rtl">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="bg-violet-600 text-white px-5 py-4">
+          <h3 className="font-bold">تسوية — إنهاء العضوية</h3>
+          <p className="text-xs text-white/80 mt-1">
+            {client.name || client.phone} — قسم {deptLabel}
+          </p>
+        </div>
+        <div className="p-5 space-y-3">
+          <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
+            هيتم اعتبار العضوية <b>منتهية بالكامل</b> (المتبقّي = 0) ويخرج العميل من قوائم «محتاج تجديد».
+            القرار قابل للتراجع في أي وقت بزر «إلغاء التسوية».
+          </div>
+          <label className="block text-sm font-medium text-slate-700">
+            سبب التسوية
+            <textarea
+              autoFocus
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={3}
+              placeholder="مثال: تحويل المستويات المتبقية لمستوى Business واحد باتفاق خاص"
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300"
+            />
+          </label>
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <button type="button" onClick={onClose} className="text-sm text-slate-500 hover:text-slate-700 px-3 py-2">
+              إلغاء
+            </button>
+            <button
+              type="button"
+              disabled={pending || !note.trim()}
+              onClick={() => onConfirm(note.trim())}
+              className="text-sm font-bold text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50 rounded-xl px-4 py-2"
+            >
+              {pending ? 'جارٍ الحفظ…' : 'تأكيد التسوية'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function DepartmentDeliveries() {
   const params = useParams();
   const qc = useQueryClient();
@@ -96,11 +145,12 @@ export default function DepartmentDeliveries() {
   });
 
   // تسوية — owner-approved deal that CLOSES a membership (remaining becomes 0).
+  const [settleTarget, setSettleTarget] = useState(null);   // the row being settled (opens the dialog)
   const settleMut = useMutation({
     mutationFn: ({ phone, settled, note }) => settled
       ? api.delete(`/cs/deliveries/${encodeURIComponent(phone)}/settle`, { params: { dept: activeDept } })
       : api.put(`/cs/deliveries/${encodeURIComponent(phone)}/settle`, { dept: activeDept, note }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['cs-deliveries'] }),
+    onSuccess: () => { setSettleTarget(null); qc.invalidateQueries({ queryKey: ['cs-deliveries'] }); },
     onError: (e) => alert('فشل تحديث التسوية: ' + (e.response?.data?.error || e.message)),
   });
   const onToggleSettle = (it) => {
@@ -110,9 +160,7 @@ export default function DepartmentDeliveries() {
       }
       return;
     }
-    const note = window.prompt(`تسوية — إنهاء عضوية ${it.name || it.phone} في ${meta.label}.\nاكتب سبب التسوية (مثال: تحويل المستويات المتبقية لمستوى Business):`);
-    if (note === null) return;   // cancelled
-    settleMut.mutate({ phone: it.phone, settled: false, note });
+    setSettleTarget(it);
   };
 
   // Admin-only: refresh the underlying data (Finance API → Membership Excel →
@@ -182,6 +230,16 @@ export default function DepartmentDeliveries() {
 
       {showAnalytics && (
         <DeptAnalyticsModal dept={activeDept} onClose={() => setShowAnalytics(false)} />
+      )}
+
+      {settleTarget && (
+        <SettleDialog
+          client={settleTarget}
+          deptLabel={meta.label}
+          pending={settleMut.isPending}
+          onConfirm={(note) => settleMut.mutate({ phone: settleTarget.phone, settled: false, note })}
+          onClose={() => setSettleTarget(null)}
+        />
       )}
 
       {/* Department tabs */}
@@ -380,8 +438,14 @@ export default function DepartmentDeliveries() {
                         {it.remaining_levels == null ? '—' : it.remaining_levels}
                       </span>
                       {it.settled && (
-                        <span className="text-[10px] bg-violet-50 text-violet-700 border border-violet-200 rounded px-1.5 py-0.5 font-semibold" title="عضوية منتهية بالتسوية">
+                        <span
+                          className="text-[10px] bg-violet-50 text-violet-700 border border-violet-200 rounded px-1.5 py-0.5 font-semibold max-w-32"
+                          title={`${it.settled_note || 'عضوية منتهية بالتسوية'}${it.settled_by ? `\nبواسطة: ${it.settled_by}` : ''}${it.settled_at ? `\nبتاريخ: ${String(it.settled_at).slice(0, 10)}` : ''}`}
+                        >
                           تسوية ✓
+                          {it.settled_note && (
+                            <span className="block font-normal text-violet-500 truncate">{it.settled_note}</span>
+                          )}
                         </span>
                       )}
                       {user?.role === 'admin' && it.has_subscription !== false && (

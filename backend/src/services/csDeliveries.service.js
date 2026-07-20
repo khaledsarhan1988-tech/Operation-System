@@ -529,20 +529,23 @@ function foldPhoneAliases(ctx, alias) {
   return ctx;
 }
 
-// Manual settlements (تسوية): Set('pn|dept') of memberships CLOSED by an
-// owner-approved deal (e.g. remaining levels converted to a Business level).
-// Keys are resolved through the phone-alias map so a settlement recorded under
-// either of a client's numbers lands on the primary.
+// Manual settlements (تسوية): Map('pn|dept' → {note, by, at}) of memberships
+// CLOSED by an owner-approved deal (e.g. remaining levels converted to a
+// Business level). A Map so the page can DISPLAY the reason/who/when; callers
+// that only need membership (membershipBalance) use .has() as before. Keys are
+// resolved through the phone-alias map so a settlement recorded under either
+// of a client's numbers lands on the primary.
 function buildSettledSet(alias) {
-  const set = new Set();
+  const map = new Map();
   try {
-    for (const r of db.prepare(`SELECT client_phone_norm pn, dept FROM cs_membership_settlements`).all()) {
+    for (const r of db.prepare(`SELECT client_phone_norm pn, dept, note, settled_by_name, settled_at FROM cs_membership_settlements`).all()) {
       const p = csPrimaryPhone(r.pn);
       if (!p || !DEPTS.includes(r.dept)) continue;
-      set.add(((alias && alias.get(p)) || p) + '|' + r.dept);
+      map.set(((alias && alias.get(p)) || p) + '|' + r.dept,
+        { note: r.note || null, by: r.settled_by_name || null, at: r.settled_at || null });
     }
   } catch (_) { /* table may not exist on older deploys */ }
-  return set;
+  return map;
 }
 
 function buildBalanceContext() {
@@ -783,7 +786,13 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user,
     it.groups_taken = groupsTaken;
     // Settled (تسوية) — membership closed by an owner-approved deal: remaining is
     // 0 by decision. SAME rule as membershipBalance (audit: balance == page).
-    it.settled = ctxMaps.settledSet.has(it.phone + '|' + dept);
+    const settleInfo = ctxMaps.settledSet.get(it.phone + '|' + dept);
+    it.settled = !!settleInfo;
+    if (settleInfo) {
+      it.settled_note = settleInfo.note;
+      it.settled_by = settleInfo.by;
+      it.settled_at = settleInfo.at;
+    }
     it.remaining_levels = it.settled ? 0
       : (it.paid_months != null) ? Math.max(0, it.paid_months - groupsTaken)
       : null;
