@@ -881,6 +881,34 @@ router.delete('/deliveries/:phone/settle', requireRole('admin'), (req, res) => {
   }
 });
 
+/**
+ * PUT /api/cs/deliveries/:phone/exclude-group — استبعاد مجموعة يدويًّا من حساب
+ * عميل واحد (borderline journeys the owner reviews himself). Body: { group, note? }.
+ * DELETE with ?group= restores it. Admin only.
+ */
+router.put('/deliveries/:phone/exclude-group', requireRole('admin'), (req, res) => {
+  try {
+    const svc = require('../services/csDeliveries.service');
+    res.json({ ok: true, ...svc.excludeClientGroup({
+      phone: req.params.phone, group: req.body?.group, note: req.body?.note,
+      userId: req.user?.id, userName: req.user?.full_name || req.user?.name || null,
+    }) });
+  } catch (e) {
+    console.error('PUT /cs/deliveries/:phone/exclude-group error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+router.delete('/deliveries/:phone/exclude-group', requireRole('admin'), (req, res) => {
+  try {
+    const svc = require('../services/csDeliveries.service');
+    res.json({ ok: true, ...svc.restoreClientGroup({ phone: req.params.phone, group: req.query?.group || req.body?.group }) });
+  } catch (e) {
+    console.error('DELETE /cs/deliveries/:phone/exclude-group error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
 // ─── ENR GROUPS (مجموعات الـ Enrollment) ──────────────────────────────────────
 
 // Enr Groups access guard: any admin OR a user granted the 'enr-groups' page.

@@ -86,6 +86,56 @@ function SettleDialog({ client, deptLabel, pending, onConfirm, onClose }) {
   );
 }
 
+// ─── EXCLUDE-GROUP DIALOG (استبعاد مجموعة من حساب عميل) ─────────────────────
+// Owner-reviewed borderline journeys: drop ONE group from ONE client's counted
+// levels, with a recorded reason. Reversible from the row (↺).
+function ExcludeGroupDialog({ client, group, pending, onConfirm, onClose }) {
+  const [note, setNote] = useState('');
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={onClose} dir="rtl">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="bg-rose-600 text-white px-5 py-4">
+          <h3 className="font-bold">استبعاد مجموعة من الحساب</h3>
+          <p className="text-xs text-white/80 mt-1">{client.name || client.phone}</p>
+        </div>
+        <div className="p-5 space-y-3">
+          <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-xs font-mono text-slate-700 break-all" dir="ltr">
+            {group}
+          </div>
+          <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
+            المجموعة دي هتتشال من عدد المستويات المأخوذة للعميل ده بس — «المتبقّي» هيزيد 1.
+            القرار قابل للتراجع بزر ↺ على المجموعة المستبعدة.
+          </div>
+          <label className="block text-sm font-medium text-slate-700">
+            سبب الاستبعاد
+            <textarea
+              autoFocus
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={3}
+              placeholder="مثال: العميل اتشال من المجموعة ولم يحضر — لا تُحتسب"
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300"
+            />
+          </label>
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <button type="button" onClick={onClose} className="text-sm text-slate-500 hover:text-slate-700 px-3 py-2">
+              إلغاء
+            </button>
+            <button
+              type="button"
+              disabled={pending || !note.trim()}
+              onClick={() => onConfirm(note.trim())}
+              className="text-sm font-bold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 rounded-xl px-4 py-2"
+            >
+              {pending ? 'جارٍ الحفظ…' : 'تأكيد الاستبعاد'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function DepartmentDeliveries() {
   const params = useParams();
   const qc = useQueryClient();
@@ -163,6 +213,16 @@ export default function DepartmentDeliveries() {
     setSettleTarget(it);
   };
 
+  // استبعاد مجموعة يدويًّا من حساب عميل واحد (المالك بيراجع الحالات الحدّية بنفسه).
+  const [excludeTarget, setExcludeTarget] = useState(null);   // { it, group }
+  const excludeMut = useMutation({
+    mutationFn: ({ phone, group, note, restore }) => restore
+      ? api.delete(`/cs/deliveries/${encodeURIComponent(phone)}/exclude-group`, { params: { group } })
+      : api.put(`/cs/deliveries/${encodeURIComponent(phone)}/exclude-group`, { group, note }),
+    onSuccess: () => { setExcludeTarget(null); qc.invalidateQueries({ queryKey: ['cs-deliveries'] }); },
+    onError: (e) => alert('فشل تعديل المجموعة: ' + (e.response?.data?.error || e.message)),
+  });
+
   // Admin-only: refresh the underlying data (Finance API → Membership Excel →
   // Drive levels), then reload the table. Runs the 3 imports sequentially; a
   // failure in one step is captured and does not block the others.
@@ -239,6 +299,16 @@ export default function DepartmentDeliveries() {
           pending={settleMut.isPending}
           onConfirm={(note) => settleMut.mutate({ phone: settleTarget.phone, settled: false, note })}
           onClose={() => setSettleTarget(null)}
+        />
+      )}
+
+      {excludeTarget && (
+        <ExcludeGroupDialog
+          client={excludeTarget.it}
+          group={excludeTarget.group}
+          pending={excludeMut.isPending}
+          onConfirm={(note) => excludeMut.mutate({ phone: excludeTarget.it.phone, group: excludeTarget.group, note })}
+          onClose={() => setExcludeTarget(null)}
         />
       )}
 
@@ -422,10 +492,39 @@ export default function DepartmentDeliveries() {
                     ) : <span className="text-slate-300">—</span>}
                   </td>
                   <td className="px-3 py-3">
-                    {it.inactive_groups?.length ? (
+                    {(it.inactive_groups?.length || it.excluded_groups?.length) ? (
                       <div className="flex flex-col gap-1">
-                        {it.inactive_groups.map((g, i) => (
-                          <span key={i} className="text-xs bg-slate-100 text-slate-600 rounded px-1.5 py-0.5 font-mono break-all">{g}</span>
+                        {(it.inactive_groups || []).map((g, i) => (
+                          <span key={i} className="group/chip inline-flex items-center gap-1 text-xs bg-slate-100 text-slate-600 rounded px-1.5 py-0.5 font-mono break-all">
+                            <span className="min-w-0">{g}</span>
+                            {user?.role === 'admin' && (
+                              <button
+                                type="button"
+                                title="استبعاد المجموعة دي من حساب العميل"
+                                disabled={excludeMut.isPending}
+                                onClick={() => setExcludeTarget({ it, group: g })}
+                                className="opacity-0 group-hover/chip:opacity-100 text-rose-400 hover:text-rose-600 font-bold px-0.5 transition-opacity"
+                              >✕</button>
+                            )}
+                          </span>
+                        ))}
+                        {(it.excluded_groups || []).map((x, i) => (
+                          <span
+                            key={'x' + i}
+                            className="inline-flex items-center gap-1 text-xs bg-rose-50 text-rose-500 border border-rose-100 rounded px-1.5 py-0.5 font-mono break-all line-through"
+                            title={`مستبعدة من الحساب${x.note ? `\nالسبب: ${x.note}` : ''}${x.by ? `\nبواسطة: ${x.by}` : ''}${x.at ? `\nبتاريخ: ${String(x.at).slice(0, 10)}` : ''}`}
+                          >
+                            <span className="min-w-0">{x.group}</span>
+                            {user?.role === 'admin' && (
+                              <button
+                                type="button"
+                                title="استرجاع المجموعة (ترجع تتحسب)"
+                                disabled={excludeMut.isPending}
+                                onClick={() => { if (window.confirm(`استرجاع «${x.group}» لحساب ${it.name || it.phone}؟`)) excludeMut.mutate({ phone: it.phone, group: x.group, restore: true }); }}
+                                className="no-underline text-emerald-500 hover:text-emerald-700 font-bold px-0.5"
+                              >↺</button>
+                            )}
+                          </span>
                         ))}
                       </div>
                     ) : <span className="text-slate-300">—</span>}

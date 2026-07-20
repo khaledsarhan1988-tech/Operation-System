@@ -2752,6 +2752,24 @@ initDb().then(db => {
       )
     `);
 
+    // ── Manual per-client GROUP exclusions (owner 2026-07-20) ──
+    // The owner reviews borderline journeys himself: a specific counted group
+    // can be excluded from ONE client's consumed levels (with a reason), and
+    // restored later. Keyed by canon group_key so name variants map to one row.
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS cs_client_group_exclusions (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_phone_norm TEXT NOT NULL,
+        group_key         TEXT NOT NULL,
+        group_label       TEXT,
+        note              TEXT,
+        excluded_by       INTEGER,
+        excluded_by_name  TEXT,
+        excluded_at       TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        UNIQUE(client_phone_norm, group_key)
+      )
+    `);
+
     // ── Owner-confirmed DELETED groups (the review gate) ──
     // A completed-level group is excluded from consumed-level counts ONLY when it
     // appears here with status='confirmed'. The owner reviews the suggested list

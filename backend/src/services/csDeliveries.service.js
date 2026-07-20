@@ -548,6 +548,21 @@ function buildSettledSet(alias) {
   return map;
 }
 
+// Manual per-client GROUP exclusions (owner-reviewed borderline journeys):
+// Map('pn|canon' → {label, note, by, at}). Phones resolved through the alias map.
+function buildGroupExclusions(alias) {
+  const map = new Map();
+  try {
+    for (const r of db.prepare(`SELECT client_phone_norm pn, group_key, group_label, note, excluded_by_name, excluded_at FROM cs_client_group_exclusions`).all()) {
+      const p = csPrimaryPhone(r.pn);
+      if (!p || !r.group_key) continue;
+      map.set(((alias && alias.get(p)) || p) + '|' + r.group_key,
+        { label: r.group_label || r.group_key, note: r.note || null, by: r.excluded_by_name || null, at: r.excluded_at || null });
+    }
+  } catch (_) { /* table may not exist on older deploys */ }
+  return map;
+}
+
 function buildBalanceContext() {
   const alias = buildPhoneAliasMap();
   const ctx = foldPhoneAliases({
@@ -556,6 +571,17 @@ function buildBalanceContext() {
     inactiveMap: buildInactiveGroupMap(),   // cs_completed_levels (past groups)
   }, alias);
   ctx.settledSet = buildSettledSet(alias);  // 'pn|dept' → membership closed by settlement
+  // Owner's manual group exclusions — applied AFTER the alias fold so a group
+  // recorded under either of the client's numbers is caught. Removing the entry
+  // here flows to the page, membershipBalance and renewals alike.
+  ctx.groupExclusions = buildGroupExclusions(alias);
+  for (const [key] of ctx.groupExclusions) {
+    const cut = key.indexOf('|');
+    const pn = key.slice(0, cut), ck = key.slice(cut + 1);
+    const set = ctx.inactiveMap.get(pn);
+    if (!set) continue;
+    for (const g of [...set]) if (bmCanon(g) === ck) set.delete(g);
+  }
   return ctx;
 }
 
@@ -760,10 +786,19 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user,
   // filters (coordinator / lecture dates / remaining levels) can run BEFORE
   // pagination. The heavy pacing work stays on the page slice only (below). ────
   const inactiveMap = ctxMaps.inactiveMap;   // folded — same object as the balance layer
+  // Owner's manual group exclusions per phone (for display + restore in the UI).
+  const exclByPhone = new Map();
+  for (const [key, info] of ctxMaps.groupExclusions) {
+    const cut = key.indexOf('|');
+    const pn2 = key.slice(0, cut);
+    if (!exclByPhone.has(pn2)) exclByPhone.set(pn2, []);
+    exclByPhone.get(pn2).push({ group: info.label, note: info.note, by: info.by, at: info.at });
+  }
   const groupLectureMeta = makeGroupLectureMeta();
   for (const it of items) {
     const inactiveAll = [...(inactiveMap.get(it.phone) || [])];
     it.inactive_groups = dropActiveTwins(it.active_groups, inactiveAll);
+    it.excluded_groups = exclByPhone.get(it.phone) || [];   // manually excluded (display + restore)
 
     // Per active group: lecture count + first/last lecture date (from `lectures`).
     // Aligned with it.active_groups order so the UI can show them side-by-side.
@@ -953,9 +988,37 @@ function clearSettlement({ phone, dept }) {
   return { phone: pn, dept, settled: false };
 }
 
+// ── Manual per-client group exclusion (تعديل المجموعات يدويًّا) writes. ──────
+function excludeClientGroup({ phone, group, note, userId, userName }) {
+  const pn = csPrimaryPhone(phone);
+  if (!pn) throw new Error('Invalid phone');
+  const label = cleanGroupCode(group);
+  if (!label) throw new Error('Invalid group');
+  db.prepare(`
+    INSERT INTO cs_client_group_exclusions (client_phone_norm, group_key, group_label, note, excluded_by, excluded_by_name, excluded_at)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now', '+2 hours'))
+    ON CONFLICT(client_phone_norm, group_key) DO UPDATE SET
+      group_label = excluded.group_label, note = excluded.note,
+      excluded_by = excluded.excluded_by, excluded_by_name = excluded.excluded_by_name,
+      excluded_at = excluded.excluded_at
+  `).run(pn, bmCanon(label), label, note || null, userId || null, userName || null);
+  saveNow();
+  return { phone: pn, group_key: bmCanon(label), excluded: true };
+}
+
+function restoreClientGroup({ phone, group }) {
+  const pn = csPrimaryPhone(phone);
+  if (!pn) throw new Error('Invalid phone');
+  const ck = bmCanon(cleanGroupCode(group));
+  db.prepare(`DELETE FROM cs_client_group_exclusions WHERE client_phone_norm = ? AND group_key = ?`).run(pn, ck);
+  saveNow();
+  return { phone: pn, group_key: ck, excluded: false };
+}
+
 module.exports = {
   getDepartmentDeliveries, setDeliveryStatus, DEPTS, STATUSES,
   buildBalanceContext, membershipBalance, getRenewalNeeded,
   buildPhoneAliasMap,   // secondary→primary phone merge (كشف العملاء mobile_no2)
   setSettlement, clearSettlement,   // تسوية — إنهاء العضوية (owner-approved deals)
+  excludeClientGroup, restoreClientGroup,   // استبعاد مجموعة يدويًّا من حساب عميل
 };
