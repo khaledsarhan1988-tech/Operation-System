@@ -185,27 +185,20 @@ function buildInactiveGroupMap() {
     map.get(pn).add(code);
   };
 
-  for (const r of db.prepare(`
-    SELECT client_phone_norm AS pn, group_name_raw AS g
-      FROM cs_completed_levels
-     WHERE group_name_raw IS NOT NULL AND TRIM(group_name_raw) != ''
-  `).all()) {
-    if (!r.pn) continue;
-    const code = cleanGroupCode(r.g);     // strip status suffix + dedupe same group across levels
-    if (!code || isIgnoredGroup(code)) continue;   // skip empty + placeholder groups (Free Slots, …)
-    add(r.pn, code);
-  }
-
+  // ── PRE-START REMOVALS (computed FIRST — applies to BOTH sources) ──────────
+  // A client who vanished from a group's roster BEFORE its nominal start never
+  // took that level (owner cases 01012965657 Jul_4, 01112806182 Jnu_21). The
+  // level files can carry the client's ORIGINAL registration group even after
+  // such a move, so the roster evidence overrides the file's stale group cell.
+  const preStartRemoved = new Set();   // 'pn|canon'
+  let histRows = [], liveBatch = new Set();
   try {
-    // ENDED = no row on the current batches sheet (it only holds نشطة/بانتظار).
-    // Keys recomputed via canonOf (NOT the stored group_key) so rows written
-    // before a canon-normalization change still dedupe/compare correctly.
-    const liveBatch = new Set(
+    liveBatch = new Set(
       db.prepare(`SELECT group_name FROM batches WHERE group_name IS NOT NULL`).all()
         .map(b => canonOf(b.group_name))
     );
     const { groupNameDate } = require('../utils/csBatchMatch');
-    const histRows = db.prepare(`
+    histRows = db.prepare(`
       SELECT client_phone_norm AS pn, group_name_raw AS g, last_seen AS ls
         FROM cs_client_group_history
     `).all();
@@ -236,14 +229,12 @@ function buildInactiveGroupMap() {
       return best;
     };
     for (const r of histRows) {
-      if (!r.pn) continue;
+      if (!r.pn || !r.ls) continue;
       const code = cleanGroupCode(r.g);
-      if (!code || isIgnoredGroup(code)) continue;
+      if (!code) continue;
       const ck = canonOf(code);
-      if (liveBatch.has(ck)) continue;    // group still active/waiting → active path owns it
-      // REMOVED BEFORE START (owner case 01012965657, Jul_4 group): the client
-      // vanished from the roster BEFORE the group's nominal start date while the
-      // group itself kept appearing on later sheets → he never took that level.
+      // The client vanished from the roster BEFORE the nominal start while the
+      // group (or its slot — renames/date-typos) kept appearing on later sheets.
       // (A client who stays enrolled counts even if absent — different case.)
       const st = startISO(code, r.ls);
       const groupWentOn = ((groupMaxSeen.get(ck) || '') >= st) || ((slotMaxSeen.get(bmSlot(code)) || '') >= st);
@@ -252,10 +243,31 @@ function buildInactiveGroupMap() {
       // just-started group briefly looks "removed" — within days his roster
       // observation moves past the start and the flag resolves itself.
       const stale = st && (Date.now() - new Date(st).getTime()) >= 4 * 86400e3;
-      if (st && stale && r.ls && r.ls < st && groupWentOn) continue;
-      add(r.pn, code);
+      if (st && stale && r.ls < st && groupWentOn) preStartRemoved.add(r.pn + '|' + ck);
     }
   } catch (_) { /* table may not exist on older deploys */ }
+
+  for (const r of db.prepare(`
+    SELECT client_phone_norm AS pn, group_name_raw AS g
+      FROM cs_completed_levels
+     WHERE group_name_raw IS NOT NULL AND TRIM(group_name_raw) != ''
+  `).all()) {
+    if (!r.pn) continue;
+    const code = cleanGroupCode(r.g);     // strip status suffix + dedupe same group across levels
+    if (!code || isIgnoredGroup(code)) continue;   // skip empty + placeholder groups (Free Slots, …)
+    if (preStartRemoved.has(r.pn + '|' + canonOf(code))) continue;  // roster proves pre-start removal
+    add(r.pn, code);
+  }
+
+  for (const r of histRows) {
+    if (!r.pn) continue;
+    const code = cleanGroupCode(r.g);
+    if (!code || isIgnoredGroup(code)) continue;
+    const ck = canonOf(code);
+    if (liveBatch.has(ck)) continue;    // group still active/waiting → active path owns it
+    if (preStartRemoved.has(r.pn + '|' + ck)) continue;
+    add(r.pn, code);
+  }
 
   return map;
 }
