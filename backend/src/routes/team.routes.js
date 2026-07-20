@@ -856,6 +856,26 @@ const stripParens = s => String(s || '').replace(/\([^)]*\)/g, '').trim();
 const normTrainer = s => stripParens(s).toLowerCase().replace(/\s+/g, '');
 const MAX_REASONABLE_MIN = 6 * 60;  // > 6h on a single block = data anomaly → flag
 
+// A group's TEACHING section — same constitution rule as trGroupSection in
+// reports.routes.js (org-chart): batches.dept_type is reliable for the main line
+// but NOT for Dardasha (names carry _P_D/_SP_D yet dept_type says General), so
+// Dardasha uses the name suffix; other lines use dept_type, falling back to the
+// suffix when the batch row is missing.
+// Suffixes: _SP = semi · _P/_KP = private · _Pm = private-morning (owner fact
+// 2026-06-28) — EXCEPT when preceded by a pure time token («Sat_10_Pm_» = 10 PM).
+const _SEC_MAP = { private: 'private', general: 'general', semi: 'semi' };
+function groupSectionOf(name, line, deptType) {
+  const s = String(name || '').replace(/\s+/g, '').toLowerCase();
+  const bySuffix = () => {
+    if (/_sp/.test(s)) return 'semi';
+    if (/_kp|_p(?![a-z])/.test(s)) return 'private';
+    if (/(?<!_\d{1,2}(:\d{2})?)_pm(?![a-z])/.test(s)) return 'private';   // General4_Pm ✓ · Sat_10_Pm ✗ (time)
+    return 'general';
+  };
+  if (String(line) === 'Dardasha') return bySuffix();
+  return _SEC_MAP[String(deptType || '').toLowerCase()] || bySuffix();
+}
+
 // Build the candidate blocks for a member over [from,to] (shared by GET+POST).
 // session_type='main', status IN ('مؤكدة','مجدولة'), matched by trainer name +
 // line. Twins (same date+start+end) collapse to one. Each block is flagged
@@ -882,6 +902,14 @@ function buildLectureBlocks(member, from, to, win) {
       .map(r => `${r.date}|${r.start_time || ''}|${r.end_time || ''}`)
   );
 
+  // dept_type per group (batches) → each block gets its group's TEACHING section
+  // (عام/شبه خاص/خاص) so the owner can filter, e.g. pay only the general-section
+  // lectures after that section's shift ended.
+  const normGroup = s => String(s || '').replace(/\s+/g, '').toLowerCase();
+  const batchDept = new Map();
+  for (const b of db.prepare(`SELECT group_name, line, MAX(dept_type) dt FROM batches GROUP BY group_name, line`).all())
+    batchDept.set(normGroup(b.group_name) + '|' + b.line, b.dt);
+
   const byKey = new Map();   // date|start|end → block (dedup twins)
   for (const r of rows) {
     if (normTrainer(r.trainer) !== target) continue;
@@ -906,6 +934,7 @@ function buildLectureBlocks(member, from, to, win) {
     byKey.set(key, {
       date: r.date, start_time, end_time, duration_min,
       group_name: r.group_name, status: r.status, line: r.line,
+      section: groupSectionOf(r.group_name, r.line, batchDept.get(normGroup(r.group_name) + '|' + r.line)),
       already_exists: existing.has(key),
       anomaly,
     });

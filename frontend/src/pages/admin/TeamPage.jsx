@@ -558,13 +558,17 @@ function ExtraShiftsSection({ memberId, inputCls, labelCls }) {
   const [genError, setGenError] = useState(null);
   const [genMsg, setGenMsg]     = useState(null);
   const [genLine, setGenLine]   = useState('');   // line filter ('' = all lines)
+  const [genSecF, setGenSecF]   = useState('');   // section filter ('' = all sections)
   const [genFromTime, setGenFromTime] = useState('');   // optional time window (24h HH:MM)
   const [genToTime, setGenToTime]     = useState('');
   const blockKey = (b) => `${b.date}|${b.start_time || ''}|${b.end_time || ''}`;
   // A line-neutral trainer (member.line='All') teaches on more than one line, and
   // each Drive line has its OWN Excel file — so the preview is filtered by line to
-  // match whatever file the owner is looking at.
-  const genVisible = (genData?.blocks || []).filter(b => !genLine || (b.line || '') === genLine);
+  // match whatever file the owner is looking at. Section filter: each block carries
+  // its group's teaching section (عام/شبه خاص/خاص) so a two-section trainer can be
+  // paid hours for ONE section's lectures only.
+  const genVisible = (genData?.blocks || []).filter(b =>
+    (!genLine || (b.line || '') === genLine) && (!genSecF || (b.section || '') === genSecF));
 
   const previewMut = useMutation({
     mutationFn: () => api.get(`/team/${memberId}/extra-shifts/from-lectures`, {
@@ -572,7 +576,7 @@ function ExtraShiftsSection({ memberId, inputCls, labelCls }) {
     }).then(r => r.data),
     onSuccess: (data) => {
       setGenData(data);
-      setGenLine('');   // reset line filter; selection is seeded by the effect below
+      setGenLine(''); setGenSecF('');   // reset filters; selection is seeded by the effect below
       setGenError(null); setGenMsg(null);
     },
     onError: (err) => { setGenData(null); setGenError(err.response?.data?.error || 'تعذّر جلب المحاضرات'); },
@@ -583,9 +587,10 @@ function ExtraShiftsSection({ memberId, inputCls, labelCls }) {
   // line view, so "إضافة المحدد" always matches the visible (per-line) list.
   useEffect(() => {
     if (!genData) return;
-    const visible = (genData.blocks || []).filter(b => !genLine || (b.line || '') === genLine);
+    const visible = (genData.blocks || []).filter(b =>
+      (!genLine || (b.line || '') === genLine) && (!genSecF || (b.section || '') === genSecF));
     setGenSel(new Set(visible.filter(b => !b.already_exists && !b.anomaly).map(blockKey)));
-  }, [genData, genLine]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [genData, genLine, genSecF]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const bulkAddMut = useMutation({
     mutationFn: (entries) => api.post(`/team/${memberId}/extra-shifts/from-lectures`, { entries }).then(r => r.data),
@@ -727,6 +732,13 @@ function ExtraShiftsSection({ memberId, inputCls, labelCls }) {
 
             {genData && (() => {
               const lines = [...new Set((genData.blocks || []).map(b => b.line || '').filter(Boolean))];
+              const secs = [...new Set((genData.blocks || []).map(b => b.section || '').filter(Boolean))];
+              const SEC_AR = { general: 'عام', semi: 'شبه خاص', private: 'خاص' };
+              const SEC_CLS = {
+                general: 'bg-emerald-100 text-emerald-700',
+                semi:    'bg-amber-200/70 text-amber-900',
+                private: 'bg-violet-100 text-violet-700',
+              };
               const visAddable = genVisible.filter(b => !b.already_exists && !b.anomaly);
               const visSelCount = genVisible.filter(b => genSel.has(blockKey(b))).length;
               return (
@@ -745,8 +757,24 @@ function ExtraShiftsSection({ memberId, inputCls, labelCls }) {
                     <span className="mr-auto text-[10px] text-amber-700">كل خط له ملف إكسيل منفصل على الدرايف</span>
                   </div>
                 )}
+                {/* Section filter — the group's teaching section (عام/شبه خاص/خاص).
+                    Shown when the trainer's lectures span >1 section, so a
+                    two-section trainer can generate hours for ONE section only. */}
+                {secs.length > 1 && (
+                  <div className="flex items-center gap-2 bg-white border border-amber-200 rounded-lg px-3 py-2">
+                    <label className="text-xs font-bold text-amber-900">القسم:</label>
+                    <select value={genSecF} onChange={e => setGenSecF(e.target.value)}
+                      className="text-xs border border-amber-200 rounded-lg px-2 py-1 bg-white focus:outline-none">
+                      <option value="">كل الأقسام ({genData.blocks.length})</option>
+                      {secs.map(sc => (
+                        <option key={sc} value={sc}>{SEC_AR[sc] || sc} ({genData.blocks.filter(b => (b.section || '') === sc).length})</option>
+                      ))}
+                    </select>
+                    <span className="mr-auto text-[10px] text-amber-700">قسم المجموعة نفسها (من الباتش/اللاحقة)</span>
+                  </div>
+                )}
                 <div className="flex items-center gap-2 text-xs text-gray-700">
-                  <span className="font-bold">{genVisible.length}</span> محاضرة{genLine ? ` (خط ${genLine})` : ' في الفترة'}
+                  <span className="font-bold">{genVisible.length}</span> محاضرة{genSecF ? ` (قسم ${SEC_AR[genSecF] || genSecF})` : ''}{genLine ? ` (خط ${genLine})` : ''}{!genSecF && !genLine ? ' في الفترة' : ''}
                   {genVisible.length > 0 && (
                     <>
                       <span className="mr-auto" />
@@ -776,6 +804,7 @@ function ExtraShiftsSection({ memberId, inputCls, labelCls }) {
                             ? <span className="text-gray-600">{b.start_time} → {b.end_time}</span>
                             : <span className="text-red-500">وقت غير مقروء</span>}
                           {b.duration_min ? <span className="bg-amber-100 text-amber-800 font-bold px-1.5 rounded">{fmtMins(b.duration_min)}</span> : null}
+                          {b.section && <span className={`px-1.5 rounded flex-shrink-0 font-bold ${SEC_CLS[b.section] || 'bg-gray-100 text-gray-600'}`}>{SEC_AR[b.section] || b.section}</span>}
                           {b.line && <span className="bg-sky-100 text-sky-700 px-1.5 rounded flex-shrink-0">{b.line}</span>}
                           <span className="text-gray-400 truncate flex-1" title={b.group_name}>{b.group_name}</span>
                           {b.already_exists && <span className="bg-gray-200 text-gray-600 px-1.5 rounded flex-shrink-0">مضاف</span>}
