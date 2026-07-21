@@ -805,7 +805,17 @@ router.get('/dashboard/at-risk', requireRole('admin', 'leader'), (req, res) => {
  * active groups, inactive (past) groups, remaining levels, coordinator.
  * Visible to admin / leader / coordinator (agent).
  */
-router.get('/deliveries', requireRole('admin', 'leader', 'agent'), (req, res) => {
+// READ guard: the usual roles OR a holder of the «تسليمات الأقسام» page grant
+// (extra_pages: cs-deliveries) — granting a page must open its API too (owner
+// rule; live case: an Enrollment user with the granted page searched a client
+// and saw an empty table because the route rejected role 'enrollment').
+const deliveriesRead = (req, res, next) => {
+  if (['admin', 'leader', 'agent'].includes(req.user?.role)) return next();
+  const pages = String(req.user?.extra_pages || '').split(',').map(s => s.trim());
+  if (pages.includes('cs-deliveries')) return next();
+  return res.status(403).json({ error: 'Forbidden' });
+};
+router.get('/deliveries', deliveriesRead, (req, res) => {
   try {
     const svc = require('../services/csDeliveries.service');
     const result = svc.getDepartmentDeliveries({
