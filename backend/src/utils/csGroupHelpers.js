@@ -13,12 +13,19 @@ const IGNORED_GROUP_PATTERNS = [
   /donot\s*closed/i,
   /grammer/i,                  // "Grammer_Con_G(...)" — grammar sessions, not a level group
   /grammar/i,                  // correct spelling, just in case
-  /comp[ae]ns/i,               // "..._Compensation" / "compensation _ s1_g2" — makeup sessions
+  /co[nm]p[ae]ns/i,            // "..._Compensation" — makeup sessions; also the live typo "conpensation" (owner 2026-07-21)
   /تعويض/,                     // Arabic compensation/makeup session (owner decision 2026-06-18)
   /placem/i,                   // "placement test" / "Placemnent Test" — level-placement, not a real level (owner 2026-07-14)
   /تحديد مستو/,                 // Arabic "تحديد مستوى/مستوي" placement session (owner 2026-07-14)
   /(^|[^a-z])test(?:[^a-z]|$)/i, // "Test_General_5" — QA/test groups are not real groups (owner 2026-07-15).
                                //  Standalone token only, so real words containing "test" don't match.
+  // Placeholder rows sitting in batches with active/waiting status — not client
+  // level-groups; owner asked to clean them from the CS pages (2026-07-21):
+  /hiring\s*new\s*teacher/i,   // "Hiring New Teacher" (already excluded on the reports side)
+  /manag\w*\s*training/i,      // "Managment Training" / "Management Training" — internal training
+  /voice\s*note/i,             // "Voice Note (Private)" — note rows, not groups
+  /(^|[^a-z])break(?:[^a-z]|$)/i, // "Break Private" — standalone token like `test`
+  /تأجيل/,                     // "تأجيل برسوم" — postponed-for-fees note rows
 ];
 
 const isIgnoredGroup = (name) => {
@@ -28,8 +35,11 @@ const isIgnoredGroup = (name) => {
   // placement test or a compensation/تعويض session must NEVER count as a group,
   // however it's written — "place ment test", "placment", "comp ensation",
   // "تعويض سيشن", "تحديد مستوي", etc. Strip every non-letter, then match.
+  // (2026-07-21: + the placeholder families the owner asked to clean — hiring/
+  // training/voice-note/تأجيل; "break" stays array-only since it needs word
+  // boundaries the compact form can't provide.)
   const compact = s.toLowerCase().replace(/[^a-z؀-ۿ]/g, '');
-  return /plac.{0,3}ment|placem|comp[ae]ns|تعويض|تحديدمستو/.test(compact);
+  return /plac.{0,3}ment|placem|co[nm]p[ae]ns|تعويض|تحديدمستو|hiringnewteacher|manag[a-z]*training|voicenote|تأجيل/.test(compact);
 };
 
 // Normalize a coordinator/user name for comparison: drop any "(...)" suffix,
