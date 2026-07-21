@@ -7,20 +7,24 @@ import {
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 
-const SIM_SECTION_LABEL = { general: 'عام', semi: 'شبه خاص', private: 'خاص' };
+// Two columns (owner decision): عام + «خاص وشبه خاص» merged (private_semi).
+const SIM_SECTION_LABEL = { general: 'عام', private_semi: 'خاص وشبه خاص' };
 const SIM_THEME = {
-  general: { accent: 'text-sky-700',    headerBg: 'bg-sky-600',    ring: 'ring-sky-100' },
-  semi:    { accent: 'text-amber-700',  headerBg: 'bg-amber-600',  ring: 'ring-amber-100' },
-  private: { accent: 'text-violet-700', headerBg: 'bg-violet-600', ring: 'ring-violet-100' },
+  general:      { accent: 'text-sky-700',    headerBg: 'bg-sky-600',    ring: 'ring-sky-100' },
+  private_semi: { accent: 'text-violet-700', headerBg: 'bg-violet-600', ring: 'ring-violet-100' },
+};
+// Per-group REAL-section badge (shown inside the merged column).
+const GROUP_SEC_BADGE = {
+  semi:    { label: 'شبه خاص', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
+  private: { label: 'خاص',     cls: 'bg-violet-50 text-violet-700 border-violet-200' },
 };
 
 // ─── PER-COLUMN VISUAL THEME ──────────────────────────────────────────────────
 // Same section colors as the customer-services org chart so the two pages read
 // as one family: عام=أزرق، شبه خاص=كهرماني، خاص=بنفسجي.
 const COLUMN_THEMES = {
-  general: { headerBg: 'bg-sky-600',    accent: 'text-sky-700',    ring: 'ring-sky-100',    softBg: 'bg-sky-50'    },
-  semi:    { headerBg: 'bg-amber-600',  accent: 'text-amber-700',  ring: 'ring-amber-100',  softBg: 'bg-amber-50'  },
-  private: { headerBg: 'bg-violet-600', accent: 'text-violet-700', ring: 'ring-violet-100', softBg: 'bg-violet-50' },
+  general:      { headerBg: 'bg-sky-600',    accent: 'text-sky-700',    ring: 'ring-sky-100',    softBg: 'bg-sky-50'    },
+  private_semi: { headerBg: 'bg-violet-600', accent: 'text-violet-700', ring: 'ring-violet-100', softBg: 'bg-violet-50' },
 };
 
 // ─── TRAINER COLUMN CARD ──────────────────────────────────────────────────────
@@ -81,9 +85,14 @@ function TrainerColumnCard({ section, onSelect }) {
         )}
       </div>
 
-      {/* Footer totals */}
+      {/* Footer totals (+ real-section breakdown for the merged column) */}
       <div className={`${theme.softBg} px-4 py-2.5 border-t border-gray-100 text-xs font-bold flex items-center justify-between flex-wrap gap-x-2 gap-y-1`}>
-        <span className="text-gray-600">الإجمالي</span>
+        <span className="text-gray-600">
+          الإجمالي
+          {section.breakdown && (
+            <span className="font-normal text-gray-500"> (خاص {section.breakdown.private ?? 0} · شبه خاص {section.breakdown.semi ?? 0})</span>
+          )}
+        </span>
         <div className="flex items-center gap-2">
           <span className={theme.accent}>
             <Layers className="w-3 h-3 inline-block ml-1" />
@@ -189,6 +198,11 @@ function TrainerDetailModal({ selected, onClose }) {
                   <tr key={i} className="hover:bg-gray-50">
                     <td className="px-4 py-2.5 text-right">
                       <span className="font-semibold text-gray-800">{g.group_name}</span>
+                      {GROUP_SEC_BADGE[g.section] && (
+                        <span className={`inline-block text-[9px] font-bold mr-1.5 px-1.5 py-0.5 rounded border ${GROUP_SEC_BADGE[g.section].cls}`}>
+                          {GROUP_SEC_BADGE[g.section].label}
+                        </span>
+                      )}
                       {g.line ? <span className="text-[10px] text-gray-400 block">{g.line}</span> : null}
                     </td>
                     <td className="px-3 py-2.5 text-center font-bold text-gray-700">{g.students}</td>
@@ -318,7 +332,7 @@ function RedistPanel({ sim }) {
                         <span>متاح في {a.suggestions[0].section_label}: <b>{a.suggestions.map((s) => s.name).join('، ')}</b></span>
                       </div>
                     ) : (
-                      <div className="mt-1 text-[10px] text-gray-400">مفيش محاضر متاح — لا في القسم ولا في القسم المقابل</div>
+                      <div className="mt-1 text-[10px] text-gray-400">مفيش محاضر متاح في القسم (شيفت يغطّي الميعاد + فاضي)</div>
                     )}
                   </li>
                 ) : (
@@ -359,7 +373,7 @@ function LeaveMode({ members, mode }) {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const sel = members.find((m) => m.key === trainer);
-  const destOptions = ['general', 'semi', 'private'].filter((s) => s !== sel?.section);
+  const destOptions = ['general', 'private_semi'].filter((s) => s !== sel?.section);
   const { data: sim, isFetching, error, refetch } = useQuery({
     queryKey: ['tr-sim', mode, trainer, toSection, from, to],
     queryFn: async () => (await api.get('/reports/trainer-org-chart/sim/leave', {
@@ -474,7 +488,7 @@ function AddNewMode({ members }) {
             <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="محاضر جديد أو موجود..."
               className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 outline-none" /></div>
           <SimSelect label="القسم" value={section} onChange={setSection}
-            options={['general', 'semi', 'private'].map((s) => ({ value: s, label: SIM_SECTION_LABEL[s] }))} placeholder="— اختار قسم —" />
+            options={['general', 'private_semi'].map((s) => ({ value: s, label: SIM_SECTION_LABEL[s] }))} placeholder="— اختار قسم —" />
           <SimRunBtn onClick={() => refetch()} disabled={!name.trim() || !section || isFetching} busy={isFetching} />
         </div>
       </SimCard>
@@ -612,7 +626,7 @@ function TrainerSimulationHub() {
         </div>
         <div>
           <h2 className="text-lg font-bold text-gray-800">محاكاة توزيع المحاضرين</h2>
-          <p className="text-xs text-gray-500 mt-0.5">بريفيو فقط بلا حفظ. التوزيع بيوازن عدد المجموعات <b>مع مراعاة مواعيد وأيام شيفت المحاضر وعدم التعارض</b> — المجموعة اللي مفيش لها محاضر متاح تظهر «محتاجة جدولة» + اقتراح من القسم المقابل (خاص↔شبه خاص).</p>
+          <p className="text-xs text-gray-500 mt-0.5">بريفيو فقط بلا حفظ. التوزيع بيوازن عدد المجموعات <b>مع مراعاة مواعيد وأيام شيفت المحاضر وعدم التعارض</b> (الفويس نوت والراحات وقت مشغول) — قسما خاص وشبه خاص pool واحد، والمجموعة اللي مفيش لها محاضر متاح تظهر «محتاجة جدولة».</p>
         </div>
       </header>
 
@@ -658,14 +672,14 @@ export default function TrainerOrgChart() {
     <div className="space-y-6 pb-12">
       <PageHero
         title="الهيكل التنظيمي للمحاضرين"
-        subtitle="محاضرو المحاضرات الأساسية موزّعين على الأقسام (عام / شبه خاص / خاص) — اضغط على أي محاضر لعرض تفاصيله"
+        subtitle="محاضرو المحاضرات الأساسية موزّعين على قسمين (عام / خاص وشبه خاص) — اضغط على أي محاضر لعرض تفاصيله"
         icon={Network}
         gradient="linear-gradient(135deg, #1e40af 0%, #6366f1 100%)"
       />
 
       {isLoading && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {[0, 1, 2].map((i) => (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {[0, 1].map((i) => (
             <div key={i} className="h-80 rounded-2xl bg-gray-100 animate-pulse" />
           ))}
         </div>
@@ -678,7 +692,7 @@ export default function TrainerOrgChart() {
       )}
 
       {!isLoading && !isError && sections.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {sections.map((s) => (
             <TrainerColumnCard
               key={s.key}

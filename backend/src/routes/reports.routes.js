@@ -9260,13 +9260,18 @@ function buildTrainerOrgData(line) {
 }
 
 // Does a trainer's shift set cover a group slot ('day|timeMin') in a section?
-// A slot inside a REST or VOICE-NOTE block of the covering shift does NOT count
-// (owner rule: voice notes/rests are occupied time — the trainer isn't free).
-// Day-scoped blocks apply on their listed days only; no days = every work-day.
+// `wantSection` may be a COLUMN key: 'private_semi' matches a shift in EITHER
+// private or semi (merged pool — owner decision). A slot inside a REST or
+// VOICE-NOTE block of the covering shift does NOT count (owner rule: voice
+// notes/rests are occupied time). Day-scoped blocks apply on their listed days
+// only; no days = every work-day.
+function _trSecMatch(shiftSec, want) {
+  return want === 'private_semi' ? (shiftSec === 'private' || shiftSec === 'semi') : shiftSec === want;
+}
 function _slotCovered(slot, shifts, wantSection) {
   const i = slot.indexOf('|'); const day = slot.slice(0, i); const tm = +slot.slice(i + 1);
   return shifts.some(sh =>
-    sh.section === wantSection && sh.daysSet.has(day) && sh.startMin <= tm && tm < sh.endMin
+    _trSecMatch(sh.section, wantSection) && sh.daysSet.has(day) && sh.startMin <= tm && tm < sh.endMin
     && !(sh.blocks || []).some(b => (b.days.size === 0 || b.days.has(day)) && b.s <= tm && tm < b.e)
   );
 }
@@ -9284,36 +9289,49 @@ function trainerCanTake(nk, group, wantSection, shiftsByKey, busyByKey, extraBus
   return true;
 }
 
+// COLUMNS (owner decision 2026-07-15): TWO columns only — عام stays alone,
+// while خاص + شبه خاص are MERGED into one column («خاص وشبه خاص»). The live
+// data showed they're one trainer pool anyway (e.g. Nada M.Semi: 42 private +
+// 1 semi split across two cards), and the owner's own cross-section rule
+// treats private↔semi as interchangeable. Real per-group sections are kept
+// internally (badges + footer breakdown). THIS PAGE ONLY — occupancy/payroll
+// keep the 3 sections.
+const TRAINER_ORG_COLUMNS = [
+  { key: 'general',      label: 'عام',           secs: ['general'] },
+  { key: 'private_semi', label: 'خاص وشبه خاص', secs: ['private', 'semi'] },
+];
 router.get('/trainer-org-chart', (req, res) => {
   try {
     const { trainersRaw, byTrainer, stripKey, studentsOf } = buildTrainerOrgData(lineFilter(req));
-    const SECTIONS = [
-      { key: 'general', label: 'عام' },
-      { key: 'semi',    label: 'شبه خاص' },
-      { key: 'private', label: 'خاص' },
-    ];
     // Dedup trainers by name (a trainer split into twin records shows once).
     const uniq = new Map();
     for (const t of trainersRaw) { const nk = stripKey(t.name); if (nk && !uniq.has(nk)) uniq.set(nk, t); }
 
-    const countsForSec = (nk, sec) => {
-      const gm = byTrainer.get(nk)?.get(sec);
-      if (!gm) return { group_count: 0, student_count: 0, lecture_count: 0 };
-      let students = 0, lectures = 0;
-      for (const g of gm.values()) { students += studentsOf(g.gk); lectures += g.lectures.size; }
-      return { group_count: gm.size, student_count: students, lecture_count: lectures };
+    // Counts for a trainer across a column's REAL sections + per-section breakdown.
+    const countsForCol = (nk, secs) => {
+      let groups = 0, students = 0, lectures = 0; const br = {};
+      for (const sec of secs) {
+        const gm = byTrainer.get(nk)?.get(sec);
+        if (!gm) continue;
+        br[sec] = gm.size; groups += gm.size;
+        for (const g of gm.values()) { students += studentsOf(g.gk); lectures += g.lectures.size; }
+      }
+      return { group_count: groups, student_count: students, lecture_count: lectures, breakdown: br };
     };
 
-    const sections = SECTIONS.map(s => {
+    const sections = TRAINER_ORG_COLUMNS.map(s => {
       const members = [...uniq.entries()]
-        .map(([nk, t]) => ({ id: t.id, name: t.name, ...countsForSec(nk, s.key) }))
+        .map(([nk, t]) => ({ id: t.id, name: t.name, ...countsForCol(nk, s.secs) }))
         .filter(m => m.group_count > 0)   // trainer shown in a column only if they teach there
         .sort((a, b) => b.group_count - a.group_count || String(a.name).localeCompare(String(b.name)));
+      const colBreakdown = {};
+      for (const sec of s.secs) colBreakdown[sec] = members.reduce((a, m) => a + (m.breakdown[sec] || 0), 0);
       return {
         key: s.key, label: s.label, members,
         total_groups:   members.reduce((a, m) => a + m.group_count, 0),
         total_students: members.reduce((a, m) => a + m.student_count, 0),
         total_lectures: members.reduce((a, m) => a + m.lecture_count, 0),
+        breakdown: s.secs.length > 1 ? colBreakdown : null,
       };
     });
 
@@ -9340,8 +9358,13 @@ router.get('/trainer-org-chart/trainer/:id', (req, res) => {
     const { byTrainer, stripKey, studentsOf } = buildTrainerOrgData(lineFilter(req));
     const nk = stripKey(member.name);
     const secMap = byTrainer.get(nk);
+    // ?section= accepts a COLUMN key ('general' | 'private_semi' = merged) or a
+    // real section; default = everything. Group rows keep their REAL section
+    // so the modal can badge خاص vs شبه خاص inside the merged column.
     const want = String(req.query.section || '').toLowerCase();
-    const secKeys = ['general', 'semi', 'private'].includes(want) ? [want] : ['general', 'semi', 'private'];
+    const secKeys = want === 'private_semi' ? ['private', 'semi']
+      : ['general', 'semi', 'private'].includes(want) ? [want]
+      : ['general', 'semi', 'private'];
 
     const list = [];
     if (secMap) for (const sec of secKeys) {
@@ -9382,7 +9405,10 @@ router.get('/trainer-org-chart/trainer/:id', (req, res) => {
 // other trainers in the same SECTION, balancing by group count (least-loaded
 // trainer takes the next group; ties break on student count). All modes are
 // read-only previews (nothing is persisted).
-const _TRAINER_SEC_LABEL = { general: 'عام', semi: 'شبه خاص', private: 'خاص' };
+// Sim works on the same TWO merged columns as the cards (owner decision):
+// عام + «خاص وشبه خاص». Real per-group/shift sections still exist underneath.
+const _TRAINER_SEC_LABEL = { general: 'عام', private_semi: 'خاص وشبه خاص' };
+const _trMergedSec = sec => (sec === 'private' || sec === 'semi') ? 'private_semi' : sec;
 const _trStripKey  = s => String(s || '').replace(/\([^)]*\)/g, '').trim().replace(/\s+/g, ' ').toLowerCase();
 const _trNormGroup = s => String(s || '').replace(/\s+/g, '').toLowerCase();
 
@@ -9391,22 +9417,30 @@ const _trNormGroup = s => String(s || '').replace(/\s+/g, '').toLowerCase();
 // private groups appears as TWO entries, one per section, each holding only that
 // section's groups. So the sim matches the cards exactly (Alaa Gamal shows in
 // both عام and خاص). Keyed by `nameKey|section`.
-const _CROSS_SEC = { private: 'semi', semi: 'private' }; // general has no pairing
+// Cross-section suggestions are OBSOLETE since the private↔semi pool is merged
+// into one column — kept as an empty map so the suggestion path degrades to [].
+const _CROSS_SEC = {};
 function buildTrainerSimContext(line) {
   const { trainersRaw, byTrainer, stripKey, studentsOf, shiftsByKey, busyByKey } = buildTrainerOrgData(line);
   const uniq = new Map();
   for (const t of trainersRaw) { const nk = stripKey(t.name); if (nk && !uniq.has(nk)) uniq.set(nk, t); }
-  const entries = new Map(); // `nk|sec` → { key, nk, id, name, section, groups:[] }
+  const entries = new Map(); // `nk|col` → { key, nk, id, name, section, groups:[] }
   for (const [nk, t] of uniq) {
     const secMap = byTrainer.get(nk); if (!secMap) continue;
+    // Merge real sections into the page's columns (private+semi → private_semi).
+    const byCol = new Map();
     for (const [sec, gm] of secMap) {
-      if (!_TRAINER_SEC_LABEL[sec]) continue; // only general/semi/private
-      const groups = [...gm.values()].map(g => ({
-        gk: g.gk, group_name: g.group_name, line: g.line,
+      const col = _trMergedSec(sec);
+      if (!_TRAINER_SEC_LABEL[col]) continue;
+      let arr = byCol.get(col); if (!arr) { arr = []; byCol.set(col, arr); }
+      for (const g of gm.values()) arr.push({
+        gk: g.gk, group_name: g.group_name, line: g.line, section: sec,
         students: studentsOf(g.gk), lectures: g.lectures.size, slots: [...g.slots],
-      }));
+      });
+    }
+    for (const [col, groups] of byCol) {
       if (!groups.length) continue;
-      entries.set(nk + '|' + sec, { key: nk + '|' + sec, nk, id: t.id, name: t.name, section: sec, groups });
+      entries.set(nk + '|' + col, { key: nk + '|' + col, nk, id: t.id, name: t.name, section: col, groups });
     }
   }
   return { entries, shiftsByKey, busyByKey };
