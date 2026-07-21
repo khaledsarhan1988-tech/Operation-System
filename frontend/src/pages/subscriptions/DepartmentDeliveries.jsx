@@ -141,6 +141,10 @@ export default function DepartmentDeliveries() {
   const qc = useQueryClient();
   const { user } = useAuth();
 
+  // Who may use the manual adjustment tools (تسوية + استبعاد مجموعة):
+  // admin + any enrollment-role user (owner 2026-07-21).
+  const canAdjust = ['admin', 'enrollment'].includes(user?.role);
+
   // A leader is locked to their own department; everyone else sees all tabs.
   const isScopedLeader = user?.role === 'leader' && user?.department !== 'All' && user?.management !== 'All';
   let allowedDepts = isScopedLeader ? ALL_DEPTS.filter(d => d === user?.department) : ALL_DEPTS;
@@ -501,7 +505,7 @@ export default function DepartmentDeliveries() {
                         {(it.inactive_groups || []).map((g, i) => (
                           <span key={i} className="group/chip inline-flex items-center gap-1 text-xs bg-slate-100 text-slate-600 rounded px-1.5 py-0.5 font-mono break-all">
                             <span className="min-w-0">{g}</span>
-                            {user?.role === 'admin' && (
+                            {canAdjust && (
                               <button
                                 type="button"
                                 title="استبعاد المجموعة دي من حساب العميل"
@@ -519,7 +523,7 @@ export default function DepartmentDeliveries() {
                             title={`مستبعدة من الحساب${x.note ? `\nالسبب: ${x.note}` : ''}${x.by ? `\nبواسطة: ${x.by}` : ''}${x.at ? `\nبتاريخ: ${String(x.at).slice(0, 10)}` : ''}`}
                           >
                             <span className="min-w-0">{x.group}</span>
-                            {user?.role === 'admin' && (
+                            {canAdjust && (
                               <button
                                 type="button"
                                 title="استرجاع المجموعة (ترجع تتحسب)"
@@ -551,7 +555,7 @@ export default function DepartmentDeliveries() {
                           )}
                         </span>
                       )}
-                      {user?.role === 'admin' && it.has_subscription !== false && (
+                      {canAdjust && it.has_subscription !== false && (
                         <button
                           type="button"
                           disabled={settleMut.isPending}

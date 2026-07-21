@@ -868,7 +868,7 @@ router.patch('/deliveries/:phone/status', requireRole('admin', 'leader', 'agent'
  * Body: { dept: 'General'|'Private'|'Semi', note? }. Admin only.
  * DELETE with ?dept= reverses it.
  */
-router.put('/deliveries/:phone/settle', requireRole('admin'), (req, res) => {
+router.put('/deliveries/:phone/settle', requireRole('admin', 'enrollment'), (req, res) => {
   try {
     const svc = require('../services/csDeliveries.service');
     res.json({ ok: true, ...svc.setSettlement({
@@ -881,7 +881,7 @@ router.put('/deliveries/:phone/settle', requireRole('admin'), (req, res) => {
   }
 });
 
-router.delete('/deliveries/:phone/settle', requireRole('admin'), (req, res) => {
+router.delete('/deliveries/:phone/settle', requireRole('admin', 'enrollment'), (req, res) => {
   try {
     const svc = require('../services/csDeliveries.service');
     res.json({ ok: true, ...svc.clearSettlement({ phone: req.params.phone, dept: req.query?.dept || req.body?.dept }) });
@@ -896,7 +896,7 @@ router.delete('/deliveries/:phone/settle', requireRole('admin'), (req, res) => {
  * عميل واحد (borderline journeys the owner reviews himself). Body: { group, note? }.
  * DELETE with ?group= restores it. Admin only.
  */
-router.put('/deliveries/:phone/exclude-group', requireRole('admin'), (req, res) => {
+router.put('/deliveries/:phone/exclude-group', requireRole('admin', 'enrollment'), (req, res) => {
   try {
     const svc = require('../services/csDeliveries.service');
     res.json({ ok: true, ...svc.excludeClientGroup({
@@ -909,7 +909,7 @@ router.put('/deliveries/:phone/exclude-group', requireRole('admin'), (req, res) 
   }
 });
 
-router.delete('/deliveries/:phone/exclude-group', requireRole('admin'), (req, res) => {
+router.delete('/deliveries/:phone/exclude-group', requireRole('admin', 'enrollment'), (req, res) => {
   try {
     const svc = require('../services/csDeliveries.service');
     res.json({ ok: true, ...svc.restoreClientGroup({ phone: req.params.phone, group: req.query?.group || req.body?.group }) });
