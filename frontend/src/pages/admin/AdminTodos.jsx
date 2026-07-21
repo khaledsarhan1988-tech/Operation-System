@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { downloadCsv } from '../../utils/csv';
 import {
@@ -778,8 +778,48 @@ function DailyWorkflowModal({ users, onClose, onApplied }) {
   const [deptFilter, setDeptFilter] = useState('');
   const [roleFilter, setRoleFilter] = useState('agent');  // default: agents only
   const [search, setSearch] = useState('');
+  const [replaceMode, setReplaceMode] = useState(true);   // الجدول ده هو الوحيد
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState(null);
+
+  // Seed the editor from the LIVE templates (distinct by title, ordered by
+  // time) instead of the hardcoded defaults — so the admin edits what is
+  // actually running. Editing the default copy caused duplicate templates
+  // whenever a title differed by even one character ("جولة ٢" vs "جولة 2").
+  const seededRef = useRef(false);
+  const { data: liveTemplates } = useQuery({
+    queryKey: ['todos', 'templates', 'workflow-modal'],
+    queryFn: () => api.get('/todos/templates').then(r => r.data),
+    staleTime: 10 * 1000,
+  });
+  useEffect(() => {
+    if (seededRef.current || !liveTemplates?.templates) return;
+    const byTitle = new Map();
+    for (const t of liveTemplates.templates) {
+      if (t.status === 'cancelled') continue;
+      const key = (t.title || '').trim().toLowerCase();
+      if (!key) continue;
+      // Keep the most recently updated variant per title
+      const prev = byTitle.get(key);
+      const stamp = t.updated_at || t.created_at || '';
+      if (!prev || stamp > (prev._stamp || '')) {
+        byTitle.set(key, {
+          title: t.title.trim(),
+          description: t.description || '',
+          due_time: t.due_time || '',
+          priority: t.priority || 'normal',
+          _stamp: stamp,
+        });
+      }
+    }
+    if (byTitle.size > 0) {
+      const list = Array.from(byTitle.values())
+        .sort((a, b) => (a.due_time || '99:99').localeCompare(b.due_time || '99:99'))
+        .map((t, i) => ({ ...t, id: i, enabled: true }));
+      setTasks(list);
+    }
+    seededRef.current = true;
+  }, [liveTemplates]);
 
   const filteredUsers = useMemo(() => {
     return users.filter(u => {
@@ -816,7 +856,10 @@ function DailyWorkflowModal({ users, onClose, onApplied }) {
     const activeTasks = tasks.filter(t => t.enabled && t.title.trim());
     if (activeTasks.length === 0) { setResult({ error: 'لا توجد مهام مفعّلة' }); return; }
     if (selectedUserIds.length === 0) { setResult({ error: 'لم تختار أي مستخدم' }); return; }
-    if (!confirm(`سيتم تطبيق ${activeTasks.length} قالب على ${selectedUserIds.length} مستخدم (الموجود يتحدّث والجديد يتضاف — ${activeTasks.length * selectedUserIds.length} إجمالاً). متابعة؟`)) return;
+    const replaceNote = replaceMode
+      ? '\n\n⚠ وضع الاستبدال مفعّل: أي مهمة يومية قديمة عند الموظفين المختارين مش موجودة في الجدول ده هتتلغى (السجل المكتمل يفضل محفوظ).'
+      : '';
+    if (!confirm(`سيتم تطبيق ${activeTasks.length} قالب على ${selectedUserIds.length} مستخدم (الموجود يتحدّث والجديد يتضاف).${replaceNote}\n\nمتابعة؟`)) return;
 
     setSubmitting(true); setResult(null);
     try {
@@ -829,6 +872,7 @@ function DailyWorkflowModal({ users, onClose, onApplied }) {
           recurrence_pattern: 'daily',
         })),
         user_ids: selectedUserIds,
+        replace: replaceMode,
       });
       setResult(data);
       onApplied();
@@ -954,14 +998,22 @@ function DailyWorkflowModal({ users, onClose, onApplied }) {
           <div className={`px-5 py-3 ${result.error ? 'bg-red-50 border-t border-red-200 text-red-700' : 'bg-emerald-50 border-t border-emerald-200 text-emerald-800'} text-sm flex items-center gap-2`}>
             {result.error
               ? <><AlertCircle size={16} /> {result.error}</>
-              : <><CheckCircle2 size={16} /> {result.message} — موزعة على {result.total_users} مستخدم{result.instances_created ? ` · ${result.instances_created} مهمة ظهرت فورًا عند الموظفين` : ''}</>}
+              : <><CheckCircle2 size={16} /> {result.message} — موزعة على {result.total_users} مستخدم{result.instances_created ? ` · ${result.instances_created} مهمة ظهرت فورًا عند الموظفين` : ''}{result.cancelled ? ` · اتلغى ${result.cancelled} قالب قديم` : ''}</>}
           </div>
         )}
 
-        <div className="px-5 py-3 bg-gray-50 border-t flex items-center justify-between">
-          <p className="text-xs text-gray-600">
-            ⚡ <strong>{activeCount * selectedUserIds.length}</strong> قالب سيتم تطبيقها ({activeCount} مهمة × {selectedUserIds.length} مستخدم) — الموجود يتحدّث والجديد يتضاف
-          </p>
+        <div className="px-5 py-3 bg-gray-50 border-t flex items-center justify-between flex-wrap gap-2">
+          <div className="text-xs text-gray-600">
+            <p>
+              ⚡ <strong>{activeCount * selectedUserIds.length}</strong> قالب سيتم تطبيقها ({activeCount} مهمة × {selectedUserIds.length} مستخدم) — الموجود يتحدّث والجديد يتضاف
+            </p>
+            <label className="flex items-center gap-1.5 mt-1 cursor-pointer select-none">
+              <input type="checkbox" checked={replaceMode} onChange={e => setReplaceMode(e.target.checked)}
+                className="w-3.5 h-3.5 accent-orange-500" />
+              <span className="font-bold text-orange-700">الجدول ده هو الوحيد</span>
+              <span className="text-[10px] text-gray-500">— إلغاء أي مهمة يومية قديمة مش موجودة فيه عند المختارين (السجل يفضل محفوظ)</span>
+            </label>
+          </div>
           <div className="flex gap-2">
             <button onClick={onClose}
               className="px-4 py-1.5 rounded-lg border border-gray-300 text-sm hover:bg-gray-100">إغلاق</button>

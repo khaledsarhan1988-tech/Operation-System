@@ -1057,15 +1057,26 @@ router.post('/bulk-templates', express.json(), (req, res) => {
      WHERE id = ?
   `);
 
+  // replace mode (default ON — the applied workflow is the ONLY daily schedule):
+  // after upserting, any OTHER active recurring template a selected user has
+  // (old titles, Arabic-digit variants, duplicates) is CANCELLED — not deleted,
+  // so completed/started history survives (parent_todo_id is ON DELETE CASCADE,
+  // deleting would wipe the performance history) — and its still-'new' upcoming
+  // instances are removed. Pass replace:false to only add/update.
+  const replaceMode = req.body?.replace !== false;
+
   let created = 0, updated = 0;
   const details = [];
   const createdIds = [];
   const updatedIds = [];
+  const keptByUser = new Map();   // uid → Set(template ids that ARE the schedule)
 
   for (const uid of userIds) {
     const u = getUser.get(uid);
     if (!u) { details.push({ user_id: uid, status: 'user_not_found' }); continue; }
 
+    const kept = new Set();
+    keptByUser.set(uid, kept);
     let userCreated = 0, userUpdated = 0;
     for (const t of templates) {
       const title = String(t.title || '').trim();
@@ -1079,6 +1090,7 @@ router.post('/bulk-templates', express.json(), (req, res) => {
         if (ex) {
           updateTemplate.run(desc, prio, time, pat, ex.id);
           updatedIds.push(ex.id);
+          kept.add(ex.id);
           updated++; userUpdated++;
         } else {
           const ins = insertTemplate.run(
@@ -1086,6 +1098,7 @@ router.post('/bulk-templates', express.json(), (req, res) => {
             u.department || null, u.management || null, pat, u.line || 'Ahmed Hassan',
           );
           createdIds.push(ins.lastInsertRowid);
+          kept.add(ins.lastInsertRowid);
           created++; userCreated++;
         }
       } catch (e) {
@@ -1093,6 +1106,38 @@ router.post('/bulk-templates', express.json(), (req, res) => {
       }
     }
     details.push({ user_id: uid, created: userCreated, updated: userUpdated });
+  }
+
+  const today = dailyTodos.todayCairo();
+  const delFuture = db.prepare(
+    `DELETE FROM todos WHERE parent_todo_id = ? AND status = 'new' AND due_date >= ?`
+  );
+
+  // ── Replace mode: cancel every other active template of the selected users ──
+  // Covers stale titles from before the upsert fix, Arabic/English digit
+  // variants ("جولة ٢" vs "جولة 2"), and duplicate same-title templates (the
+  // upsert updates only one — the rest land here). Cancelled templates stop
+  // generating (the generator skips status='cancelled') but keep history.
+  let cancelled = 0;
+  if (replaceMode) {
+    try {
+      const listUserTemplates = db.prepare(`
+        SELECT id FROM todos
+         WHERE assigned_to = ? AND is_recurring = 1 AND parent_todo_id IS NULL
+           AND status NOT IN ('cancelled')
+      `);
+      const cancelTemplate = db.prepare(
+        `UPDATE todos SET status = 'cancelled', updated_at = datetime('now', '+2 hours') WHERE id = ?`
+      );
+      for (const [uid, kept] of keptByUser) {
+        for (const row of listUserTemplates.all(uid)) {
+          if (kept.has(row.id)) continue;
+          cancelTemplate.run(row.id);
+          delFuture.run(row.id, today);
+          cancelled++;
+        }
+      }
+    } catch (e) { console.error('[todos] bulk-templates replace:', e.message); }
   }
 
   // Materialize the change on the employees' lists IMMEDIATELY (not only after
@@ -1104,10 +1149,6 @@ router.post('/bulk-templates', express.json(), (req, res) => {
   let instances_created = 0;
   try {
     const getT = db.prepare(`SELECT * FROM todos WHERE id = ?`);
-    const today = dailyTodos.todayCairo();
-    const delFuture = db.prepare(
-      `DELETE FROM todos WHERE parent_todo_id = ? AND status = 'new' AND due_date >= ?`
-    );
     for (const tid of createdIds) {
       instances_created += dailyTodos.generateWindowForTemplate(getT.get(tid)).created;
     }
@@ -1118,8 +1159,8 @@ router.post('/bulk-templates', express.json(), (req, res) => {
   } catch (e) { console.error('[todos] bulk-templates window gen:', e.message); }
 
   return res.json({
-    message: `تم إنشاء ${created} قالب وتحديث ${updated}`,
-    created, updated,
+    message: `تم إنشاء ${created} قالب وتحديث ${updated}${cancelled ? ` وإلغاء ${cancelled} قديم` : ''}`,
+    created, updated, cancelled,
     instances_created,
     total_users: userIds.length,
     total_templates: templates.length,
