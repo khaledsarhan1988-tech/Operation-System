@@ -1071,7 +1071,9 @@ router.get('/enr-groups/activity', enrGuard, (req, res) => {
  * Per-department analytics: clients with remaining levels (+ upcoming-group flag +
  * last group/level) and how many graduate in a date range. Admin only.
  */
-router.get('/deliveries/analytics', requireRole('admin'), (req, res) => {
+// Same read guard as the deliveries list: roles OR the cs-deliveries page grant
+// (owner 2026-07-21: analytics opens for anyone the page opens for).
+router.get('/deliveries/analytics', deliveriesRead, (req, res) => {
   try {
     const svc = require('../services/csDeliveriesReport.service');
     res.json({ ok: true, ...svc.getDeptAnalytics({

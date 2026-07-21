@@ -268,15 +268,17 @@ export default function DepartmentDeliveries() {
         color={meta.color}
       />
 
-      {user?.role === 'admin' && (
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            onClick={() => setShowAnalytics(true)}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-white border border-violet-200 text-violet-700 hover:bg-violet-50"
-          >
-            <BarChart3 className="w-4 h-4" />
-            تحليلات القسم
-          </button>
+      {/* تحليلات القسم = for everyone who can open the page (owner 2026-07-21);
+          تحديث البيانات stays admin-only. */}
+      <div className="mt-4 flex justify-end gap-2">
+        <button
+          onClick={() => setShowAnalytics(true)}
+          className="inline-flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-white border border-violet-200 text-violet-700 hover:bg-violet-50"
+        >
+          <BarChart3 className="w-4 h-4" />
+          تحليلات القسم
+        </button>
+        {user?.role === 'admin' && (
           <button
             onClick={() => ingestAll.mutate()}
             disabled={ingestAll.isPending}
@@ -285,8 +287,8 @@ export default function DepartmentDeliveries() {
             <RefreshCw className={`w-4 h-4 ${ingestAll.isPending ? 'animate-spin' : ''}`} />
             {ingestAll.isPending ? 'جاري تحديث البيانات...' : 'تحديث البيانات (استيراد شامل)'}
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
       {showAnalytics && (
         <DeptAnalyticsModal dept={activeDept} onClose={() => setShowAnalytics(false)} />
