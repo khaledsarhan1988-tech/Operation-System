@@ -965,15 +965,58 @@ router.get('/enr-groups/levels-overview', enrGuard, (req, res) => {
   try {
     const svc = require('../services/csEnrGroups.service');
     const result = svc.getLevelsOverview({
-      dept:     (req.query.dept || '').trim(),
-      q:        (req.query.q || '').trim(),
-      status:   (req.query.status || '').trim(),
-      page:     req.query.page,
-      pageSize: req.query.page_size,
+      dept:      (req.query.dept || '').trim(),
+      q:         (req.query.q || '').trim(),
+      status:    (req.query.status || '').trim(),
+      firstFrom: (req.query.first_from || '').trim(),
+      firstTo:   (req.query.first_to || '').trim(),
+      lastFrom:  (req.query.last_from || '').trim(),
+      lastTo:    (req.query.last_to || '').trim(),
+      days:      (req.query.days || '').trim(),
+      level:     (req.query.level || '').trim(),
+      page:      req.query.page,
+      pageSize:  req.query.page_size,
     });
     res.json({ ok: true, ...result });
   } catch (e) {
     console.error('GET /cs/enr-groups/levels-overview error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * GET /api/cs/enr-groups/levels-overview/clients?group=&line=&dept=
+ * Clients of one group with the SAME membership numbers as تسليمات الأقسام
+ * (paid/taken/remaining/state + ended groups). Admin, OR granted 'enr-groups'.
+ */
+router.get('/enr-groups/levels-overview/clients', enrGuard, (req, res) => {
+  try {
+    const svc = require('../services/csEnrGroups.service');
+    res.json({ ok: true, ...svc.getLevelsGroupClients({
+      group: (req.query.group || '').trim(),
+      line:  (req.query.line || '').trim(),
+      dept:  (req.query.dept || '').trim(),
+    }) });
+  } catch (e) {
+    console.error('GET /cs/enr-groups/levels-overview/clients error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * GET /api/cs/enr-groups/levels-overview/lectures?group=&line=
+ * Registered sessions of one group: main lectures + phone-call (side) sessions.
+ * Admin, OR granted 'enr-groups'.
+ */
+router.get('/enr-groups/levels-overview/lectures', enrGuard, (req, res) => {
+  try {
+    const svc = require('../services/csEnrGroups.service');
+    res.json({ ok: true, ...svc.getLevelsGroupLectures({
+      group: (req.query.group || '').trim(),
+      line:  (req.query.line || '').trim(),
+    }) });
+  } catch (e) {
+    console.error('GET /cs/enr-groups/levels-overview/lectures error:', e.message);
     res.status(400).json({ ok: false, error: e.message });
   }
 });

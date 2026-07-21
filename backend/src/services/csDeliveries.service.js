@@ -1021,4 +1021,5 @@ module.exports = {
   buildPhoneAliasMap,   // secondary→primary phone merge (كشف العملاء mobile_no2)
   setSettlement, clearSettlement,   // تسوية — إنهاء العضوية (owner-approved deals)
   excludeClientGroup, restoreClientGroup,   // استبعاد مجموعة يدويًّا من حساب عميل
+  csPrimaryPhone, dropActiveTwins,  // reused by csEnrGroups levels drill-down (2026-07-21) — export only, no behavior change
 };

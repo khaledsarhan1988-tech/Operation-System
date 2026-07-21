@@ -1,5 +1,6 @@
 'use client';
 import { useState, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Users, CalendarDays, Check, X, AlertTriangle, CalendarOff, Activity } from 'lucide-react';
 import api from '../../api/axios';
@@ -77,10 +78,18 @@ function buildBlocks(day) {
 // ─── main page ────────────────────────────────────────────────────────────────
 export default function TrainerDetails() {
   const today = new Date();
-  const [section, setSection] = useState('semi');
+  // Deep-link: ?trainer=<name> (from المستويات الشغّالة) opens the page showing
+  // ONLY that trainer. Section starts at 'الكل' so the trainer is found whatever
+  // their section; matching = stripParens + compact (the constitution's rule —
+  // no fuzzy matching).
+  const [searchParams] = useSearchParams();
+  const trainerParam = (searchParams.get('trainer') || '').trim();
+  const [nameFilter, setNameFilter] = useState(trainerParam);
+  const [section, setSection] = useState(trainerParam ? 'all' : 'semi');
   const [dayPair, setDayPair] = useState('all');
   const [from, setFrom] = useState(fmtISO(today));
   const [to, setTo] = useState(fmtISO(addDays(today, 30)));
+  const compactName = (n) => String(n || '').replace(/\([^)]*\)/g, '').replace(/\s+/g, '').toLowerCase();
 
   const validRange = !!(from && to && from <= to);
   const { data, isLoading } = useQuery({
@@ -100,10 +109,12 @@ export default function TrainerDetails() {
     const set = new Set(p.dows);
     return dates.filter(d => set.has(dowFromISO(d)));
   }, [dates, dayPair]);
-  const trainers = useMemo(
-    () => (data?.trainers || []).slice().sort((a, b) => String(a.name).localeCompare(String(b.name), 'ar')),
-    [data]
-  );
+  const trainers = useMemo(() => {
+    const all = (data?.trainers || []).slice().sort((a, b) => String(a.name).localeCompare(String(b.name), 'ar'));
+    if (!nameFilter) return all;
+    const key = compactName(nameFilter);
+    return all.filter(t => compactName(t.name) === key);
+  }, [data, nameFilter]);
 
   // Recurring free slots over 4 consecutive weeks (day-pair patterns) — reuses
   // /find-available-trainer no-window mode (the system's agreed recurring logic).
@@ -140,6 +151,23 @@ export default function TrainerDetails() {
       />
 
       <HolidayBanner dates={data?.holiday_dates} />
+
+      {/* ── Single-trainer deep-link notice ── */}
+      {nameFilter && (
+        <div className="bg-violet-50 border border-violet-200 rounded-2xl px-5 py-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-violet-800 text-sm font-bold">
+            <Users size={16} className="text-violet-600" />
+            معروض مدرب واحد: <span dir="ltr">{nameFilter}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setNameFilter('')}
+            className="px-3 py-1.5 text-xs rounded-lg border border-violet-300 text-violet-700 hover:bg-violet-100"
+          >
+            عرض كل المدربين
+          </button>
+        </div>
+      )}
 
       {/* ── Filters ── */}
       <div className="bg-white rounded-2xl border border-gray-100 p-4 flex flex-wrap items-center gap-3">

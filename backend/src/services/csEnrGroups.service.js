@@ -341,13 +341,24 @@ function makeGroupLectureFacts() {
  *   dept: 'General' | 'Private' | 'Semi'
  *   q: search on group code / trainer
  *   status: '' (all) | started | waiting_lectures | waiting_trainees
+ *   firstFrom/firstTo: group start_date within range   (owner 2026-07-21)
+ *   lastFrom/lastTo:   group end_date within range     (owner 2026-07-21)
+ *   days: CSV of day labels (e.g. "Sun,Wed") — row matches if ANY selected day
+ *         is among the group's days (OR semantics, owner: «الأحد أو الأربع أو
+ *         الاثنين مع بعض»)                              (owner 2026-07-21)
+ *   level: exact level label (e.g. "General 4")         (owner 2026-07-21)
  */
-function getLevelsOverview({ dept, q, status, page, pageSize }) {
+function getLevelsOverview({ dept, q, status, firstFrom, firstTo, lastFrom, lastTo, days, level, page, pageSize }) {
   if (!DEPTS.includes(dept)) throw new Error('Invalid dept (use General | Private | Semi)');
   page = Math.max(1, parseInt(page, 10) || 1);
   pageSize = Math.min(200, Math.max(5, parseInt(pageSize, 10) || 50));
   q = (q || '').trim();
   status = (status || '').trim();
+  firstFrom = (firstFrom || '').trim();  firstTo = (firstTo || '').trim();
+  lastFrom  = (lastFrom  || '').trim();  lastTo  = (lastTo  || '').trim();
+  level = (level || '').trim();
+  const VALID_DAYS = new Set(Object.values(DAY_LABEL));
+  const daySel = new Set(String(days || '').split(',').map(s => s.trim()).filter(d => VALID_DAYS.has(d)));
 
   // Same population + dedup as getEnrGroups (real batches.status, placeholders out).
   const rows = db.prepare(`
@@ -387,10 +398,10 @@ function getLevelsOverview({ dept, q, status, page, pageSize }) {
 
     // Day(s): actual lecture weekdays; a group with no lectures yet falls back
     // to the single day token written in its code (no pair inference).
-    let day = facts.days.length ? facts.days.join(' - ') : null;
-    if (!day) {
+    let daysList = facts.days;
+    if (!daysList.length) {
       const m = String(r.group_name || '').split('(')[0].match(NAME_DAY_RE);
-      if (m) day = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+      if (m) daysList = [m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase()];
     }
 
     const lvl = parseLevelParts(r.group_name);
@@ -399,7 +410,8 @@ function getLevelsOverview({ dept, q, status, page, pageSize }) {
       level_order: lvl ? (FAMILY_ORDER[lvl.family] * 100 + lvl.num) : 9999,
       group_name:  r.group_name,
       line:        r.line,
-      day,
+      day:         daysList.length ? daysList.join(' - ') : null,
+      days_list:   daysList,
       start_date:  startDate,
       end_date:    endDate,
       // Trainer = last-lecture trainer; group with no lectures → null
@@ -410,6 +422,17 @@ function getLevelsOverview({ dept, q, status, page, pageSize }) {
       lectures:    meta.lectures,
     });
   }
+
+  // Level chips/options = every level present in the dept (computed BEFORE
+  // any filter, so the list stays stable while filtering), ladder-sorted,
+  // + a pre-filter group count per level (chip badges, owner 2026-07-21).
+  const levelSet = new Map();   // label → order
+  const levelCounts = {};       // label → group count (pre-filter)
+  for (const it of items) if (it.level) {
+    levelSet.set(it.level, it.level_order);
+    levelCounts[it.level] = (levelCounts[it.level] || 0) + 1;
+  }
+  const levels = [...levelSet.entries()].sort((a, b) => a[1] - b[1]).map(e => e[0]);
 
   if (status && STATUSES.includes(status)) {
     items = items.filter(it => it.status === status);
@@ -423,6 +446,24 @@ function getLevelsOverview({ dept, q, status, page, pageSize }) {
       String(it.trainer || '').toLowerCase().includes(ql)
     );
   }
+
+  // Date-range filters — same dateInRange semantics as getEnrGroups (a null
+  // date never matches an active range filter).
+  const dateInRange = (d, from, to) => {
+    if (!d) return false;
+    if (from && d < from) return false;
+    if (to && d > to) return false;
+    return true;
+  };
+  if (firstFrom || firstTo) items = items.filter(it => dateInRange(it.start_date, firstFrom, firstTo));
+  if (lastFrom  || lastTo)  items = items.filter(it => dateInRange(it.end_date,   lastFrom,  lastTo));
+
+  // Days filter — OR semantics: the row matches if ANY selected day is among
+  // the group's days (Sun+Wed selected → rows with Sun, Wed, or both).
+  if (daySel.size) items = items.filter(it => it.days_list.some(d => daySel.has(d)));
+
+  // Level filter — exact label match.
+  if (level) items = items.filter(it => it.level === level);
 
   // Level ladder ascending (Starter → General → Conversation; unknown last),
   // then newest start date, then code.
@@ -439,8 +480,99 @@ function getLevelsOverview({ dept, q, status, page, pageSize }) {
     page_size: pageSize,
     total,
     total_pages: Math.ceil(total / pageSize) || 1,
-    items: items.slice(start, start + pageSize).map(({ level_order, ...it }) => it),
+    levels,
+    level_counts: levelCounts,
+    items: items.slice(start, start + pageSize).map(({ level_order, days_list, ...it }) => it),
   };
 }
 
-module.exports = { getEnrGroups, getLevelsOverview, DEPTS };
+// ─── Levels page drill-downs (2026-07-21, owner request) ────────────────────
+
+/**
+ * Clients of ONE group with the SAME membership numbers as the deliveries page
+ * (تسليمات الأقسام): paid months / taken / remaining / state + the past
+ * (ended) groups the balance counts. Computed through the REAL csDeliveries
+ * functions (buildBalanceContext + membershipBalance), so every deliveries-side
+ * adjustment — تسوية, group exclusion, transfer, phone alias — flows here
+ * automatically with zero mirroring.
+ */
+function getLevelsGroupClients({ group, line, dept }) {
+  if (!DEPTS.includes(dept)) throw new Error('Invalid dept (use General | Private | Semi)');
+  group = String(group || '').trim();
+  if (!group) throw new Error('group is required');
+  line = String(line || '');
+
+  const csBal = require('./csDeliveries.service');
+  const ctx = csBal.buildBalanceContext();
+  const alias = csBal.buildPhoneAliasMap();
+
+  // Same roster + dedup as the page's student_count (buildClientsByGroup rule).
+  const rows = db.prepare(`
+    SELECT name, phone FROM clients
+     WHERE group_name = ? AND line = ? AND group_name IS NOT NULL AND TRIM(group_name) <> ''
+  `).all(group, line);
+  const seen = new Set();
+  const items = [];
+  for (const c of rows) {
+    const id = c.phone ? 'p:' + c.phone : 'n:' + (c.name || '');
+    if (seen.has(id)) continue;
+    seen.add(id);
+
+    // Resolve the phone to its PRIMARY (alias fold) exactly like deliveries:
+    // ctx maps are keyed by primary after foldPhoneAliases.
+    const pnRaw = csBal.csPrimaryPhone(c.phone);
+    const pn = (pnRaw && alias.get(pnRaw)) || pnRaw;
+    const bal = csBal.membershipBalance(ctx, pn || c.phone, dept);
+    // Past/ended groups exactly as the balance counts them (post exclusions,
+    // active twins dropped) — the same lines as membershipBalance internals.
+    const activeGroups = pn ? (ctx.activeMap.get(pn) || []).map(a => a.group_name) : [];
+    const inactiveGroups = pn ? csBal.dropActiveTwins(activeGroups, [...(ctx.inactiveMap.get(pn) || [])]) : [];
+
+    items.push({
+      name: c.name || null,
+      phone: c.phone || null,
+      paid_months: bal.paid_months,
+      groups_taken: bal.groups_taken,
+      remaining: bal.remaining,
+      state: bal.state,
+      active_groups: activeGroups,
+      inactive_groups: inactiveGroups,
+    });
+  }
+  return { group, line, dept, total: items.length, items };
+}
+
+/**
+ * Registered sessions of ONE group: main lectures (مؤكدة+مجدولة, current sheet
+ * — the same population the page's lecture count uses) + phone-call/side
+ * sessions (current sheet, no status filter — the documented side rule).
+ * Counts use the canonical keys: main = DISTINCT date|time, side = DISTINCT
+ * date|time|trainer.
+ */
+function getLevelsGroupLectures({ group, line }) {
+  group = String(group || '').trim();
+  if (!group) throw new Error('group is required');
+  line = String(line || '');
+
+  const listOf = (type) => db.prepare(`
+    SELECT DISTINCT date, time, duration, trainer, status
+      FROM lectures
+      INNER JOIN (SELECT group_name AS g, line AS l, date(MAX(synced_at)) AS sd
+                    FROM lectures WHERE session_type = ? GROUP BY group_name, line) ls
+        ON ls.g = lectures.group_name AND ls.l = lectures.line
+       AND date(lectures.synced_at) = ls.sd
+     WHERE group_name = ? AND line = ? AND session_type = ?
+     ORDER BY date, time
+  `).all(type, group, line, type);
+
+  const main = listOf('main').filter(r => r.status === 'مؤكدة' || r.status === 'مجدولة');
+  const side = listOf('side');
+  return {
+    group, line,
+    main, side,
+    main_count: new Set(main.map(r => r.date + '|' + r.time)).size,
+    side_count: new Set(side.map(r => r.date + '|' + r.time + '|' + (r.trainer || ''))).size,
+  };
+}
+
+module.exports = { getEnrGroups, getLevelsOverview, getLevelsGroupClients, getLevelsGroupLectures, DEPTS };
