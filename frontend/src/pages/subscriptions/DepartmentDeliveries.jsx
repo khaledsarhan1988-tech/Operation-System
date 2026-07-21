@@ -451,11 +451,13 @@ export default function DepartmentDeliveries() {
                     )}
                   </td>
                   <td className="px-3 py-3">
+                    {/* Status is writable by admin/leader/agent only — page-grant
+                        viewers see a read-only badge (the API rejects them anyway). */}
                     <select
                       value={it.status}
-                      disabled={setStatusMut.isPending}
+                      disabled={setStatusMut.isPending || !['admin', 'leader', 'agent'].includes(user?.role)}
                       onChange={(e) => setStatusMut.mutate({ phone: it.phone, status: e.target.value })}
-                      className={`text-xs rounded-full border px-2 py-1 focus:outline-none ${STATUS_CLS[it.status] || ''}`}
+                      className={`text-xs rounded-full border px-2 py-1 focus:outline-none disabled:opacity-70 ${STATUS_CLS[it.status] || ''}`}
                     >
                       {STATUS_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                     </select>
