@@ -9212,42 +9212,49 @@ function buildTrainerOrgData(line) {
     cliMap.set(normGroup(r.group_name) + '|' + r.line, r.c || 0);
   const studentsOf = gk => (batchMap.get(gk)?.tc) ?? cliMap.get(gk) ?? 0;
 
-  // Pass 1: bucket lectures per trainer×section×group + collect each group's raw
-  // (day, time) samples so we can derive a CANONICAL slot per group.
-  const byTrainer = new Map();
-  const groupSamples = new Map(); // gk → { timesByDay: Map<day,[min]> }
+  // Pass 1: collect per-GROUP facts — all rows (for ownership), all distinct
+  // sessions, and (day,time) samples for the canonical slot.
+  const teamKeys = new Set(trainersRaw.map(t => stripKey(t.name)).filter(Boolean));
+  const groupInfo = new Map(); // gk → { group_name,line,sec,sessions:Set,rows:[],timesByDay:Map }
   for (const l of lecRows) {
     const tk = stripKey(l.trainer); if (!tk) continue;
     const gk = normGroup(l.group_name) + '|' + l.line;
     if (!activeSet.has(gk)) continue;
-    const sec = trGroupSection(l.group_name, l.line, batchMap.get(gk)?.dt);
-    let secMap = byTrainer.get(tk); if (!secMap) { secMap = new Map(); byTrainer.set(tk, secMap); }
-    let gm = secMap.get(sec); if (!gm) { gm = new Map(); secMap.set(sec, gm); }
-    let g = gm.get(gk); if (!g) { g = { gk, group_name: l.group_name, line: l.line, lectures: new Set(), slots: new Set() }; gm.set(gk, g); }
-    g.lectures.add(l.date + '|' + l.time);
+    let gi = groupInfo.get(gk);
+    if (!gi) { gi = { gk, group_name: l.group_name, line: l.line, sec: trGroupSection(l.group_name, l.line, batchMap.get(gk)?.dt), sessions: new Set(), rows: [], timesByDay: new Map() }; groupInfo.set(gk, gi); }
+    gi.sessions.add(l.date + '|' + l.time);
+    gi.rows.push({ tk, date: l.date });
     const dn = _dayOfIso(l.date), tm = parseTime12(l.time);
-    if (dn && tm >= 0) {
-      let s = groupSamples.get(gk); if (!s) { s = new Map(); groupSamples.set(gk, s); }
-      (s.get(dn) || s.set(dn, []).get(dn)).push(tm);
-    }
+    if (dn && tm >= 0) (gi.timesByDay.get(dn) || gi.timesByDay.set(dn, []).get(dn)).push(tm);
   }
-  // Canonical slots per group = each teaching day × that day's MODAL start time.
-  const groupSlotMap = new Map(); // gk → Set<'day|min'>
-  for (const [gk, timesByDay] of groupSamples) {
+
+  // Pass 2: OWNERSHIP — each group belongs to exactly ONE trainer: the trainer
+  // of its LAST main lecture (MAX date), restricted to registered education
+  // trainers. Same rule as trainer-recruitment (bf4997e, owner-approved): a
+  // handed-over group counts for the CURRENT trainer only — early rows by the
+  // previous trainer (e.g. Mariam's 2 rows in Marie Edward's Con1) don't put
+  // the group on both cards / double-count its students. Tie on the same last
+  // date → the trainer with more rows in the group. lecture_count = ALL the
+  // group's distinct sessions (the group's schedule, not one trainer's slice).
+  const byTrainer = new Map(); const busyByKey = new Map();
+  for (const gi of groupInfo.values()) {
+    const rowCount = new Map();
+    for (const r of gi.rows) rowCount.set(r.tk, (rowCount.get(r.tk) || 0) + 1);
+    let owner = null, bestDate = '', bestCnt = -1;
+    for (const r of gi.rows) {
+      if (!teamKeys.has(r.tk)) continue;
+      const cnt = rowCount.get(r.tk) || 0;
+      if (r.date > bestDate || (r.date === bestDate && cnt > bestCnt)) { owner = r.tk; bestDate = r.date; bestCnt = cnt; }
+    }
+    if (!owner) continue; // no registered trainer ever taught it → shows nowhere (unchanged)
     const slots = new Set();
-    for (const [day, times] of timesByDay) slots.add(day + '|' + _modeOf(times));
-    groupSlotMap.set(gk, slots);
-  }
-  // Attach slots to each group object + build each trainer's BUSY slot set.
-  const busyByKey = new Map();
-  for (const [tk, secMap] of byTrainer) {
-    for (const gm of secMap.values()) {
-      for (const g of gm.values()) {
-        g.slots = groupSlotMap.get(g.gk) || new Set();
-        let bs = busyByKey.get(tk); if (!bs) { bs = new Set(); busyByKey.set(tk, bs); }
-        for (const s of g.slots) bs.add(s);
-      }
-    }
+    for (const [day, times] of gi.timesByDay) slots.add(day + '|' + _modeOf(times));
+    const g = { gk: gi.gk, group_name: gi.group_name, line: gi.line, lectures: gi.sessions, slots };
+    let secMap = byTrainer.get(owner); if (!secMap) { secMap = new Map(); byTrainer.set(owner, secMap); }
+    let gm = secMap.get(gi.sec); if (!gm) { gm = new Map(); secMap.set(gi.sec, gm); }
+    gm.set(gi.gk, g);
+    let bs = busyByKey.get(owner); if (!bs) { bs = new Set(); busyByKey.set(owner, bs); }
+    for (const s of slots) bs.add(s);
   }
   return { trainersRaw, byTrainer, stripKey, studentsOf, shiftsByKey, busyByKey };
 }
