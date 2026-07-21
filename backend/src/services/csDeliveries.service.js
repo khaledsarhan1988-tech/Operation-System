@@ -571,6 +571,12 @@ function buildBalanceContext() {
     inactiveMap: buildInactiveGroupMap(),   // cs_completed_levels (past groups)
   }, alias);
   ctx.settledSet = buildSettledSet(alias);  // 'pn|dept' → membership closed by settlement
+  // primary → [secondary norms] — so SEARCH can match a client by EITHER number.
+  ctx.aliasesByPrimary = new Map();
+  for (const [s, p] of alias) {
+    if (!ctx.aliasesByPrimary.has(p)) ctx.aliasesByPrimary.set(p, []);
+    ctx.aliasesByPrimary.get(p).push(s);
+  }
   // Owner's manual group exclusions — applied AFTER the alias fold so a group
   // recorded under either of the client's numbers is caught. Removing the entry
   // here flows to the page, membershipBalance and renewals alike.
@@ -751,8 +757,13 @@ function getDepartmentDeliveries({ dept, q, status, page, pageSize, user,
 
     const name = sales.name || nameByPhone.get(pn) || null;
     if (q) {
+      // Match by name, the PRIMARY phone, or ANY secondary phone (كشف العملاء
+      // mobile_no2) — owner 2026-07-21: searching the added second number
+      // returned nothing because only the primary was checked.
       const ql = q.toLowerCase();
-      if (!(String(name || '').toLowerCase().includes(ql) || pn.includes(q))) continue;
+      const phoneHit = pn.includes(q)
+        || (ctxMaps.aliasesByPrimary.get(pn) || []).some(a => a.includes(q));
+      if (!(String(name || '').toLowerCase().includes(ql) || phoneHit)) continue;
     }
 
     const activeGroups = active.map(a => a.group_name);
