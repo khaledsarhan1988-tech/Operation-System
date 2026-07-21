@@ -252,4 +252,195 @@ function getEnrGroups({ dept, q, status, firstFrom, firstTo, lastFrom, lastTo, p
   };
 }
 
-module.exports = { getEnrGroups, DEPTS };
+// ─── Levels overview (المستويات الشغّالة) — 2026-07-21 ──────────────────────
+// A LEVEL-oriented view of the same groups: for every active/waiting group in a
+// department show its level + code + day(s) + first/last lecture date + trainer
+// + student count, sorted by the level ladder (Starter → General → Conversation).
+// Read-only, additive; reuses the exact same group population as getEnrGroups.
+
+// Parse the level from the group code. Same family+number rule as
+// csDeliveriesReport.parseLevel (kept local — not exported there): family must
+// start the string or follow a non-alphanumeric separator, because "_" is a
+// word char and a bare \b would grab "Aug_16" as "General 16". Two robustness
+// additions for THIS page only (live nulls found in verification 2026-07-21):
+//   - parenthesized segments are STRIPPED (not split-at-first-paren), so codes
+//     that START with a paren like "(New)Aug_8_..._general3_(Menna)" still parse;
+//     trainer/coordinator text inside parens is removed either way.
+//   - "conv" accepted as a Conversation abbreviation (live codes: Conv4_P).
+function parseLevelParts(name) {
+  const base = String(name == null ? '' : name).replace(/\([^)]*\)/g, ' ');
+  const m = base.match(/(?:^|[^a-z0-9])(conversation|conv|con|general|gen|starter|str)\s*_?\s*(\d+)/i);
+  if (!m) return null;
+  const fam = m[1].toLowerCase();
+  const family = /^con/.test(fam) ? 'conversation'
+    : /^(general|gen)/.test(fam)  ? 'general'
+    : 'starter';
+  return { family, num: parseInt(m[2], 10) };
+}
+const LEVEL_LABEL  = { starter: 'Starter', general: 'General', conversation: 'Conversation' };
+const FAMILY_ORDER = { starter: 0, general: 1, conversation: 2 };
+
+// Academy week starts Saturday: JS getDay() 6=Sat, 0=Sun, ...
+const DAY_ORDER  = [6, 0, 1, 2, 3, 4, 5];
+const DAY_LABEL  = { 0: 'Sun', 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri', 6: 'Sat' };
+const NAME_DAY_RE = /(?:^|[^a-z0-9])(sat|sun|mon|tue|wed|thu|fri)(?:[^a-z0-9]|$)/i;
+
+// Per-group (trainer, date) rows from the CURRENT sheet (latest synced_at per
+// group), main only, مؤكدة+مجدولة — the same population makeGroupLectureMeta
+// counts. From one pass we derive:
+//   - days:    distinct weekdays of the group's lecture dates (Sat-first order)
+//   - trainer: the LAST-lecture trainer (MAX date; tie → most rows), per the
+//     documented ownership rule (bf4997e / 6c29fe9).
+function makeGroupLectureFacts() {
+  const stmt = db.prepare(`
+    SELECT trainer, date
+      FROM lectures
+      INNER JOIN (SELECT group_name AS g, line AS l, date(MAX(synced_at)) AS sd
+                    FROM lectures WHERE session_type='main' GROUP BY group_name, line) ls
+        ON ls.g = lectures.group_name AND ls.l = lectures.line
+       AND date(lectures.synced_at) = ls.sd
+     WHERE group_name = ? AND line = ?
+       AND session_type = 'main' AND status IN ('مؤكدة', 'مجدولة')
+  `);
+  const memo = new Map();
+  return (group, line) => {
+    const key = String(group) + '|' + String(line || '');
+    if (memo.has(key)) return memo.get(key);
+    const rows = stmt.all(group, line || '');
+    const daySet = new Set();
+    const byTrainer = new Map();   // trainer → { maxDate, count }
+    for (const r of rows) {
+      const d = new Date(String(r.date) + 'T00:00:00');
+      if (!isNaN(d)) daySet.add(d.getDay());
+      const tr = String(r.trainer == null ? '' : r.trainer).trim();
+      if (tr) {
+        const cur = byTrainer.get(tr) || { maxDate: '', count: 0 };
+        if (String(r.date) > cur.maxDate) cur.maxDate = String(r.date);
+        cur.count++;
+        byTrainer.set(tr, cur);
+      }
+    }
+    let trainer = null;
+    for (const [tr, v] of byTrainer) {
+      if (!trainer) { trainer = { name: tr, ...v }; continue; }
+      if (v.maxDate > trainer.maxDate || (v.maxDate === trainer.maxDate && v.count > trainer.count)) {
+        trainer = { name: tr, ...v };
+      }
+    }
+    const facts = {
+      days: DAY_ORDER.filter(d => daySet.has(d)).map(d => DAY_LABEL[d]),
+      trainer: trainer ? trainer.name : null,
+    };
+    memo.set(key, facts);
+    return facts;
+  };
+}
+
+/**
+ * Levels overview for one department.
+ *   dept: 'General' | 'Private' | 'Semi'
+ *   q: search on group code / trainer
+ *   status: '' (all) | started | waiting_lectures | waiting_trainees
+ */
+function getLevelsOverview({ dept, q, status, page, pageSize }) {
+  if (!DEPTS.includes(dept)) throw new Error('Invalid dept (use General | Private | Semi)');
+  page = Math.max(1, parseInt(page, 10) || 1);
+  pageSize = Math.min(200, Math.max(5, parseInt(pageSize, 10) || 50));
+  q = (q || '').trim();
+  status = (status || '').trim();
+
+  // Same population + dedup as getEnrGroups (real batches.status, placeholders out).
+  const rows = db.prepare(`
+    SELECT group_name, line, dept_type, start_date, status
+      FROM batches
+     WHERE status IN ('نشطة', 'بانتظار تسجيل المتدربين', 'بانتظار تسجيل المحاضرات')
+       AND dept_type = ?
+  `).all(dept);
+
+  const seen = new Map();
+  for (const r of rows) {
+    if (isIgnoredGroup(r.group_name)) continue;
+    const key = canonGroupKey(r.group_name) + '|' + String(r.line || '');
+    if (!seen.has(key)) seen.set(key, r);
+  }
+
+  const lectureMeta  = makeGroupLectureMeta();
+  const lectureFacts = makeGroupLectureFacts();
+  const clientsByGroup = buildClientsByGroup();
+
+  let items = [];
+  for (const r of seen.values()) {
+    const meta  = lectureMeta(r.group_name, r.line);
+    const facts = lectureFacts(r.group_name, r.line);
+    const gkey  = String(r.group_name) + '|' + String(r.line || '');
+
+    // Dates: same rule as getEnrGroups — lectures when the group has any,
+    // otherwise batches.start_date and no end date.
+    let startDate, endDate;
+    if (meta.lectures > 0) {
+      startDate = meta.start_date;
+      endDate   = meta.end_date;
+    } else {
+      startDate = r.start_date || null;
+      endDate   = null;
+    }
+
+    // Day(s): actual lecture weekdays; a group with no lectures yet falls back
+    // to the single day token written in its code (no pair inference).
+    let day = facts.days.length ? facts.days.join(' - ') : null;
+    if (!day) {
+      const m = String(r.group_name || '').split('(')[0].match(NAME_DAY_RE);
+      if (m) day = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+    }
+
+    const lvl = parseLevelParts(r.group_name);
+    items.push({
+      level:       lvl ? `${LEVEL_LABEL[lvl.family]} ${lvl.num}` : null,
+      level_order: lvl ? (FAMILY_ORDER[lvl.family] * 100 + lvl.num) : 9999,
+      group_name:  r.group_name,
+      line:        r.line,
+      day,
+      start_date:  startDate,
+      end_date:    endDate,
+      // Trainer = last-lecture trainer; group with no lectures → null
+      // (frontend shows «لا يوجد مدرب» — owner decision 2026-07-21).
+      trainer:     meta.lectures > 0 ? facts.trainer : null,
+      status:      STATUS_MAP[r.status] || 'started',
+      student_count: (clientsByGroup.get(gkey) || []).length,
+      lectures:    meta.lectures,
+    });
+  }
+
+  if (status && STATUSES.includes(status)) {
+    items = items.filter(it => it.status === status);
+  }
+
+  if (q) {
+    const ql = q.toLowerCase();
+    const qcompact = stripSpaces(ql);
+    items = items.filter(it =>
+      stripSpaces(String(it.group_name || '').toLowerCase()).includes(qcompact) ||
+      String(it.trainer || '').toLowerCase().includes(ql)
+    );
+  }
+
+  // Level ladder ascending (Starter → General → Conversation; unknown last),
+  // then newest start date, then code.
+  items.sort((a, b) =>
+    (a.level_order - b.level_order) ||
+    String(b.start_date || '').localeCompare(String(a.start_date || '')) ||
+    String(a.group_name || '').localeCompare(String(b.group_name || ''), 'ar'));
+
+  const total = items.length;
+  const start = (page - 1) * pageSize;
+  return {
+    dept,
+    page,
+    page_size: pageSize,
+    total,
+    total_pages: Math.ceil(total / pageSize) || 1,
+    items: items.slice(start, start + pageSize).map(({ level_order, ...it }) => it),
+  };
+}
+
+module.exports = { getEnrGroups, getLevelsOverview, DEPTS };

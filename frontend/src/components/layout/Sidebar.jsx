@@ -226,6 +226,7 @@ function getAdminLinks(user) {
             { to: '/subscriptions/cs-department', label: 'Customer Services Department', icon: GraduationCap, color: 'violet' },
             { to: '/subscriptions/enrollment', label: 'Enrollment', icon: GraduationCap, color: 'cyan' },
             { to: '/subscriptions/enr-groups', label: 'Enr Groups', icon: GraduationCap, color: 'emerald' },
+            { to: '/subscriptions/enr-levels', label: 'المستويات الشغّالة', icon: BarChart2, color: 'amber' },
             ...(user?.role === 'admin' ? [{ to: '/subscriptions/deleted-groups', label: 'مراجعة المجموعات المحذوفة', icon: AlertTriangle, color: 'rose' }] : []),
           ] },
         { sub: true, group: true, key: 'occupancy-trainers', label: 'الإشغال والمدربين', icon: Activity, color: 'teal', children: [
@@ -300,8 +301,10 @@ export default function Sidebar({ mobile, onClose }) {
     delGrants.push({ to: '/subscriptions/cs-department', label: 'Customer Services Department', icon: GraduationCap, color: 'violet' });
   if (grants.has('cs-enrollment'))
     delGrants.push({ to: '/subscriptions/enrollment', label: 'Enrollment', icon: GraduationCap, color: 'cyan' });
-  if (grants.has('enr-groups'))
+  if (grants.has('enr-groups')) {
     delGrants.push({ to: '/subscriptions/enr-groups', label: 'Enr Groups', icon: GraduationCap, color: 'emerald' });
+    delGrants.push({ to: '/subscriptions/enr-levels', label: 'المستويات الشغّالة', icon: BarChart2, color: 'amber' });
+  }
   if (delGrants.length) {
     grantedLinks.push({ type: 'section', label: 'تسليمات الأقسام — ممنوحة' }, ...delGrants);
   }

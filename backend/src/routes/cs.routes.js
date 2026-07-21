@@ -955,6 +955,29 @@ router.get('/enr-groups', enrGuard, (req, res) => {
   }
 });
 
+/**
+ * GET /api/cs/enr-groups/levels-overview?dept=General|Private|Semi&q=&status=&page=&page_size=
+ * Level-oriented view (المستويات الشغّالة): every active/waiting group in the
+ * dept with its level + code + day + first/last lecture date + trainer +
+ * student count, sorted by the level ladder. Admin, OR granted 'enr-groups'.
+ */
+router.get('/enr-groups/levels-overview', enrGuard, (req, res) => {
+  try {
+    const svc = require('../services/csEnrGroups.service');
+    const result = svc.getLevelsOverview({
+      dept:     (req.query.dept || '').trim(),
+      q:        (req.query.q || '').trim(),
+      status:   (req.query.status || '').trim(),
+      page:     req.query.page,
+      pageSize: req.query.page_size,
+    });
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    console.error('GET /cs/enr-groups/levels-overview error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
 // ─── ENR GROUPS — transition (next group + dispositions), admin only ──────────
 const enrTx = () => require('../services/csEnrTransition.service');
 

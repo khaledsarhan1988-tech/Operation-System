@@ -77,6 +77,7 @@ import DepartmentDeliveries from './pages/subscriptions/DepartmentDeliveries';
 import DeletedGroupsReview from './pages/admin/DeletedGroupsReview';
 import Enrollment from './pages/subscriptions/Enrollment';
 import EnrGroups from './pages/subscriptions/EnrGroups';
+import EnrLevels from './pages/subscriptions/EnrLevels';
 
 import TeamProgression from './pages/leader/TeamProgression';
 import EvaluateGoals from './pages/leader/EvaluateGoals';
@@ -234,6 +235,7 @@ const router = createBrowserRouter([
       { path: 'deliveries/:dept',   element: <DepartmentDeliveries /> },
       { path: 'enrollment',         element: <Enrollment /> },
       { path: 'enr-groups',         element: <PrivateRoute requirePage="enr-groups"><EnrGroups /></PrivateRoute> },
+      { path: 'enr-levels',         element: <PrivateRoute requirePage="enr-groups"><EnrLevels /></PrivateRoute> },
       { path: 'deleted-groups',     element: <PrivateRoute allowedRoles={['admin']}><DeletedGroupsReview /></PrivateRoute> },
     ],
   },
