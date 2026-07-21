@@ -301,10 +301,11 @@ export default function Sidebar({ mobile, onClose }) {
     delGrants.push({ to: '/subscriptions/cs-department', label: 'Customer Services Department', icon: GraduationCap, color: 'violet' });
   if (grants.has('cs-enrollment'))
     delGrants.push({ to: '/subscriptions/enrollment', label: 'Enrollment', icon: GraduationCap, color: 'cyan' });
-  if (grants.has('enr-groups')) {
+  if (grants.has('enr-groups'))
     delGrants.push({ to: '/subscriptions/enr-groups', label: 'Enr Groups', icon: GraduationCap, color: 'emerald' });
+  // المستويات الشغّالة — its OWN grant key (was bundled with enr-groups).
+  if (grants.has('enr-levels'))
     delGrants.push({ to: '/subscriptions/enr-levels', label: 'المستويات الشغّالة', icon: BarChart2, color: 'amber' });
-  }
   if (delGrants.length) {
     grantedLinks.push({ type: 'section', label: 'تسليمات الأقسام — ممنوحة' }, ...delGrants);
   }

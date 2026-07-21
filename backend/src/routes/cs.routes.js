@@ -927,6 +927,10 @@ router.delete('/deliveries/:phone/exclude-group', requireRole('admin', 'enrollme
 // /enr-groups route below so a scoped non-admin can use the page without full
 // admin rights. (Owner decision 2026-07-04.)
 const enrGuard = requirePageOrManagement('enr-groups');
+// «المستويات الشغّالة» has its OWN grant key (`enr-levels`) so it can be granted
+// independently of Enr Groups. Any admin passes; otherwise the user needs the
+// 'enr-levels' page in extra_pages. Applied to the 3 levels-overview endpoints.
+const levelsGuard = requirePageOrManagement('enr-levels');
 
 /**
  * GET /api/cs/enr-groups?dept=General|Private|Semi&q=&page=&page_size=
@@ -961,7 +965,7 @@ router.get('/enr-groups', enrGuard, (req, res) => {
  * dept with its level + code + day + first/last lecture date + trainer +
  * student count, sorted by the level ladder. Admin, OR granted 'enr-groups'.
  */
-router.get('/enr-groups/levels-overview', enrGuard, (req, res) => {
+router.get('/enr-groups/levels-overview', levelsGuard, (req, res) => {
   try {
     const svc = require('../services/csEnrGroups.service');
     const result = svc.getLevelsOverview({
@@ -989,7 +993,7 @@ router.get('/enr-groups/levels-overview', enrGuard, (req, res) => {
  * Clients of one group with the SAME membership numbers as تسليمات الأقسام
  * (paid/taken/remaining/state + ended groups). Admin, OR granted 'enr-groups'.
  */
-router.get('/enr-groups/levels-overview/clients', enrGuard, (req, res) => {
+router.get('/enr-groups/levels-overview/clients', levelsGuard, (req, res) => {
   try {
     const svc = require('../services/csEnrGroups.service');
     res.json({ ok: true, ...svc.getLevelsGroupClients({
@@ -1008,7 +1012,7 @@ router.get('/enr-groups/levels-overview/clients', enrGuard, (req, res) => {
  * Registered sessions of one group: main lectures + phone-call (side) sessions.
  * Admin, OR granted 'enr-groups'.
  */
-router.get('/enr-groups/levels-overview/lectures', enrGuard, (req, res) => {
+router.get('/enr-groups/levels-overview/lectures', levelsGuard, (req, res) => {
   try {
     const svc = require('../services/csEnrGroups.service');
     res.json({ ok: true, ...svc.getLevelsGroupLectures({
