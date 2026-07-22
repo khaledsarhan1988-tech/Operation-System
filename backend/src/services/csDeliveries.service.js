@@ -24,7 +24,7 @@
 
 const db = require('../config/database');
 const { saveNow } = require('../config/database');
-const { csPrimaryPhone } = require('../utils/csPhoneNormalize');
+const { csPrimaryPhone, csExtractAllPhones } = require('../utils/csPhoneNormalize');
 const { IGNORED_GROUP_PATTERNS, isIgnoredGroup, normName } = require('../utils/csGroupHelpers');
 const { canonKey: bmCanon, slotKey: bmSlot } = require('../utils/csBatchMatch');
 
@@ -470,6 +470,30 @@ function buildPhoneAliasMap() {
       if (p && s && p !== s) map.set(s, p);
     }
   } catch (_) { /* mobile_no2 may not exist on older DBs */ }
+
+  // Multi-number كشف العملاء cells ("1094692455-1012273843", "…/…", newline-
+  // separated) are ONE person who gave two numbers — only the FIRST used to
+  // carry the membership, so groups recorded under the other number counted as
+  // a separate, membership-less client (owner audit 2026-07-22, 329 cells).
+  // Treat the extras as aliases so the membership stays counted ONCE while
+  // groups under either number merge onto the primary.
+  try {
+    const rows = db.prepare(`SELECT mobile_no FROM cs_sales_register
+                              WHERE mobile_no IS NOT NULL AND TRIM(mobile_no) <> ''`).all();
+    // A number that is itself the PRIMARY of some membership row belongs to a
+    // real client of its own — never alias it away (7 such cases live).
+    const ownPrimary = new Set();
+    for (const r of rows) { const p = csPrimaryPhone(r.mobile_no); if (p) ownPrimary.add(p); }
+    for (const r of rows) {
+      const all = csExtractAllPhones(r.mobile_no);
+      if (all.length < 2) continue;
+      const primary = all[0];
+      for (const sec of all.slice(1)) {
+        if (sec === primary || ownPrimary.has(sec) || map.has(sec)) continue;
+        map.set(sec, primary);
+      }
+    }
+  } catch (_) { /* best-effort */ }
   return map;
 }
 
