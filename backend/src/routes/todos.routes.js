@@ -443,6 +443,9 @@ router.get('/templates', (req, res) => {
     const rows = db.prepare(`
       SELECT t.*,
         u_assigned.full_name AS assigned_to_name,
+        -- Employment state of the assignee, so the manager can spot (and retire)
+        -- templates still attached to people who left the academy.
+        u_assigned.is_active AS assigned_is_active,
         u_created.full_name  AS created_by_name,
         (SELECT COUNT(*) FROM todos c WHERE c.parent_todo_id = t.id) AS instances_count,
         (SELECT COUNT(*) FROM todos c WHERE c.parent_todo_id = t.id AND c.status='completed') AS completed_count

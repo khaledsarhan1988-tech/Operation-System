@@ -600,6 +600,7 @@ function TemplatesManager() {
   const qc = useQueryClient();
   const [search, setSearch] = useState('');
   const [empFilter, setEmpFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');   // '' | 'active' | 'left'
   const [selected, setSelected] = useState([]);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
@@ -629,10 +630,16 @@ function TemplatesManager() {
     return [...m.entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1])));
   }, [templates]);
 
+  const leftCount = useMemo(
+    () => templates.filter(t => t.assigned_to && t.assigned_is_active === 0).length, [templates]);
+
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
     return templates
       .filter(t => !empFilter || String(t.assigned_to) === String(empFilter))
+      .filter(t => statusFilter === '' ? true
+        : statusFilter === 'left' ? (t.assigned_to && t.assigned_is_active === 0)
+        : t.assigned_is_active === 1)
       .filter(t => !q || (t.title || '').toLowerCase().includes(q)
                        || (t.assigned_to_name || '').toLowerCase().includes(q))
       .sort((a, b) =>
@@ -688,6 +695,13 @@ function TemplatesManager() {
               <option value="">كل الموظفين</option>
               {employees.map(([id, name]) => (<option key={id} value={id}>{name}</option>))}
             </select>
+            <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setSelected([]); }}
+              className={`px-2 py-1.5 rounded-lg border text-sm font-bold ${
+                statusFilter === 'left' ? 'bg-rose-50 border-rose-300 text-rose-700' : 'bg-white border-gray-300'}`}>
+              <option value="">كل الحالات</option>
+              <option value="active">على رأس العمل</option>
+              <option value="left">موظفين مشيوا ({leftCount})</option>
+            </select>
             <button onClick={toggleAllShown} disabled={rows.length === 0}
               className="px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-xs font-bold disabled:opacity-40">
               {allShown ? 'إلغاء تحديد المعروض' : 'تحديد المعروض'}
@@ -741,7 +755,12 @@ function TemplatesManager() {
                     </td>
                     <td className="px-3 py-2 font-mono text-xs">{t.due_time || '—'}</td>
                     <td className="px-3 py-2 text-xs text-gray-600">{t.recurrence_pattern || '—'}</td>
-                    <td className="px-3 py-2 text-xs">{t.assigned_to_name || '—'}</td>
+                    <td className="px-3 py-2 text-xs">
+                      {t.assigned_to_name || '—'}
+                      {t.assigned_to && t.assigned_is_active === 0 && (
+                        <span className="mr-1.5 px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 text-[10px] font-black">مشى</span>
+                      )}
+                    </td>
                     <td className="px-3 py-2 text-xs text-gray-500">{t.created_by_name || '—'}</td>
                     <td className="px-3 py-2 text-xs text-gray-500">{t.completed_count || 0}/{t.instances_count || 0}</td>
                   </tr>
