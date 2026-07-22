@@ -2752,13 +2752,18 @@ initDb().then(db => {
       )
     `);
 
-    // MIGRATION (2026-07-22): re-normalize stored client phones after the
-    // csPhoneNormalize fix (leading "00" international prefix is now stripped).
-    // Stored values were written by the OLD normalizer, so a lookup computing
-    // "966…" would miss a row stored as "00966…" — 515 real clients looked
-    // unregistered and their memberships went uncounted. Row-by-row so a
-    // collision (two rows that were the same person all along) MERGES instead
-    // of throwing. Idempotent: after the first pass nothing starts with "00".
+    // MIGRATION (2026-07-22): re-normalize stored client phones whenever
+    // csPhoneNormalize learns a new form. Stored values were written by an OLDER
+    // normalizer, so a lookup computing today's canonical form misses them:
+    //   "00966…"        → "966…"        (515 clients, first pass)
+    //   "0201021925461" → "01021925461" (a leading 0 typed before the country
+    //   "0966535193907" → "966535193907" code — 20 more clients, second pass)
+    //   "0575282028"    → "575282028"
+    // Every row is re-normalized and updated only when the value actually
+    // changes, so this stays correct for the NEXT fix too instead of being tied
+    // to one bad prefix. Row-by-row so a collision (two rows that were the same
+    // person all along) MERGES instead of throwing. Idempotent: a second run
+    // finds nothing because normalizing a canonical value returns itself.
     try {
       const { csPrimaryPhone: _norm } = require('./utils/csPhoneNormalize');
       const _tables = ['cs_subscriptions', 'cs_client_coordinator', 'cs_reminders', 'cs_notifications',
@@ -2770,7 +2775,7 @@ initDb().then(db => {
         if (!exists?.[0]?.values?.length) continue;
         const cols = (db._raw.exec(`PRAGMA table_info(${t})`)?.[0]?.values || []).map(r => r[1]);
         if (!cols.includes('client_phone_norm') || !cols.includes('id')) continue;
-        const rows = db.prepare(`SELECT id, client_phone_norm AS p FROM ${t} WHERE client_phone_norm LIKE '00%'`).all();
+        const rows = db.prepare(`SELECT id, client_phone_norm AS p FROM ${t} WHERE client_phone_norm IS NOT NULL`).all();
         const upd = db.prepare(`UPDATE ${t} SET client_phone_norm = ? WHERE id = ?`);
         const del = db.prepare(`DELETE FROM ${t} WHERE id = ?`);
         for (const r of rows) {

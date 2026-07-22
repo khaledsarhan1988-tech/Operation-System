@@ -37,8 +37,17 @@ function csNormalizePhone(raw) {
   // Only strip when what remains is still a plausible international number.
   if (s.startsWith('00') && s.length - 2 >= 9) s = s.slice(2);
 
-  // Egyptian: "20XXXXXXXXXX" (12) → strip 20 → "01..." (with prefix fix below)
-  if (s.length === 12 && s.startsWith('20')) {
+  // A single leading "0" written before a COUNTRY CODE is a typo for "+":
+  // "0201021925461" is "+20 1021925461", "0966535193907" is "+966 535193907".
+  // These used to fall through to the catch-all and stay verbatim, so the same
+  // client existed twice and 20 memberships went uncounted (owner audit
+  // 2026-07-22). Egyptian "01XXXXXXXXX" is untouched — after the 0 comes a "1",
+  // which is not a country code.
+  if (/^0(?:20|966|971|972|970)/.test(s)) s = s.slice(1);
+
+  // Egyptian with country code: "20" + local, whether the local part kept its
+  // leading zero ("2001034885366", 13) or dropped it ("201021925461", 12).
+  if (s.startsWith('20') && (s.length === 12 || s.length === 13)) {
     const rest = s.slice(2);
     if (rest.length === 10 && rest.startsWith('1')) return '0' + rest;
     if (rest.length === 11 && rest.startsWith('01')) return rest;
@@ -49,6 +58,11 @@ function csNormalizePhone(raw) {
 
   // Egyptian missing the leading zero
   if (s.length === 10 && s.startsWith('1')) return '0' + s;
+
+  // Gulf local form "05XXXXXXXX" (10) → the 9-digit form the register stores
+  // ("0575282028" ≡ "575282028"). Not Egyptian: an Egyptian local number is 11
+  // digits and starts "01", so a 10-digit "05…" can only be the Gulf local form.
+  if (s.length === 10 && s.startsWith('05')) return s.slice(1);
 
   // Saudi / UAE / Palestinian — keep as-is (12 digits)
   if (s.length === 12 && (s.startsWith('966') || s.startsWith('971') || s.startsWith('972') || s.startsWith('970'))) {
