@@ -646,7 +646,7 @@ function TemplatesManager() {
         (a.title || '').localeCompare(b.title || '')
         || (a.due_time || '99:99').localeCompare(b.due_time || '99:99')
         || String(a.assigned_to_name || '').localeCompare(String(b.assigned_to_name || '')));
-  }, [templates, search, empFilter]);
+  }, [templates, search, empFilter, statusFilter]);
 
   const toggle = id => setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
   const allShown = rows.length > 0 && rows.every(r => selected.includes(r.id));
