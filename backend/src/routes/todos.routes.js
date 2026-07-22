@@ -124,6 +124,16 @@ function buildListWhere(scope, query) {
   if (query.priority)    { wheres.push('t.priority = ?');    params.push(query.priority); }
   if (query.assigned_to) { wheres.push('t.assigned_to = ?'); params.push(query.assigned_to); }
   if (query.due_date)    { wheres.push('t.due_date = ?');    params.push(query.due_date); }
+  // Date-range filter (YYYY-MM-DD). Range-overlap semantics so multi-day tasks
+  // count when any part of them falls inside the window. Validated to a strict
+  // date shape before going into SQL.
+  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+  if (dateRe.test(query.due_from || '')) {
+    wheres.push('COALESCE(t.due_date_end, t.due_date) >= ?'); params.push(query.due_from);
+  }
+  if (dateRe.test(query.due_to || '')) {
+    wheres.push('t.due_date <= ?'); params.push(query.due_to);
+  }
   if (query.search) {
     wheres.push('(t.title LIKE ? OR t.description LIKE ? OR t.tags LIKE ?)');
     const s = `%${query.search}%`;

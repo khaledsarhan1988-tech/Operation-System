@@ -75,6 +75,10 @@ export default function AdminTodos() {
   const [filterPriority, setFilterPriority] = useState('');
   const [filterKind, setFilterKind] = useState('');  // '' = all | 'extra' | 'workflow'
   const [filterAssignee, setFilterAssignee] = useState('');
+  // Date-range filter — applied SERVER-side so it searches the whole dataset,
+  // not just the 1000 rows this page happens to have fetched.
+  const [dueFrom, setDueFrom] = useState('');
+  const [dueTo, setDueTo] = useState('');
   const [openId, setOpenId] = useState(null);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -84,9 +88,14 @@ export default function AdminTodos() {
   const qc = useQueryClient();
 
   const { data: todosData, isLoading } = useQuery({
-    queryKey: ['todos', 'admin-all', filterKind],
+    queryKey: ['todos', 'admin-all', filterKind, dueFrom, dueTo],
     queryFn: () => api.get('/todos', {
-      params: { limit: 1000, ...(filterKind ? { task_kind: filterKind } : {}) },
+      params: {
+        limit: 1000,
+        ...(filterKind ? { task_kind: filterKind } : {}),
+        ...(dueFrom ? { due_from: dueFrom } : {}),
+        ...(dueTo   ? { due_to:   dueTo   } : {}),
+      },
     }).then(r => r.data),
     staleTime: 30 * 1000,
   });
@@ -431,14 +440,23 @@ export default function AdminTodos() {
               <option value="">كل الموظفين</option>
               {(usersData?.users || []).map(u => (<option key={u.id} value={u.id}>{u.full_name}</option>))}
             </select>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-bold text-gray-500">من</span>
+              <input type="date" value={dueFrom} onChange={e => setDueFrom(e.target.value)}
+                className="px-2 py-1.5 rounded-lg border border-gray-300 text-xs" />
+              <span className="text-xs font-bold text-gray-500">إلى</span>
+              <input type="date" value={dueTo} onChange={e => setDueTo(e.target.value)}
+                min={dueFrom || undefined}
+                className="px-2 py-1.5 rounded-lg border border-gray-300 text-xs" />
+            </div>
             <select value={filterKind} onChange={e => setFilterKind(e.target.value)}
               className={`px-2 py-1.5 rounded-lg border text-sm font-bold ${filterKind === 'extra' ? 'bg-orange-50 border-orange-300 text-orange-700' : filterKind === 'workflow' ? 'bg-violet-50 border-violet-300 text-violet-700' : 'bg-white border-gray-300'}`}>
               <option value="">كل الأنواع</option>
               <option value="extra">إضافية فقط</option>
               <option value="workflow">قوالب اليوم فقط</option>
             </select>
-            {(activeFilters > 0 || filterKind) && (
-              <button onClick={() => { setSearch(''); setFilterStatus(''); setFilterPriority(''); setFilterAssignee(''); setFilterKind(''); }}
+            {(activeFilters > 0 || filterKind || dueFrom || dueTo) && (
+              <button onClick={() => { setSearch(''); setFilterStatus(''); setFilterPriority(''); setFilterAssignee(''); setFilterKind(''); setDueFrom(''); setDueTo(''); }}
                 className="px-2 py-1.5 rounded-lg text-xs text-violet-600 hover:bg-violet-50">مسح</button>
             )}
             <button onClick={exportCsv} disabled={!filtered.length}
@@ -547,6 +565,10 @@ export default function AdminTodos() {
   );
 }
 
+// Column identity for the monitoring matrix: the same task shared by several
+// employees is ONE column, even though each employee owns a distinct template row.
+const colKey = (t) => `${(t.title || '').trim()}|${t.due_time || ''}`;
+
 // ─── Templates Performance — Daily Workflow Monitoring ────────────────────────
 function TemplatesPerformance() {
   const [windowDays, setWindowDays] = useState(7);
@@ -565,6 +587,25 @@ function TemplatesPerformance() {
     if (!q) return data.employees;
     return data.employees.filter(e => (e.user_name || '').toLowerCase().includes(q));
   }, [data, searchEmp]);
+
+  // Column set = UNION of every employee's templates. Previously the header row
+  // was built from the FIRST employee only, so any task another employee had
+  // (e.g. one assigned to a single person) rendered as a header-less cell AND
+  // pushed that row's cells under the wrong headers. Keyed by title+time so the
+  // same task shared by several employees is one column.
+  const columns = useMemo(() => {
+    const map = new Map();
+    for (const e of data?.employees || []) {
+      for (const t of e.templates || []) {
+        const key = colKey(t);
+        if (!map.has(key)) map.set(key, { key, title: t.title, due_time: t.due_time });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) =>
+      (a.due_time || '99:99').localeCompare(b.due_time || '99:99')
+      || (a.title || '').localeCompare(b.title || '')
+    );
+  }, [data]);
 
   // Cell color based on status + overdue
   function cellStyle(today) {
@@ -696,11 +737,11 @@ function TemplatesPerformance() {
                     <th className="px-2 py-2 text-center font-bold text-gray-700 whitespace-nowrap">
                       آخر {windowDays} يوم
                     </th>
-                    {/* Dynamic template columns — use first employee's templates as headers */}
-                    {filteredEmployees[0]?.templates.map((t, i) => (
-                      <th key={i} className="px-2 py-2 text-center font-bold text-gray-700 whitespace-nowrap min-w-[70px]">
-                        <div className="text-[10px] truncate max-w-[100px]" title={t.title}>{t.title}</div>
-                        <div className="text-[9px] text-gray-400 font-mono">{t.due_time || '—'}</div>
+                    {/* Dynamic template columns — UNION across all employees */}
+                    {columns.map(c => (
+                      <th key={c.key} className="px-2 py-2 text-center font-bold text-gray-700 whitespace-nowrap min-w-[70px]">
+                        <div className="text-[10px] truncate max-w-[100px]" title={c.title}>{c.title}</div>
+                        <div className="text-[9px] text-gray-400 font-mono">{c.due_time || '—'}</div>
                       </th>
                     ))}
                   </tr>
@@ -736,19 +777,36 @@ function TemplatesPerformance() {
                           </div>
                           <p className="text-[9px] text-gray-500 mt-0.5">{winDone}/{winTotal}</p>
                         </td>
-                        {emp.templates.map(t => (
-                          <td key={t.template_id} className="px-1 py-1.5 text-center">
-                            <div
-                              className={`inline-flex flex-col items-center justify-center w-12 h-12 rounded-lg border ${cellStyle(t.today)}`}
-                              title={`${t.title} (${t.due_time || '—'})\nاليوم: ${t.today.status}${t.today.is_overdue ? ' — متأخرة' : ''}\nآخر ${windowDays} يوم: ${t.stats_window.completed}/${t.stats_window.total} (${t.stats_window.rate}%)`}
-                            >
-                              <span className="text-base leading-none font-bold">{cellIcon(t.today)}</span>
-                              {t.stats_window.total > 0 && (
-                                <span className="text-[8px] mt-0.5 font-bold opacity-70">{t.stats_window.rate}%</span>
-                              )}
-                            </div>
-                          </td>
-                        ))}
+                        {(() => {
+                          // Look up this employee's template per COLUMN key so every
+                          // cell lands under its own header. Employees who don't have
+                          // a given task get a blank cell instead of shifting the row.
+                          const byKey = new Map(emp.templates.map(t => [colKey(t), t]));
+                          return columns.map(c => {
+                            const t = byKey.get(c.key);
+                            if (!t) {
+                              return (
+                                <td key={c.key} className="px-1 py-1.5 text-center">
+                                  <div className="inline-flex items-center justify-center w-12 h-12 rounded-lg border border-dashed border-gray-200 text-gray-300 text-[10px]"
+                                       title={`${c.title} — مش مسندة للموظف ده`}>—</div>
+                                </td>
+                              );
+                            }
+                            return (
+                              <td key={c.key} className="px-1 py-1.5 text-center">
+                                <div
+                                  className={`inline-flex flex-col items-center justify-center w-12 h-12 rounded-lg border ${cellStyle(t.today)}`}
+                                  title={`${t.title} (${t.due_time || '—'})\nاليوم: ${t.today.status}${t.today.is_overdue ? ' — متأخرة' : ''}\nآخر ${windowDays} يوم: ${t.stats_window.completed}/${t.stats_window.total} (${t.stats_window.rate}%)`}
+                                >
+                                  <span className="text-base leading-none font-bold">{cellIcon(t.today)}</span>
+                                  {t.stats_window.total > 0 && (
+                                    <span className="text-[8px] mt-0.5 font-bold opacity-70">{t.stats_window.rate}%</span>
+                                  )}
+                                </div>
+                              </td>
+                            );
+                          });
+                        })()}
                       </tr>
                     );
                   })}
