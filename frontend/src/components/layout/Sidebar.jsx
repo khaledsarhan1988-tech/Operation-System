@@ -42,10 +42,14 @@ const COLOR_MAP = {
 // Enrollment — Department Deliveries (تسليمات الأقسام) as a single page with a
 // tab per department. Shown to admin, leader and coordinator (agent); the
 // backend scopes the data and the page shows only the leader's own dept tab.
+// NOTE (2026-07-21, Owner): «Enrollment» was REMOVED from these base links —
+// it belongs to the Enrollment department, so a Customer-Services coordinator
+// (agent) / leader must NOT see it by default. It stays reachable via the
+// Enrollment management (Enrollment tree in getAdminLinks) or the
+// `cs-enrollment` page grant. Only the CS-department delivery stays here.
 const DELIVERIES_LINKS = [
   { type: 'section', label: 'تسليمات الأقسام' },
   { to: '/subscriptions/cs-department', label: 'Customer Services Department', icon: GraduationCap, color: 'violet' },
-  { to: '/subscriptions/enrollment',    label: 'Enrollment',                  icon: GraduationCap, color: 'cyan' },
 ];
 
 const AGENT_LINKS = [

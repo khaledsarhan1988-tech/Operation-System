@@ -233,7 +233,7 @@ const router = createBrowserRouter([
       { path: 'dashboard',          element: <CsDashboard /> },
       { path: 'cs-department',      element: <DepartmentDeliveries /> },
       { path: 'deliveries/:dept',   element: <DepartmentDeliveries /> },
-      { path: 'enrollment',         element: <Enrollment /> },
+      { path: 'enrollment',         element: <PrivateRoute requirePage="cs-enrollment"><Enrollment /></PrivateRoute> },
       { path: 'enr-groups',         element: <PrivateRoute requirePage="enr-groups"><EnrGroups /></PrivateRoute> },
       { path: 'enr-levels',         element: <PrivateRoute requirePage="enr-levels"><EnrLevels /></PrivateRoute> },
       { path: 'deleted-groups',     element: <PrivateRoute allowedRoles={['admin']}><DeletedGroupsReview /></PrivateRoute> },
