@@ -232,6 +232,8 @@ function getAdminLinks(user) {
             { to: '/subscriptions/enr-groups', label: 'Enr Groups', icon: GraduationCap, color: 'emerald' },
             { to: '/subscriptions/enr-levels', label: 'المستويات الشغّالة', icon: BarChart2, color: 'amber' },
             ...(user?.role === 'admin' ? [{ to: '/subscriptions/deleted-groups', label: 'مراجعة المجموعات المحذوفة', icon: AlertTriangle, color: 'rose' }] : []),
+    // TEMPORARY review page — remove with the feature when the owner is done.
+    ...(['admin', 'enrollment'].includes(user?.role) ? [{ to: '/subscriptions/unregistered-clients', label: 'عملاء غير مسجلين', icon: UserX, color: 'amber' }] : []),
           ] },
         { sub: true, group: true, key: 'occupancy-trainers', label: 'الإشغال والمدربين', icon: Activity, color: 'teal', children: [
             { to: '/admin/reports/trainer-utilization',    label: 'nav.trainerUtilization',   icon: Activity,  color: 'teal'   },

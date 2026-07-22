@@ -75,6 +75,7 @@ import CsClientProfile from './pages/subscriptions/CsClientProfile';
 import CsDashboard from './pages/subscriptions/CsDashboard';
 import DepartmentDeliveries from './pages/subscriptions/DepartmentDeliveries';
 import DeletedGroupsReview from './pages/admin/DeletedGroupsReview';
+import UnregisteredClients from './pages/subscriptions/UnregisteredClients';   // TEMP review page
 import Enrollment from './pages/subscriptions/Enrollment';
 import EnrGroups from './pages/subscriptions/EnrGroups';
 import EnrLevels from './pages/subscriptions/EnrLevels';
@@ -237,6 +238,7 @@ const router = createBrowserRouter([
       { path: 'enr-groups',         element: <PrivateRoute requirePage="enr-groups"><EnrGroups /></PrivateRoute> },
       { path: 'enr-levels',         element: <PrivateRoute requirePage="enr-levels"><EnrLevels /></PrivateRoute> },
       { path: 'deleted-groups',     element: <PrivateRoute allowedRoles={['admin']}><DeletedGroupsReview /></PrivateRoute> },
+      { path: 'unregistered-clients', element: <PrivateRoute allowedRoles={['admin', 'enrollment']}><UnregisteredClients /></PrivateRoute> },
     ],
   },
 

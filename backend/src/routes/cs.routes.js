@@ -919,6 +919,29 @@ router.delete('/deliveries/:phone/exclude-group', requireRole('admin', 'enrollme
   }
 });
 
+// ─── «عملاء غير مسجلين في كشف العملاء» — TEMPORARY review page ───────────────
+// Remove this block together with the page/service/table when the review ends.
+router.get('/unregistered-clients', requireRole('admin', 'enrollment'), (req, res) => {
+  try {
+    res.json({ ok: true, ...require('../services/csUnregisteredClients.service').getUnregisteredClients() });
+  } catch (e) {
+    console.error('GET /cs/unregistered-clients error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+router.put('/unregistered-clients/:phone/note', requireRole('admin', 'enrollment'), (req, res) => {
+  try {
+    res.json({ ok: true, ...require('../services/csUnregisteredClients.service').setNote({
+      phone: req.params.phone, note: req.body?.note,
+      userId: req.user?.id, userName: req.user?.full_name || req.user?.name || null,
+    }) });
+  } catch (e) {
+    console.error('PUT /cs/unregistered-clients/:phone/note error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
 // ─── ENR GROUPS (مجموعات الـ Enrollment) ──────────────────────────────────────
 
 // Enr Groups access guard: any admin OR a user granted the 'enr-groups' page.

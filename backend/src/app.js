@@ -2783,6 +2783,20 @@ initDb().then(db => {
       if (_fixed || _merged) { saveNow(); console.log(`✅ Migration: phone re-normalize — ${_fixed} updated, ${_merged} merged duplicates`); }
     } catch (e) { console.error('phone re-normalize migration error:', e.message); }
 
+    // ── Review notes for the «عملاء غير مسجلين» page (owner 2026-07-22) ──
+    // TEMPORARY review aid: the owner walks the unregistered-clients list and
+    // jots a note per client. Safe to drop the table with the page when the
+    // review is done — nothing else reads it.
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS cs_unregistered_notes (
+        client_phone_norm TEXT PRIMARY KEY,
+        note              TEXT,
+        updated_by        INTEGER,
+        updated_by_name   TEXT,
+        updated_at        TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+      )
+    `);
+
     // ── Manual per-client GROUP exclusions (owner 2026-07-20) ──
     // The owner reviews borderline journeys himself: a specific counted group
     // can be excluded from ONE client's consumed levels (with a reason), and
