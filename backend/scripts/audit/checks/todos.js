@@ -147,6 +147,40 @@ module.exports = async function todos({ call, db }) {
     }
   }
 
+  // ── 4b. NO completed work may be missing from the board ───────────────────
+  // The strongest possible statement of the Owner's complaint: take every
+  // instance an employed agent COMPLETED inside the window and prove the board
+  // reports it. Catches template-shape bugs generically — fan-out templates
+  // (assigned_to NULL, invisible to an assignee-joined query), assignee-blind
+  // instance lookups, retired templates, anything future.
+  if (perf && !boardBlind) {
+    const doneRows = db.prepare(`
+      SELECT c.assigned_to AS uid, u.full_name AS name, c.parent_todo_id AS pid,
+             COUNT(*) AS done
+        FROM todos c
+        INNER JOIN users u ON u.id = c.assigned_to AND u.is_active = 1
+       WHERE c.parent_todo_id IS NOT NULL
+         AND c.status = 'completed'
+         AND c.due_date BETWEEN ? AND ?
+       GROUP BY c.assigned_to, c.parent_todo_id
+    `).all(perf.window_start, perf.window_end);
+
+    const reported = new Map();   // `${uid}|${templateId}` → completed count
+    for (const e of employees) {
+      for (const t of e.templates || []) {
+        reported.set(`${e.user_id}|${t.template_id}`, (t.stats_window || {}).completed || 0);
+      }
+    }
+    for (const r of doneRows) {
+      const got = reported.get(`${r.uid}|${r.pid}`);
+      if (got === undefined) {
+        fails.retired.push(`${r.name}: ${r.done} completed task(s) under template #${r.pid} are MISSING from the board`);
+      } else if (got < r.done) {
+        fails.retired.push(`${r.name}: board credits ${got} of ${r.done} completed under template #${r.pid}`);
+      }
+    }
+  }
+
   // ── 5. Date-range filters must filter, and survive garbage ────────────────
   const rangeProbe = await call('/todos?limit=200&due_from=1990-01-01&due_to=1990-01-02');
   if (rangeProbe.status !== 200) fails.range.push(`/todos range probe: HTTP ${rangeProbe.status}`);

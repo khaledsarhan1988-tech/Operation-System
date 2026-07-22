@@ -669,11 +669,56 @@ router.get('/templates-performance', (req, res) => {
        ORDER BY u.full_name COLLATE NOCASE, t.due_time, t.id
     `).all(...params, windowStart, windowEnd);
 
-    // Helper to find a single template's today instance
+    // ── Fan-out templates (scope = department / all) ──────────────────────────
+    // These carry assigned_to = NULL by design: the generator resolves the real
+    // assignees per day. The query above requires assigned_to IS NOT NULL, so
+    // they — and every instance the team completed under them — were INVISIBLE
+    // on this board. Expand each one to the people who actually received it
+    // inside the window, so their work is attributed to them.
+    const fanoutTemplates = db.prepare(`
+      SELECT t.id, t.title, t.description, t.due_time, t.priority,
+             CASE WHEN t.status = 'cancelled' THEN 1 ELSE 0 END AS is_retired
+        FROM todos t
+       WHERE ${where}
+         AND t.is_recurring = 1 AND t.parent_todo_id IS NULL
+         AND t.assigned_to IS NULL
+         AND (
+           t.status NOT IN ('cancelled')
+           OR EXISTS (SELECT 1 FROM todos c
+                       WHERE c.parent_todo_id = t.id
+                         AND c.due_date BETWEEN ? AND ?)
+         )
+    `).all(...params, windowStart, windowEnd);
+
+    const getAudience = db.prepare(`
+      SELECT DISTINCT c.assigned_to AS uid, u.full_name AS name, u.department AS dept
+        FROM todos c
+        INNER JOIN users u ON u.id = c.assigned_to AND u.is_active = 1
+       WHERE c.parent_todo_id = ? AND c.due_date BETWEEN ? AND ?
+    `);
+
+    // Every template is evaluated as a (template, assignee) pair so a shared
+    // fan-out template yields one cell per person.
+    const pairs = templates.map(t => ({
+      t, uid: t.assigned_to, name: t.assigned_to_name, dept: t.assigned_to_dept,
+    }));
+    for (const t of fanoutTemplates) {
+      for (const a of getAudience.all(t.id, windowStart, windowEnd)) {
+        pairs.push({ t, uid: a.uid, name: a.name, dept: a.dept });
+      }
+    }
+    pairs.sort((a, b) =>
+      String(a.name || '').localeCompare(String(b.name || ''))
+      || String(a.t.due_time || '').localeCompare(String(b.t.due_time || ''))
+      || a.t.id - b.t.id);
+
+    // Instance lookups MUST be scoped to the assignee: a fan-out template has
+    // one instance PER employee on the same date, so keying by template+date
+    // alone would show one person's row to everybody.
     const getTodayInstance = db.prepare(`
       SELECT id, status, completed_at, due_time
         FROM todos
-       WHERE parent_todo_id = ? AND due_date = ?
+       WHERE parent_todo_id = ? AND due_date = ? AND assigned_to IS ?
        ORDER BY id ASC LIMIT 1
     `);
 
@@ -683,6 +728,7 @@ router.get('/templates-performance', (req, res) => {
              SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed
         FROM todos
        WHERE parent_todo_id = ?
+         AND assigned_to IS ?
          AND due_date BETWEEN ? AND ?
     `);
 
@@ -701,17 +747,18 @@ router.get('/templates-performance', (req, res) => {
     const byEmployee = new Map();
     const templateAgg = new Map(); // by title — for overall summary
 
-    for (const t of templates) {
-      // Today's instance
-      const inst = getTodayInstance.get(t.id, today);
+    for (const pair of pairs) {
+      const t = pair.t;
+      // Today's instance — scoped to THIS assignee
+      const inst = getTodayInstance.get(t.id, today, pair.uid);
       const dueMin = timeToMinutes(t.due_time);
       const isOverdue =
         dueMin != null &&
         nowMinutes > dueMin &&
         (!inst || (inst.status !== 'completed' && inst.status !== 'cancelled'));
 
-      // Window stats
-      const ws = getWindowStats.get(t.id, windowStart, windowEnd) || { total: 0, completed: 0 };
+      // Window stats — scoped to THIS assignee
+      const ws = getWindowStats.get(t.id, pair.uid, windowStart, windowEnd) || { total: 0, completed: 0 };
 
       const todayInfo = inst
         ? { instance_id: inst.id, status: inst.status, completed_at: inst.completed_at, is_overdue: isOverdue }
@@ -726,17 +773,17 @@ router.get('/templates-performance', (req, res) => {
       };
 
       // Accumulate per-employee
-      if (!byEmployee.has(t.assigned_to)) {
-        byEmployee.set(t.assigned_to, {
-          user_id: t.assigned_to,
-          user_name: t.assigned_to_name,
-          department: t.assigned_to_dept,
+      if (!byEmployee.has(pair.uid)) {
+        byEmployee.set(pair.uid, {
+          user_id: pair.uid,
+          user_name: pair.name,
+          department: pair.dept,
           templates: [],
           today_completed: 0,
           today_total: 0,
         });
       }
-      const emp = byEmployee.get(t.assigned_to);
+      const emp = byEmployee.get(pair.uid);
       emp.templates.push({
         template_id: t.id,
         title: t.title,
