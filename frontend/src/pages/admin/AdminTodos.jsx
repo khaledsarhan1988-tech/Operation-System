@@ -821,7 +821,9 @@ function TemplatesPerformance() {
     for (const e of data?.employees || []) {
       for (const t of e.templates || []) {
         const key = colKey(t);
-        if (!map.has(key)) map.set(key, { key, title: t.title, due_time: t.due_time });
+        if (!map.has(key)) map.set(key, { key, title: t.title, due_time: t.due_time, retired: t.is_retired });
+        // A column is only "retired" when EVERY employee holding it has retired it.
+        else if (!t.is_retired) map.get(key).retired = false;
       }
     }
     return Array.from(map.values()).sort((a, b) =>
@@ -983,6 +985,11 @@ function TemplatesPerformance() {
                       <th key={c.key} className="px-2 py-2 text-center font-bold text-gray-700 whitespace-nowrap min-w-[70px]">
                         <div className="text-[10px] truncate max-w-[100px]" title={c.title}>{c.title}</div>
                         <div className="text-[9px] text-gray-400 font-mono">{c.due_time || '—'}</div>
+                        {c.retired && (
+                          <div className="text-[8px] text-gray-400 font-bold" title="اتوقفت من الجدول — معروضة عشان فيها شغل متسجّل في الفترة دي">
+                            متوقّفة
+                          </div>
+                        )}
                       </th>
                     ))}
                   </tr>
@@ -1042,7 +1049,7 @@ function TemplatesPerformance() {
                                   onClick={() => hasInstance && setOpenInstanceId(t.today.instance_id)}
                                   className={`inline-flex flex-col items-center justify-center w-12 h-12 rounded-lg border transition ${cellStyle(t.today)} ${
                                     hasInstance ? 'cursor-pointer hover:ring-2 hover:ring-orange-400 hover:scale-105' : 'cursor-default'}`}
-                                  title={`${t.title} (${t.due_time || '—'})\nاليوم: ${t.today.status}${t.today.is_overdue ? ' — متأخرة' : ''}\n${data?.custom_range ? `${data.window_start} → ${data.window_end}` : `آخر ${data?.window_days ?? windowDays} يوم`}: ${t.stats_window.completed}/${t.stats_window.total} (${t.stats_window.rate}%)${hasInstance ? '\n\n🔍 اضغط لكل التفاصيل والتعليقات' : ''}`}
+                                  title={`${t.title} (${t.due_time || '—'})${t.is_retired ? '\n⏸ اتوقفت من الجدول — الشغل ده متسجّل قبل الإيقاف' : ''}\nاليوم: ${t.today.status}${t.today.is_overdue ? ' — متأخرة' : ''}\n${data?.custom_range ? `${data.window_start} → ${data.window_end}` : `آخر ${data?.window_days ?? windowDays} يوم`}: ${t.stats_window.completed}/${t.stats_window.total} (${t.stats_window.rate}%)${hasInstance ? '\n\n🔍 اضغط لكل التفاصيل والتعليقات' : ''}`}
                                 >
                                   <span className="text-base leading-none font-bold">{cellIcon(t.today)}</span>
                                   {t.stats_window.total > 0 && (

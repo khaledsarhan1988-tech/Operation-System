@@ -204,7 +204,13 @@ function todayCairo() {
 }
 
 function addDaysCairo(n) {
-  const r = db.prepare("SELECT DATE('now', '+2 hours', ?) AS d").get(`+${n} days`);
+  // SQLite date modifiers must carry a SINGLE sign: '-6 days' is valid,
+  // '+-6 days' is not — it makes DATE() return NULL, which silently turned the
+  // "last N days" window start into NULL (so every BETWEEN over it matched
+  // nothing). Build the sign from the number instead of always prefixing '+'.
+  const days = Number(n) || 0;
+  const modifier = `${days >= 0 ? '+' : '-'}${Math.abs(days)} days`;
+  const r = db.prepare("SELECT DATE('now', '+2 hours', ?) AS d").get(modifier);
   return r?.d || null;
 }
 
@@ -639,18 +645,29 @@ router.get('/templates-performance', (req, res) => {
     //      survives; the monitoring board should only track the LIVE schedule).
     //    • INNER JOIN + is_active=1 → employees who left the academy drop out
     //      of the board (their history stays in the DB, just not monitored).
+    // A RETIRED template must still appear when it produced real work inside the
+    // window: its instances may already be done, and hiding the template would
+    // erase that effort from the board (the employee shows "—" as if the task
+    // was never theirs, and their rate silently drops). So: keep live templates,
+    // plus cancelled ones that have at least one instance dated in the window.
     const templates = db.prepare(`
       SELECT t.id, t.title, t.description, t.due_time, t.priority, t.assigned_to,
              u.full_name AS assigned_to_name,
-             u.department AS assigned_to_dept
+             u.department AS assigned_to_dept,
+             CASE WHEN t.status = 'cancelled' THEN 1 ELSE 0 END AS is_retired
         FROM todos t
         INNER JOIN users u ON u.id = t.assigned_to AND u.is_active = 1
        WHERE ${where}
          AND t.is_recurring = 1 AND t.parent_todo_id IS NULL
-         AND t.status NOT IN ('cancelled')
          AND t.assigned_to IS NOT NULL
+         AND (
+           t.status NOT IN ('cancelled')
+           OR EXISTS (SELECT 1 FROM todos c
+                       WHERE c.parent_todo_id = t.id
+                         AND c.due_date BETWEEN ? AND ?)
+         )
        ORDER BY u.full_name COLLATE NOCASE, t.due_time, t.id
-    `).all(...params);
+    `).all(...params, windowStart, windowEnd);
 
     // Helper to find a single template's today instance
     const getTodayInstance = db.prepare(`
@@ -726,6 +743,7 @@ router.get('/templates-performance', (req, res) => {
         description: t.description,
         due_time: t.due_time,
         priority: t.priority,
+        is_retired: t.is_retired === 1,   // no longer scheduled, but did work in-window
         today: todayInfo,
         stats_window: statsInfo,
       });
