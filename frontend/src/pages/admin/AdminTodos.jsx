@@ -215,9 +215,21 @@ export default function AdminTodos() {
           <Grid3x3 size={16} />
           متابعة القوالب اليومية
         </button>
+        <button
+          onClick={() => setActiveTab('templates')}
+          className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-bold transition flex items-center justify-center gap-2
+            ${activeTab === 'templates'
+              ? 'bg-gradient-to-r from-rose-500 to-pink-500 text-white shadow-md'
+              : 'text-gray-600 hover:bg-gray-50'}`}
+        >
+          <ListTodo size={16} />
+          إدارة القوالب
+        </button>
       </div>
 
-      {activeTab === 'monitoring' ? (
+      {activeTab === 'templates' ? (
+        <TemplatesManager />
+      ) : activeTab === 'monitoring' ? (
         <TemplatesPerformance />
       ) : (
       <>
@@ -568,6 +580,178 @@ export default function AdminTodos() {
 // Column identity for the monitoring matrix: the same task shared by several
 // employees is ONE column, even though each employee owns a distinct template row.
 const colKey = (t) => `${(t.title || '').trim()}|${t.due_time || ''}`;
+
+// ─── Templates Manager — surgical per-template control ────────────────────────
+// The workflow modal applies ONE list to MANY people, so it can't remove a stale
+// template from a single employee without also touching everyone else. This view
+// lists every live recurring template (who owns it, who created it) and retires
+// exactly the ones you pick.
+function TemplatesManager() {
+  const qc = useQueryClient();
+  const [search, setSearch] = useState('');
+  const [empFilter, setEmpFilter] = useState('');
+  const [selected, setSelected] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['todos', 'templates', 'manager'],
+    queryFn: () => api.get('/todos/templates').then(r => r.data),
+    staleTime: 15 * 1000,
+  });
+
+  const templates = data?.templates || [];
+
+  // Titles owned by more than one distinct (time) variant → likely duplicates.
+  const variantCount = useMemo(() => {
+    const m = new Map();
+    for (const t of templates) {
+      const k = (t.title || '').trim().toLowerCase();
+      if (!m.has(k)) m.set(k, new Set());
+      m.get(k).add(t.due_time || '');
+    }
+    return m;
+  }, [templates]);
+
+  const employees = useMemo(() => {
+    const m = new Map();
+    templates.forEach(t => { if (t.assigned_to) m.set(t.assigned_to, t.assigned_to_name || `#${t.assigned_to}`); });
+    return [...m.entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1])));
+  }, [templates]);
+
+  const rows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return templates
+      .filter(t => !empFilter || String(t.assigned_to) === String(empFilter))
+      .filter(t => !q || (t.title || '').toLowerCase().includes(q)
+                       || (t.assigned_to_name || '').toLowerCase().includes(q))
+      .sort((a, b) =>
+        (a.title || '').localeCompare(b.title || '')
+        || (a.due_time || '99:99').localeCompare(b.due_time || '99:99')
+        || String(a.assigned_to_name || '').localeCompare(String(b.assigned_to_name || '')));
+  }, [templates, search, empFilter]);
+
+  const toggle = id => setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
+  const allShown = rows.length > 0 && rows.every(r => selected.includes(r.id));
+  const toggleAllShown = () => {
+    const ids = rows.map(r => r.id);
+    setSelected(s => allShown ? s.filter(x => !ids.includes(x)) : [...new Set([...s, ...ids])]);
+  };
+
+  async function cancelSelected() {
+    if (selected.length === 0) return;
+    const names = rows.filter(r => selected.includes(r.id))
+      .map(r => `• ${r.title} (${r.due_time || '—'}) — ${r.assigned_to_name || '؟'}`).slice(0, 15).join('\n');
+    if (!confirm(`هيتم إلغاء ${selected.length} قالب:\n\n${names}${selected.length > 15 ? '\n…' : ''}\n\nالنسخ القادمة اللي لسه ماتعملتش هتتشال، والمهام المكتملة/المبدوءة هتفضل محفوظة. متابعة؟`)) return;
+    setBusy(true); setResult(null);
+    try {
+      const { data: r } = await api.post('/todos/templates/cancel', { ids: selected });
+      setResult(r);
+      setSelected([]);
+      qc.invalidateQueries({ queryKey: ['todos'] });
+    } catch (e) {
+      setResult({ error: e.response?.data?.error || e.message });
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="font-bold text-gray-800 text-lg flex items-center gap-2">
+              <ListTodo size={18} className="text-rose-500" />
+              إدارة القوالب المتكررة
+            </h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {templates.length} قالب شغّال · شيل أي قالب قديم/مكرر لموظف بعينه من غير ما تأثّر على باقي الموظفين
+            </p>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="relative">
+              <Search size={13} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input type="text" value={search} onChange={e => setSearch(e.target.value)}
+                placeholder="بحث بالعنوان/الموظف..." className="pl-3 pr-8 py-1.5 rounded-lg border border-gray-300 text-sm w-52" />
+            </div>
+            <select value={empFilter} onChange={e => setEmpFilter(e.target.value)}
+              className="px-2 py-1.5 rounded-lg border border-gray-300 text-sm bg-white">
+              <option value="">كل الموظفين</option>
+              {employees.map(([id, name]) => (<option key={id} value={id}>{name}</option>))}
+            </select>
+            <button onClick={toggleAllShown} disabled={rows.length === 0}
+              className="px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-xs font-bold disabled:opacity-40">
+              {allShown ? 'إلغاء تحديد المعروض' : 'تحديد المعروض'}
+            </button>
+            <button onClick={cancelSelected} disabled={busy || selected.length === 0}
+              className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-rose-500 to-red-600 text-white text-xs font-bold disabled:opacity-40 inline-flex items-center gap-1.5">
+              <Trash2 size={13} /> {busy ? 'جاري...' : `إلغاء المحدد (${selected.length})`}
+            </button>
+          </div>
+        </div>
+
+        {result && (
+          <div className={`mt-3 px-3 py-2 rounded-lg text-sm ${result.error ? 'bg-red-50 border border-red-200 text-red-700' : 'bg-emerald-50 border border-emerald-200 text-emerald-800'}`}>
+            {result.error
+              ? <>⚠ {result.error}</>
+              : <>✅ اتلغى {result.cancelled} قالب · اتشال {result.instances_removed} نسخة قادمة{result.skipped ? ` · اتخطّى ${result.skipped}` : ''}</>}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-3 py-2 w-8"></th>
+                <th className="px-3 py-2 text-start font-semibold text-gray-700">العنوان</th>
+                <th className="px-3 py-2 text-start font-semibold text-gray-700">الوقت</th>
+                <th className="px-3 py-2 text-start font-semibold text-gray-700">التكرار</th>
+                <th className="px-3 py-2 text-start font-semibold text-gray-700">الموظف</th>
+                <th className="px-3 py-2 text-start font-semibold text-gray-700">أنشأها</th>
+                <th className="px-3 py-2 text-start font-semibold text-gray-700">نسخ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {isLoading ? (
+                <tr><td colSpan={7} className="text-center py-12 text-gray-400">جاري التحميل...</td></tr>
+              ) : rows.length === 0 ? (
+                <tr><td colSpan={7} className="text-center py-12 text-gray-400">لا توجد قوالب</td></tr>
+              ) : rows.map(t => {
+                const dup = (variantCount.get((t.title || '').trim().toLowerCase())?.size || 1) > 1;
+                return (
+                  <tr key={t.id} className={`border-t border-gray-100 ${selected.includes(t.id) ? 'bg-rose-50' : 'hover:bg-gray-50'}`}>
+                    <td className="px-3 py-2">
+                      <input type="checkbox" checked={selected.includes(t.id)} onChange={() => toggle(t.id)}
+                        className="w-4 h-4 accent-rose-500" />
+                    </td>
+                    <td className="px-3 py-2 font-semibold">
+                      {t.title}
+                      {dup && <span className="mr-1.5 px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-black">أوقات متعددة</span>}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs">{t.due_time || '—'}</td>
+                    <td className="px-3 py-2 text-xs text-gray-600">{t.recurrence_pattern || '—'}</td>
+                    <td className="px-3 py-2 text-xs">{t.assigned_to_name || '—'}</td>
+                    <td className="px-3 py-2 text-xs text-gray-500">{t.created_by_name || '—'}</td>
+                    <td className="px-3 py-2 text-xs text-gray-500">{t.completed_count || 0}/{t.instances_count || 0}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <p className="text-[11px] text-gray-500 px-2 flex items-start gap-1.5">
+        <AlertCircle size={12} className="text-amber-500 mt-0.5 flex-shrink-0" />
+        <span>
+          «إلغاء» بيوقف القالب عن توليد مهام جديدة وبيشيل النسخ القادمة اللي لسه ماتعملتش —
+          لكن المهام المكتملة أو اللي الموظف بدأها بتفضل محفوظة في السجل والتقارير.
+        </span>
+      </p>
+    </div>
+  );
+}
 
 // ─── Templates Performance — Daily Workflow Monitoring ────────────────────────
 function TemplatesPerformance() {

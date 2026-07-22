@@ -1203,6 +1203,56 @@ router.post('/bulk-templates', express.json(), (req, res) => {
   });
 });
 
+// POST /api/todos/templates/cancel — retire specific recurring templates.
+// Surgical counterpart to the workflow's replace mode: cancels ONLY the ids
+// given, so stale/duplicate templates can be cleaned without touching tasks
+// other managers assigned to their own people.
+//
+// Cancels (status='cancelled') rather than deletes — todos.parent_todo_id is
+// ON DELETE CASCADE, so deleting a template would wipe every completed instance
+// under it and destroy the performance history. Cancelled templates stop
+// generating (the generator filters them out) and disappear from the boards.
+// Their still-'new' upcoming instances are removed; started/finished ones stay.
+//
+// Body: { ids: [templateId, ...] }
+router.post('/templates/cancel', express.json(), (req, res) => {
+  try {
+    const scope = userScope(req);
+    if (scope.role !== 'admin' && scope.role !== 'leader') {
+      return res.status(403).json({ error: 'صلاحية للقادة والمدراء فقط' });
+    }
+    const ids = Array.isArray(req.body?.ids)
+      ? req.body.ids.map(n => parseInt(n, 10)).filter(Number.isFinite)
+      : [];
+    if (ids.length === 0) return res.status(400).json({ error: 'يجب تحديد القوالب' });
+
+    const getOne = db.prepare(`SELECT * FROM todos WHERE id = ?`);
+    const cancel = db.prepare(
+      `UPDATE todos SET status = 'cancelled', updated_at = datetime('now', '+2 hours') WHERE id = ?`
+    );
+    const delFuture = db.prepare(
+      `DELETE FROM todos WHERE parent_todo_id = ? AND status = 'new' AND due_date >= ?`
+    );
+    const today = dailyTodos.todayCairo();
+
+    let cancelled = 0, instances_removed = 0, skipped = 0;
+    const errors = [];
+    for (const id of ids) {
+      const t = getOne.get(id);
+      if (!t || t.is_recurring !== 1 || t.parent_todo_id != null) { skipped++; continue; }
+      if (!canMutateTodo(scope, t)) { skipped++; errors.push({ id, error: 'صلاحية غير كافية' }); continue; }
+      if (t.status === 'cancelled') { skipped++; continue; }
+      cancel.run(id);
+      instances_removed += delFuture.run(id, today).changes;
+      cancelled++;
+    }
+    return res.json({ ok: true, cancelled, instances_removed, skipped, errors });
+  } catch (err) {
+    console.error('[todos] templates/cancel error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/todos/:id/comments — add comment
 router.post('/:id/comments', express.json(), (req, res) => {
   try {
