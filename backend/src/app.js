@@ -3251,6 +3251,10 @@ initDb().then(db => {
       // the استرداد tab restores the exact boxes. Hidden from the edit form (keeps
       // the refund operation clean — no messy note).
       addCol('refund_details', 'TEXT');
+      // Transfer: MANUAL override of the consumed-level value. NULL = use the auto
+      // formula (old paid × consumed ÷ total). Lets the owner honour a credit that
+      // was quoted on the list price while the client actually paid a discounted amount.
+      addCol('transfer_consumed_value', 'REAL');
     }
     // A client_request_id may appear at most once → a retried create can never
     // produce a duplicate money row. Partial index so legacy NULLs are allowed.

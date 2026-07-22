@@ -33,6 +33,7 @@ const EMPTY_FORM = {
   noted2: '', tamkeen: '', installment_date: '', note: '',
   op_type: '', transfer_consumed_levels: '', transfer_total_levels: '',
   transfer_from_phone: '', transfer_from_code: '', refund_details: '',
+  transfer_consumed_value: '',
 };
 // Parse the level count from a course code: "6L GAC" → 6, "3L PAC 2P" → 3.
 function parseLevels(code) {
@@ -109,9 +110,9 @@ function calcPaidBalance(form, installments, mode = 'normal') {
     // (We do NOT also add `price` back as credit — that would double-count the old
     //  payments, which now live in the installments.)
     const oldPrice = subPrice;
-    const totalLevels = Number(form.transfer_total_levels) || 0;
-    const consumedLevels = Number(form.transfer_consumed_levels) || 0;
-    const consumedValue = totalLevels > 0 ? Math.round((oldPrice * consumedLevels / totalLevels) * 100) / 100 : 0;
+    // Consumed value: the auto formula, UNLESS the owner typed an override (e.g. a
+    // credit quoted on the list price while the client paid a discounted amount).
+    const consumedValue = consumedValueOf(form);
     const credit = oldPrice - consumedValue;       // value carried from the old membership (informational)
     const required = newPrice - credit;            // new money still required (informational)
     const balance = Math.round((newPrice - (totalPaid - consumedValue)) * 100) / 100;
@@ -125,20 +126,23 @@ function calcPaidBalance(form, installments, mode = 'normal') {
   return { hasInst, instSum, manual: manual || 0, effPrice, discount, totalPaid, balance };
 }
 
-function instTotal(list) { return (list || []).reduce((s, i) => s + (Number(i.amount) || 0), 0); }
-// The DIRECT (non-installment) payment toward the transfer, auto-filled so the
-// balance lands exactly on 0 given the installments entered:
-//   direct = max(0, newPrice + consumedValue − Σinstallments)
-// When every payment is listed as an installment this is ~0 (just rounding);
-// when the difference was paid directly (outside the installments) it equals
-// that difference. consumedValue here mirrors calcPaidBalance (rounded to 2dp).
-function transferDirectStr(form, list) {
+// The AUTO consumed-level value for a transfer: old paid × consumed ÷ total levels.
+function autoConsumedValue(form) {
   const oldPrice = Number(form.price) || 0;
   const totalLevels = Number(form.transfer_total_levels) || 0;
   const consumedLevels = Number(form.transfer_consumed_levels) || 0;
-  const consumedValue = totalLevels > 0 ? Math.round((oldPrice * consumedLevels / totalLevels) * 100) / 100 : 0;
-  const newPrice = Number(String(form.new_prices ?? '').replace(/,/g, '')) || 0;
-  return String(Math.max(0, Math.round((newPrice + consumedValue - instTotal(list)) * 100) / 100));
+  return totalLevels > 0 ? Math.round((oldPrice * consumedLevels / totalLevels) * 100) / 100 : 0;
+}
+// The consumed value actually USED: the owner's manual override when present,
+// otherwise the auto formula. The override exists because a credit is sometimes
+// quoted on the LIST price while the client paid a discounted amount — e.g. paid
+// 8550, credit promised 6000 ⇒ the consumed month is worth 2550, not 8550÷3.
+// NOTE: the old "auto-fill the direct payment so the balance is 0" helper was
+// REMOVED — it overwrote the real amount paid and hid a client's leftover credit.
+function consumedValueOf(form) {
+  const ov = form.transfer_consumed_value;
+  if (ov !== '' && ov != null) return Math.round((Number(ov) || 0) * 100) / 100;
+  return autoConsumedValue(form);
 }
 
 // ─── FORM MODAL (create / edit) ───────────────────────────────────────────────
@@ -256,10 +260,9 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   // In transfer mode, keep the direct payment = required − installments so the
   // balance stays 0 and installments are never double-counted.
-  const syncTr = (list) => { if (mode === 'transfer') setForm(f => ({ ...f, total_paid_same_month: transferDirectStr(f, list) })); };
-  const setInst = (idx, k, v) => { const next = installments.map((it, i) => i === idx ? { ...it, [k]: v } : it); setInstallments(next); syncTr(next); };
-  const addInst = () => { const next = [...installments, { ...EMPTY_INST }]; setInstallments(next); syncTr(next); };
-  const rmInst = (idx) => { const next = installments.filter((_, i) => i !== idx); setInstallments(next); syncTr(next); };
+  const setInst = (idx, k, v) => setInstallments(list => list.map((it, i) => i === idx ? { ...it, [k]: v } : it));
+  const addInst = () => setInstallments(list => [...list, { ...EMPTY_INST }]);
+  const rmInst = (idx) => setInstallments(list => list.filter((_, i) => i !== idx));
 
   const opt = (k) => options?.[k] || [];
 
@@ -313,29 +316,30 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
   const newCourseOptions = (form.new_courses && !membershipCodes.includes(form.new_courses))
     ? [form.new_courses, ...membershipCodes] : membershipCodes;
 
-  // ── Transfer helpers: any change to a transfer input (or installment) recomputes
-  // the auto direct payment (transferDirectStr) so the balance lands exactly on 0.
+  // ── Transfer helpers. Changing a transfer input re-syncs the consumed VALUE to
+  // its auto formula — unless the owner is editing that value itself, then their
+  // override stands. The amount PAID is never auto-written (it must stay the real
+  // figure, so a leftover client credit shows as a negative balance).
   const setTr = (patch) => setForm(f => {
     const next = { ...f, ...patch };
-    next.total_paid_same_month = transferDirectStr(next, installments);
+    if (!('transfer_consumed_value' in patch)) next.transfer_consumed_value = String(autoConsumedValue(next));
     return next;
   });
-  // New membership (transfer): set new_courses + auto new_prices from catalog, recalc.
+  // New membership (transfer): set new_courses + auto new_prices from catalog.
   const applyTransferNewCourse = (v) => setForm(f => {
     const next = { ...f, new_courses: v };
     const r = priceFor(v, f.pages);
     if (r.apply) next.new_prices = r.value == null ? '' : String(r.value);
-    next.total_paid_same_month = transferDirectStr(next, installments);
     return next;
   });
-  // Old membership (transfer): set courses + total levels parsed from the code, recalc.
+  // Old membership (transfer): set courses + total levels parsed from the code.
   const applyTransferOldCourse = (v) => setForm(f => {
     const next = { ...f, courses: v };
     const lv = parseLevels(v);
     if (lv) next.transfer_total_levels = String(lv);
     const r = priceFor(v, f.pages);
     if (r.apply) next.price = r.value == null ? '' : String(r.value);
-    next.total_paid_same_month = transferDirectStr(next, installments);
+    next.transfer_consumed_value = String(autoConsumedValue(next));
     return next;
   });
 
@@ -599,9 +603,10 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                           className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
                       </div>
                       <div>
-                        <label className="block text-[11px] font-bold text-gray-500 mb-1">قيمة المستهلَك — تلقائي</label>
-                        <input type="number" readOnly value={Math.round((totals.consumedValue || 0) * 100) / 100}
-                          className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-100 text-gray-600 outline-none" />
+                        <label className="block text-[11px] font-bold text-gray-500 mb-1">قيمة المستهلَك (تلقائي — تقدر تعدّله)</label>
+                        <input type="number" value={form.transfer_consumed_value ?? ''}
+                          onChange={(e) => setTr({ transfer_consumed_value: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
                       </div>
                       <div>
                         <label className="block text-[11px] font-bold text-gray-500 mb-1">الرصيد المحوّل — تلقائي</label>
