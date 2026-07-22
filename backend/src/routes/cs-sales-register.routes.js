@@ -170,9 +170,17 @@ router.get('/list', (req, res) => {
       // unrelated phone number (e.g. 1223643366 contains "22364").
       // Mobiles are stored WITHOUT the leading zero (e.g. 1555…), so strip a
       // leading zero from BOTH sides — searching "01555…" or "1555…" both match.
+      // A client may also have a SECOND phone stored on their Clients-Codes entry
+      // (mobile_no2). Searching by EITHER registry number resolves to that client's
+      // code, so all their operations are found even if a row carries the other one.
       const qz = q.replace(/^0+/, '') || q;
-      where.push("(client_name LIKE ? OR LTRIM(IFNULL(mobile_no,''),'0') LIKE ? OR code LIKE ?)");
-      p.push(`%${q}%`, `${qz}%`, `${q}%`);
+      where.push(
+        "(client_name LIKE ? OR LTRIM(IFNULL(mobile_no,''),'0') LIKE ? OR code LIKE ?" +
+        " OR code IN (SELECT code FROM cs_client_codes" +
+        "              WHERE LTRIM(IFNULL(mobile_no,''),'0') LIKE ?" +
+        "                 OR LTRIM(IFNULL(mobile_no2,''),'0') LIKE ?))"
+      );
+      p.push(`%${q}%`, `${qz}%`, `${q}%`, `${qz}%`, `${qz}%`);
     }
     if (department) { where.push('department = ?');  p.push(department); }
     if (paymentWay) { where.push('payment_way = ?'); p.push(paymentWay); }
