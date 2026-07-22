@@ -609,8 +609,24 @@ router.get('/templates-performance', (req, res) => {
     ensureTodayRecurringInstances(scope);
 
     const today = todayCairo();
-    const windowDays = Math.min(Math.max(parseInt(req.query.days, 10) || 7, 1), 90);
-    const windowStart = addDaysCairo(-windowDays + 1);
+    // Stats window: either an explicit from/to range (takes precedence) or the
+    // rolling "last N days" preset. Dates are regex-validated before use.
+    const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+    const fromQ = dateRe.test(req.query.from || '') ? req.query.from : null;
+    const toQ   = dateRe.test(req.query.to   || '') ? req.query.to   : null;
+    let windowDays, windowStart, windowEnd;
+    if (fromQ || toQ) {
+      windowEnd   = toQ   || today;
+      windowStart = fromQ || windowEnd;
+      if (windowStart > windowEnd) { const s = windowStart; windowStart = windowEnd; windowEnd = s; }
+      windowDays = Math.round(
+        (Date.parse(windowEnd + 'T00:00:00Z') - Date.parse(windowStart + 'T00:00:00Z')) / 86400000
+      ) + 1;
+    } else {
+      windowDays  = Math.min(Math.max(parseInt(req.query.days, 10) || 7, 1), 90);
+      windowStart = addDaysCairo(-windowDays + 1);
+      windowEnd   = today;
+    }
 
     const { where, params } = buildListWhere(scope, {});
 
@@ -675,7 +691,7 @@ router.get('/templates-performance', (req, res) => {
         (!inst || (inst.status !== 'completed' && inst.status !== 'cancelled'));
 
       // Window stats
-      const ws = getWindowStats.get(t.id, windowStart, today) || { total: 0, completed: 0 };
+      const ws = getWindowStats.get(t.id, windowStart, windowEnd) || { total: 0, completed: 0 };
 
       const todayInfo = inst
         ? { instance_id: inst.id, status: inst.status, completed_at: inst.completed_at, is_overdue: isOverdue }
@@ -748,6 +764,8 @@ router.get('/templates-performance', (req, res) => {
       date: today,
       window_days: windowDays,
       window_start: windowStart,
+      window_end: windowEnd,
+      custom_range: !!(fromQ || toQ),
       employees,
       templates_summary,
       total_employees: employees.length,

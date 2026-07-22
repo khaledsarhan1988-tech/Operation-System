@@ -572,12 +572,20 @@ const colKey = (t) => `${(t.title || '').trim()}|${t.due_time || ''}`;
 // ─── Templates Performance — Daily Workflow Monitoring ────────────────────────
 function TemplatesPerformance() {
   const [windowDays, setWindowDays] = useState(7);
+  const [rangeFrom, setRangeFrom] = useState('');
+  const [rangeTo, setRangeTo] = useState('');
   const [searchEmp, setSearchEmp] = useState('');
   const qc = useQueryClient();
+  const hasRange = !!(rangeFrom || rangeTo);
 
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: ['todos', 'templates-performance', windowDays],
-    queryFn: () => api.get('/todos/templates-performance', { params: { days: windowDays } }).then(r => r.data),
+    queryKey: ['todos', 'templates-performance', windowDays, rangeFrom, rangeTo],
+    queryFn: () => api.get('/todos/templates-performance', {
+      // An explicit range wins over the rolling "last N days" preset.
+      params: hasRange
+        ? { ...(rangeFrom ? { from: rangeFrom } : {}), ...(rangeTo ? { to: rangeTo } : {}) }
+        : { days: windowDays },
+    }).then(r => r.data),
     staleTime: 30 * 1000,
   });
 
@@ -645,7 +653,10 @@ function TemplatesPerformance() {
             </h3>
             {data && (
               <p className="text-xs text-gray-500 mt-0.5">
-                {data.total_employees} موظف · {data.total_templates} قالب نشط · إحصائيات آخر {data.window_days} أيام
+                {data.total_employees} موظف · {data.total_templates} قالب نشط · إحصائيات{' '}
+                {data.custom_range
+                  ? <>من <b>{data.window_start}</b> إلى <b>{data.window_end}</b> ({data.window_days} يوم)</>
+                  : <>آخر {data.window_days} أيام</>}
               </p>
             )}
           </div>
@@ -659,13 +670,28 @@ function TemplatesPerformance() {
               />
             </div>
             <select value={windowDays} onChange={e => setWindowDays(parseInt(e.target.value))}
-              className="px-2 py-1.5 rounded-lg border border-gray-300 text-sm bg-white">
+              disabled={hasRange}
+              title={hasRange ? 'معطّل — في مدى تاريخ محدد' : ''}
+              className="px-2 py-1.5 rounded-lg border border-gray-300 text-sm bg-white disabled:bg-gray-100 disabled:text-gray-400">
               <option value={1}>اليوم فقط</option>
               <option value={3}>آخر 3 أيام</option>
               <option value={7}>آخر 7 أيام</option>
               <option value={14}>آخر 14 يوم</option>
               <option value={30}>آخر 30 يوم</option>
             </select>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-bold text-gray-500">من</span>
+              <input type="date" value={rangeFrom} onChange={e => setRangeFrom(e.target.value)}
+                className="px-2 py-1.5 rounded-lg border border-gray-300 text-xs" />
+              <span className="text-xs font-bold text-gray-500">إلى</span>
+              <input type="date" value={rangeTo} onChange={e => setRangeTo(e.target.value)}
+                min={rangeFrom || undefined}
+                className="px-2 py-1.5 rounded-lg border border-gray-300 text-xs" />
+              {hasRange && (
+                <button onClick={() => { setRangeFrom(''); setRangeTo(''); }}
+                  className="text-[11px] text-rose-500 font-bold hover:underline">مسح</button>
+              )}
+            </div>
             <button onClick={() => qc.invalidateQueries({ queryKey: ['todos', 'templates-performance'] })}
               className="p-1.5 rounded-lg border border-gray-300 hover:bg-gray-50">
               <RefreshCw size={14} className={isFetching ? 'animate-spin' : ''} />
@@ -735,7 +761,7 @@ function TemplatesPerformance() {
                       اليوم
                     </th>
                     <th className="px-2 py-2 text-center font-bold text-gray-700 whitespace-nowrap">
-                      آخر {windowDays} يوم
+                      {data?.custom_range ? `المدى (${data.window_days} يوم)` : `آخر ${data?.window_days ?? windowDays} يوم`}
                     </th>
                     {/* Dynamic template columns — UNION across all employees */}
                     {columns.map(c => (
@@ -796,7 +822,7 @@ function TemplatesPerformance() {
                               <td key={c.key} className="px-1 py-1.5 text-center">
                                 <div
                                   className={`inline-flex flex-col items-center justify-center w-12 h-12 rounded-lg border ${cellStyle(t.today)}`}
-                                  title={`${t.title} (${t.due_time || '—'})\nاليوم: ${t.today.status}${t.today.is_overdue ? ' — متأخرة' : ''}\nآخر ${windowDays} يوم: ${t.stats_window.completed}/${t.stats_window.total} (${t.stats_window.rate}%)`}
+                                  title={`${t.title} (${t.due_time || '—'})\nاليوم: ${t.today.status}${t.today.is_overdue ? ' — متأخرة' : ''}\n${data?.custom_range ? `${data.window_start} → ${data.window_end}` : `آخر ${data?.window_days ?? windowDays} يوم`}: ${t.stats_window.completed}/${t.stats_window.total} (${t.stats_window.rate}%)`}
                                 >
                                   <span className="text-base leading-none font-bold">{cellIcon(t.today)}</span>
                                   {t.stats_window.total > 0 && (
@@ -819,7 +845,7 @@ function TemplatesPerformance() {
           <p className="text-[11px] text-gray-500 px-2 flex items-start gap-1.5">
             <AlertCircle size={12} className="text-amber-500 mt-0.5 flex-shrink-0" />
             <span>
-              مرّر الماوس فوق أي خلية لرؤية تفاصيل الحالة + معدل الإنجاز آخر {windowDays} أيام لتلك المهمة.
+              مرّر الماوس فوق أي خلية لرؤية تفاصيل الحالة + معدل الإنجاز خلال {data?.custom_range ? `المدى المحدد (${data.window_start} → ${data.window_end})` : `آخر ${data?.window_days ?? windowDays} أيام`} لتلك المهمة.
               المهام "المتأخرة" هي اللي فات وقتها (due_time) ومش متعملة لسه.
             </span>
           </p>
