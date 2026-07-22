@@ -13,6 +13,7 @@ const MODULES = {
   quality: require('./checks/quality'),
   attendance: require('./checks/attendance'),
   deliveries: require('./checks/deliveries'),
+  todos: require('./checks/todos'),
 };
 
 function arg(name, def) { const a = process.argv.find(x => x.startsWith(`--${name}=`)); return a ? a.split('=')[1] : def; }

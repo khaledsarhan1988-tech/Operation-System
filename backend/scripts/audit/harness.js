@@ -50,14 +50,27 @@ async function bootServer(snapshotPath = SNAP) {
   // ── auth stub (inject admin, pass all role guards) via require-cache ──
   const ap = require.resolve(path.join(BACKEND, 'src/middleware/auth'));
   require.cache[ap] = { id: ap, filename: ap, loaded: true, exports: {
-    authenticate: (q, _r, n) => { q.user = { id: 1, role: 'admin', line: 'All', username: 'audit' }; n(); },
+    // management:'All' = super-admin. Without it userScope() yields management:null
+    // and buildListWhere() narrows to `management IS NULL OR 'All'`, which matches
+    // NO real row (everything is 'Customer Services'/'Education'/…) — endpoints
+    // then return empty sets and checks fail for a reason that does not exist in
+    // production. The audit actor must be the widest-scoped admin.
+    authenticate: (q, _r, n) => { q.user = { id: 1, role: 'admin', line: 'All', management: 'All', full_name: 'Audit', username: 'audit' }; n(); },
   } };
   const rp = require.resolve(path.join(BACKEND, 'src/middleware/roles'));
+  // Must mirror EVERY export of src/middleware/roles.js — a missing one makes
+  // require() throw inside a router, the harness silently skips that router, and
+  // its endpoints then 404 in the audit as if the feature were broken.
+  const pass = (_q, _r, n) => n();
+  const passFactory = () => pass;
   require.cache[rp] = { id: rp, filename: rp, loaded: true, exports: {
-    requireRole: () => (_q, _r, n) => n(),
-    requireAnyRole: () => (_q, _r, n) => n(),
-    requireSuperAdmin: (_q, _r, n) => n(),
-    requirePageOrManagement: () => (_q, _r, n) => n(),
+    requireRole: passFactory,
+    requireAnyRole: passFactory,
+    requireSuperAdmin: pass,
+    requireManagement: passFactory,
+    requirePageOrManagement: passFactory,
+    requireOwner: pass,
+    requireOwnerOrManagement: passFactory,
   } };
 
   require(path.join(BACKEND, 'src/config/database')).initDb();
