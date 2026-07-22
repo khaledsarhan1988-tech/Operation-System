@@ -144,6 +144,15 @@ function consumedValueOf(form) {
   if (ov !== '' && ov != null) return Math.round((Number(ov) || 0) * 100) / 100;
   return autoConsumedValue(form);
 }
+// Keep the consumed value on the auto formula BY DEFAULT, but never clobber a
+// manual override: we only re-sync when the current value still equals the auto
+// value of the PREVIOUS state (i.e. the owner hasn't typed their own figure).
+function syncConsumed(prev, next) {
+  const cur = prev.transfer_consumed_value;
+  const untouched = cur === '' || cur == null || Number(cur) === autoConsumedValue(prev);
+  if (untouched) next.transfer_consumed_value = String(autoConsumedValue(next));
+  return next;
+}
 
 // ─── FORM MODAL (create / edit) ───────────────────────────────────────────────
 function SaleFormModal({ open, editId, options, onClose, onSaved }) {
@@ -322,7 +331,7 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
   // figure, so a leftover client credit shows as a negative balance).
   const setTr = (patch) => setForm(f => {
     const next = { ...f, ...patch };
-    if (!('transfer_consumed_value' in patch)) next.transfer_consumed_value = String(autoConsumedValue(next));
+    if (!('transfer_consumed_value' in patch)) syncConsumed(f, next);
     return next;
   });
   // New membership (transfer): set new_courses + auto new_prices from catalog.
@@ -339,7 +348,7 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
     if (lv) next.transfer_total_levels = String(lv);
     const r = priceFor(v, f.pages);
     if (r.apply) next.price = r.value == null ? '' : String(r.value);
-    next.transfer_consumed_value = String(autoConsumedValue(next));
+    syncConsumed(f, next);
     return next;
   });
 
