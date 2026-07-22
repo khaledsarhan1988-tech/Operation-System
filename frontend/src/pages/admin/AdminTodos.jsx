@@ -49,6 +49,16 @@ const STATUS_CFG = {
   cancelled:   { label: 'ملغاة',       color: '#ef4444' },
 };
 
+// Humanize the backend's late_by_minutes into "X س Y د" / "X يوم".
+function fmtLate(mins) {
+  const m = Math.round(mins || 0);
+  if (m <= 0) return 'في الميعاد';
+  const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), r = m % 60;
+  if (d > 0) return `${d} يوم${h ? ` و${h} س` : ''}`;
+  if (h > 0) return `${h} س${r ? ` و${r} د` : ''}`;
+  return `${r} د`;
+}
+
 function todayStr() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -759,6 +769,8 @@ function TemplatesPerformance() {
   const [rangeFrom, setRangeFrom] = useState('');
   const [rangeTo, setRangeTo] = useState('');
   const [searchEmp, setSearchEmp] = useState('');
+  // Cell drill-down: the id of the instance whose full details are open.
+  const [openInstanceId, setOpenInstanceId] = useState(null);
   const qc = useQueryClient();
   const hasRange = !!(rangeFrom || rangeTo);
 
@@ -1002,17 +1014,22 @@ function TemplatesPerformance() {
                                 </td>
                               );
                             }
+                            const hasInstance = !!t.today?.instance_id;
                             return (
                               <td key={c.key} className="px-1 py-1.5 text-center">
-                                <div
-                                  className={`inline-flex flex-col items-center justify-center w-12 h-12 rounded-lg border ${cellStyle(t.today)}`}
-                                  title={`${t.title} (${t.due_time || '—'})\nاليوم: ${t.today.status}${t.today.is_overdue ? ' — متأخرة' : ''}\n${data?.custom_range ? `${data.window_start} → ${data.window_end}` : `آخر ${data?.window_days ?? windowDays} يوم`}: ${t.stats_window.completed}/${t.stats_window.total} (${t.stats_window.rate}%)`}
+                                <button
+                                  type="button"
+                                  disabled={!hasInstance}
+                                  onClick={() => hasInstance && setOpenInstanceId(t.today.instance_id)}
+                                  className={`inline-flex flex-col items-center justify-center w-12 h-12 rounded-lg border transition ${cellStyle(t.today)} ${
+                                    hasInstance ? 'cursor-pointer hover:ring-2 hover:ring-orange-400 hover:scale-105' : 'cursor-default'}`}
+                                  title={`${t.title} (${t.due_time || '—'})\nاليوم: ${t.today.status}${t.today.is_overdue ? ' — متأخرة' : ''}\n${data?.custom_range ? `${data.window_start} → ${data.window_end}` : `آخر ${data?.window_days ?? windowDays} يوم`}: ${t.stats_window.completed}/${t.stats_window.total} (${t.stats_window.rate}%)${hasInstance ? '\n\n🔍 اضغط لكل التفاصيل والتعليقات' : ''}`}
                                 >
                                   <span className="text-base leading-none font-bold">{cellIcon(t.today)}</span>
                                   {t.stats_window.total > 0 && (
                                     <span className="text-[8px] mt-0.5 font-bold opacity-70">{t.stats_window.rate}%</span>
                                   )}
-                                </div>
+                                </button>
                               </td>
                             );
                           });
@@ -1029,11 +1046,22 @@ function TemplatesPerformance() {
           <p className="text-[11px] text-gray-500 px-2 flex items-start gap-1.5">
             <AlertCircle size={12} className="text-amber-500 mt-0.5 flex-shrink-0" />
             <span>
-              مرّر الماوس فوق أي خلية لرؤية تفاصيل الحالة + معدل الإنجاز خلال {data?.custom_range ? `المدى المحدد (${data.window_start} → ${data.window_end})` : `آخر ${data?.window_days ?? windowDays} أيام`} لتلك المهمة.
+              <b>اضغط على أي مربع</b> لفتح كل تفاصيل المهمة — الحالة، اتعملت إمتى بالظبط، والتعليقات.
+              التمرير بالماوس بيعرض ملخص سريع + معدل الإنجاز خلال {data?.custom_range ? `المدى المحدد (${data.window_start} → ${data.window_end})` : `آخر ${data?.window_days ?? windowDays} أيام`}.
               المهام "المتأخرة" هي اللي فات وقتها (due_time) ومش متعملة لسه.
             </span>
           </p>
         </>
+      )}
+
+      {/* Cell drill-down — full details + comments for the clicked instance */}
+      {openInstanceId && (
+        <TodoDetailModal
+          id={openInstanceId}
+          onClose={() => setOpenInstanceId(null)}
+          onEdit={() => setOpenInstanceId(null)}
+          onDeleted={() => { qc.invalidateQueries({ queryKey: ['todos'] }); setOpenInstanceId(null); }}
+        />
       )}
     </div>
   );
@@ -1685,8 +1713,28 @@ function TodoDetailModal({ id, onClose, onEdit, onDeleted }) {
                     ? <>{t.due_date} → {t.due_date_end}</>
                     : t.due_date)
                 : '—'}
+              {t.due_time ? ` • ${t.due_time}` : ''}
             </strong></div>
             <div><span className="text-gray-500">الحالة: </span><strong>{STATUS_CFG[t.status]?.label}</strong></div>
+            <div><span className="text-gray-500">اتعملت إمتى: </span>
+              <strong className={t.completed_at ? 'text-emerald-700' : 'text-gray-400'}>
+                {t.completed_at ? t.completed_at.slice(0, 16).replace('T', ' ') : 'لسه ماتعملتش'}
+              </strong>
+            </div>
+            <div><span className="text-gray-500">التأخير: </span>
+              <strong className={t.late_by_minutes > 0 ? 'text-rose-600' : 'text-emerald-700'}>
+                {t.late_by_minutes > 0 ? fmtLate(t.late_by_minutes) : 'في الميعاد'}
+              </strong>
+            </div>
+            <div><span className="text-gray-500">اتضافت: </span>
+              <strong>{t.created_at ? t.created_at.slice(0, 16).replace('T', ' ') : '—'}</strong></div>
+            <div><span className="text-gray-500">آخر تحديث: </span>
+              <strong>{t.updated_at ? t.updated_at.slice(0, 16).replace('T', ' ') : '—'}</strong></div>
+            {t.parent_todo_id && (
+              <div className="col-span-2 text-[11px] text-violet-700 bg-violet-50 border border-violet-200 rounded px-2 py-1">
+                🔁 دي نسخة يومية متولّدة من قالب متكرر (تكرار: {t.recurrence_pattern || 'يومي'})
+              </div>
+            )}
           </div>
           <div className="border-t pt-3">
             <p className="text-xs font-bold text-gray-500 mb-2">التعليقات ({data.comments.length})</p>

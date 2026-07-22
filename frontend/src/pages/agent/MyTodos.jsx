@@ -97,9 +97,19 @@ export default function MyTodos() {
   const [openId, setOpenId]     = useState(null);   // detail panel
   const qc = useQueryClient();
 
+  // Optional date window — when set it REPLACES the bucket so you can review a
+  // specific stretch of days (the buckets are relative to today and can't do that).
+  const [dueFrom, setDueFrom] = useState('');
+  const [dueTo, setDueTo] = useState('');
+  const hasRange = !!(dueFrom || dueTo);
+
   const { data, isLoading } = useQuery({
-    queryKey: ['todos', 'bucket', activeBucket],
-    queryFn: () => api.get('/todos', { params: { bucket: activeBucket } }).then(r => r.data),
+    queryKey: ['todos', 'bucket', activeBucket, dueFrom, dueTo],
+    queryFn: () => api.get('/todos', {
+      params: hasRange
+        ? { ...(dueFrom ? { due_from: dueFrom } : {}), ...(dueTo ? { due_to: dueTo } : {}), limit: 500 }
+        : { bucket: activeBucket },
+    }).then(r => r.data),
     staleTime: 30 * 1000,
   });
 
@@ -187,24 +197,44 @@ export default function MyTodos() {
         )}
       </div>
 
-      {/* Buckets tabs */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+      {/* Buckets tabs + date window */}
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 flex-wrap">
         {BUCKETS.map(b => {
           const Icon = b.icon;
-          const isActive = activeBucket === b.key;
+          const isActive = activeBucket === b.key && !hasRange;
           return (
             <button
               key={b.key}
-              onClick={() => setActiveBucket(b.key)}
+              onClick={() => { setActiveBucket(b.key); setDueFrom(''); setDueTo(''); }}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold whitespace-nowrap transition
-                ${isActive ? 'bg-gradient-to-r from-rose-500 to-pink-500 text-white shadow-md' : 'bg-white border border-gray-200 hover:bg-gray-50 text-gray-700'}`}
+                ${isActive ? 'bg-gradient-to-r from-rose-500 to-pink-500 text-white shadow-md'
+                           : `bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 ${hasRange ? 'opacity-50' : ''}`}`}
             >
               <Icon size={14} className={isActive ? 'text-white' : b.color} />
               {b.label}
             </button>
           );
         })}
+        <div className="flex items-center gap-1.5 mr-auto bg-white border border-gray-200 rounded-lg px-2 py-1">
+          <Calendar size={13} className="text-rose-500" />
+          <span className="text-xs font-bold text-gray-500">من</span>
+          <input type="date" value={dueFrom} onChange={e => setDueFrom(e.target.value)}
+            className="px-1.5 py-1 rounded border border-gray-200 text-xs" />
+          <span className="text-xs font-bold text-gray-500">إلى</span>
+          <input type="date" value={dueTo} onChange={e => setDueTo(e.target.value)}
+            min={dueFrom || undefined}
+            className="px-1.5 py-1 rounded border border-gray-200 text-xs" />
+          {hasRange && (
+            <button onClick={() => { setDueFrom(''); setDueTo(''); }}
+              className="text-[11px] text-rose-500 font-bold hover:underline">مسح</button>
+          )}
+        </div>
       </div>
+      {hasRange && (
+        <p className="text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-1.5">
+          📅 بتستعرض المهام من <b>{dueFrom || '—'}</b> إلى <b>{dueTo || '—'}</b> — التبويبات معطّلة دلوقتي. اضغط «مسح» للرجوع.
+        </p>
+      )}
 
       {/* Split sections: daily workflow on top, extras below */}
       {isLoading ? (

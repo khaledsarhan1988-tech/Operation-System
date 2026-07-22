@@ -826,8 +826,31 @@ router.get('/assignable-users', (req, res) => {
 router.get('/:id', (req, res) => {
   try {
     const scope = userScope(req);
+    // Same lateness maths the list uses, so the detail drill-down can show
+    // "اتعملت متأخر بكام" without the client recomputing it.
     const todo = db.prepare(`
       SELECT t.*,
+        CAST(
+          CASE
+            WHEN t.status = 'completed' AND t.completed_at IS NOT NULL
+                 AND t.due_date IS NOT NULL AND t.due_time IS NOT NULL
+                 AND datetime(t.due_date || ' ' || t.due_time) < t.completed_at
+            THEN (julianday(t.completed_at) - julianday(t.due_date || ' ' || t.due_time)) * 1440
+            WHEN t.status = 'completed' AND t.completed_at IS NOT NULL
+                 AND t.due_date IS NOT NULL AND t.due_time IS NULL
+                 AND DATE(t.completed_at) > COALESCE(t.due_date_end, t.due_date)
+            THEN (julianday(DATE(t.completed_at)) - julianday(COALESCE(t.due_date_end, t.due_date))) * 1440
+            WHEN t.status NOT IN ('completed','cancelled')
+                 AND t.due_date IS NOT NULL AND t.due_time IS NOT NULL
+                 AND datetime(t.due_date || ' ' || t.due_time) < datetime('now', '+2 hours')
+            THEN (julianday(datetime('now', '+2 hours')) - julianday(t.due_date || ' ' || t.due_time)) * 1440
+            WHEN t.status NOT IN ('completed','cancelled')
+                 AND t.due_date IS NOT NULL AND t.due_time IS NULL
+                 AND COALESCE(t.due_date_end, t.due_date) < DATE('now', '+2 hours')
+            THEN (julianday(DATE('now', '+2 hours')) - julianday(COALESCE(t.due_date_end, t.due_date))) * 1440
+            ELSE NULL
+          END
+        AS INTEGER) AS late_by_minutes,
         u_assigned.full_name AS assigned_to_name,
         u_created.full_name  AS created_by_name
       FROM todos t
