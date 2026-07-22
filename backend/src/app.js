@@ -2752,6 +2752,37 @@ initDb().then(db => {
       )
     `);
 
+    // MIGRATION (2026-07-22): re-normalize stored client phones after the
+    // csPhoneNormalize fix (leading "00" international prefix is now stripped).
+    // Stored values were written by the OLD normalizer, so a lookup computing
+    // "966…" would miss a row stored as "00966…" — 515 real clients looked
+    // unregistered and their memberships went uncounted. Row-by-row so a
+    // collision (two rows that were the same person all along) MERGES instead
+    // of throwing. Idempotent: after the first pass nothing starts with "00".
+    try {
+      const { csPrimaryPhone: _norm } = require('./utils/csPhoneNormalize');
+      const _tables = ['cs_subscriptions', 'cs_client_coordinator', 'cs_reminders', 'cs_notifications',
+        'cs_audit_log', 'cs_client_delivery_status', 'cs_completed_levels', 'cs_client_group_history',
+        'cs_membership_settlements', 'cs_client_group_exclusions'];
+      let _fixed = 0, _merged = 0;
+      for (const t of _tables) {
+        const exists = db._raw.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name='${t}'`);
+        if (!exists?.[0]?.values?.length) continue;
+        const cols = (db._raw.exec(`PRAGMA table_info(${t})`)?.[0]?.values || []).map(r => r[1]);
+        if (!cols.includes('client_phone_norm') || !cols.includes('id')) continue;
+        const rows = db.prepare(`SELECT id, client_phone_norm AS p FROM ${t} WHERE client_phone_norm LIKE '00%'`).all();
+        const upd = db.prepare(`UPDATE ${t} SET client_phone_norm = ? WHERE id = ?`);
+        const del = db.prepare(`DELETE FROM ${t} WHERE id = ?`);
+        for (const r of rows) {
+          const fixed = _norm(r.p);
+          if (!fixed || fixed === r.p) continue;
+          try { upd.run(fixed, r.id); _fixed++; }
+          catch (_) { del.run(r.id); _merged++; }   // UNIQUE clash = same person twice
+        }
+      }
+      if (_fixed || _merged) { saveNow(); console.log(`✅ Migration: phone re-normalize — ${_fixed} updated, ${_merged} merged duplicates`); }
+    } catch (e) { console.error('phone re-normalize migration error:', e.message); }
+
     // ── Manual per-client GROUP exclusions (owner 2026-07-20) ──
     // The owner reviews borderline journeys himself: a specific counted group
     // can be excluded from ONE client's consumed levels (with a reason), and

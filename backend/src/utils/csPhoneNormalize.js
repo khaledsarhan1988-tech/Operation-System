@@ -27,8 +27,15 @@
  */
 function csNormalizePhone(raw) {
   if (raw == null) return null;
-  const s = String(raw).replace(/\D+/g, '');
+  let s = String(raw).replace(/\D+/g, '');
   if (!s) return null;
+
+  // International dialing prefix: "00" + country code IS "+" + country code.
+  // Without this, "00966554157081" and "966554157081" were two different
+  // clients — 515 real clients (380 of them just this prefix) looked
+  // unregistered and their memberships went uncounted (owner audit 2026-07-22).
+  // Only strip when what remains is still a plausible international number.
+  if (s.startsWith('00') && s.length - 2 >= 9) s = s.slice(2);
 
   // Egyptian: "20XXXXXXXXXX" (12) → strip 20 → "01..." (with prefix fix below)
   if (s.length === 12 && s.startsWith('20')) {
@@ -69,11 +76,19 @@ function csNormalizePhone(raw) {
  */
 function csExtractAllPhones(raw) {
   if (raw == null) return [];
-  const parts = String(raw).split(/[^\d+]+/);
   const out = new Set();
-  for (const p of parts) {
-    const n = csNormalizePhone(p);
-    if (n) out.add(n);
+  // Split ONLY on separators that really mean "another number" (/ - , ، ; newline).
+  // Spaces are treated as digit grouping INSIDE one number ("109 856 1111"),
+  // which the old split-on-everything lost entirely (4 register rows).
+  for (const seg of String(raw).split(/[\/\\,،;\n\r|-]+/)) {
+    if (!seg.trim()) continue;
+    const joined = csNormalizePhone(seg.replace(/\s+/g, ''));   // spaced single number
+    if (joined) out.add(joined);
+    // Belt-and-braces: a segment may still hold two space-separated numbers.
+    for (const tok of seg.split(/\s+/)) {
+      const n = csNormalizePhone(tok);
+      if (n) out.add(n);
+    }
   }
   return Array.from(out);
 }
