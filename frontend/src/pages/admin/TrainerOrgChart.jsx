@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import {
   Network, Layers, Users, BookOpen, GraduationCap, AlertCircle, X, Calendar, ChevronLeft,
-  ArrowLeftRight, ArrowRight, RefreshCw, Sparkles, ChevronDown, UserPlus,
+  ArrowLeftRight, ArrowRight, RefreshCw, Sparkles, ChevronDown, UserPlus, GitMerge,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -309,11 +309,18 @@ function RedistPanel({ sim }) {
         <div>
           <div className="text-[11px] font-bold text-gray-500 mb-2 flex items-center justify-between">
             <span>توزيع المجموعات</span>
-            {sim.needs_scheduling_count > 0 && (
-              <span className="text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 font-bold">
-                {sim.needs_scheduling_count} محتاجة جدولة
-              </span>
-            )}
+            <span className="flex items-center gap-1">
+              {sim.mergeable_count > 0 && (
+                <span className="text-indigo-700 bg-indigo-50 border border-indigo-200 rounded px-1.5 py-0.5 font-bold">
+                  {sim.mergeable_count} ممكن دمجها
+                </span>
+              )}
+              {sim.needs_scheduling_count > 0 && (
+                <span className="text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 font-bold">
+                  {sim.needs_scheduling_count} محتاجة جدولة
+                </span>
+              )}
+            </span>
           </div>
           {sim.assignments.length === 0 ? (
             <p className="text-sm text-gray-400 italic text-center py-3">لا توجد مجموعات للتوزيع</p>
@@ -323,16 +330,33 @@ function RedistPanel({ sim }) {
                 a.needs_scheduling ? (
                   <li key={i} className="text-xs py-1.5 px-2 rounded bg-amber-50 border border-amber-200">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="truncate flex-1 text-gray-800 font-semibold" title={a.group_name}>{a.group_name}</span>
+                      <span className="truncate flex-1 text-gray-800 font-semibold" title={a.group_name}>
+                        {a.group_name}
+                        {a.level && <span className="text-[9px] text-gray-500 font-normal mr-1">({a.level} · {a.students}ط)</span>}
+                      </span>
                       <span className="flex items-center gap-1 text-amber-700 font-bold flex-shrink-0"><AlertCircle className="w-3 h-3" />محتاجة جدولة</span>
                     </div>
-                    {a.suggestions && a.suggestions.length > 0 ? (
+                    {a.suggestions && a.suggestions.length > 0 && (
                       <div className="mt-1 text-[10px] text-emerald-700 flex items-start gap-1">
                         <Sparkles className="w-3 h-3 flex-shrink-0 mt-0.5" />
                         <span>متاح في {a.suggestions[0].section_label}: <b>{a.suggestions.map((s) => s.name).join('، ')}</b></span>
                       </div>
-                    ) : (
-                      <div className="mt-1 text-[10px] text-gray-400">مفيش محاضر متاح في القسم (شيفت يغطّي الميعاد + فاضي)</div>
+                    )}
+                    {a.merge_options && a.merge_options.length > 0 && (
+                      <div className="mt-1 rounded bg-white/70 border border-indigo-200 px-1.5 py-1">
+                        <div className="text-[10px] font-bold text-indigo-700 flex items-center gap-1 mb-0.5">
+                          <GitMerge className="w-3 h-3" />ممكن تتدمج مع (نفس المستوى ونفس الميعاد):
+                        </div>
+                        {a.merge_options.map((m, j) => (
+                          <div key={j} className="text-[10px] text-gray-700 flex items-center justify-between gap-2 py-0.5">
+                            <span className="truncate" title={m.group_name}>{m.group_name}</span>
+                            <span className="flex-shrink-0"><b className="text-gray-800">{m.trainer}</b> · الإجمالي <b className="text-indigo-700">{m.combined}</b> طالب</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {(!a.suggestions || !a.suggestions.length) && (!a.merge_options || !a.merge_options.length) && (
+                      <div className="mt-1 text-[10px] text-gray-400">مفيش محاضر متاح ولا مجموعة تتدمج معاها</div>
                     )}
                   </li>
                 ) : (

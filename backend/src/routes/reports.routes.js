@@ -9425,6 +9425,7 @@ function buildTrainerSimContext(line) {
   const uniq = new Map();
   for (const t of trainersRaw) { const nk = stripKey(t.name); if (nk && !uniq.has(nk)) uniq.set(nk, t); }
   const entries = new Map(); // `nk|col` → { key, nk, id, name, section, groups:[] }
+  const allGroups = [];      // flat catalogue — used for merge suggestions
   for (const [nk, t] of uniq) {
     const secMap = byTrainer.get(nk); if (!secMap) continue;
     // Merge real sections into the page's columns (private+semi → private_semi).
@@ -9433,17 +9434,65 @@ function buildTrainerSimContext(line) {
       const col = _trMergedSec(sec);
       if (!_TRAINER_SEC_LABEL[col]) continue;
       let arr = byCol.get(col); if (!arr) { arr = []; byCol.set(col, arr); }
-      for (const g of gm.values()) arr.push({
-        gk: g.gk, group_name: g.group_name, line: g.line, section: sec,
-        students: studentsOf(g.gk), lectures: g.lectures.size, slots: [...g.slots],
-      });
+      for (const g of gm.values()) {
+        const item = {
+          gk: g.gk, group_name: g.group_name, line: g.line, section: sec,
+          students: studentsOf(g.gk), lectures: g.lectures.size, slots: [...g.slots],
+        };
+        arr.push(item);
+        allGroups.push({ ...item, slotKey: [...g.slots].sort().join(','), level: trParseLevel(g.group_name), ownerNk: nk, ownerName: t.name });
+      }
     }
     for (const [col, groups] of byCol) {
       if (!groups.length) continue;
       entries.set(nk + '|' + col, { key: nk + '|' + col, nk, id: t.id, name: t.name, section: col, groups });
     }
   }
-  return { entries, shiftsByKey, busyByKey };
+  return { entries, shiftsByKey, busyByKey, allGroups };
+}
+
+// ─── MERGE SUGGESTIONS (اقتراح دمج المجموعات) ─────────────────────────────────
+// Owner idea: when NOBODY can take a group, the real-world fix isn't always a
+// free trainer — the group can be MERGED into another group at the SAME LEVEL
+// running at the SAME day+time; the receiving trainer then teaches ONE session
+// for both. Conditions (all required):
+//   • GENERAL only — «خاص» is 1-on-1 and «شبه خاص» is exactly 2 students by
+//     product definition (live data: private max 1, semi max 2), so merging
+//     them would break what the client paid for.
+//   • same parsed level (General 3 == General 3), same LINE (different brands),
+//   • identical slots (day+time) so students keep their exact schedule,
+//   • combined students ≤ TR_MERGE_CAP (10 = largest general group live),
+//   • the receiving group's trainer STAYS (not the one leaving).
+const TR_MERGE_CAP = 10;
+function trParseLevel(name) {
+  // Same rule as csDeliveriesReport.parseLevel: family must start the string or
+  // follow a non-alphanumeric char (can't use \b — "_" is a word char and a lone
+  // "g" would turn "Aug_16" into "General 16").
+  const base = String(name || '').split('(')[0];
+  const m = base.match(/(?:^|[^a-z0-9])(conversation|con|general|gen|starter|str)\s*_?\s*(\d+)/i);
+  if (!m) return null;
+  const f = m[1].toLowerCase();
+  const label = /^con/.test(f) ? 'Conversation' : /^(general|gen)/.test(f) ? 'General' : 'Starter';
+  return `${label} ${m[2]}`;
+}
+function attachMergeSuggestions(assignments, allGroups, leavingNk) {
+  for (const a of assignments) {
+    if (!a.needs_scheduling) continue;
+    a.merge_options = [];
+    const slotKey = [...(a.slots || [])].sort().join(',');
+    const src = allGroups.find(g => g.group_name === a.group_name && g.line === a.line);
+    if (!src || src.section !== 'general' || !src.level || !slotKey) continue;
+    a.level = src.level;
+    a.merge_options = allGroups
+      .filter(c => c.gk !== src.gk
+        && c.section === 'general' && c.level === src.level
+        && c.slotKey === slotKey && c.line === src.line
+        && c.ownerNk && c.ownerNk !== leavingNk
+        && (c.students + src.students) <= TR_MERGE_CAP)
+      .map(c => ({ group_name: c.group_name, trainer: c.ownerName, students: c.students, combined: c.students + src.students }))
+      .sort((x, y) => x.combined - y.combined)
+      .slice(0, 3);
+  }
 }
 
 const _grpStats = groups => ({
@@ -9519,7 +9568,7 @@ router.get('/trainer-org-chart/sim/members', (req, res) => {
 // display; the redistribution is identical.
 router.get('/trainer-org-chart/sim/leave', (req, res) => {
   try {
-    const { entries, shiftsByKey, busyByKey } = buildTrainerSimContext(lineFilter(req));
+    const { entries, shiftsByKey, busyByKey, allGroups } = buildTrainerSimContext(lineFilter(req));
     const src = entries.get(String(req.query.key || ''));
     if (!src) return res.status(404).json({ error: 'المحاضر غير موجود' });
     const recipients = [...entries.values()].filter(t => t.section === src.section && t.key !== src.key);
@@ -9527,6 +9576,8 @@ router.get('/trainer-org-chart/sim/leave', (req, res) => {
     // For groups nobody in-section can take: suggest available trainers in the
     // paired section (private↔semi only) whose shift covers the slot + free.
     attachCrossSectionSuggestions(assignments, src.section, entries, shiftsByKey, busyByKey);
+    // …and propose MERGING them into a same-level group at the same slot.
+    attachMergeSuggestions(assignments, allGroups, src.nk);
     const toSection = String(req.query.to_section || '').toLowerCase();
     return res.json({
       mode: req.query.mode || 'leave',
@@ -9534,6 +9585,7 @@ router.get('/trainer-org-chart/sim/leave', (req, res) => {
       target: (toSection && _TRAINER_SEC_LABEL[toSection]) ? { section_key: toSection, section_label: _TRAINER_SEC_LABEL[toSection] } : null,
       date_from: req.query.date_from || null, date_to: req.query.date_to || null,
       needs_scheduling_count: assignments.filter(a => a.needs_scheduling).length,
+      mergeable_count: assignments.filter(a => (a.merge_options || []).length > 0).length,
       cross_section: _CROSS_SEC[src.section] ? _TRAINER_SEC_LABEL[_CROSS_SEC[src.section]] : null,
       assignments, recipients: recs,
     });
@@ -9548,7 +9600,7 @@ router.get('/trainer-org-chart/sim/leave', (req, res) => {
 // trainer from the other section.
 router.get('/trainer-org-chart/sim/swap', (req, res) => {
   try {
-    const { entries, shiftsByKey, busyByKey } = buildTrainerSimContext(lineFilter(req));
+    const { entries, shiftsByKey, busyByKey, allGroups } = buildTrainerSimContext(lineFilter(req));
     const a = entries.get(String(req.query.keyA || ''));
     const b = entries.get(String(req.query.keyB || ''));
     if (!a || !b) return res.status(404).json({ error: 'أحد المحاضرين غير موجود' });
@@ -9559,9 +9611,11 @@ router.get('/trainer-org-chart/sim/swap', (req, res) => {
     const recA = [...entries.values()].filter(t => t.section === a.section && t.key !== a.key);
     const planA = distributeTrainerGroups(a.groups, recA, a.section, shiftsByKey, busyByKey);
     attachCrossSectionSuggestions(planA.assignments, a.section, entries, shiftsByKey, busyByKey);
+    attachMergeSuggestions(planA.assignments, allGroups, a.nk);
     const recB = [...entries.values()].filter(t => t.section === b.section && t.key !== b.key);
     const planB = distributeTrainerGroups(b.groups, recB, b.section, shiftsByKey, busyByKey);
     attachCrossSectionSuggestions(planB.assignments, b.section, entries, shiftsByKey, busyByKey);
+    attachMergeSuggestions(planB.assignments, allGroups, b.nk);
     return res.json({
       mode: 'swap',
       a: { name: a.name, section_label: _TRAINER_SEC_LABEL[a.section] || a.section, before: _grpStats(a.groups), assignments: planA.assignments, recipients: planA.recipients, needs_scheduling_count: planA.assignments.filter(x => x.needs_scheduling).length },
