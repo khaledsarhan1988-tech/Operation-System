@@ -440,6 +440,7 @@ router.get('/templates', (req, res) => {
       LEFT JOIN users u_assigned ON u_assigned.id = t.assigned_to
       LEFT JOIN users u_created  ON u_created.id  = t.created_by
       WHERE ${where} AND t.is_recurring = 1 AND t.parent_todo_id IS NULL
+        AND t.status NOT IN ('cancelled')
       ORDER BY t.created_at DESC
     `).all(...params);
     return res.json({ templates: rows });
@@ -603,15 +604,21 @@ router.get('/templates-performance', (req, res) => {
 
     const { where, params } = buildListWhere(scope, {});
 
-    // 1. Get all templates visible to this user, grouped per assignee
+    // 1. Get all templates visible to this user, grouped per assignee.
+    //    • status NOT 'cancelled' → retired/replaced templates must NOT keep
+    //      showing here (replace-mode cancels rather than deletes so history
+    //      survives; the monitoring board should only track the LIVE schedule).
+    //    • INNER JOIN + is_active=1 → employees who left the academy drop out
+    //      of the board (their history stays in the DB, just not monitored).
     const templates = db.prepare(`
       SELECT t.id, t.title, t.description, t.due_time, t.priority, t.assigned_to,
              u.full_name AS assigned_to_name,
              u.department AS assigned_to_dept
         FROM todos t
-        LEFT JOIN users u ON u.id = t.assigned_to
+        INNER JOIN users u ON u.id = t.assigned_to AND u.is_active = 1
        WHERE ${where}
          AND t.is_recurring = 1 AND t.parent_todo_id IS NULL
+         AND t.status NOT IN ('cancelled')
          AND t.assigned_to IS NOT NULL
        ORDER BY u.full_name COLLATE NOCASE, t.due_time, t.id
     `).all(...params);
