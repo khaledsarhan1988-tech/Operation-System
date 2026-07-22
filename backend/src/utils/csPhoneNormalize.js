@@ -73,14 +73,21 @@ function csNormalizePhone(raw) {
  *
  *   "1093648335/1021261029"  → ["01093648335", "01021261029"]
  *   "1507409030-1225977162"  → ["01507409030", "01225977162"]
+ *   "1099596097_966592778186" → ["01099596097", "966592778186"]
+ *   "1098217866ـــــ1021533108" → ["01098217866", "01021533108"]
  */
 function csExtractAllPhones(raw) {
   if (raw == null) return [];
   const out = new Set();
-  // Split ONLY on separators that really mean "another number" (/ - , ، ; newline).
+  // Split ONLY on separators that really mean "another number"
+  // (/ - , ، ; newline, and "_" / Arabic tatweel "ـ" — the register uses both to
+  // join a client and a guardian: "1099596097_966592778186" alongside the name
+  // "Hala Ahmed fawzy_Ahmed fawzy"). Without them the two numbers glued into a
+  // 22-digit string, which the ≤15-digit guard rejected outright, so the WHOLE
+  // membership row dropped out of كشف العملاء (owner report 2026-07-22).
   // Spaces are treated as digit grouping INSIDE one number ("109 856 1111"),
   // which the old split-on-everything lost entirely (4 register rows).
-  for (const seg of String(raw).split(/[\/\\,،;\n\r|-]+/)) {
+  for (const seg of String(raw).split(/[\/\\,،;\n\r|_ـ-]+/)) {
     if (!seg.trim()) continue;
     const joined = csNormalizePhone(seg.replace(/\s+/g, ''));   // spaced single number
     if (joined) out.add(joined);
