@@ -41,33 +41,93 @@ const stripSpaces = (s) => String(s == null ? '' : s).replace(/\s/g, '');
 // Canonical group identity = the code BEFORE the first "(" (drops the
 // "(trainer)" paren AND the trailing coordinator-name suffix), space-stripped.
 // Same rule as csDeliveries so a group renamed/handed-over isn't double-counted.
-const canonGroupKey = (s) => stripSpaces(String(s == null ? '' : s).split('(')[0]);
+// Names that START with "(" (batches data-entry pattern "(Trainer)Aug_29_…")
+// produce an EMPTY base — before the 2026-07-22 fix every such group collapsed
+// into one dedup key and all but one silently vanished from the pages (audit
+// found 6 active Private groups hidden). Fall back to the full stripped name.
+const canonGroupKey = (s) => {
+  const base = stripSpaces(String(s == null ? '' : s).split('(')[0]);
+  return base || stripSpaces(s);
+};
 
 // IGNORED_GROUP_PATTERNS / isIgnoredGroup / normName / realCoordinator now come
 // from ../utils/csGroupHelpers (shared with csDeliveries & csEnrTransition).
 
-// Per-group lecture meta: count + first/last date. IDENTICAL query to
-// csDeliveries.makeGroupLectureMeta (main only, مؤكدة+مجدولة, current sheet only,
-// DISTINCT date|time). Memoized per (group_name, line) for the page run.
-function makeGroupLectureMeta() {
-  const stmt = db.prepare(`
-    SELECT COUNT(DISTINCT date || '|' || time) AS cnt, MIN(date) AS mn, MAX(date) AS mx
+// Normalized full-name key: lowercase + every whitespace stripped. The batches
+// sheet and the lectures sheet sometimes spell the SAME group with different
+// case/spacing ("Con2_SP…" vs "CON2_SP…", "5pm" vs "5Pm") — exact matching hid
+// those groups' lectures entirely (audit 2026-07-22: 7 page rows wrongly showed
+// 0 lectures / «لا يوجد مدرب»). Folding is on the FULL name (suffix included),
+// so two different cohorts can never merge — respects the no-loose-linking rule.
+const normFull = (s) => String(s == null ? '' : s).replace(/\s/g, '').toLowerCase();
+
+// ONE-pass index over ALL main lectures: rows are bucketed by normalized full
+// name + line; the "current sheet" = the rows of the LATEST synced_at day
+// across the spelling variants (the live file's own rows), مؤكدة+مجدولة.
+// From that one pass we derive count/first/last (meta), days + last-lecture
+// trainer (facts) and the modal's row list — replacing the old per-group
+// exact-name queries (which also re-scanned the table per group).
+function buildMainIndex() {
+  const raw = db.prepare(`
+    SELECT group_name, IFNULL(line, '') AS ln, trainer, date, time, duration, status,
+           date(synced_at) AS sday
       FROM lectures
-      INNER JOIN (SELECT group_name AS g, line AS l, date(MAX(synced_at)) AS sd
-                    FROM lectures WHERE session_type='main' GROUP BY group_name, line) ls
-        ON ls.g = lectures.group_name AND ls.l = lectures.line
-       AND date(lectures.synced_at) = ls.sd
-     WHERE group_name = ? AND line = ?
-       AND session_type = 'main' AND status IN ('مؤكدة', 'مجدولة')
-  `);
-  const memo = new Map();
+     WHERE session_type = 'main'
+  `).all();
+  const byKey = new Map();   // normFull|line → { maxDay, rows }
+  for (const r of raw) {
+    const key = normFull(r.group_name) + '|' + r.ln;
+    let e = byKey.get(key);
+    if (!e) { e = { maxDay: '', rows: [] }; byKey.set(key, e); }
+    if (String(r.sday || '') > e.maxDay) e.maxDay = String(r.sday || '');
+    e.rows.push(r);
+  }
+  const agg = new Map();
+  for (const [key, e] of byKey) {
+    const cur = e.rows.filter(r =>
+      String(r.sday || '') === e.maxDay && (r.status === 'مؤكدة' || r.status === 'مجدولة'));
+    const sessions = new Set(), days = new Set(), byTrainer = new Map();
+    let mn = null, mx = null;
+    for (const r of cur) {
+      sessions.add(r.date + '|' + r.time);
+      const ds = String(r.date);
+      if (mn === null || ds < mn) mn = ds;
+      if (mx === null || ds > mx) mx = ds;
+      const d = new Date(ds + 'T00:00:00');
+      if (!isNaN(d)) days.add(d.getDay());
+      const t = String(r.trainer == null ? '' : r.trainer).trim();
+      if (t) {
+        const c = byTrainer.get(t) || { maxDate: '', count: 0 };
+        if (ds > c.maxDate) c.maxDate = ds;
+        c.count++;
+        byTrainer.set(t, c);
+      }
+    }
+    // last-lecture trainer (MAX date; tie → most rows) — documented rule bf4997e.
+    let trainer = null;
+    for (const [t, v] of byTrainer) {
+      if (!trainer || v.maxDate > trainer.maxDate ||
+          (v.maxDate === trainer.maxDate && v.count > trainer.count)) trainer = { name: t, ...v };
+    }
+    agg.set(key, {
+      lectures: sessions.size,
+      start_date: mn,
+      end_date: mx,
+      days: DAY_ORDER.filter(d => days.has(d)).map(d => DAY_LABEL[d]),
+      trainer: trainer ? trainer.name : null,
+      rows: cur,
+    });
+  }
+  const EMPTY = { lectures: 0, start_date: null, end_date: null, days: [], trainer: null, rows: [] };
+  return (group, line) => agg.get(normFull(group) + '|' + String(line || '')) || EMPTY;
+}
+
+// Back-compat wrapper for getEnrGroups: same shape as the old per-group meta.
+function makeGroupLectureMeta() {
+  const idx = buildMainIndex();
   return (group, line) => {
-    const key = String(group) + '' + String(line || '');
-    if (memo.has(key)) return memo.get(key);
-    const r = stmt.get(group, line || '') || {};
-    const meta = { lectures: r.cnt || 0, start_date: r.mn || null, end_date: r.mx || null };
-    memo.set(key, meta);
-    return meta;
+    const e = idx(group, line);
+    return { lectures: e.lectures, start_date: e.start_date, end_date: e.end_date };
   };
 }
 
@@ -285,56 +345,7 @@ const DAY_ORDER  = [6, 0, 1, 2, 3, 4, 5];
 const DAY_LABEL  = { 0: 'Sun', 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri', 6: 'Sat' };
 const NAME_DAY_RE = /(?:^|[^a-z0-9])(sat|sun|mon|tue|wed|thu|fri)(?:[^a-z0-9]|$)/i;
 
-// Per-group (trainer, date) rows from the CURRENT sheet (latest synced_at per
-// group), main only, مؤكدة+مجدولة — the same population makeGroupLectureMeta
-// counts. From one pass we derive:
-//   - days:    distinct weekdays of the group's lecture dates (Sat-first order)
-//   - trainer: the LAST-lecture trainer (MAX date; tie → most rows), per the
-//     documented ownership rule (bf4997e / 6c29fe9).
-function makeGroupLectureFacts() {
-  const stmt = db.prepare(`
-    SELECT trainer, date
-      FROM lectures
-      INNER JOIN (SELECT group_name AS g, line AS l, date(MAX(synced_at)) AS sd
-                    FROM lectures WHERE session_type='main' GROUP BY group_name, line) ls
-        ON ls.g = lectures.group_name AND ls.l = lectures.line
-       AND date(lectures.synced_at) = ls.sd
-     WHERE group_name = ? AND line = ?
-       AND session_type = 'main' AND status IN ('مؤكدة', 'مجدولة')
-  `);
-  const memo = new Map();
-  return (group, line) => {
-    const key = String(group) + '|' + String(line || '');
-    if (memo.has(key)) return memo.get(key);
-    const rows = stmt.all(group, line || '');
-    const daySet = new Set();
-    const byTrainer = new Map();   // trainer → { maxDate, count }
-    for (const r of rows) {
-      const d = new Date(String(r.date) + 'T00:00:00');
-      if (!isNaN(d)) daySet.add(d.getDay());
-      const tr = String(r.trainer == null ? '' : r.trainer).trim();
-      if (tr) {
-        const cur = byTrainer.get(tr) || { maxDate: '', count: 0 };
-        if (String(r.date) > cur.maxDate) cur.maxDate = String(r.date);
-        cur.count++;
-        byTrainer.set(tr, cur);
-      }
-    }
-    let trainer = null;
-    for (const [tr, v] of byTrainer) {
-      if (!trainer) { trainer = { name: tr, ...v }; continue; }
-      if (v.maxDate > trainer.maxDate || (v.maxDate === trainer.maxDate && v.count > trainer.count)) {
-        trainer = { name: tr, ...v };
-      }
-    }
-    const facts = {
-      days: DAY_ORDER.filter(d => daySet.has(d)).map(d => DAY_LABEL[d]),
-      trainer: trainer ? trainer.name : null,
-    };
-    memo.set(key, facts);
-    return facts;
-  };
-}
+// (makeGroupLectureFacts was folded into buildMainIndex — 2026-07-22.)
 
 /**
  * Levels overview for one department.
@@ -375,14 +386,13 @@ function getLevelsOverview({ dept, q, status, firstFrom, firstTo, lastFrom, last
     if (!seen.has(key)) seen.set(key, r);
   }
 
-  const lectureMeta  = makeGroupLectureMeta();
-  const lectureFacts = makeGroupLectureFacts();
+  const mainIdx = buildMainIndex();
   const clientsByGroup = buildClientsByGroup();
 
   let items = [];
   for (const r of seen.values()) {
-    const meta  = lectureMeta(r.group_name, r.line);
-    const facts = lectureFacts(r.group_name, r.line);
+    const meta  = mainIdx(r.group_name, r.line);
+    const facts = meta;   // same index entry carries days + trainer
     const gkey  = String(r.group_name) + '|' + String(r.line || '');
 
     // Dates: same rule as getEnrGroups — lectures when the group has any,
@@ -398,9 +408,11 @@ function getLevelsOverview({ dept, q, status, firstFrom, firstTo, lastFrom, last
 
     // Day(s): actual lecture weekdays; a group with no lectures yet falls back
     // to the single day token written in its code (no pair inference).
+    // Paren segments are stripped (not split-at-first-paren) so codes that
+    // START with "(" still yield their day token.
     let daysList = facts.days;
     if (!daysList.length) {
-      const m = String(r.group_name || '').split('(')[0].match(NAME_DAY_RE);
+      const m = String(r.group_name || '').replace(/\([^)]*\)/g, ' ').match(NAME_DAY_RE);
       if (m) daysList = [m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase()];
     }
 
@@ -542,10 +554,50 @@ function getLevelsGroupClients({ group, line, dept }) {
   return { group, line, dept, total: items.length, items };
 }
 
+// Side (فون كول) sessions index — bucketed by the group's CANONICAL BASE
+// (the code before the first "(", normalized), like the phone-call-gap page's
+// documented baseGroupOf rule: the side sheet writes the same group with a
+// DIFFERENT coordinator suffix, so exact-name matching missed sessions (audit
+// 2026-07-22: 28 page groups were missing 405 recorded side sessions).
+// Current sheet is taken PER spelling variant (its own latest synced_at day).
+// Empty base (name starts with "(") falls back to the full normalized name so
+// unrelated paren-prefixed rows can never cross-match.
+function buildSideIndex() {
+  const raw = db.prepare(`
+    SELECT group_name, IFNULL(line, '') AS ln, trainer, date, time, duration, status,
+           date(synced_at) AS sday
+      FROM lectures
+     WHERE session_type = 'side'
+  `).all();
+  const byVar = new Map();   // normFull|line → { maxDay, rows }
+  for (const r of raw) {
+    const key = normFull(r.group_name) + '|' + r.ln;
+    let e = byVar.get(key);
+    if (!e) { e = { maxDay: '', rows: [] }; byVar.set(key, e); }
+    if (String(r.sday || '') > e.maxDay) e.maxDay = String(r.sday || '');
+    e.rows.push(r);
+  }
+  const baseKeyOf = (name, ln) => {
+    const b = normFull(String(name == null ? '' : name).split('(')[0]);
+    return (b || normFull(name)) + '|' + String(ln || '');
+  };
+  const byBase = new Map();
+  for (const [, e] of byVar) {
+    for (const r of e.rows) {
+      if (String(r.sday || '') !== e.maxDay) continue;
+      const bkey = baseKeyOf(r.group_name, r.ln);
+      if (!byBase.has(bkey)) byBase.set(bkey, []);
+      byBase.get(bkey).push(r);
+    }
+  }
+  return (group, line) => byBase.get(baseKeyOf(group, line)) || [];
+}
+
 /**
- * Registered sessions of ONE group: main lectures (مؤكدة+مجدولة, current sheet
- * — the same population the page's lecture count uses) + phone-call/side
- * sessions (current sheet, no status filter — the documented side rule).
+ * Registered sessions of ONE group: main lectures (مؤكدة+مجدولة, current sheet,
+ * normalized full-name match — the same population the page's lecture count
+ * uses) + phone-call/side sessions (current sheet, canonical-base match like
+ * the phone-call-gap page, no status filter — the documented side rule).
  * Counts use the canonical keys: main = DISTINCT date|time, side = DISTINCT
  * date|time|trainer.
  */
@@ -554,19 +606,21 @@ function getLevelsGroupLectures({ group, line }) {
   if (!group) throw new Error('group is required');
   line = String(line || '');
 
-  const listOf = (type) => db.prepare(`
-    SELECT DISTINCT date, time, duration, trainer, status
-      FROM lectures
-      INNER JOIN (SELECT group_name AS g, line AS l, date(MAX(synced_at)) AS sd
-                    FROM lectures WHERE session_type = ? GROUP BY group_name, line) ls
-        ON ls.g = lectures.group_name AND ls.l = lectures.line
-       AND date(lectures.synced_at) = ls.sd
-     WHERE group_name = ? AND line = ? AND session_type = ?
-     ORDER BY date, time
-  `).all(type, group, line, type);
+  const toRow = ({ date, time, duration, trainer, status }) => ({ date, time, duration, trainer, status });
+  const dedupe = (rows) => {
+    const seen = new Set(), out = [];
+    for (const r of rows) {
+      const k = [r.date, r.time, r.duration, r.trainer, r.status].join('|');
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(r);
+    }
+    return out.sort((a, b) =>
+      String(a.date).localeCompare(String(b.date)) || String(a.time).localeCompare(String(b.time)));
+  };
 
-  const main = listOf('main').filter(r => r.status === 'مؤكدة' || r.status === 'مجدولة');
-  const side = listOf('side');
+  const main = dedupe(buildMainIndex()(group, line).rows.map(toRow));
+  const side = dedupe(buildSideIndex()(group, line).map(toRow));
   return {
     group, line,
     main, side,

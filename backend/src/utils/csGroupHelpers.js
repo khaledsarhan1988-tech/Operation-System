@@ -26,6 +26,13 @@ const IGNORED_GROUP_PATTERNS = [
   /voice\s*note/i,             // "Voice Note (Private)" — note rows, not groups
   /(^|[^a-z])break(?:[^a-z]|$)/i, // "Break Private" — standalone token like `test`
   /تأجيل/,                     // "تأجيل برسوم" — postponed-for-fees note rows
+  // Second batch found by the 2026-07-22 audit (owner approved):
+  /meeting/i,                  // "Meetings"
+  /coach/i,                    // coaching sessions
+  /coche/i,                    // live typo "Cocheing Session (Mariam)"
+  /follow\s*up/i,              // "FOLLOWUPFADYMAY"
+  /feedback/i,                 // "Feedback"
+  /conversation\s*session/i,   // "CONVERSATION SESSION P #8" — a session note, not a level cohort
 ];
 
 const isIgnoredGroup = (name) => {
@@ -37,9 +44,10 @@ const isIgnoredGroup = (name) => {
   // "تعويض سيشن", "تحديد مستوي", etc. Strip every non-letter, then match.
   // (2026-07-21: + the placeholder families the owner asked to clean — hiring/
   // training/voice-note/تأجيل; "break" stays array-only since it needs word
-  // boundaries the compact form can't provide.)
+  // boundaries the compact form can't provide. 2026-07-22: + meeting/coach/
+  // coche/followup/feedback/conversationsession — second audit batch.)
   const compact = s.toLowerCase().replace(/[^a-z؀-ۿ]/g, '');
-  return /plac.{0,3}ment|placem|co[nm]p[ae]ns|تعويض|تحديدمستو|hiringnewteacher|manag[a-z]*training|voicenote|تأجيل/.test(compact);
+  return /plac.{0,3}ment|placem|co[nm]p[ae]ns|تعويض|تحديدمستو|hiringnewteacher|manag[a-z]*training|voicenote|تأجيل|meeting|coach|coche|followup|feedback|conversationsession/.test(compact);
 };
 
 // Normalize a coordinator/user name for comparison: drop any "(...)" suffix,
