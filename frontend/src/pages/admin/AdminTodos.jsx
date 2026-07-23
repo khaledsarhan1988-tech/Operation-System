@@ -975,7 +975,9 @@ function TemplatesPerformance() {
                       الموظف
                     </th>
                     <th className="px-2 py-2 text-center font-bold text-gray-700 whitespace-nowrap">
-                      اليوم
+                      {data?.custom_range && data?.reference_date && data.reference_date !== data.date
+                        ? <>يوم<br /><span className="text-[9px] font-mono text-gray-400">{data.reference_date}</span></>
+                        : 'اليوم'}
                     </th>
                     <th className="px-2 py-2 text-center font-bold text-gray-700 whitespace-nowrap">
                       {data?.custom_range ? `المدى (${data.window_days} يوم)` : `آخر ${data?.window_days ?? windowDays} يوم`}

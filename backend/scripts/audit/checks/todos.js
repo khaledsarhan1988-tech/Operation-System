@@ -203,6 +203,41 @@ module.exports = async function todos({ call, db }) {
   if (perfBad.status !== 200) fails.range.push(`invalid range crashed templates-performance: HTTP ${perfBad.status}`);
   else if (perfBad.json.custom_range !== false) fails.range.push('invalid from/to was not ignored (should fall back to the preset)');
 
+  // ── 6. A single-day filter shows THAT day's cells, not today's ────────────
+  // Pick a past day that actually has instances, and prove the per-cell status
+  // reflects it (reference_date follows the filter, and the cell status equals
+  // the DB status for that day) — guards the "filtered 22/7 but saw 23/7" bug.
+  const pastDay = db.prepare(`
+    SELECT c.due_date AS d
+      FROM todos c
+     WHERE c.parent_todo_id IS NOT NULL AND c.due_date < DATE('now','+2 hours')
+     GROUP BY c.due_date ORDER BY c.due_date DESC LIMIT 1
+  `).get();
+  if (pastDay && pastDay.d) {
+    const day = pastDay.d;
+    const pr = await call(`/todos/templates-performance?from=${day}&to=${day}`);
+    if (pr.status !== 200) fails.range.push(`single-day filter ${day}: HTTP ${pr.status}`);
+    else {
+      if (pr.json.reference_date !== day) {
+        fails.range.push(`single-day filter ${day}: reference_date=${pr.json.reference_date} (cells would still show today)`);
+      }
+      // Cross-check a few cells against the DB status for that day.
+      let checked = 0, mismatched = 0;
+      for (const e of (pr.json.employees || [])) {
+        for (const t of (e.templates || [])) {
+          if (checked >= 40) break;
+          const inst = db.prepare(
+            `SELECT status FROM todos WHERE parent_todo_id=? AND due_date=? AND assigned_to IS ? ORDER BY id LIMIT 1`
+          ).get(t.template_id, day, e.user_id);
+          const dbStatus = inst ? inst.status : 'missing';
+          if ((t.today || {}).status !== dbStatus) mismatched++;
+          checked++;
+        }
+      }
+      if (mismatched > 0) fails.range.push(`single-day filter ${day}: ${mismatched}/${checked} cells don't match that day's DB status`);
+    }
+  }
+
   return {
     area: 'todos',
     meta: `${employees.length} employee(s) on the board`,

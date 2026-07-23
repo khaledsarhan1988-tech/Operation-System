@@ -623,8 +623,9 @@ router.get('/templates-performance', (req, res) => {
     const dateRe = /^\d{4}-\d{2}-\d{2}$/;
     const fromQ = dateRe.test(req.query.from || '') ? req.query.from : null;
     const toQ   = dateRe.test(req.query.to   || '') ? req.query.to   : null;
+    const customRange = !!(fromQ || toQ);
     let windowDays, windowStart, windowEnd;
-    if (fromQ || toQ) {
+    if (customRange) {
       windowEnd   = toQ   || today;
       windowStart = fromQ || windowEnd;
       if (windowStart > windowEnd) { const s = windowStart; windowStart = windowEnd; windowEnd = s; }
@@ -636,6 +637,13 @@ router.get('/templates-performance', (req, res) => {
       windowStart = addDaysCairo(-windowDays + 1);
       windowEnd   = today;
     }
+    // The per-cell "current" status must follow the filter, not stay stuck on
+    // today. When a date range is chosen, the cell shows the instance on the
+    // range's END day (= the day itself for a single-day filter like "امبارح");
+    // otherwise it's genuinely today.
+    const refDate = customRange ? windowEnd : today;
+    const refIsPast   = refDate < today;
+    const refIsFuture = refDate > today;
 
     const { where, params } = buildListWhere(scope, {});
 
@@ -749,13 +757,16 @@ router.get('/templates-performance', (req, res) => {
 
     for (const pair of pairs) {
       const t = pair.t;
-      // Today's instance — scoped to THIS assignee
-      const inst = getTodayInstance.get(t.id, today, pair.uid);
+      // Instance for the reference date (the filtered day, or today) — scoped
+      // to THIS assignee.
+      const inst = getTodayInstance.get(t.id, refDate, pair.uid);
       const dueMin = timeToMinutes(t.due_time);
-      const isOverdue =
-        dueMin != null &&
-        nowMinutes > dueMin &&
-        (!inst || (inst.status !== 'completed' && inst.status !== 'cancelled'));
+      const notDone = !inst || (inst.status !== 'completed' && inst.status !== 'cancelled');
+      const isOverdue = refIsFuture
+        ? false                                    // a future day is never "late"
+        : refIsPast
+          ? notDone                                // a past day fully elapsed
+          : (dueMin != null && nowMinutes > dueMin && notDone);   // today = time-aware
 
       // Window stats — scoped to THIS assignee
       const ws = getWindowStats.get(t.id, pair.uid, windowStart, windowEnd) || { total: 0, completed: 0 };
@@ -830,10 +841,11 @@ router.get('/templates-performance', (req, res) => {
 
     return res.json({
       date: today,
+      reference_date: refDate,   // the day the per-cell "current" status reflects
       window_days: windowDays,
       window_start: windowStart,
       window_end: windowEnd,
-      custom_range: !!(fromQ || toQ),
+      custom_range: customRange,
       employees,
       templates_summary,
       total_employees: employees.length,
