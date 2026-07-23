@@ -45,6 +45,14 @@ function csNormalizePhone(raw) {
   // which is not a country code.
   if (/^0(?:20|966|971|972|970)/.test(s)) s = s.slice(1);
 
+  // A "0" sitting BETWEEN a country code and the local number is the local
+  // number's own leading zero, left in by mistake: "9660508919052" is
+  // "+966" + "0508919052" — the same client as "966508919052". Without this the
+  // 13-digit form was kept verbatim (see the length-13 branch below) and split
+  // the client in two. Strip that one zero for every code we recognize; 9+ more
+  // digits must remain so we never eat a real digit.
+  s = s.replace(/^(20|966|971|972|970|249)0(?=\d{9,})/, '$1');
+
   // Egyptian with country code: "20" + local, whether the local part kept its
   // leading zero ("2001034885366", 13) or dropped it ("201021925461", 12).
   if (s.startsWith('20') && (s.length === 12 || s.length === 13)) {
@@ -79,6 +87,16 @@ function csNormalizePhone(raw) {
   // 13 digits sometimes (e.g., "9660550357448" — extra digit), still keep
   if (s.length === 13 && (s.startsWith('966') || s.startsWith('971') || s.startsWith('972') || s.startsWith('970'))) {
     return s;
+  }
+
+  // A spurious leading "0" on a NON-Egyptian number ("023599784396",
+  // "061470273770") — the register kept the same value without it, so the two
+  // split one client. Egyptian is safe: an 11-digit "01…" was already returned
+  // above, and after stripping the zeros an Egyptian number would start "1",
+  // which we refuse to touch here.
+  if (s.startsWith('0') && s.length >= 10) {
+    const t = s.replace(/^0+/, '');
+    if (t.length >= 9 && !t.startsWith('1')) s = t;
   }
 
   // Unknown country code: accept ONLY if it looks like a real international
