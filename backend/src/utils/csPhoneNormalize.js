@@ -59,10 +59,18 @@ function csNormalizePhone(raw) {
   // Egyptian missing the leading zero
   if (s.length === 10 && s.startsWith('1')) return '0' + s;
 
-  // Gulf local form "05XXXXXXXX" (10) → the 9-digit form the register stores
-  // ("0575282028" ≡ "575282028"). Not Egyptian: an Egyptian local number is 11
-  // digits and starts "01", so a 10-digit "05…" can only be the Gulf local form.
-  if (s.length === 10 && s.startsWith('05')) return s.slice(1);
+  // Saudi mobile written in local form — fold onto the international "966…" key
+  // so the three spellings of ONE number converge instead of splitting a client:
+  //   "0575282028" (10, "05…")  → "966575282028"
+  //   "575282028"  (9,  "5…")   → "966575282028"
+  //   "966575282028" (12)       → stays
+  // The register kept some Saudis as the 9-digit local form while their group
+  // data used "966…", so 5 clients had membership under one key and their levels
+  // under the other (owner audit 2026-07-22). Not Egyptian: an Egyptian local
+  // number is 11 digits and starts "01". All 18 short numbers in the data are
+  // Saudi — none has a "971" (UAE) counterpart — so "966" is unambiguous here.
+  if (s.length === 10 && s.startsWith('05')) return '966' + s.slice(1);
+  if (s.length === 9 && s.startsWith('5'))   return '966' + s;
 
   // Saudi / UAE / Palestinian — keep as-is (12 digits)
   if (s.length === 12 && (s.startsWith('966') || s.startsWith('971') || s.startsWith('972') || s.startsWith('970'))) {
