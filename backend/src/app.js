@@ -3711,6 +3711,54 @@ initDb().then(db => {
     }
   }
 
+  // ─── TRANSFER-PHOTO MONTHLY FOLDERS ──────────────────────────────────────
+  // Builds next month's «Transfer Photo <Month> <Year>» tree — one folder per
+  // day plus Administrative Exp / Refund / Salary — inside
+  // Ahmed Hassan / Customer transfer photos / <year>. Runs on the 25th so the
+  // month is ready well before it starts, and again at boot so a deploy that
+  // straddled the 25th still ends up with the folders. Every folder goes
+  // through getOrCreateFolder, so repeats are free and hand-made folders are
+  // left alone.
+  //   DRIVE_TRANSFER_PREP_ENABLED=1              — must be set to enable
+  //   DRIVE_TRANSFER_PREP_CRON='0 1 25 * *'      — 25th of each month, 01:00
+  //   DRIVE_PREP_FOLDERS_TZ='Africa/Cairo'       — shared with the day-prep crons
+  if (process.env.DRIVE_TRANSFER_PREP_ENABLED === '1') {
+    try {
+      const cron = require('node-cron');
+      const transferFolders = require('./services/csTransferFolders.service');
+      const cronExpr = process.env.DRIVE_TRANSFER_PREP_CRON || '0 1 25 * *';
+      const tz       = process.env.DRIVE_PREP_FOLDERS_TZ    || 'Africa/Cairo';
+
+      const runPrep = async (offset, label) => {
+        try {
+          const r = await transferFolders.prepareRelativeMonth(offset, tz);
+          console.log(`📁 Transfer folders ${label} — ${r.month}: created=${r.created} existing=${r.existed}`);
+        } catch (e) {
+          console.error(`Transfer folders ${label} failed:`, e.message);
+        }
+      };
+
+      if (!cron.validate(cronExpr)) {
+        console.error(`Transfer folders: invalid cron expression "${cronExpr}", skipping schedule.`);
+      } else {
+        cron.schedule(cronExpr, () => runPrep(1, 'cron(next month)'), { timezone: tz });
+        console.log(`⏰ Transfer-folders cron scheduled (${cronExpr}, ${tz})`);
+      }
+      // Boot catch-up: make sure the CURRENT month exists, and pre-build next
+      // month once we are past the 25th (i.e. after the cron would have run).
+      setTimeout(() => {
+        runPrep(0, 'boot(current month)').then(() => {
+          const dayInTz = Number(new Intl.DateTimeFormat('en-CA', { timeZone: tz, day: '2-digit' }).format(new Date()));
+          if (dayInTz >= 25) return runPrep(1, 'boot(next month)');
+        });
+      }, 20000);
+    } catch (e) {
+      console.error('Failed to schedule transfer-folders cron:', e.message);
+    }
+  } else {
+    console.log('📁 Transfer-folders cron disabled (set DRIVE_TRANSFER_PREP_ENABLED=1 to enable).');
+  }
+
   // ─── DRIVE PREP-FOLDERS SAFETY NET ───────────────────────────────────────
   // The cron fires once per day at 00:30 Cairo. If the server happens to be
   // restarting at that exact moment (e.g. during a deploy), the cron MISSES

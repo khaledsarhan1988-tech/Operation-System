@@ -161,6 +161,30 @@ router.post('/prepare-folders', authenticate, requireRole('leader'), express.jso
   }
 });
 
+// POST /api/drive/prepare-transfer-month
+// Body: { year, month } (both optional — defaults to NEXT month, Cairo time)
+//       { daysOnly: true } fills only the day folders, leaving an older month's
+//       own Administrative/Refund/Salary naming untouched.
+//       { dryRun: true } lists what would be created without touching Drive.
+// Builds Ahmed Hassan / Customer transfer photos / <year> / Transfer Photo
+// <Month> <year> / { one folder per day, Administrative Exp, Refund, Salary }.
+// Idempotent — safe to re-run; hand-made folders are never modified.
+router.post('/prepare-transfer-month', authenticate, requireRole('admin'), express.json(), async (req, res) => {
+  const transferFolders = require('../services/csTransferFolders.service');
+  const { year, month, daysOnly, dryRun } = req.body || {};
+  const tz = process.env.DRIVE_PREP_FOLDERS_TZ || 'Africa/Cairo';
+
+  try {
+    const opts = { daysOnly: !!daysOnly, dryRun: !!dryRun };
+    const result = (year && month)
+      ? await transferFolders.prepareTransferMonth(year, month, opts)
+      : await transferFolders.prepareRelativeMonth(1, tz, opts);   // default: next month
+    return res.json(result);
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to prepare transfer month', details: err.message });
+  }
+});
+
 // POST /api/drive/sync
 // Body: { line, date, fileTypes?, force? }
 // force=true → re-import even unchanged files (default false = Smart Sync)
