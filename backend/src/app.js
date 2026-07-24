@@ -2802,6 +2802,34 @@ initDb().then(db => {
       )
     `);
 
+    // ── Daily data-integrity findings (owner 2026-07-24) ──
+    // The one-off cleanup of ~800 unregistered clients only stays clean if new
+    // mismatches are caught as they appear. A daily job records every client who
+    // shows up in a group on or after the cutoff without a matching membership,
+    // so a bad number surfaces within a day instead of piling up for months.
+    // Rows auto-resolve when the mismatch disappears from the live data, so the
+    // open list is always "what is wrong right now".
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS cs_integrity_findings (
+        client_phone_norm TEXT PRIMARY KEY,
+        client_name       TEXT,
+        category          TEXT,
+        first_seen        TEXT,
+        groups_count      INTEGER,
+        groups_sample     TEXT,
+        evidence          TEXT,
+        image_check       TEXT,     -- pending | found | not_found
+        image_file        TEXT,
+        detected_at       TEXT NOT NULL DEFAULT (datetime('now', '+2 hours')),
+        last_checked_at   TEXT,
+        status            TEXT NOT NULL DEFAULT 'open',   -- open | resolved | ignored
+        resolved_at       TEXT,
+        note              TEXT,
+        note_by           TEXT
+      )
+    `);
+    try { db._raw.run(`CREATE INDEX IF NOT EXISTS idx_integrity_status ON cs_integrity_findings(status, detected_at)`); } catch (_) {}
+
     // ── Manual per-client GROUP exclusions (owner 2026-07-20) ──
     // The owner reviews borderline journeys himself: a specific counted group
     // can be excluded from ONE client's consumed levels (with a reason), and
@@ -3709,6 +3737,52 @@ initDb().then(db => {
     } catch (e) {
       console.error('Failed to schedule Drive prep-tomorrow cron:', e.message);
     }
+  }
+
+  // ─── DAILY INTEGRITY WATCH ───────────────────────────────────────────────
+  // Catches a mistyped client number the day it appears instead of letting it
+  // pile up (the July 2026 cleanup was ~800 clients deep). Runs nightly; the
+  // Saturday run also logs the week's digest for the report tab.
+  //   INTEGRITY_WATCH_ENABLED=1                  — must be set to enable
+  //   INTEGRITY_WATCH_CRON='0 3 * * *'           — 03:00 Cairo daily
+  //   DRIVE_PREP_FOLDERS_TZ='Africa/Cairo'
+  if (process.env.INTEGRITY_WATCH_ENABLED === '1') {
+    try {
+      const cron = require('node-cron');
+      const cronExpr = process.env.INTEGRITY_WATCH_CRON || '0 3 * * *';
+      const tz       = process.env.DRIVE_PREP_FOLDERS_TZ || 'Africa/Cairo';
+
+      const runWatch = async (label) => {
+        const svc = require('./services/csIntegrityCheck.service');
+        try {
+          const scan = svc.runCheck();
+          console.log(`🔍 Integrity ${label}: watched=${scan.watched} new=${scan.added} resolved=${scan.resolved}`);
+          // Drive being unreachable must not lose the scan we just recorded.
+          try {
+            const img = await svc.verifyImages({ limit: 40 });
+            if (img.checked) console.log(`🔍 Integrity images: checked=${img.checked} found=${img.found} missing=${img.notFound}`);
+          } catch (e) { console.error('Integrity image check failed:', e.message); }
+          // Saturday = the owner's weekly report day.
+          const dow = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short' }).format(new Date());
+          if (dow === 'Sat') {
+            const w = svc.weeklySummary();
+            console.log(`📋 Weekly integrity report ${w.week_ending}: detected=${w.detected} open=${w.still_open} fixed=${w.fixed} no-receipt=${w.no_receipt}`);
+          }
+        } catch (e) { console.error(`Integrity ${label} failed:`, e.message); }
+      };
+
+      if (!cron.validate(cronExpr)) {
+        console.error(`Integrity watch: invalid cron "${cronExpr}", skipping schedule.`);
+      } else {
+        cron.schedule(cronExpr, () => runWatch('cron'), { timezone: tz });
+        console.log(`⏰ Integrity watch cron scheduled (${cronExpr}, ${tz})`);
+      }
+      setTimeout(() => runWatch('boot'), 45000);   // after the DB/migrations settle
+    } catch (e) {
+      console.error('Failed to schedule integrity watch:', e.message);
+    }
+  } else {
+    console.log('🔍 Integrity watch disabled (set INTEGRITY_WATCH_ENABLED=1 to enable).');
   }
 
   // ─── TRANSFER-PHOTO MONTHLY FOLDERS ──────────────────────────────────────

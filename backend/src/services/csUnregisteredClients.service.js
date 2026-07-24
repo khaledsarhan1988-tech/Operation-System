@@ -27,6 +27,12 @@ const { csPrimaryPhone } = require('../utils/csPhoneNormalize');
 const { isIgnoredGroup } = require('../utils/csGroupHelpers');
 const csDel = require('./csDeliveries.service');
 
+// Everything first seen BEFORE this date is the one-off backlog the owner
+// cleaned in July 2026. It stays visible but is tagged `legacy` so the page can
+// default to what appeared AFTER the cleanup — the cases that still need acting
+// on. Owner decision 2026-07-24.
+const LEGACY_CUTOFF = '2026-07-24';
+
 const digits = (s) => String(s || '').replace(/\D/g, '');
 const normName = (s) => String(s || '').split(/[\r\n]/)[0]
   .replace(/[ـً-ْ]/g, '').replace(/[أإآ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه')
@@ -115,6 +121,9 @@ function getUnregisteredClients() {
     const row = {
       phone: pn, name: e.name || '', groups_count: groups.length, groups,
       first_seen: e.first || null, last_seen: e.last || null,
+      // No first_seen at all → treat as legacy; an undated row is old data, and
+      // calling it "new" would put it in the daily-watch list forever.
+      is_legacy: !e.first || e.first < LEGACY_CUTOFF,
       note: notes.get(pn)?.note || '', note_by: notes.get(pn)?.updated_by_name || null,
       note_at: notes.get(pn)?.updated_at || null,
     };
@@ -139,9 +148,13 @@ function getUnregisteredClients() {
   }
 
   items.sort((a, b) => (b.groups_count - a.groups_count) || String(b.last_seen || '').localeCompare(String(a.last_seen || '')));
-  const counts = { all: items.length, need: 0, likely: 0, review: 0, staff: 0, with_note: 0 };
-  for (const i of items) { counts[i.category]++; if (i.note) counts.with_note++; }
-  return { counts, total_in_groups: seen.size, registered: seen.size - items.length, items };
+  const counts = { all: items.length, need: 0, likely: 0, review: 0, staff: 0, with_note: 0, legacy: 0, fresh: 0 };
+  for (const i of items) {
+    counts[i.category]++;
+    if (i.note) counts.with_note++;
+    if (i.is_legacy) counts.legacy++; else counts.fresh++;
+  }
+  return { counts, cutoff: LEGACY_CUTOFF, total_in_groups: seen.size, registered: seen.size - items.length, items };
 }
 
 function setNote({ phone, note, userId, userName }) {

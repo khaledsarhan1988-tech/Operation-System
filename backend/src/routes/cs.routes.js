@@ -942,6 +942,48 @@ router.put('/unregistered-clients/:phone/note', requireRole('admin', 'enrollment
   }
 });
 
+// ─── DAILY INTEGRITY WATCH (المراقبة اليومية) ─────────────────────────────────
+// Findings recorded by the daily job: clients that appeared in a group on or
+// after the cutoff without a matching membership. Read here, acted on in the
+// «مراقبة يومية» tab of the unregistered-clients page.
+router.get('/integrity-findings', requireRole('admin', 'enrollment'), (req, res) => {
+  try {
+    const svc = require('../services/csIntegrityCheck.service');
+    res.json({ ...svc.getFindings({ status: req.query.status || 'open', weekOf: req.query.weekOf || null }),
+      weekly: svc.weeklySummary() });
+  } catch (e) {
+    console.error('GET /cs/integrity-findings error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.put('/integrity-findings/:phone', requireRole('admin', 'enrollment'), (req, res) => {
+  try {
+    res.json({ ok: true, ...require('../services/csIntegrityCheck.service').setStatus({
+      phone: req.params.phone, status: req.body?.status, note: req.body?.note,
+      userName: req.user?.full_name || req.user?.name || null,
+    }) });
+  } catch (e) {
+    console.error('PUT /cs/integrity-findings/:phone error:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+// Manual re-scan (the cron does this nightly; this is the "run it now" button).
+router.post('/integrity-findings/run', requireRole('admin'), async (req, res) => {
+  try {
+    const svc = require('../services/csIntegrityCheck.service');
+    const scan = svc.runCheck();
+    let images = null;
+    try { images = await svc.verifyImages({ limit: Number(req.body?.imageLimit) || 40 }); }
+    catch (e) { images = { error: e.message }; }   // Drive down must not fail the scan
+    res.json({ ok: true, scan, images });
+  } catch (e) {
+    console.error('POST /cs/integrity-findings/run error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ─── ENR GROUPS (مجموعات الـ Enrollment) ──────────────────────────────────────
 
 // Enr Groups access guard: any admin OR a user granted the 'enr-groups' page.

@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { UserX, Search, AlertCircle, CheckCircle2, HelpCircle, UserCog, Download } from 'lucide-react';
+import { UserX, Search, AlertCircle, CheckCircle2, HelpCircle, UserCog, Download,
+  Radar, Archive, RefreshCw, Image as ImageIcon, EyeOff } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 
@@ -46,8 +47,145 @@ function NoteCell({ item, onSave, saving }) {
   );
 }
 
+/**
+ * «مراقبة يومية» — the live watch list. The backlog tab is a one-off cleanup;
+ * this one is what keeps it clean: the nightly job records every client who
+ * lands in a group without a matching membership, and clears the row by itself
+ * once the number is fixed. So an empty table here is the good state.
+ */
+function WatchPanel() {
+  const qc = useQueryClient();
+  const [status, setStatus] = useState('open');
+
+  const q = useQuery({
+    queryKey: ['cs-integrity', status],
+    queryFn: () => api.get('/cs/integrity-findings', { params: { status } }).then(r => r.data),
+  });
+  const mut = useMutation({
+    mutationFn: ({ phone, status: s, note }) => api.put(`/cs/integrity-findings/${encodeURIComponent(phone)}`, { status: s, note }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cs-integrity'] }),
+    onError: (e) => alert('فشل التحديث: ' + (e.response?.data?.error || e.message)),
+  });
+  const runNow = useMutation({
+    mutationFn: () => api.post('/cs/integrity-findings/run', {}),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['cs-integrity'] });
+      const s = r.data?.scan || {};
+      alert(`تم الفحص\nجديد: ${s.added ?? 0} · اتقفل تلقائيًا: ${s.resolved ?? 0}`);
+    },
+    onError: (e) => alert('فشل الفحص: ' + (e.response?.data?.error || e.message)),
+  });
+
+  const w = q.data?.weekly || {};
+  const counts = q.data?.counts || {};
+  const items = q.data?.items || [];
+
+  const IMG = {
+    found:     { label: 'إيصال يطابق الرقم', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+    not_found: { label: 'مفيش إيصال بالرقم', cls: 'bg-rose-50 text-rose-700 border-rose-200' },
+    pending:   { label: 'لسه', cls: 'bg-slate-50 text-slate-500 border-slate-200' },
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Weekly digest — the Saturday report */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          ['اتكشف الأسبوع ده', w.detected, 'bg-sky-50 text-sky-700 border-sky-200'],
+          ['لسه مفتوح', w.still_open, 'bg-amber-50 text-amber-700 border-amber-200'],
+          ['اتصلح', w.fixed, 'bg-emerald-50 text-emerald-700 border-emerald-200'],
+          ['بلا إيصال', w.no_receipt, 'bg-rose-50 text-rose-700 border-rose-200'],
+        ].map(([label, val, cls]) => (
+          <div key={label} className={`rounded-2xl border p-4 ${cls}`}>
+            <div className="text-2xl font-black">{val ?? 0}</div>
+            <div className="text-xs font-bold mt-1">{label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-100 overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-100 flex flex-wrap items-center gap-2">
+          {[['open', 'مفتوح'], ['resolved', 'اتصلح'], ['ignored', 'متجاهَل'], ['all', 'الكل']].map(([k, label]) => (
+            <button key={k} onClick={() => setStatus(k)}
+              className={`text-xs rounded-lg px-3 py-2 border ${status === k ? 'bg-violet-600 text-white border-violet-600' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+              {label}{counts[k] != null ? ` (${counts[k]})` : ''}
+            </button>
+          ))}
+          <button onClick={() => runNow.mutate()} disabled={runNow.isPending}
+            className="text-xs inline-flex items-center gap-1.5 rounded-lg px-3 py-2 bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60 mr-auto">
+            <RefreshCw className={`w-3.5 h-3.5 ${runNow.isPending ? 'animate-spin' : ''}`} />
+            {runNow.isPending ? 'بيفحص…' : 'افحص دلوقتي'}
+          </button>
+        </div>
+
+        {q.isLoading ? (
+          <div className="p-10 text-center text-slate-400 text-sm">جارٍ التحميل…</div>
+        ) : items.length === 0 ? (
+          <div className="p-10 text-center text-slate-500 text-sm flex flex-col items-center gap-2">
+            <CheckCircle2 className="w-7 h-7 text-emerald-500" />
+            <span className="font-semibold">مفيش أي مخالفة</span>
+            <span className="text-xs text-slate-400">الجدول الفاضي هنا معناه إن كل الأرقام الجديدة مظبوطة</span>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-slate-500 text-xs">
+                <tr>
+                  <th className="px-3 py-2.5 text-right font-medium">العميل</th>
+                  <th className="px-3 py-2.5 text-center font-medium">اتكشف</th>
+                  <th className="px-3 py-2.5 text-center font-medium">مجموعات</th>
+                  <th className="px-3 py-2.5 text-right font-medium">الدليل</th>
+                  <th className="px-3 py-2.5 text-center font-medium">الإيصال</th>
+                  <th className="px-3 py-2.5 text-center font-medium">إجراء</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {items.map(it => (
+                  <tr key={it.client_phone_norm} className="hover:bg-slate-50/60 align-top">
+                    <td className="px-3 py-3">
+                      <div className="font-medium text-slate-800">{it.client_name || '—'}</div>
+                      <div className="text-xs text-slate-400 font-mono" dir="ltr">{it.client_phone_norm}</div>
+                    </td>
+                    <td className="px-3 py-3 text-center text-[11px] font-mono text-slate-600 whitespace-nowrap" dir="ltr">
+                      {String(it.detected_at || '').slice(0, 10)}
+                    </td>
+                    <td className="px-3 py-3 text-center">
+                      <span className="inline-flex min-w-7 justify-center px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 text-xs font-semibold">{it.groups_count}</span>
+                      <div className="text-[10px] text-slate-400 mt-1 max-w-52 truncate mx-auto" title={it.groups_sample || ''}>{it.groups_sample}</div>
+                    </td>
+                    <td className="px-3 py-3 text-xs text-slate-700 max-w-md">{it.evidence}</td>
+                    <td className="px-3 py-3 text-center">
+                      <span className={`inline-flex items-center gap-1 text-[10px] rounded px-1.5 py-0.5 border ${(IMG[it.image_check] || IMG.pending).cls}`}>
+                        <ImageIcon className="w-3 h-3" />{(IMG[it.image_check] || IMG.pending).label}
+                      </span>
+                      {it.image_file && <div className="text-[10px] text-slate-400 mt-1 max-w-40 truncate mx-auto" title={it.image_file}>{it.image_file}</div>}
+                    </td>
+                    <td className="px-3 py-3 text-center whitespace-nowrap">
+                      {it.status === 'open' ? (
+                        <button onClick={() => { const n = prompt('سبب التجاهل (اختياري):'); if (n !== null) mut.mutate({ phone: it.client_phone_norm, status: 'ignored', note: n || null }); }}
+                          className="text-[11px] inline-flex items-center gap-1 rounded-lg px-2 py-1 border border-slate-200 text-slate-600 hover:bg-slate-50">
+                          <EyeOff className="w-3 h-3" /> تجاهل
+                        </button>
+                      ) : (
+                        <button onClick={() => mut.mutate({ phone: it.client_phone_norm, status: 'open' })}
+                          className="text-[11px] rounded-lg px-2 py-1 border border-slate-200 text-slate-600 hover:bg-slate-50">↺ رجّعه</button>
+                      )}
+                      {it.note && <div className="text-[10px] text-slate-400 mt-1 max-w-40 truncate mx-auto" title={it.note}>{it.note}</div>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function UnregisteredClients() {
   const qc = useQueryClient();
+  const [view, setView] = useState('watch');   // watch = the live list; backlog = the July cleanup
   const [cat, setCat] = useState('need');
   const [q, setQ] = useState('');
   const [onlyNoted, setOnlyNoted] = useState(false);
@@ -95,6 +233,24 @@ export default function UnregisteredClients() {
         gradient="linear-gradient(135deg, #9f1239 0%, #f59e0b 100%)"
       />
 
+      {/* Tabs — the watch list is the day-to-day view; the backlog is history. */}
+      <div className="flex items-center gap-2">
+        {[
+          ['watch', 'مراقبة يومية', Radar, 'اللي بيظهر من 24 يوليو 2026'],
+          ['backlog', 'المراجعة القديمة', Archive, `الدفعة الأولى — ${counts.legacy ?? 0} عميل`],
+        ].map(([k, label, Icon, hint]) => (
+          <button key={k} onClick={() => setView(k)}
+            className={`flex-1 md:flex-none text-right rounded-2xl border px-4 py-3 transition-all ${
+              view === k ? 'bg-violet-600 text-white border-violet-600 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+            <div className="flex items-center gap-2 font-bold text-sm"><Icon className="w-4 h-4" />{label}</div>
+            <div className={`text-[11px] mt-0.5 ${view === k ? 'text-white/80' : 'text-slate-400'}`}>{hint}</div>
+          </button>
+        ))}
+      </div>
+
+      {view === 'watch' && <WatchPanel />}
+
+      {view === 'backlog' && <>
       {/* Summary */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {CATS.map(c => {
@@ -204,6 +360,7 @@ export default function UnregisteredClients() {
           </div>
         )}
       </div>
+      </>}
     </div>
   );
 }
