@@ -94,8 +94,29 @@ function runCheck() {
     db.transaction(() => { for (const p of stale) res.run(p); })();
   }
 
+  const result = { scanned: live.items.length, watched: watch.length, added, refreshed, resolved: stale.length };
+  recordRun(result, arguments[0]?.by || 'manual');
   saveNow();
-  return { scanned: live.items.length, watched: watch.length, added, refreshed, resolved: stale.length };
+  return result;
+}
+
+/** Heartbeat: stamp the last run so the page can show the watch is alive. */
+function recordRun(result, by) {
+  try {
+    db.prepare(`
+      INSERT INTO cs_integrity_status (id, last_run_at, last_run_by, last_scanned, last_added, last_resolved)
+      VALUES (1, datetime('now','+2 hours'), ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        last_run_at = excluded.last_run_at, last_run_by = excluded.last_run_by,
+        last_scanned = excluded.last_scanned, last_added = excluded.last_added,
+        last_resolved = excluded.last_resolved
+    `).run(by, result.scanned || 0, result.added || 0, result.resolved || 0);
+  } catch (_) { /* status table is optional — never fail a scan over it */ }
+}
+
+function getStatus() {
+  try { return db.prepare(`SELECT * FROM cs_integrity_status WHERE id = 1`).get() || null; }
+  catch (_) { return null; }
 }
 
 /**
@@ -141,6 +162,10 @@ async function verifyImages({ limit = 40 } = {}) {
     if (hit) { upd.run('found', hit.name, p); found++; }
     else { upd.run('not_found', null, p); notFound++; }
   }
+  try {
+    db.prepare(`UPDATE cs_integrity_status SET last_images = ? WHERE id = 1`)
+      .run(`${found}/${rows.length} إيصال`);
+  } catch (_) {}
   saveNow();
   return { checked: rows.length, found, notFound };
 }
@@ -185,4 +210,4 @@ function setStatus({ phone, status, note, userName }) {
   return { phone, status };
 }
 
-module.exports = { runCheck, verifyImages, getFindings, weeklySummary, setStatus, isWatchable };
+module.exports = { runCheck, verifyImages, getFindings, weeklySummary, setStatus, getStatus, isWatchable };

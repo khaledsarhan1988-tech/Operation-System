@@ -2830,6 +2830,21 @@ initDb().then(db => {
     `);
     try { db._raw.run(`CREATE INDEX IF NOT EXISTS idx_integrity_status ON cs_integrity_findings(status, detected_at)`); } catch (_) {}
 
+    // A single-row heartbeat so the page can prove the watch is alive even on a
+    // night with zero findings — "last check: today 03:00" beats an empty table
+    // that could equally mean "clean" or "the job silently stopped weeks ago".
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS cs_integrity_status (
+        id             INTEGER PRIMARY KEY CHECK (id = 1),
+        last_run_at    TEXT,
+        last_run_by    TEXT,        -- 'cron' | 'boot' | 'manual'
+        last_scanned   INTEGER,
+        last_added     INTEGER,
+        last_resolved  INTEGER,
+        last_images    TEXT
+      )
+    `);
+
     // ── Manual per-client GROUP exclusions (owner 2026-07-20) ──
     // The owner reviews borderline journeys himself: a specific counted group
     // can be excluded from ONE client's consumed levels (with a reason), and
@@ -3755,7 +3770,7 @@ initDb().then(db => {
       const runWatch = async (label) => {
         const svc = require('./services/csIntegrityCheck.service');
         try {
-          const scan = svc.runCheck();
+          const scan = svc.runCheck({ by: label });
           console.log(`🔍 Integrity ${label}: watched=${scan.watched} new=${scan.added} resolved=${scan.resolved}`);
           // Drive being unreachable must not lose the scan we just recorded.
           try {

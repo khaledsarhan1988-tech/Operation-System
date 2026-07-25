@@ -79,6 +79,11 @@ function WatchPanel() {
   const w = q.data?.weekly || {};
   const counts = q.data?.counts || {};
   const items = q.data?.items || [];
+  const st = q.data?.status || null;
+
+  // Heartbeat freshness: a daily job that last ran >36h ago has probably stopped.
+  const lastRun = st?.last_run_at ? String(st.last_run_at) : null;
+  const staleWatch = lastRun && (Date.now() - new Date(lastRun.replace(' ', 'T')).getTime()) > 36 * 3600 * 1000;
 
   const IMG = {
     found:     { label: 'إيصال يطابق الرقم', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
@@ -88,6 +93,17 @@ function WatchPanel() {
 
   return (
     <div className="space-y-4">
+      {/* Heartbeat — proves the nightly job is alive on a zero-finding night. */}
+      <div className={`rounded-xl border px-4 py-2.5 text-xs flex items-center gap-2 ${
+        !lastRun ? 'bg-slate-50 border-slate-200 text-slate-500'
+          : staleWatch ? 'bg-rose-50 border-rose-200 text-rose-700'
+          : 'bg-emerald-50 border-emerald-200 text-emerald-700'}`}>
+        {!lastRun ? <AlertCircle className="w-4 h-4" /> : staleWatch ? <AlertCircle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
+        {!lastRun ? 'الفحص التلقائي لسه ماشتغلش — فعّل INTEGRITY_WATCH_ENABLED أو اضغط «افحص دلوقتي»'
+          : <span dir="ltr" className="font-mono">آخر فحص: {String(lastRun).slice(0, 16)} · {st.last_scanned ?? 0} فُحصوا · {st.last_added ?? 0} جديد{st.last_images ? ` · ${st.last_images}` : ''}</span>}
+        {staleWatch && <span className="font-bold">— عدّى أكتر من 36 ساعة، اتأكد إن الفحص شغّال</span>}
+      </div>
+
       {/* Weekly digest — the Saturday report */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[

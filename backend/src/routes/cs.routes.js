@@ -950,7 +950,7 @@ router.get('/integrity-findings', requireRole('admin', 'enrollment'), (req, res)
   try {
     const svc = require('../services/csIntegrityCheck.service');
     res.json({ ...svc.getFindings({ status: req.query.status || 'open', weekOf: req.query.weekOf || null }),
-      weekly: svc.weeklySummary() });
+      weekly: svc.weeklySummary(), status: svc.getStatus() });
   } catch (e) {
     console.error('GET /cs/integrity-findings error:', e.message);
     res.status(500).json({ error: e.message });
