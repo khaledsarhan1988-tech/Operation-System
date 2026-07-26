@@ -9,7 +9,7 @@ import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import HolidayBanner from '../../components/ui/HolidayBanner';
 import { MemberModal } from './TeamPage';
-import { mergeSecKey } from '../../utils/sectionMerge';
+import { mergeSecKey, matchesSectionFilter, apiSectionParam, MERGED_FILTER_KEYS } from '../../utils/sectionMerge';
 
 // ─── CONSTANTS ─────────────────────────────────────────────────────────────────
 const SECTIONS = {
@@ -404,7 +404,7 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
     // plain سجل عمل المدربين excludes them.
     queryKey: ['trainer-work-history', fromDate, toDate, section, trainer, showSalaryCategory],
     queryFn: () => api.get('/reports/trainer-work-history', {
-      params: { from: fromDate, to: toDate, section, trainer, include_leaders: showSalaryCategory ? 1 : undefined },
+      params: { from: fromDate, to: toDate, section: apiSectionParam(section), trainer, include_leaders: showSalaryCategory ? 1 : undefined },
     }).then(r => r.data),
     staleTime: 60 * 1000,
   });
@@ -519,10 +519,12 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
 
   // ── client-side trainer-name search (in addition to dropdown)
   const filteredRows = useMemo(() => {
-    if (!search) return rows;
-    const q = search.toLowerCase();
-    return rows.filter(r => (r.trainer_name || '').toLowerCase().includes(q));
-  }, [rows, search]);
+    // Section filter is client-side (merged «خاص وشبه خاص»); the query sends 'all'
+    // for merged keys so the backend returns both semi & private.
+    let list = rows.filter(r => matchesSectionFilter(r.section, section));
+    if (search) { const q = search.toLowerCase(); list = list.filter(r => (r.trainer_name || '').toLowerCase().includes(q)); }
+    return list;
+  }, [rows, search, section]);
 
   // When grouping is on (مرتبات المدربين), order rows by section so each
   // section's trainers sit together (General → Private → Semi → Phone Call),
@@ -667,9 +669,9 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
             <div>
               <label className="block text-[11px] font-bold text-gray-500 mb-1">القسم</label>
               <select value={section} onChange={e => setSection(e.target.value)} className={selectCls}>
-                {/* merged keys are display-only labels — the filter keeps the raw
-                    semi/private the backend understands (drill-down). */}
-                {Object.entries(SECTIONS).filter(([k]) => k !== 'privsemi' && k !== 'phone_call_privsemi').map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                {/* Only the merged section options (شبه خاص + خاص → «خاص وشبه خاص»);
+                    the query sends 'all' for merged keys + filters client-side. */}
+                {MERGED_FILTER_KEYS.map(k => <option key={k} value={k}>{SECTIONS[k] || k}</option>)}
               </select>
             </div>
             <div>

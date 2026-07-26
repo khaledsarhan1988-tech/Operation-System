@@ -7742,7 +7742,7 @@ router.get('/phone-call-gap', (req, res) => {
   try {
     const PER_STUDENT     = 7;
     const callsPerHour    = Math.max(1, parseInt(req.query.calls_per_hour, 10) || 4);
-    const sectionFilter   = ['general', 'semi', 'private'].includes(req.query.section) ? req.query.section : 'all';
+    const sectionFilter   = ['general', 'semi', 'private', 'privsemi'].includes(req.query.section) ? req.query.section : 'all';
     const line            = lineFilter(req);   // null for admin/All; honors ?line=
     const dateRe          = /^\d{4}-\d{2}-\d{2}$/;
     const fromDate        = dateRe.test(req.query.from || '') ? req.query.from : null;
@@ -8200,7 +8200,7 @@ router.get('/groups-missing-phonecall', (req, res) => {
 router.get('/trainer-recruitment', (req, res) => {
   try {
     const PER_STUDENT   = 7;
-    const sectionFilter = ['general', 'semi', 'private'].includes(req.query.section) ? req.query.section : 'all';
+    const sectionFilter = ['general', 'semi', 'private', 'privsemi'].includes(req.query.section) ? req.query.section : 'all';
     const line          = lineFilter(req);   // null for admin/All; honors ?line=
     // ── global filters (from/to already sanitized to YYYY-MM-DD by router middleware) ──
     const fromDate   = req.query.from || null;   // '' → null
@@ -8385,7 +8385,7 @@ router.get('/trainer-recruitment', (req, res) => {
       };
     });
 
-    if (sectionFilter !== 'all') trainers = trainers.filter(t => t.section === sectionFilter);
+    if (sectionFilter !== 'all') trainers = trainers.filter(t => secFilterMatch(t.section, sectionFilter));
     trainers.sort((a, b) => b.students - a.students || String(a.name).localeCompare(String(b.name), 'ar'));
 
     // ── per-section summary (from each trainer's primary section) ──
@@ -8401,7 +8401,7 @@ router.get('/trainer-recruitment', (req, res) => {
         demand_month: ts.reduce((a, t) => a + t.demand_month, 0),
         demand_by_side_pair: byPair,
       };
-    }).filter(s => sectionFilter === 'all' || s.section === sectionFilter);
+    }).filter(s => secFilterMatch(s.section, sectionFilter));
 
     const totals = {
       trainers: trainers.length,
@@ -8445,6 +8445,9 @@ const mergeSecBE = (sec) => {
   if (s === 'phone_call_semi' || s === 'phone_call_private') return 'phone_call_privsemi';
   return s;
 };
+// Merge-aware section-filter match: the «خاص وشبه خاص» filter (privsemi) matches
+// both semi & private. Used by the recruitment tabs so their totals stay filtered.
+const secFilterMatch = (rawSec, filter) => filter === 'all' || rawSec === filter || mergeSecBE(rawSec) === filter;
 
 // ─── GET /api/reports/trainer-recruitment-supply ─────────────────────────────
 // «توظيف المدربين» — PHASE 2 (supply side). Phone-call (zoom) trainers' call
@@ -8457,7 +8460,7 @@ router.get('/trainer-recruitment-supply', (req, res) => {
   try {
     const CALLS_PER_HOUR  = 4;
     const WEEKS_PER_MONTH = 4;
-    const sectionFilter   = ['general', 'semi', 'private'].includes(req.query.section) ? req.query.section : 'all';
+    const sectionFilter   = ['general', 'semi', 'private', 'privsemi'].includes(req.query.section) ? req.query.section : 'all';
     const DAYPAIR_KEY = { sat_tue: '6,2', sun_wed: '0,3', mon_thu: '1,4' };
     const wantPairKey = DAYPAIR_KEY[req.query.day_pair] || null;
     const asOf = recruitAsOf(req);   // shifts must be active on this date (was: no date check at all)
@@ -8535,7 +8538,7 @@ router.get('/trainer-recruitment-supply', (req, res) => {
         by_pair,
       };
     });
-    if (sectionFilter !== 'all') trainers = trainers.filter(t => t.section === sectionFilter);
+    if (sectionFilter !== 'all') trainers = trainers.filter(t => secFilterMatch(t.section, sectionFilter));
     if (wantPairKey) {
       // scope every headline number to the chosen phone-call day-pair
       trainers = trainers
@@ -8557,7 +8560,7 @@ router.get('/trainer-recruitment-supply', (req, res) => {
         monthly_calls: ts.reduce((a, t) => a + t.monthly_calls, 0),
         capacity_by_side_pair: cap_by_pair,
       };
-    }).filter(s => sectionFilter === 'all' || s.section === sectionFilter);
+    }).filter(s => secFilterMatch(s.section, sectionFilter));
 
     const totals = {
       trainers: trainers.length,
@@ -8594,7 +8597,7 @@ router.get('/trainer-recruitment-balance', (req, res) => {
     const CALLS_PER_HOUR  = 4;
     const WEEKS_PER_MONTH  = 4;
     const PER_TRAINER_WEEKLY_PER_PAIR = 7 * 2 * CALLS_PER_HOUR;   // 56 = a full-timer's calls/week on one day-pair (7h×2days×4)
-    const sectionFilter = ['general', 'semi', 'private'].includes(req.query.section) ? req.query.section : 'all';
+    const sectionFilter = ['general', 'semi', 'private', 'privsemi'].includes(req.query.section) ? req.query.section : 'all';
     const line = lineFilter(req);
     const DAYPAIR_KEY = { sat_tue: '6,2', sun_wed: '0,3', mon_thu: '1,4' };
     const wantPairKey = DAYPAIR_KEY[req.query.day_pair] || null;
@@ -8779,7 +8782,7 @@ router.get('/trainer-recruitment-balance', (req, res) => {
         trainers_needed: trainersNeeded, capacity_sufficient: peakShortSection === 0,
         pairs,
       };
-    }).filter(s => sectionFilter === 'all' || s.section === sectionFilter);
+    }).filter(s => secFilterMatch(s.section, sectionFilter));
 
     const totals = {
       demand_monthly: sections.reduce((a, s) => a + s.demand_monthly, 0),
@@ -8788,7 +8791,7 @@ router.get('/trainer-recruitment-balance', (req, res) => {
       trainers_needed: sections.reduce((a, s) => a + s.trainers_needed, 0),
     };
 
-    const missingOut = sectionFilter === 'all' ? groups_missing : groups_missing.filter(g => g.section === sectionFilter);
+    const missingOut = groups_missing.filter(g => secFilterMatch(g.section, sectionFilter));
     const missingCountsOut = {
       total: missingOut.length,
       zero: missingOut.filter(g => g.zero).length,
@@ -8816,7 +8819,7 @@ router.get('/trainer-recruitment-balance', (req, res) => {
 // are NOT flagged (counted separately). Scope: active+waiting groups, current sheet.
 router.get('/trainer-recruitment-cross-section', (req, res) => {
   try {
-    const sectionFilter = ['general', 'semi', 'private'].includes(req.query.section) ? req.query.section : 'all';
+    const sectionFilter = ['general', 'semi', 'private', 'privsemi'].includes(req.query.section) ? req.query.section : 'all';
     const line = lineFilter(req);
     const DAYPAIR_KEY = { sat_tue: '6,2', sun_wed: '0,3', mon_thu: '1,4' };
     const wantSideKey = DAYPAIR_KEY[req.query.day_pair] || null;
@@ -8969,7 +8972,7 @@ router.get('/trainer-recruitment-cross-section', (req, res) => {
         group_list,
       };
     });
-    if (sectionFilter !== 'all') trainers = trainers.filter(t => t.section === sectionFilter);
+    if (sectionFilter !== 'all') trainers = trainers.filter(t => secFilterMatch(t.section, sectionFilter));
     trainers.sort((a, b) => b.sessions - a.sessions || String(a.name).localeCompare(String(b.name), 'ar'));
 
     const totals = {
@@ -9002,7 +9005,7 @@ router.get('/trainer-recruitment-independence', (req, res) => {
     const STUDENTS_PER_GROUP    = { general: 8, semi: 2, private: 1 };   // owner: عام 8 / شبه خاص 2 / خاص 1
     const STUDENTS_PER_TRAINER  = 28;
     const GROUP_DUR = { general: 1.5, semi: 1, private: 1 };   // main-lecture hours per group
-    const sectionFilter = ['general', 'semi', 'private'].includes(req.query.section) ? req.query.section : 'all';
+    const sectionFilter = ['general', 'semi', 'private', 'privsemi'].includes(req.query.section) ? req.query.section : 'all';
     const DAYPAIR_SIDE = { sat_tue: 'سبت + ثلاثاء', sun_wed: 'أحد + أربعاء', mon_thu: 'إثنين + خميس' };
     const wantSideLabel = DAYPAIR_SIDE[req.query.day_pair] || null;
 
@@ -9097,10 +9100,10 @@ router.get('/trainer-recruitment-independence', (req, res) => {
           ends_at: ti.open ? null : (ti.ends_at || null),
         })).sort((a, b) => b.groups - a.groups),
       };
-    }).filter(s => sectionFilter === 'all' || s.section === sectionFilter);
+    }).filter(s => secFilterMatch(s.section, sectionFilter));
 
     const totals = {
-      main_trainers: [...new Set([].concat(...SEC.filter(s => sectionFilter === 'all' || s === sectionFilter).map(s => [...trainerSet[s]])))].length,
+      main_trainers: [...new Set([].concat(...SEC.filter(s => secFilterMatch(s, sectionFilter)).map(s => [...trainerSet[s]])))].length,
       groups: sections.reduce((a, s) => a + s.total_groups, 0),
       students: sections.reduce((a, s) => a + s.total_students, 0),
       trainers_needed: +sections.reduce((a, s) => a + s.total_trainers_needed, 0).toFixed(1),
@@ -9109,7 +9112,7 @@ router.get('/trainer-recruitment-independence', (req, res) => {
     return res.json({
       params: { students_per_group: STUDENTS_PER_GROUP, students_per_trainer: STUDENTS_PER_TRAINER, group_duration: GROUP_DUR, section: sectionFilter, day_pair: req.query.day_pair || 'all', as_of: today },
       totals, sections,
-      detail: detail.filter(d => (sectionFilter === 'all' || d.section === sectionFilter)),
+      detail: detail.filter(d => (secFilterMatch(d.section, sectionFilter))),
     });
   } catch (err) {
     console.error('[reports] trainer-recruitment-independence:', err);

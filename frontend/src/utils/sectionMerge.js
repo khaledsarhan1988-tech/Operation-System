@@ -24,6 +24,17 @@ export const MERGED_SEC_LABEL = {
 // Label for any section key, honoring the merge. `base` = the page's own map.
 export const secLabel = (sec, base = {}) => MERGED_SEC_LABEL[sec] || base[sec] || base[mergeSecKey(sec)] || sec;
 
+// The ONLY section-filter options the trainer pages should offer (merged) —
+// شبه خاص/خاص and their phone-call variants are hidden; «خاص وشبه خاص» covers them.
+export const MERGED_FILTER_KEYS = ['all', 'general', 'privsemi', 'phone_call_general', 'phone_call_privsemi'];
+// Does a row/trainer's raw section match the selected (possibly-merged) filter?
+export const matchesSectionFilter = (rawSec, filterKey) =>
+  !filterKey || filterKey === 'all' || mergeSecKey(rawSec) === filterKey || rawSec === filterKey;
+// What section value to actually send to the backend: merged keys the backend
+// doesn't understand → 'all' (then filter client-side); everything else as-is.
+export const apiSectionParam = (filterKey) =>
+  (filterKey === 'privsemi' || filterKey === 'phone_call_privsemi') ? 'all' : filterKey;
+
 // Collapse a per-section array [{section, label, ...}] by mergeSecKey: sum numeric
 // fields, concat array fields, keep the first of anything else, then run an
 // optional `recompute(mergedRow)` for derived fields (%, ÷N, …). Order preserved.

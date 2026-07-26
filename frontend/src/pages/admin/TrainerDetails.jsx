@@ -7,7 +7,7 @@ import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import EmptyState from '../../components/ui/EmptyState';
 import HolidayBanner from '../../components/ui/HolidayBanner';
-import { mergeSecKey } from '../../utils/sectionMerge';
+import { mergeSecKey, matchesSectionFilter, apiSectionParam, MERGED_FILTER_KEYS } from '../../utils/sectionMerge';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 const SECTIONS = { all: 'الكل', general: 'عام', private: 'خاص', semi: 'شبه خاص', privsemi: 'خاص وشبه خاص', phone_call: 'فون كول', phone_call_general: 'فون كول عام', phone_call_semi: 'فون كول شبه خاص', phone_call_private: 'فون كول خاص', phone_call_privsemi: 'فون كول خاص وشبه خاص' };
@@ -86,7 +86,7 @@ export default function TrainerDetails() {
   const [searchParams] = useSearchParams();
   const trainerParam = (searchParams.get('trainer') || '').trim();
   const [nameFilter, setNameFilter] = useState(trainerParam);
-  const [section, setSection] = useState(trainerParam ? 'all' : 'semi');
+  const [section, setSection] = useState(trainerParam ? 'all' : 'privsemi');
   const [dayPair, setDayPair] = useState('all');
   const [from, setFrom] = useState(fmtISO(today));
   const [to, setTo] = useState(fmtISO(addDays(today, 30)));
@@ -96,7 +96,7 @@ export default function TrainerDetails() {
   const { data, isLoading } = useQuery({
     queryKey: ['trainer-details', from, to, section],
     queryFn: () => api.get('/reports/trainer-utilization', {
-      params: { from, to, section },
+      params: { from, to, section: apiSectionParam(section) },
     }).then(r => r.data),
     enabled: validRange,
     staleTime: 60 * 1000,
@@ -111,18 +111,20 @@ export default function TrainerDetails() {
     return dates.filter(d => set.has(dowFromISO(d)));
   }, [dates, dayPair]);
   const trainers = useMemo(() => {
-    const all = (data?.trainers || []).slice().sort((a, b) => String(a.name).localeCompare(String(b.name), 'ar'));
+    const all = (data?.trainers || [])
+      .filter(t => matchesSectionFilter(t.section, section))   // merged «خاص وشبه خاص» filter
+      .slice().sort((a, b) => String(a.name).localeCompare(String(b.name), 'ar'));
     if (!nameFilter) return all;
     const key = compactName(nameFilter);
     return all.filter(t => compactName(t.name) === key);
-  }, [data, nameFilter]);
+  }, [data, nameFilter, section]);
 
   // Recurring free slots over 4 consecutive weeks (day-pair patterns) — reuses
   // /find-available-trainer no-window mode (the system's agreed recurring logic).
   const { data: faData } = useQuery({
     queryKey: ['trainer-details-recurring', from, section],
     queryFn: () => api.get('/reports/find-available-trainer', {
-      params: { section, days: 'saturday,sunday,monday,tuesday,wednesday,thursday', weeks_count: 4, start_date: from },
+      params: { section: apiSectionParam(section), days: 'saturday,sunday,monday,tuesday,wednesday,thursday', weeks_count: 4, start_date: from },
     }).then(r => r.data),
     enabled: validRange,
     staleTime: 60 * 1000,
@@ -179,7 +181,7 @@ export default function TrainerDetails() {
             onChange={e => setSection(e.target.value)}
             className="px-3 py-2 rounded-lg border border-gray-200 text-sm font-semibold text-gray-700 bg-gray-50 focus:bg-white outline-none"
           >
-            {Object.entries(SECTIONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            {MERGED_FILTER_KEYS.map(k => <option key={k} value={k}>{SECTIONS[k] || k}</option>)}
           </select>
         </div>
         <div className="flex items-center gap-2">

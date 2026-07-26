@@ -11,7 +11,7 @@ import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import EmptyState from '../../components/ui/EmptyState';
 import HolidayBanner from '../../components/ui/HolidayBanner';
-import { mergeSecKey } from '../../utils/sectionMerge';
+import { mergeSecKey, matchesSectionFilter, apiSectionParam, MERGED_FILTER_KEYS } from '../../utils/sectionMerge';
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 const SECTIONS = {
@@ -302,7 +302,7 @@ export default function TrainerUtilization() {
   });
   const trainerOptions = useMemo(() => {
     return teamList
-      .filter(t => section === 'all' || t.section === section)
+      .filter(t => matchesSectionFilter(t.section, section))
       // only trainers with at least one configured shift can appear in the heatmap
       .filter(t => t.shift || t.shift2)
       .map(t => ({
@@ -323,15 +323,17 @@ export default function TrainerUtilization() {
   const { data, isLoading } = useQuery({
     queryKey: ['trainer-utilization', fromDate, toDate, section, trainerName],
     queryFn: () => api.get('/reports/trainer-utilization', {
-      params: { from: fromDate, to: toDate, section, search: trainerName },
+      params: { from: fromDate, to: toDate, section: apiSectionParam(section), search: trainerName },
     }).then(r => r.data),
     staleTime: 60 * 1000,
   });
 
   const dates    = useMemo(() => data?.dates    || [], [data]);
-  // شبه خاص + خاص shown as «خاص وشبه خاص» (display only; section filter above still
-  // drills into each separately since the backend understands the raw values).
-  const trainers = useMemo(() => (data?.trainers || []).map(t => ({ ...t, section: mergeSecKey(t.section) })), [data]);
+  // شبه خاص + خاص shown as «خاص وشبه خاص». Client-filter by the (merged) section
+  // selection first — the query sends 'all' for merged keys — then relabel.
+  const trainers = useMemo(() => (data?.trainers || [])
+    .filter(t => matchesSectionFilter(t.section, section))
+    .map(t => ({ ...t, section: mergeSecKey(t.section) })), [data, section]);
 
   const shiftWeek = (delta) => {
     const start = new Date(weekStart + 'T12:00:00');
@@ -432,7 +434,7 @@ export default function TrainerUtilization() {
           onChange={e => handleSectionChange(e.target.value)}
           className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/30"
         >
-          {Object.entries(SECTIONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          {MERGED_FILTER_KEYS.map(k => <option key={k} value={k}>{SECTIONS[k] || k}</option>)}
         </select>
 
         {/* Trainer dropdown — only active education trainers, filtered by section */}

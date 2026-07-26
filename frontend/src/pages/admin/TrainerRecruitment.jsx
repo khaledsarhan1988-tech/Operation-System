@@ -7,7 +7,9 @@ import PageHero from '../../components/ui/PageHero';
 import EmptyState from '../../components/ui/EmptyState';
 import { collapseSections, collapseRowsByKey, mergeSecKey, secLabel } from '../../utils/sectionMerge';
 
-const SECTIONS = { all: 'كل الأقسام', general: 'عام', semi: 'شبه خاص', private: 'خاص' };
+const SECTIONS = { all: 'كل الأقسام', general: 'عام', semi: 'شبه خاص', private: 'خاص', privsemi: 'خاص وشبه خاص' };
+// Section-filter options offered on the recruitment tabs — شبه خاص + خاص merged.
+const SEC_FILTER_KEYS = ['all', 'general', 'privsemi'];
 const SEC_TONE = {
   general:  'border-blue-200 bg-blue-50 text-blue-800',
   semi:     'border-amber-200 bg-amber-50 text-amber-800',
@@ -20,7 +22,8 @@ const SEC_TONE = {
 // capacity-by-pair objects, collapses «استقلال» per-day-pair rows by main_pair,
 // and recomputes the derived ÷28 / % fields. Display only — backend untouched.
 function mergeViewSections(sections, section) {
-  if (section !== 'all') return sections || [];
+  // Always collapse شبه خاص + خاص → «خاص وشبه خاص» (even under a privsemi drill-down
+  // the backend returns both semi & private rows, which must fold into one).
   return collapseSections(sections || [], (s) => {
     if (Array.isArray(s.rows)) {
       s.rows = collapseRowsByKey(s.rows, 'main_pair', (r) => {
@@ -148,7 +151,7 @@ export default function TrainerRecruitment() {
         <div className="flex items-center gap-2">
           <span className="text-xs font-bold text-gray-500">القسم</span>
           <select value={section} onChange={e => setSection(e.target.value)} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
-            {Object.entries(SECTIONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            {SEC_FILTER_KEYS.map(k => <option key={k} value={k}>{SECTIONS[k]}</option>)}
           </select>
         </div>
         <div className="flex items-center gap-2">
@@ -323,7 +326,7 @@ function SupplyView() {
         <div className="flex items-center gap-2">
           <span className="text-xs font-bold text-gray-500">القسم</span>
           <select value={section} onChange={e => setSection(e.target.value)} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
-            {Object.entries(SECTIONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            {SEC_FILTER_KEYS.map(k => <option key={k} value={k}>{SECTIONS[k]}</option>)}
           </select>
         </div>
         <div className="flex items-center gap-2">
@@ -452,7 +455,7 @@ function BalanceView() {
         <div className="flex items-center gap-2">
           <span className="text-xs font-bold text-gray-500">القسم</span>
           <select value={section} onChange={e => setSection(e.target.value)} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
-            {Object.entries(SECTIONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            {SEC_FILTER_KEYS.map(k => <option key={k} value={k}>{SECTIONS[k]}</option>)}
           </select>
         </div>
         <div className="flex items-center gap-2">
@@ -630,7 +633,7 @@ function CrossSectionView() {
         <div className="flex items-center gap-2">
           <span className="text-xs font-bold text-gray-500">القسم</span>
           <select value={section} onChange={e => setSection(e.target.value)} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
-            {Object.entries(SECTIONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            {SEC_FILTER_KEYS.map(k => <option key={k} value={k}>{SECTIONS[k]}</option>)}
           </select>
         </div>
         <div className="flex items-center gap-2">
@@ -775,7 +778,7 @@ function IndependenceView() {
         <div className="flex items-center gap-2">
           <span className="text-xs font-bold text-gray-500">القسم</span>
           <select value={section} onChange={e => setSection(e.target.value)} className="px-3 py-2 rounded-lg border border-gray-200 font-semibold text-gray-700 bg-gray-50">
-            {Object.entries(SECTIONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            {SEC_FILTER_KEYS.map(k => <option key={k} value={k}>{SECTIONS[k]}</option>)}
           </select>
         </div>
         <div className="flex items-center gap-2">

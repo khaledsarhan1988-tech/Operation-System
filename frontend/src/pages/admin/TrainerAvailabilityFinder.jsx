@@ -10,7 +10,7 @@ import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import EmptyState from '../../components/ui/EmptyState';
 import HolidayBanner from '../../components/ui/HolidayBanner';
-import { mergeSecKey } from '../../utils/sectionMerge';
+import { mergeSecKey, matchesSectionFilter, apiSectionParam, MERGED_FILTER_KEYS } from '../../utils/sectionMerge';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const SECTIONS = {
@@ -268,7 +268,7 @@ export default function TrainerAvailabilityFinder() {
     queryKey: ['find-available-trainer', section, selectedDays.join(','), noWindow ? 'ANY' : fromTime, noWindow ? 'ANY' : toTime, weeksCount, startDate, courseFamily, courseLevel],
     queryFn: () => api.get('/reports/find-available-trainer', {
       params: {
-        section,
+        section: apiSectionParam(section),   // merged keys → 'all' + client-filter below
         days: selectedDays.join(','),
         from_time: noWindow ? '' : fromTime,
         to_time:   noWindow ? '' : toTime,
@@ -286,7 +286,11 @@ export default function TrainerAvailabilityFinder() {
     setSelDays(prev => prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]);
   };
 
-  const results = useMemo(() => data?.results || [], [data]);
+  // Section filter is applied client-side (merged «خاص وشبه خاص» covers semi+private).
+  const results = useMemo(
+    () => (data?.results || []).filter(r => matchesSectionFilter(r.section, section)),
+    [data, section]
+  );
   const summary = data?.summary;
   const filteredResults = useMemo(() => {
     if (filterMode === 'full')    return results.filter(r => r.fully_available);
@@ -321,7 +325,7 @@ export default function TrainerAvailabilityFinder() {
           <div>
             <label className={labelCls}>القسم</label>
             <select value={section} onChange={e => setSection(e.target.value)} className={inputCls}>
-              {Object.entries(SECTIONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              {MERGED_FILTER_KEYS.map(k => <option key={k} value={k}>{SECTIONS[k] || k}</option>)}
             </select>
           </div>
           <div>
