@@ -9,6 +9,7 @@ import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import HolidayBanner from '../../components/ui/HolidayBanner';
 import { MemberModal } from './TeamPage';
+import { mergeSecKey } from '../../utils/sectionMerge';
 
 // ─── CONSTANTS ─────────────────────────────────────────────────────────────────
 const SECTIONS = {
@@ -16,20 +17,24 @@ const SECTIONS = {
   general:    'عام',
   private:    'خاص',
   semi:       'شبه خاص',
+  privsemi:   'خاص وشبه خاص',
   phone_call: 'فون كول',
   phone_call_general: 'فون كول عام',
   phone_call_semi:    'فون كول شبه خاص',
   phone_call_private: 'فون كول خاص',
+  phone_call_privsemi: 'فون كول خاص وشبه خاص',
 };
 
 const SECTION_BADGE = {
   general:    'bg-sky-100 text-sky-800 border-sky-200',
   private:    'bg-violet-100 text-violet-800 border-violet-200',
   semi:       'bg-amber-100 text-amber-800 border-amber-200',
+  privsemi:   'bg-violet-100 text-violet-800 border-violet-200',
   phone_call: 'bg-pink-100 text-pink-800 border-pink-200',
   phone_call_general: 'bg-pink-100 text-pink-800 border-pink-200',
   phone_call_semi:    'bg-rose-100 text-rose-800 border-rose-200',
   phone_call_private: 'bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200',
+  phone_call_privsemi: 'bg-rose-100 text-rose-800 border-rose-200',
   all:        'bg-gray-100 text-gray-700 border-gray-200',
 };
 
@@ -45,7 +50,7 @@ const EMPLOYMENT_LABEL = {
 
 // Section display order for the grouped "مرتبات المدربين" view: General →
 // Private → Semi → Phone Call → (anything else).
-const SECTION_ORDER = { general: 0, private: 1, semi: 2, phone_call: 3, phone_call_general: 3, phone_call_semi: 4, phone_call_private: 5, all: 8 };
+const SECTION_ORDER = { general: 0, private: 1, semi: 2, privsemi: 1, phone_call: 3, phone_call_general: 3, phone_call_semi: 4, phone_call_private: 5, phone_call_privsemi: 4, all: 8 };
 const sectionRank = (s) => (s in SECTION_ORDER ? SECTION_ORDER[s] : 9);
 
 // Salary-category badge colors. Full Time & Part Time get fixed colors; every
@@ -222,8 +227,11 @@ function fmtTimeAr(t) {
 }
 
 function SectionBadge({ value }) {
-  const cls = SECTION_BADGE[value] || 'bg-gray-100 text-gray-700 border-gray-200';
-  const label = SECTIONS[value] || value || '—';
+  // شبه خاص + خاص shown as one «خاص وشبه خاص» (display only; salary system for both
+  // is already the same «جلسات اساسيه», so grouping them changes no number).
+  const k = mergeSecKey(value);
+  const cls = SECTION_BADGE[k] || SECTION_BADGE[value] || 'bg-gray-100 text-gray-700 border-gray-200';
+  const label = SECTIONS[k] || SECTIONS[value] || value || '—';
   return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold border ${cls}`}>{label}</span>;
 }
 
@@ -522,7 +530,7 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
   const displayRows = useMemo(() => {
     if (!groupBySection) return filteredRows;
     return [...filteredRows].sort((a, b) =>
-      (sectionRank(a.section) - sectionRank(b.section)) ||
+      (sectionRank(mergeSecKey(a.section)) - sectionRank(mergeSecKey(b.section))) ||
       String(a.trainer_name || '').localeCompare(String(b.trainer_name || ''), 'ar')
     );
   }, [filteredRows, groupBySection]);
@@ -659,7 +667,9 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
             <div>
               <label className="block text-[11px] font-bold text-gray-500 mb-1">القسم</label>
               <select value={section} onChange={e => setSection(e.target.value)} className={selectCls}>
-                {Object.entries(SECTIONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                {/* merged keys are display-only labels — the filter keeps the raw
+                    semi/private the backend understands (drill-down). */}
+                {Object.entries(SECTIONS).filter(([k]) => k !== 'privsemi' && k !== 'phone_call_privsemi').map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </select>
             </div>
             <div>
@@ -748,8 +758,8 @@ export default function TrainerWorkHistory({ title = 'سجل عمل المدرب
                  </tr>
                ) :
                tableRows.map((r, i) => {
-                 const showHeader = groupBySection && (i === 0 || tableRows[i - 1].section !== r.section);
-                 const sectionCount = showHeader ? tableRows.filter(x => x.section === r.section).length : 0;
+                 const showHeader = groupBySection && (i === 0 || mergeSecKey(tableRows[i - 1].section) !== mergeSecKey(r.section));
+                 const sectionCount = showHeader ? tableRows.filter(x => mergeSecKey(x.section) === mergeSecKey(r.section)).length : 0;
                  return (
                  <Fragment key={i}>
                    {showHeader && (
