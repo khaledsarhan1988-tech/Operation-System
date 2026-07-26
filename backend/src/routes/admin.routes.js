@@ -7,7 +7,7 @@ const fs = require('fs');
 const db = require('../config/database');
 const { saveNow } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
-const { requireRole, requireSuperAdmin } = require('../middleware/roles');
+const { requireRole, requireSuperAdmin, requireSuperAdminOrPage } = require('../middleware/roles');
 const { lineFilter } = require('../utils/lineFilter');
 const avatarStorage = require('../utils/avatar-storage');
 
@@ -21,7 +21,20 @@ const avatarUpload = multer({
 });
 
 const router = express.Router();
-router.use(authenticate, requireRole('leader'));
+// Router access: leader+ for the WHOLE admin router (backup/restore, clear-data,
+// kpis, pipeline, renames…). EXCEPTION — the /users* endpoints are ALSO reachable
+// by a user granted 'users-management' (إدارة المستخدمين), even if their role is
+// below leader; the WRITE endpoints stay gated per-endpoint by
+// requireSuperAdminOrPage. This deliberately does NOT open the other admin
+// endpoints to the grant. (Owner 2026-07-21.)
+router.use(authenticate, (req, res, next) => {
+  const role = req.user?.role;
+  if (role === 'admin' || role === 'leader') return next();
+  const usersPath = req.path === '/users' || req.path.startsWith('/users/');
+  const pages = String(req.user?.extra_pages || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (usersPath && pages.includes('users-management')) return next();
+  return res.status(403).json({ error: 'Forbidden: insufficient role' });
+});
 
 // Effective line for endpoints where 'All' admins can choose via ?line= query:
 //   - non-'All' users → always their own line (override ignored)
@@ -68,7 +81,7 @@ function blockLeaderTouchingAdmin(req, res, { targetRole, newRole } = {}) {
 // POST /api/admin/users — SUPER-ADMIN only (role='admin' + management='All').
 // User creation/deletion + permission grants are locked to the top-level
 // "مسؤول"; department admins ("مدير") and leaders are blocked. (Owner 2026-07-04.)
-router.post('/users', requireSuperAdmin, (req, res) => {
+router.post('/users', requireSuperAdminOrPage('users-management'), (req, res) => {
   const {
     username, password, full_name, role, department,
     extra_departments, extra_managements, extra_pages,
@@ -157,7 +170,7 @@ router.post('/users', requireSuperAdmin, (req, res) => {
 });
 
 // PUT /api/admin/users/:id
-router.put('/users/:id', requireSuperAdmin, (req, res) => {
+router.put('/users/:id', requireSuperAdminOrPage('users-management'), (req, res) => {
   const { id } = req.params;
   const { username, full_name, role, department, extra_departments, extra_managements, extra_pages, language, password, is_active, management, line, start_date, end_date } = req.body;
 
@@ -345,7 +358,7 @@ router.put('/users/:id', requireSuperAdmin, (req, res) => {
 // (team_member_dept_history via /api/team/:id/dept-history).
 
 // PATCH /api/admin/users/:id/status — toggle active/inactive
-router.patch('/users/:id/status', requireSuperAdmin, (req, res) => {
+router.patch('/users/:id/status', requireSuperAdminOrPage('users-management'), (req, res) => {
   const { id } = req.params;
   if (parseInt(id) === req.user.id) return res.status(400).json({ error: 'Cannot change your own status' });
   const user = db.prepare('SELECT id, role, is_active, end_date FROM users WHERE id = ?').get(id);
@@ -385,7 +398,7 @@ router.patch('/users/:id/status', requireSuperAdmin, (req, res) => {
 });
 
 // DELETE /api/admin/users/:id — hard delete
-router.delete('/users/:id', requireSuperAdmin, (req, res) => {
+router.delete('/users/:id', requireSuperAdminOrPage('users-management'), (req, res) => {
   const { id } = req.params;
   if (parseInt(id) === req.user.id) return res.status(400).json({ error: 'Cannot delete yourself' });
   const user = db.prepare('SELECT id, role, avatar_url FROM users WHERE id = ?').get(id);

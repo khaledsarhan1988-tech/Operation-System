@@ -315,6 +315,15 @@ export default function Sidebar({ mobile, onClose }) {
   if (delGrants.length) {
     grantedLinks.push({ type: 'section', label: 'تسليمات الأقسام — ممنوحة' }, ...delGrants);
   }
+  // إدارة المستخدمين + فريق العمل — granted pages (neutral /reports mounts).
+  const adminGrants = [];
+  if (grants.has('users-management'))
+    adminGrants.push({ to: '/reports/users', label: 'إدارة المستخدمين', icon: UserCog, color: 'indigo' });
+  if (grants.has('team'))
+    adminGrants.push({ to: '/reports/team', label: 'فريق العمل', icon: Users, color: 'purple' });
+  if (adminGrants.length) {
+    grantedLinks.push({ type: 'section', label: 'صلاحيات ممنوحة' }, ...adminGrants);
+  }
   // كشف العملاء — Finance NON-admins only (e.g. وكيل); admins get it via getAdminLinks.
   if (user?.role !== 'admin') {
     const finMgmts = [user?.management, ...String(user?.extra_managements || '').split(',')]

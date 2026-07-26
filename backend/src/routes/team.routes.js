@@ -2,14 +2,14 @@
 const express = require('express');
 const db = require('../config/database');
 const { authenticate } = require('../middleware/auth');
-const { requireManagement } = require('../middleware/roles');
+const { requirePageOrManagement } = require('../middleware/roles');
 
 const router = express.Router();
-// فريق العمل + team API = المسؤول (admin+All) أو مدير Enrollment (admin+Enrollment)
-// only. Other admins / leaders / agents are blocked. Kept OPEN to Enrollment so
-// «سجل عمل المدربين» (which edits trainers via /team) keeps working for them.
-// (Owner 2026-07-04.)
-router.use(authenticate, requireManagement('Enrollment'));
+// فريق العمل + team API = admin whose management is Enrollment/All (مسؤول + مدير
+// Enrollment) OR any user granted the 'team' page (إدارة فريق العمل — Owner
+// 2026-07-21). Kept OPEN to Enrollment so «سجل عمل المدربين» (edits trainers via
+// /team) keeps working. Other admins / leaders / agents without the grant = 403.
+router.use(authenticate, requirePageOrManagement('team', 'Enrollment'));
 
 // ─── GET /api/team ────────────────────────────────────────────────────────────
 router.get('/', (req, res) => {

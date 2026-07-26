@@ -134,4 +134,21 @@ function requireOwnerOrManagement(required) {
   };
 }
 
-module.exports = { requireRole, requireAnyRole, requireSuperAdmin, requireManagement, requirePageOrManagement, requireOwner, requireOwnerOrManagement };
+/**
+ * requireSuperAdminOrPage(pageKey) — super-admin (admin+All) OR a user granted
+ * `pageKey` via extra_pages (ANY role). Used to open a super-admin-only WRITE
+ * action to a specifically-granted deputy — e.g. إدارة المستخدمين writes
+ * (users-management grant). (Owner 2026-07-21.)
+ */
+function requireSuperAdminOrPage(pageKey) {
+  return (req, res, next) => {
+    const u = req.user;
+    if (!u) return res.status(401).json({ error: 'Unauthenticated' });
+    if (u.role === 'admin' && u.management === 'All') return next(); // super-admin
+    const pages = String(u.extra_pages || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (pageKey && pages.includes(pageKey)) return next();
+    return res.status(403).json({ error: 'Forbidden: super-admin or the specific page grant only' });
+  };
+}
+
+module.exports = { requireRole, requireAnyRole, requireSuperAdmin, requireManagement, requirePageOrManagement, requireOwner, requireOwnerOrManagement, requireSuperAdminOrPage };

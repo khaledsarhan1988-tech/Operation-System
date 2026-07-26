@@ -136,6 +136,10 @@ const router = createBrowserRouter([
       { path: 'trainer-recruitment',    element: <PrivateRoute requirePage="trainer-recruitment"><TrainerRecruitment /></PrivateRoute> },
       { path: 'trainer-org-chart',      element: <PrivateRoute requirePage="trainer-org-chart"><TrainerOrgChart /></PrivateRoute> },
       { path: 'sales-register',         element: <PrivateRoute requireManagementAnyRole="Finance"><ClientSalesRegister /></PrivateRoute> },
+      // Neutral mounts so a GRANTED non-admin (any role) can reach these pages
+      // — backend enforces the real access (users-management / team grants).
+      { path: 'users',                  element: <PrivateRoute requirePage="users-management"><UserManagement /></PrivateRoute> },
+      { path: 'team',                   element: <PrivateRoute requirePage="team"><TeamPage /></PrivateRoute> },
     ],
   },
 

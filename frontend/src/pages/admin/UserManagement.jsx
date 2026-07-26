@@ -43,6 +43,8 @@ const GRANTABLE_PAGES = [
   { value: 'cs-enrollment',          label: 'تسليمات الأقسام — Enrollment' },
   { value: 'enr-groups',             label: 'تسليمات الأقسام — Enr Groups' },
   { value: 'enr-levels',             label: 'تسليمات الأقسام — المستويات الشغّالة' },
+  { value: 'users-management',       label: '⚠ إدارة المستخدمين (إضافة/تعديل/حذف + منح صلاحيات)' },
+  { value: 'team',                   label: 'فريق العمل (عرض + تعديل)' },
   // كشف العملاء is NOT a page-grant anymore — access is via the «الإدارة المالية»
   // (Finance) management (requireOwnerOrManagement). Assign the user management=Finance.
 ];
