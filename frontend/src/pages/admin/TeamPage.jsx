@@ -8,6 +8,7 @@ import {
   Clock, Calendar as CalendarIcon, History, Scale,
 } from 'lucide-react';
 import api from '../../api/axios';
+import { mergeSecKey } from '../../utils/sectionMerge';
 import PageHero from '../../components/ui/PageHero';
 import EmptyState from '../../components/ui/EmptyState';
 import ModernButton from '../../components/ui/ModernButton';
@@ -25,10 +26,12 @@ const SECTIONS = {
   general:    'عام',
   private:    'خاص',
   semi:       'شبه خاص',
+  privsemi:   'خاص وشبه خاص',        // display-merge grouping (roster only)
   phone_call: 'فون كول',            // legacy umbrella (kept for un-reclassified members)
   phone_call_general: 'فون كول عام',
   phone_call_semi:    'فون كول شبه خاص',
   phone_call_private: 'فون كول خاص',
+  phone_call_privsemi: 'فون كول خاص وشبه خاص',
 };
 
 const SHIFTS = {
@@ -76,10 +79,12 @@ const SECTION_COLORS = {
   general:    'bg-sky-100 text-sky-800 border-sky-200',
   private:    'bg-violet-100 text-violet-800 border-violet-200',
   semi:       'bg-amber-100 text-amber-800 border-amber-200',
+  privsemi:   'bg-violet-100 text-violet-800 border-violet-200',
   phone_call: 'bg-pink-100 text-pink-800 border-pink-200',
   phone_call_general: 'bg-pink-100 text-pink-800 border-pink-200',
   phone_call_semi:    'bg-rose-100 text-rose-800 border-rose-200',
   phone_call_private: 'bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200',
+  phone_call_privsemi: 'bg-rose-100 text-rose-800 border-rose-200',
 };
 
 // ─── EMPTY FORM ───────────────────────────────────────────────────────────────
@@ -182,6 +187,26 @@ const EMPTY_SHIFT = {
 // Today (Cairo, UTC+2) as YYYY-MM-DD, and a ±days helper — used by the shift-change flow.
 const shiftToday = () => new Date(Date.now() + 2 * 3600 * 1000).toISOString().slice(0, 10);
 const addDaysISO = (iso, n) => { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+
+// Two shift records are TRUE duplicates only if EVERY operational field matches
+// (section, shift, times, days, breaks, voice-notes, employment, salary category)
+// — differing only in the date range. Anything else = a genuinely distinct shift.
+const shiftOpKey = sh => JSON.stringify([
+  sh.shift || '', sh.shift_start || '', sh.shift_end || '', sh.work_days || '', sh.section || '',
+  sh.employment_type || '', sh.salary_category || '', sh.shift_rests || [], sh.voice_notes || [],
+]);
+const shiftsEqualExceptDates = (a, b) => shiftOpKey(a) === shiftOpKey(b);
+// Date ranges overlap (inclusive) or are adjacent (one ends the day before the
+// other starts). Empty start = open start (−∞), empty end = open end (+∞).
+const shiftsOverlapAdj = (a, b) => {
+  const as = a.shift_start_date || null, ae = a.shift_end_date || null;
+  const bs = b.shift_start_date || null, be = b.shift_end_date || null;
+  const AS = as || '0000-00-00', AE = ae || '9999-12-31', BS = bs || '0000-00-00', BE = be || '9999-12-31';
+  if (AS <= BE && BS <= AE) return true;                 // overlap
+  if (ae && bs && addDaysISO(ae, 1) === bs) return true; // a ends day before b starts
+  if (be && as && addDaysISO(be, 1) === as) return true; // b ends day before a starts
+  return false;
+};
 
 // «غيّر الشيفت اعتبارًا من تاريخ» bar — closes the current shift the day before the
 // chosen date and opens a pre-filled clone, so the user only tweaks what changed
@@ -1099,6 +1124,23 @@ export function MemberModal({ initial, onSave, onClose, loading }) {
     });
     setShowHistory(false);
   };
+  // Merge two TRUE-duplicate shifts (identical except dates, overlapping/adjacent)
+  // into one with the union date range. Manual + confirmed — it touches history
+  // that feeds salary/utilization, so never automatic.
+  const mergeShifts = (i, j) => {
+    if (!confirm('دمج الشيفتين المتطابقين في شيفت واحد بمدى تاريخ موحّد؟')) return;
+    setShifts(list => {
+      const a = list[i], b = list[j]; if (!a || !b) return list;
+      const startEmpty = !a.shift_start_date || !b.shift_start_date;   // empty start = open (−∞)
+      const endEmpty   = !a.shift_end_date   || !b.shift_end_date;     // empty end   = open (+∞)
+      const merged = {
+        ...a,
+        shift_start_date: startEmpty ? '' : (a.shift_start_date < b.shift_start_date ? a.shift_start_date : b.shift_start_date),
+        shift_end_date:   endEmpty   ? '' : (a.shift_end_date   > b.shift_end_date   ? a.shift_end_date   : b.shift_end_date),
+      };
+      return list.map((s, idx) => (idx === i ? merged : s)).filter((_, idx) => idx !== j);
+    });
+  };
 
   // Reset section when dept changes if invalid; clear shifts if leaving education.
   // A legacy 'phone_call' section is preserved (not auto-reset) until the owner
@@ -1249,8 +1291,29 @@ export function MemberModal({ initial, onSave, onClose, loading }) {
                 />
               );
             };
+            const mergeable = [];
+            for (let a = 0; a < shifts.length; a++)
+              for (let b = a + 1; b < shifts.length; b++)
+                if (shiftsEqualExceptDates(shifts[a], shifts[b]) && shiftsOverlapAdj(shifts[a], shifts[b])) mergeable.push([a, b]);
+            const dr = k => `${shifts[k].shift_start_date || '—'}→${shifts[k].shift_end_date || 'مفتوح'}`;
             return (
               <>
+                {mergeable.length > 0 && (
+                  <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 text-xs space-y-2">
+                    <div className="font-bold text-orange-800">⚠ شيفتات مكررة متداخلة ({mergeable.length})</div>
+                    <p className="text-[11px] text-orange-700 leading-relaxed">
+                      شيفتات متطابقة تمامًا (نفس القسم/الوقت/الأيام/البريك) وتواريخها متداخلة — بتتحسب مرتين في «المتاح». ادمج كل زوج في شيفت واحد بمدى موحّد.
+                    </p>
+                    {mergeable.map(([a, b], k) => (
+                      <div key={k} className="flex flex-wrap items-center gap-2 bg-white rounded-lg px-2 py-1.5 border border-orange-100">
+                        <span className="text-gray-700 font-semibold">{SECTIONS[shifts[a].section] || 'نفس قسم المدرب'} · {shifts[a].shift_start}→{shifts[a].shift_end}</span>
+                        <span className="text-gray-400">{dr(a)} + {dr(b)}</span>
+                        <button type="button" onClick={() => mergeShifts(a, b)}
+                          className="mr-auto px-2.5 py-0.5 rounded-lg bg-orange-500 hover:bg-orange-600 text-white font-bold">دمج</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {activeIdx.map((idx, pos) => (
                   <div key={idx}>
                     {renderShift(idx, `الشيفت ${ord[pos] || `#${pos + 1}`}${upcoming(shifts[idx]) ? ' — قادم' : ' — ساري'}`)}
@@ -1690,15 +1753,20 @@ export default function TeamPage() {
   // Stats per dept
   const deptCount = (dept) => all.filter(m => m.department === dept && m.status === 'active').length;
 
-  // Group by section
+  // Group by section. Education roster DISPLAYS شبه خاص + خاص as one «خاص وشبه خاص»
+  // column (mergeSecKey) — the edit-employee dropdown still keeps the real section.
+  const mergeCols = activeDept === 'education';
+  const colKey = s => (mergeCols ? mergeSecKey(s) : s);
   const bySection = {};
-  DEPT_SECTIONS[activeDept].forEach(s => { bySection[s] = []; });
-  visible.forEach(m => { (bySection[m.section] = bySection[m.section] || []).push(m); });
-  // Render the dept's sections + any legacy section that still has members (e.g.
-  // un-reclassified 'phone_call') so nobody silently disappears from the page.
+  visible.forEach(m => { const k = colKey(m.section); (bySection[k] = bySection[k] || []).push(m); });
+  // Column order: the dept's sections (collapsed for education) + any leftover
+  // section that still has members (e.g. un-reclassified 'phone_call').
+  const baseCols = mergeCols
+    ? ['all', 'general', 'privsemi', 'phone_call_general', 'phone_call_privsemi']
+    : DEPT_SECTIONS[activeDept];
   const sectionsToRender = [
-    ...DEPT_SECTIONS[activeDept],
-    ...Object.keys(bySection).filter(s => !DEPT_SECTIONS[activeDept].includes(s) && (bySection[s] || []).length > 0),
+    ...baseCols,
+    ...Object.keys(bySection).filter(s => !baseCols.includes(s) && (bySection[s] || []).length > 0),
   ];
 
   const totalVisible = visible.length;

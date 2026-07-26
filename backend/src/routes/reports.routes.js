@@ -8435,6 +8435,17 @@ const recruitAsOf = req => {
 };
 const shiftActiveOn = (sh, d) => (!sh.startDate || sh.startDate <= d) && (!sh.endDate || sh.endDate >= d);
 
+// Trainer-side section merge (Owner 2026-07-20): شبه خاص + خاص are one «خاص وشبه
+// خاص» pool (same trainers serve both). Used ONLY by «خارج القسم» cross-section
+// detection so a semi↔private crossing is not flagged as a real mismatch. Display
+// merges live in the frontend; this only affects the mismatch comparison.
+const mergeSecBE = (sec) => {
+  const s = String(sec || '');
+  if (s === 'semi' || s === 'private') return 'privsemi';
+  if (s === 'phone_call_semi' || s === 'phone_call_private') return 'phone_call_privsemi';
+  return s;
+};
+
 // ─── GET /api/reports/trainer-recruitment-supply ─────────────────────────────
 // «توظيف المدربين» — PHASE 2 (supply side). Phone-call (zoom) trainers' call
 // CAPACITY, from LIVE data. Per owner: capacity = each trainer's ACTUAL net
@@ -8925,7 +8936,8 @@ router.get('/trainer-recruitment-cross-section', (req, res) => {
       if (wantSideKey && g.side_key !== wantSideKey) continue;
       const tsec = trainerSecOf(r.trainer);
       if (!tsec) { unresolved++; continue; }
-      if (tsec === g.section) continue;                        // same section — fine
+      // شبه خاص + خاص = one pool → a semi↔private crossing is NOT out-of-section.
+      if (mergeSecBE(tsec) === mergeSecBE(g.section)) continue;   // same (merged) section — fine
       // CROSS
       const main = mainTrainerOf(k); if (!main) continue;
       if (/\(z\.?[cm]\)/i.test(main)) continue;

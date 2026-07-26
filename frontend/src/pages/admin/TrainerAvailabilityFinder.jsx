@@ -10,6 +10,7 @@ import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import EmptyState from '../../components/ui/EmptyState';
 import HolidayBanner from '../../components/ui/HolidayBanner';
+import { mergeSecKey } from '../../utils/sectionMerge';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const SECTIONS = {
@@ -17,19 +18,23 @@ const SECTIONS = {
   general:    'عام',
   private:    'خاص',
   semi:       'شبه خاص',
+  privsemi:   'خاص وشبه خاص',
   phone_call: 'فون كول',
   phone_call_general: 'فون كول عام',
   phone_call_semi:    'فون كول شبه خاص',
   phone_call_private: 'فون كول خاص',
+  phone_call_privsemi: 'فون كول خاص وشبه خاص',
 };
 const SECTION_TONE = {
   general:    'bg-sky-50 text-sky-700 border-sky-200',
   private:    'bg-violet-50 text-violet-700 border-violet-200',
   semi:       'bg-amber-50 text-amber-700 border-amber-200',
+  privsemi:   'bg-violet-50 text-violet-700 border-violet-200',
   phone_call: 'bg-pink-50 text-pink-700 border-pink-200',
   phone_call_general: 'bg-pink-50 text-pink-700 border-pink-200',
   phone_call_semi:    'bg-rose-50 text-rose-700 border-rose-200',
   phone_call_private: 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200',
+  phone_call_privsemi: 'bg-rose-50 text-rose-700 border-rose-200',
   all:        'bg-slate-100 text-slate-600 border-slate-200',
 };
 const DAYS = [
@@ -153,8 +158,8 @@ function TrainerCard({ trainer }) {
         <div className="flex-1 min-w-0 text-right">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-bold text-gray-900 text-sm">{trainer.name}</span>
-            <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold border ${SECTION_TONE[trainer.section] || SECTION_TONE.all}`}>
-              {SECTIONS[trainer.section] || trainer.section}
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold border ${SECTION_TONE[mergeSecKey(trainer.section)] || SECTION_TONE.all}`}>
+              {SECTIONS[mergeSecKey(trainer.section)] || trainer.section}
             </span>
             {trainer.shift_summary?.includes('مسائي') ? <Moon size={11} className="text-indigo-400" />
               : trainer.shift_summary?.includes('صباحي') ? <Sun size={11} className="text-amber-400" /> : null}

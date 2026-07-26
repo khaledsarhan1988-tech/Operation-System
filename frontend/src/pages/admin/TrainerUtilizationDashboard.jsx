@@ -17,6 +17,7 @@ import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import EmptyState from '../../components/ui/EmptyState';
 import HolidayBanner from '../../components/ui/HolidayBanner';
+import { collapseSections, mergeSecKey } from '../../utils/sectionMerge';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const SECTIONS = {
@@ -24,29 +25,35 @@ const SECTIONS = {
   general:    'عام',
   private:    'خاص',
   semi:       'شبه خاص',
+  privsemi:   'خاص وشبه خاص',
   phone_call: 'فون كول',
   phone_call_general: 'فون كول عام',
   phone_call_semi:    'فون كول شبه خاص',
   phone_call_private: 'فون كول خاص',
+  phone_call_privsemi: 'فون كول خاص وشبه خاص',
 };
 const SECTION_TONE = {
   general:    'bg-sky-50 text-sky-700 border-sky-200',
   private:    'bg-violet-50 text-violet-700 border-violet-200',
   semi:       'bg-amber-50 text-amber-700 border-amber-200',
+  privsemi:   'bg-violet-50 text-violet-700 border-violet-200',
   phone_call: 'bg-pink-50 text-pink-700 border-pink-200',
   phone_call_general: 'bg-pink-50 text-pink-700 border-pink-200',
   phone_call_semi:    'bg-rose-50 text-rose-700 border-rose-200',
   phone_call_private: 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200',
+  phone_call_privsemi: 'bg-rose-50 text-rose-700 border-rose-200',
   all:        'bg-slate-100 text-slate-600 border-slate-200',
 };
 const SECTION_COLORS_CHART = {
   general:    '#0EA5E9',
   private:    '#8B5CF6',
   semi:       '#F59E0B',
+  privsemi:   '#8B5CF6',
   phone_call: '#EC4899',
   phone_call_general: '#EC4899',
   phone_call_semi:    '#F43F5E',
   phone_call_private: '#D946EF',
+  phone_call_privsemi: '#F43F5E',
 };
 
 // Status tone (low/normal/high)
@@ -122,8 +129,12 @@ export default function TrainerUtilizationDashboard() {
 
   const summary           = data?.summary;
   const weeklyTimeline    = data?.weekly_timeline    || [];
-  const sectionAverages   = data?.section_averages   || [];
-  const trainers          = data?.trainers           || [];
+  // شبه خاص + خاص merged into «خاص وشبه خاص» for display (data untouched).
+  const sectionAverages   = collapseSections(data?.section_averages || [], (s) => {
+    s.avg_utilization = s.available_hours > 0 ? Math.round((s.booked_hours / s.available_hours) * 100) : 0;
+    s.wasted_hours    = Math.max(0, (s.available_hours || 0) - (s.booked_hours || 0));
+  });
+  const trainers          = (data?.trainers || []).map((t) => ({ ...t, section: mergeSecKey(t.section) }));
   const insights          = data?.insights           || [];
   const period            = data?.period;
 
@@ -167,7 +178,7 @@ export default function TrainerUtilizationDashboard() {
     const periodStr = period ? `${period.from} → ${period.to}` : '';
 
     // Flatten trainers grouped by section (section header rows + trainer rows)
-    const order = ['general', 'private', 'semi', 'phone_call_general', 'phone_call_semi', 'phone_call_private', 'phone_call'];
+    const order = ['general', 'privsemi', 'phone_call_general', 'phone_call_privsemi', 'phone_call'];
     const groups = {};
     trainers.forEach(t => { (groups[t.section] = groups[t.section] || []).push(t); });
     // Any section not in the explicit order (future-proof) appended at the end.

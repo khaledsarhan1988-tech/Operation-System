@@ -11,6 +11,7 @@ import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import EmptyState from '../../components/ui/EmptyState';
 import HolidayBanner from '../../components/ui/HolidayBanner';
+import { mergeSecKey } from '../../utils/sectionMerge';
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 const SECTIONS = {
@@ -18,10 +19,12 @@ const SECTIONS = {
   general:    'عام',
   private:    'خاص',
   semi:       'شبه خاص',
+  privsemi:   'خاص وشبه خاص',
   phone_call: 'فون كول',
   phone_call_general: 'فون كول عام',
   phone_call_semi:    'فون كول شبه خاص',
   phone_call_private: 'فون كول خاص',
+  phone_call_privsemi: 'فون كول خاص وشبه خاص',
 };
 const DOW_AR = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 const DOW_SHORT = ['أحد', 'إثن', 'ثلاث', 'أربع', 'خميس', 'جمعة', 'سبت'];
@@ -67,6 +70,8 @@ const SECTION_TONE = {
   general:    'bg-sky-50 text-sky-700 border-sky-200',
   private:    'bg-violet-50 text-violet-700 border-violet-200',
   semi:       'bg-amber-50 text-amber-700 border-amber-200',
+  privsemi:   'bg-violet-50 text-violet-700 border-violet-200',
+  phone_call_privsemi: 'bg-rose-50 text-rose-700 border-rose-200',
   phone_call: 'bg-pink-50 text-pink-700 border-pink-200',
   phone_call_general: 'bg-pink-50 text-pink-700 border-pink-200',
   phone_call_semi:    'bg-rose-50 text-rose-700 border-rose-200',
@@ -324,7 +329,9 @@ export default function TrainerUtilization() {
   });
 
   const dates    = useMemo(() => data?.dates    || [], [data]);
-  const trainers = useMemo(() => data?.trainers || [], [data]);
+  // شبه خاص + خاص shown as «خاص وشبه خاص» (display only; section filter above still
+  // drills into each separately since the backend understands the raw values).
+  const trainers = useMemo(() => (data?.trainers || []).map(t => ({ ...t, section: mergeSecKey(t.section) })), [data]);
 
   const shiftWeek = (delta) => {
     const start = new Date(weekStart + 'T12:00:00');

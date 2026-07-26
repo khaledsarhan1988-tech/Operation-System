@@ -7,9 +7,10 @@ import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import EmptyState from '../../components/ui/EmptyState';
 import HolidayBanner from '../../components/ui/HolidayBanner';
+import { mergeSecKey } from '../../utils/sectionMerge';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
-const SECTIONS = { all: 'الكل', general: 'عام', private: 'خاص', semi: 'شبه خاص', phone_call: 'فون كول', phone_call_general: 'فون كول عام', phone_call_semi: 'فون كول شبه خاص', phone_call_private: 'فون كول خاص' };
+const SECTIONS = { all: 'الكل', general: 'عام', private: 'خاص', semi: 'شبه خاص', privsemi: 'خاص وشبه خاص', phone_call: 'فون كول', phone_call_general: 'فون كول عام', phone_call_semi: 'فون كول شبه خاص', phone_call_private: 'فون كول خاص', phone_call_privsemi: 'فون كول خاص وشبه خاص' };
 const DOW_AR = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 // Day-pair filter — each group meets twice a week on a fixed pair. getDay(): 0=Sun..6=Sat.
 const DAY_PAIRS = {
@@ -269,7 +270,7 @@ function TrainerCard({ trainer: t, dates, recurring }) {
         <div className="flex-1 min-w-[150px]">
           <div className="font-bold text-gray-900 text-sm flex items-center gap-2">
             {t.name}
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100 font-semibold">{SECTIONS[t.section] || t.section}</span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100 font-semibold">{SECTIONS[mergeSecKey(t.section)] || t.section}</span>
             {t.out_of_shift_hours > 0 && (
               <span title="محاضرات خارج الشيفت — منفصلة، غير محتسبة في النسبة"
                 className="text-[10px] px-2 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-200 font-semibold">

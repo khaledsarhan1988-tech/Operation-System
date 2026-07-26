@@ -5,13 +5,32 @@ import { UserPlus, PhoneCall, Users, Search, ChevronDown, ChevronLeft, Graduatio
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import EmptyState from '../../components/ui/EmptyState';
+import { collapseSections, collapseRowsByKey, mergeSecKey, secLabel } from '../../utils/sectionMerge';
 
 const SECTIONS = { all: 'كل الأقسام', general: 'عام', semi: 'شبه خاص', private: 'خاص' };
 const SEC_TONE = {
-  general: 'border-blue-200 bg-blue-50 text-blue-800',
-  semi:    'border-amber-200 bg-amber-50 text-amber-800',
-  private: 'border-violet-200 bg-violet-50 text-violet-800',
+  general:  'border-blue-200 bg-blue-50 text-blue-800',
+  semi:     'border-amber-200 bg-amber-50 text-amber-800',
+  private:  'border-violet-200 bg-violet-50 text-violet-800',
+  privsemi: 'border-violet-200 bg-violet-50 text-violet-800',
+  phone_call_privsemi: 'border-rose-200 bg-rose-50 text-rose-800',
 };
+// Merge شبه خاص + خاص into «خاص وشبه خاص» for the «كل الأقسام» view only (a
+// specific-section drill-down keeps that section). Sums section numbers +
+// capacity-by-pair objects, collapses «استقلال» per-day-pair rows by main_pair,
+// and recomputes the derived ÷28 / % fields. Display only — backend untouched.
+function mergeViewSections(sections, section) {
+  if (section !== 'all') return sections || [];
+  return collapseSections(sections || [], (s) => {
+    if (Array.isArray(s.rows)) {
+      s.rows = collapseRowsByKey(s.rows, 'main_pair', (r) => {
+        if (typeof r.students === 'number') r.trainers_needed = +(r.students / 28).toFixed(1);
+      });
+    }
+    if (typeof s.total_students === 'number') s.total_trainers_needed = +(s.total_students / 28).toFixed(1);
+    if (typeof s.available_hours === 'number') s.avg_utilization = s.available_hours > 0 ? Math.round(((s.booked_hours || 0) / s.available_hours) * 100) : 0;
+  });
+}
 // day_pair values name the PHONE-CALL (side) day-pair; side_key matches group_list.side_key
 const DAY_PAIRS = {
   all:     { label: 'كل الأيام',      sideKey: null },
@@ -91,7 +110,7 @@ export default function TrainerRecruitment() {
   });
 
   const totals = data?.totals || {};
-  const sections = data?.sections || [];
+  const sections = mergeViewSections(data?.sections, section);
   const trainers = useMemo(() => {
     let t = data?.trainers || [];
     if (q.trim()) { const s = q.trim().toLowerCase(); t = t.filter(x => (x.name || '').toLowerCase().includes(s)); }
@@ -222,7 +241,7 @@ export default function TrainerRecruitment() {
                     <tr key={t.name} className="hover:bg-gray-50/60 cursor-pointer" onClick={() => setOpen(o => ({ ...o, [t.name]: !o[t.name] }))}>
                       <td className="px-3 py-2 text-gray-400">{isOpen ? <ChevronDown size={15} /> : <ChevronLeft size={15} />}</td>
                       <td className="px-3 py-2 font-mono text-[12px] text-gray-800 whitespace-nowrap" dir="ltr">{t.name}</td>
-                      <td className="px-3 py-2"><span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold ${SEC_TONE[t.section]}`}>{t.section_label}</span></td>
+                      <td className="px-3 py-2"><span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold ${SEC_TONE[mergeSecKey(t.section)] || SEC_TONE[t.section]}`}>{secLabel(t.section, SECTIONS)}</span></td>
                       <td className="px-3 py-2 text-center font-bold">{t.groups}</td>
                       <td className="px-3 py-2 text-center font-bold">{num(t.students)}</td>
                       <td className="px-3 py-2 text-xs text-gray-600 whitespace-nowrap">
@@ -290,7 +309,7 @@ function SupplyView() {
   });
 
   const totals = data?.totals || {};
-  const sections = data?.sections || [];
+  const sections = mergeViewSections(data?.sections, section);
   const trainers = useMemo(() => {
     let t = data?.trainers || [];
     if (q.trim()) { const s = q.trim().toLowerCase(); t = t.filter(x => (x.name || '').toLowerCase().includes(s)); }
@@ -421,7 +440,7 @@ function BalanceView() {
   });
 
   const totals = data?.totals || {};
-  const sections = data?.sections || [];
+  const sections = mergeViewSections(data?.sections, section);
   const missing = data?.groups_missing || [];
   const missCounts = data?.missing_counts || {};
   const missingShown = useMemo(() => missFilter === 'zero' ? missing.filter(g => g.zero) : missFilter === 'partial' ? missing.filter(g => !g.zero) : missing, [missing, missFilter]);
@@ -664,7 +683,7 @@ function CrossSectionView() {
                     <tr key={t.name} className="hover:bg-gray-50/60 cursor-pointer" onClick={() => setOpen(o => ({ ...o, [t.name]: !o[t.name] }))}>
                       <td className="px-3 py-2 text-gray-400">{isOpen ? <ChevronDown size={15} /> : <ChevronLeft size={15} />}</td>
                       <td className="px-3 py-2 font-mono text-[12px] text-gray-800 whitespace-nowrap" dir="ltr">{t.name}</td>
-                      <td className="px-3 py-2"><span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold ${SEC_TONE[t.section]}`}>{t.section_label}</span></td>
+                      <td className="px-3 py-2"><span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold ${SEC_TONE[mergeSecKey(t.section)] || SEC_TONE[t.section]}`}>{secLabel(t.section, SECTIONS)}</span></td>
                       <td className="px-3 py-2 text-center font-bold">{t.groups}</td>
                       <td className="px-3 py-2 text-center font-black text-rose-700">{num(t.sessions)}</td>
                     </tr>
@@ -677,7 +696,7 @@ function CrossSectionView() {
                               <div key={gi} className="bg-white rounded-lg border border-gray-100 p-2.5">
                                 <div className="flex flex-wrap items-center gap-2 mb-1.5 text-[12px]">
                                   <span className="font-mono text-gray-700 truncate max-w-[320px]" dir="ltr" title={g.group_name}>{g.group_name}</span>
-                                  <span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold ${SEC_TONE[g.section]}`}>{g.section_label}</span>
+                                  <span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold ${SEC_TONE[mergeSecKey(g.section)] || SEC_TONE[g.section]}`}>{secLabel(g.section, SECTIONS)}</span>
                                   <span className="text-[11px] text-blue-700 font-semibold">فون كول: {g.side_pair}</span>
                                   <span className="mr-auto text-[11px] text-rose-700 font-black">{num(g.sessions)} جلسة</span>
                                 </div>
@@ -686,8 +705,8 @@ function CrossSectionView() {
                                     const ck = `${t.name}|${gi}|${pi}`;
                                     return (
                                       <button key={pi} onClick={() => setOpenChip(o => ({ ...o, [ck]: !o[ck] }))}
-                                        className={`text-[11px] px-2 py-1 rounded-lg border font-semibold cursor-pointer hover:brightness-95 ${SEC_TONE[p.section]} ${openChip[ck] ? 'ring-2 ring-rose-300' : ''}`} dir="ltr" title="اضغط لعرض المواعيد">
-                                        {p.name} <span className="opacity-70">({p.section_label})</span> · <b>{num(p.sessions)}</b>
+                                        className={`text-[11px] px-2 py-1 rounded-lg border font-semibold cursor-pointer hover:brightness-95 ${SEC_TONE[mergeSecKey(p.section)] || SEC_TONE[p.section]} ${openChip[ck] ? 'ring-2 ring-rose-300' : ''}`} dir="ltr" title="اضغط لعرض المواعيد">
+                                        {p.name} <span className="opacity-70">({secLabel(p.section, SECTIONS)})</span> · <b>{num(p.sessions)}</b>
                                       </button>
                                     );
                                   })}
@@ -748,7 +767,7 @@ function IndependenceView() {
   });
 
   const totals = data?.totals || {};
-  const sections = data?.sections || [];
+  const sections = mergeViewSections(data?.sections, section);
 
   return (
     <div className="space-y-5">
