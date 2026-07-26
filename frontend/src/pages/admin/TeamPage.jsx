@@ -179,6 +179,29 @@ const EMPTY_SHIFT = {
   salary_category: '',
 };
 
+// Today (Cairo, UTC+2) as YYYY-MM-DD, and a ±days helper — used by the shift-change flow.
+const shiftToday = () => new Date(Date.now() + 2 * 3600 * 1000).toISOString().slice(0, 10);
+const addDaysISO = (iso, n) => { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+
+// «غيّر الشيفت اعتبارًا من تاريخ» bar — closes the current shift the day before the
+// chosen date and opens a pre-filled clone, so the user only tweaks what changed
+// (prevents the overlapping-duplicate mess). Local date state so array re-indexing
+// on insert doesn't scramble it.
+function ShiftChangeBar({ onApply }) {
+  const [d, setD] = useState(shiftToday());
+  return (
+    <div className="flex flex-wrap items-center gap-2 -mt-3 mb-4 px-3 py-2 bg-amber-50 border border-t-0 border-amber-200 rounded-b-xl text-xs">
+      <span className="font-bold text-amber-800">غيّر الشيفت اعتبارًا من</span>
+      <input type="date" value={d} onChange={e => setD(e.target.value)}
+        className="border border-amber-200 rounded-lg px-2 py-1 bg-white" />
+      <button type="button" onClick={() => onApply(d)}
+        className="mr-auto px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-bold">
+        غيّر من هنا
+      </button>
+    </div>
+  );
+}
+
 // ─── SHIFT SECTION (reusable for shift 1 and shift 2) ─────────────────────────
 function ShiftSection({
   title, shiftValue, startValue, endValue, restsValue, voiceNotesValue, employmentValue, daysValue,
@@ -1059,6 +1082,23 @@ export function MemberModal({ initial, onSave, onClose, loading }) {
   const removeShift = (idx) => {
     setShifts(s => s.filter((_, i) => i !== idx));
   };
+  const [showHistory, setShowHistory] = useState(false);
+  // Close the current shift the day before `date` and open a clone starting `date`.
+  // (History is kept intact for salary/utilization accuracy — this only automates
+  // the close-old + open-new split so no overlapping duplicates get created.)
+  const applyShiftChange = (idx, date) => {
+    if (!date) return;
+    setShifts(list => {
+      const cur = list[idx]; if (!cur) return list;
+      if (cur.shift_start_date && date <= cur.shift_start_date) {
+        alert('تاريخ التغيير لازم يكون بعد تاريخ بداية الشيفت'); return list;
+      }
+      const closed = { ...cur, shift_end_date: addDaysISO(date, -1) };
+      const clone  = { ...cur, shift_start_date: date, shift_end_date: '' };
+      const next = [...list]; next.splice(idx, 1, closed, clone); return next;
+    });
+    setShowHistory(false);
+  };
 
   // Reset section when dept changes if invalid; clear shifts if leaving education.
   // A legacy 'phone_call' section is preserved (not auto-reset) until the owner
@@ -1164,42 +1204,78 @@ export function MemberModal({ initial, onSave, onClose, loading }) {
             )}
           </div>
 
-          {/* Shifts — unlimited dynamic list, education only */}
-          {form.department === 'education' && shifts.map((sh, idx) => {
+          {/* Shifts — split into active/upcoming (open) vs ended history (collapsed).
+              Same flat `shifts` array + absolute indices, so update/remove/change
+              handlers are unchanged; only the rendering is partitioned. */}
+          {form.department === 'education' && (() => {
             const ord = ['الأول','الثاني','الثالث','الرابع','الخامس','السادس','السابع','الثامن','التاسع','العاشر'];
-            const title = `الشيفت ${ord[idx] || `رقم ${idx + 1}`}`;
+            const todayStr = shiftToday();
+            const ended    = sh => sh.shift_end_date && sh.shift_end_date < todayStr;
+            const upcoming = sh => sh.shift_start_date && sh.shift_start_date > todayStr;
+            const idxs = shifts.map((_, i) => i);
+            const activeIdx = idxs.filter(i => !ended(shifts[i]));
+            const endedIdx  = idxs.filter(i =>  ended(shifts[i]));
+            const renderShift = (idx, title) => {
+              const sh = shifts[idx];
+              return (
+                <ShiftSection
+                  key={idx}
+                  title={title}
+                  shiftValue={sh.shift}
+                  startValue={sh.shift_start}
+                  endValue={sh.shift_end}
+                  restsValue={sh.shift_rests}
+                  voiceNotesValue={sh.voice_notes}
+                  employmentValue={sh.employment_type}
+                  daysValue={sh.work_days}
+                  startDateValue={sh.shift_start_date}
+                  endDateValue={sh.shift_end_date}
+                  sectionValue={sh.section}
+                  salaryCategoryValue={sh.salary_category}
+                  salaryCategoryOptions={salaryCategories}
+                  onSalaryCategoryChange={(v) => updateShift(idx, 'salary_category', v)}
+                  onShiftChange={(v) => updateShift(idx, 'shift', v)}
+                  onStartChange={(v) => updateShift(idx, 'shift_start', v)}
+                  onEndChange={(v) => updateShift(idx, 'shift_end', v)}
+                  onRestsChange={(v) => updateShift(idx, 'shift_rests', v)}
+                  onVoiceNotesChange={(v) => updateShift(idx, 'voice_notes', v)}
+                  onEmploymentChange={(v) => updateShift(idx, 'employment_type', v)}
+                  onDaysChange={(v) => updateShift(idx, 'work_days', v)}
+                  onStartDateChange={(v) => updateShift(idx, 'shift_start_date', v)}
+                  onEndDateChange={(v) => updateShift(idx, 'shift_end_date', v)}
+                  onSectionChange={(v) => updateShift(idx, 'section', v)}
+                  onRemove={() => removeShift(idx)}
+                  inputCls={inputCls} labelCls={labelCls}
+                />
+              );
+            };
             return (
-              <ShiftSection
-                key={idx}
-                title={title}
-                shiftValue={sh.shift}
-                startValue={sh.shift_start}
-                endValue={sh.shift_end}
-                restsValue={sh.shift_rests}
-                voiceNotesValue={sh.voice_notes}
-                employmentValue={sh.employment_type}
-                daysValue={sh.work_days}
-                startDateValue={sh.shift_start_date}
-                endDateValue={sh.shift_end_date}
-                sectionValue={sh.section}
-                salaryCategoryValue={sh.salary_category}
-                salaryCategoryOptions={salaryCategories}
-                onSalaryCategoryChange={(v) => updateShift(idx, 'salary_category', v)}
-                onShiftChange={(v) => updateShift(idx, 'shift', v)}
-                onStartChange={(v) => updateShift(idx, 'shift_start', v)}
-                onEndChange={(v) => updateShift(idx, 'shift_end', v)}
-                onRestsChange={(v) => updateShift(idx, 'shift_rests', v)}
-                onVoiceNotesChange={(v) => updateShift(idx, 'voice_notes', v)}
-                onEmploymentChange={(v) => updateShift(idx, 'employment_type', v)}
-                onDaysChange={(v) => updateShift(idx, 'work_days', v)}
-                onStartDateChange={(v) => updateShift(idx, 'shift_start_date', v)}
-                onEndDateChange={(v) => updateShift(idx, 'shift_end_date', v)}
-                onSectionChange={(v) => updateShift(idx, 'section', v)}
-                onRemove={() => removeShift(idx)}
-                inputCls={inputCls} labelCls={labelCls}
-              />
+              <>
+                {activeIdx.map((idx, pos) => (
+                  <div key={idx}>
+                    {renderShift(idx, `الشيفت ${ord[pos] || `#${pos + 1}`}${upcoming(shifts[idx]) ? ' — قادم' : ' — ساري'}`)}
+                    {!upcoming(shifts[idx]) && <ShiftChangeBar onApply={(d) => applyShiftChange(idx, d)} />}
+                  </div>
+                ))}
+                {endedIdx.length > 0 && (
+                  <div className="border border-gray-200 rounded-xl bg-gray-50/60">
+                    <button type="button" onClick={() => setShowHistory(h => !h)}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-gray-600">
+                      <History size={14} className="text-gray-400" />
+                      سجل الشيفتات المنتهية ({endedIdx.length})
+                      <ChevronDown size={16} className={`mr-auto transition-transform ${showHistory ? 'rotate-180' : ''}`} />
+                    </button>
+                    {showHistory && (
+                      <div className="p-2 space-y-2">
+                        <p className="text-[10px] text-gray-400 px-1">شيفتات منتهية — بتفضل محفوظة للمرتب/الإشغال، وتقدر تعدّلها لو محتاج.</p>
+                        {endedIdx.map(idx => renderShift(idx, `شيفت منتهٍ — انتهى ${shifts[idx].shift_end_date}`))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
             );
-          })}
+          })()}
 
           {/* Add another shift — visible whenever the dept is education */}
           {form.department === 'education' && (
