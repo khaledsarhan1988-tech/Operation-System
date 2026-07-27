@@ -8,6 +8,7 @@ import {
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
 import { useAuth } from '../../auth/AuthContext';
+import PerformanceMatrix from '../../components/todos/PerformanceMatrix';
 
 // Same content-ownership rule as the backend: only the creator (or super-admin)
 // can edit the title/desc/date/etc. Everyone else can only flip the status.
@@ -44,6 +45,11 @@ function todayStr() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
+function daysAgoStr(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 // Format minutes-late → Arabic short form ("45 د" / "2 س 15 د" / "1 يوم 3 س")
 function formatMinutesLate(mins) {
@@ -70,11 +76,18 @@ export default function LeaderTodos() {
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(null);
   const [openId, setOpenId] = useState(null);
+  const [view, setView] = useState('matrix'); // 'matrix' (like the admin board) | 'kanban'
   const qc = useQueryClient();
 
+  // Kanban = daily-workflow instances. Fetch ONLY the recent window (last 7
+  // days) so the board reflects the current week — not the thousands of
+  // ancient auto-generated instances that accumulate forever (which used to
+  // fill the 1000-row cap with old "missed" cards and hide everything current).
   const { data: todosData, isLoading } = useQuery({
-    queryKey: ['todos', 'all'],
-    queryFn: () => api.get('/todos', { params: { limit: 1000 } }).then(r => r.data),
+    queryKey: ['todos', 'kanban'],
+    queryFn: () => api.get('/todos', {
+      params: { task_kind: 'workflow', due_from: daysAgoStr(7), due_to: todayStr(), limit: 5000 },
+    }).then(r => r.data),
     staleTime: 20 * 1000,
   });
 
@@ -192,10 +205,27 @@ export default function LeaderTodos() {
     <div className="space-y-4">
       <PageHero
         title="مهام الفريق"
-        subtitle="لوحة Kanban — اسحب البطاقات بين الأعمدة لتغيير الحالة"
+        subtitle="متابعة إنجاز فريقك للمهام اليومية + المهام المُكلّف بها من الإدارة"
         icon={KanbanIcon}
         gradient="from-indigo-500 to-purple-600"
       />
+
+      {/* View switcher — same daily-templates matrix the admin sees, scoped to
+          this leader's team; plus the classic Kanban board. */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-1.5 flex gap-1.5">
+        <button
+          onClick={() => setView('matrix')}
+          className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-bold transition flex items-center justify-center gap-2
+            ${view === 'matrix' ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-md' : 'text-gray-600 hover:bg-gray-50'}`}>
+          📋 متابعة القوالب اليومية
+        </button>
+        <button
+          onClick={() => setView('kanban')}
+          className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-bold transition flex items-center justify-center gap-2
+            ${view === 'kanban' ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-md' : 'text-gray-600 hover:bg-gray-50'}`}>
+          🗂️ لوحة كانبان
+        </button>
+      </div>
 
       {/* Top bar */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-3 flex flex-wrap items-center gap-2">
@@ -238,6 +268,24 @@ export default function LeaderTodos() {
         </button>
       </div>
 
+      {/* Extra (non-daily) tasks — the leader's own + manager-assigned one-off
+          work. Shown in BOTH views so it's never hidden behind a tab. */}
+      <ExtraTasksSection
+        todos={filteredExtras}
+        onCardClick={(id) => setOpenId(id)}
+        onEdit={(t) => setEditing(t)}
+      />
+
+      {/* ── MATRIX VIEW (default) — same board the admin has ── */}
+      {view === 'matrix' && (
+        <PerformanceMatrix
+          onCellClick={setOpenId}
+          emptyHint="القوالب اليومية بتظهر هنا لما الإدارة تعيّن جدول أعمال لفريقك"
+        />
+      )}
+
+      {/* ── KANBAN VIEW ── */}
+      {view === 'kanban' && (<>
       {/* Team Summary — per-person card with completion-rate progress bar */}
       {summary?.rows && summary.rows.length > 0 && (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4">
@@ -293,13 +341,6 @@ export default function LeaderTodos() {
         </div>
       )}
 
-      {/* Extra (non-daily) tasks — dedicated section above Kanban */}
-      <ExtraTasksSection
-        todos={filteredExtras}
-        onCardClick={(id) => setOpenId(id)}
-        onEdit={(t) => setEditing(t)}
-      />
-
       {/* Kanban Board — daily workflow tasks only */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-3">
         <div className="flex items-center gap-2 mb-2 px-1">
@@ -341,6 +382,7 @@ export default function LeaderTodos() {
         ))}
       </div>
       </div>
+      </>)}
 
       {(creating || editing) && (
         <TodoEditModal todo={editing} usersData={usersData}
