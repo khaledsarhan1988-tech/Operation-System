@@ -1152,6 +1152,23 @@ router.patch('/:id', express.json(), (req, res) => {
         dailyTodos.generateWindowForTemplate(todo);
       } catch (e) { console.error('[todos] window regen (edit):', e.message); }
     }
+
+    // Notify the CREATOR when someone else marks their assigned task complete
+    // (e.g. a manager assigns a one-off task to a team leader — the leader
+    // finishes it and the manager needs to know). Surfaces in the creator's
+    // notification bell. Fires only on the new→completed transition.
+    if (b.status === 'completed' && existing.status !== 'completed'
+        && existing.created_by && existing.created_by !== scope.id) {
+      try {
+        db.prepare(`INSERT INTO notifications (user_id, type, title, body, meta)
+                    VALUES (?, 'custom', ?, ?, ?)`).run(
+          existing.created_by,
+          `✅ ${scope.fullName || 'الموظف'} أنجز المهمة: ${existing.title}`,
+          existing.description ? String(existing.description).slice(0, 200) : null,
+          JSON.stringify({ todo_id: existing.id, by: scope.id, by_name: scope.fullName })
+        );
+      } catch (e) { console.error('[todos] notify creator:', e.message); }
+    }
     return res.json({ todo });
   } catch (err) {
     console.error('[todos] update error:', err);

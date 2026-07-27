@@ -118,6 +118,10 @@ export default function LeaderTodos() {
     mutationFn: ({ id, status }) => api.patch(`/todos/${id}`, { status }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['todos'] }),
   });
+  // Quick complete/uncomplete toggle for the one-off «extra» cards. Completing
+  // an assigned task notifies whoever created it (backend).
+  const toggleExtra = (todo) =>
+    moveStatus.mutate({ id: todo.id, status: todo.status === 'completed' ? 'in_progress' : 'completed' });
 
   const filtered = useMemo(() => {
     const list = todosData?.todos || [];
@@ -273,6 +277,7 @@ export default function LeaderTodos() {
       <ExtraTasksSection
         todos={filteredExtras}
         onCardClick={(id) => setOpenId(id)}
+        onToggleStatus={toggleExtra}
         onEdit={(t) => setEditing(t)}
       />
 
@@ -405,7 +410,7 @@ export default function LeaderTodos() {
 // Manual one-off tasks (NOT daily workflow). Lives above the Kanban so leaders
 // see new admin/manager-assigned work at a glance instead of hunting through
 // hundreds of recurring daily cards.
-function ExtraTasksSection({ todos, onCardClick, onEdit }) {
+function ExtraTasksSection({ todos, onCardClick, onEdit, onToggleStatus }) {
   // Extras = one-off manual tasks. NOT recurring templates, NOT daily instances.
   const extras = useMemo(
     () => (todos || []).filter(t =>
@@ -454,6 +459,7 @@ function ExtraTasksSection({ todos, onCardClick, onEdit }) {
         {extras.map(t => (
           <ExtraCard key={t.id} todo={t}
             onClick={() => onCardClick(t.id)}
+            onToggleStatus={onToggleStatus}
             onEdit={() => onEdit(t)} />
         ))}
       </div>
@@ -461,7 +467,7 @@ function ExtraTasksSection({ todos, onCardClick, onEdit }) {
   );
 }
 
-function ExtraCard({ todo, onClick, onEdit }) {
+function ExtraCard({ todo, onClick, onEdit, onToggleStatus }) {
   const p = PRIORITY_CFG[todo.priority] || PRIORITY_CFG.normal;
   // Time-aware lateness from the backend (`late_by_minutes`) — fall back to
   // a date-only check on older API responses.
@@ -494,9 +500,18 @@ function ExtraCard({ todo, onClick, onEdit }) {
     >
       <div className="flex items-start gap-2">
         <span className={`w-1 self-stretch ${p.dot} rounded-full flex-shrink-0`}></span>
+        {/* Quick complete toggle — mark done without opening. Completing an
+            assigned task notifies whoever created it. */}
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggleStatus?.(todo); }}
+          title={done ? 'إلغاء الإكمال' : 'علّم كمكتملة'}
+          className={`mt-0.5 w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition
+            ${done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300 text-transparent hover:border-emerald-400 hover:text-emerald-400'}`}>
+          <CheckCircle2 size={12} />
+        </button>
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline justify-between gap-1">
-            <h4 className="font-bold text-xs text-gray-800 line-clamp-2">{todo.title}</h4>
+            <h4 className={`font-bold text-xs line-clamp-2 ${done ? 'text-gray-400 line-through' : 'text-gray-800'}`}>{todo.title}</h4>
             <button onClick={(e) => { e.stopPropagation(); onEdit(); }}
               className="opacity-0 group-hover:opacity-100 transition p-0.5 hover:bg-gray-100 rounded">
               <Edit3 size={11} className="text-gray-400" />
@@ -828,6 +843,12 @@ function TodoDetailModal({ id, onClose, onEdit, onDeleted }) {
     mutationFn: () => api.post(`/todos/${id}/comments`, { comment: newComment }),
     onSuccess: () => { setNewComment(''); qc.invalidateQueries({ queryKey: ['todos', id] }); },
   });
+  // Any assignee can change status (the backend restricts non-creators to the
+  // status field only). Completing a task notifies its creator.
+  const statusMut = useMutation({
+    mutationFn: (status) => api.patch(`/todos/${id}`, { status }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['todos'] }); qc.invalidateQueries({ queryKey: ['todos', id] }); },
+  });
   const deleteMut = useMutation({
     mutationFn: () => api.delete(`/todos/${id}`),
     onSuccess: () => onDeleted(),
@@ -865,7 +886,32 @@ function TodoDetailModal({ id, onClose, onEdit, onDeleted }) {
             <DetailRow label="المُكلّف بها" value={t.assigned_to_name || '—'} />
             <DetailRow label="أنشأها" value={t.created_by_name || '—'} />
             <DetailRow label="تاريخ الاستحقاق" value={t.due_date || '—'} />
-            <DetailRow label="الحالة" value={t.status} />
+            <DetailRow label="اتعملت في" value={t.completed_at ? t.completed_at.replace('T', ' ').slice(0, 16) : '—'} />
+          </div>
+
+          {/* Status control — mark done / change progress. Completing notifies
+              whoever assigned the task. */}
+          <div className="border-t pt-3">
+            <p className="text-xs font-bold text-gray-500 mb-2">الحالة</p>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { k: 'new',         label: 'جديدة',       cls: 'bg-blue-100 text-blue-700 border-blue-300' },
+                { k: 'in_progress', label: 'قيد التنفيذ', cls: 'bg-amber-100 text-amber-700 border-amber-300' },
+                { k: 'on_hold',     label: 'معلّقة',      cls: 'bg-gray-200 text-gray-700 border-gray-300' },
+                { k: 'completed',   label: '✅ مكتملة',   cls: 'bg-emerald-100 text-emerald-700 border-emerald-400' },
+              ].map(s => (
+                <button key={s.k}
+                  onClick={() => t.status !== s.k && statusMut.mutate(s.k)}
+                  disabled={statusMut.isPending}
+                  className={`px-3 py-1.5 rounded-lg border text-xs font-bold transition disabled:opacity-50
+                    ${t.status === s.k ? `${s.cls} ring-2 ring-offset-1 ring-current` : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'}`}>
+                  {s.label}
+                </button>
+              ))}
+            </div>
+            {t.created_by_name && t.status !== 'completed' && (
+              <p className="text-[10px] text-gray-400 mt-1.5">🔔 لما تعلّمها «مكتملة» هيوصل إشعار لـ {t.created_by_name} (اللي كلّفك بيها).</p>
+            )}
           </div>
           <div className="border-t pt-3">
             <p className="text-xs font-bold text-gray-500 mb-2 flex items-center gap-1">
