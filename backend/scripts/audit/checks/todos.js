@@ -181,6 +181,30 @@ module.exports = async function todos({ call, db }) {
     }
   }
 
+  // ── 4c. One-off (manual) tasks must NEVER be truncated by daily-instance
+  //        volume ────────────────────────────────────────────────────────────
+  // The combined /todos list is capped (limit) and daily instances — thousands,
+  // sorted oldest-first — pushed recent one-off tasks (e.g. a manager assigning
+  // work to a leader) off the end, so they vanished from the board. The
+  // dedicated task_kind=extra list must return EVERY one-off task in scope.
+  const extraResp = await call('/todos?task_kind=extra&limit=5000');
+  if (extraResp.status !== 200) {
+    fails.hygiene.push(`/todos?task_kind=extra: HTTP ${extraResp.status}`);
+  } else {
+    const returned = new Set((extraResp.json.todos || []).map(t => t.id));
+    // Ground truth: every non-cancelled one-off task in the DB (super-admin
+    // scope sees all, which is what the audit actor is).
+    const dbExtras = db.prepare(`
+      SELECT id FROM todos
+       WHERE is_recurring = 0 AND parent_todo_id IS NULL
+         AND status NOT IN ('cancelled')
+    `).all().map(r => r.id);
+    const missing = dbExtras.filter(id => !returned.has(id));
+    if (missing.length > 0) {
+      fails.hygiene.push(`task_kind=extra dropped ${missing.length}/${dbExtras.length} one-off task(s) (e.g. #${missing.slice(0, 5).join(', #')}) — truncation regression`);
+    }
+  }
+
   // ── 5. Date-range filters must filter, and survive garbage ────────────────
   const rangeProbe = await call('/todos?limit=200&due_from=1990-01-01&due_to=1990-01-02');
   if (rangeProbe.status !== 200) fails.range.push(`/todos range probe: HTTP ${rangeProbe.status}`);

@@ -78,6 +78,17 @@ export default function LeaderTodos() {
     staleTime: 20 * 1000,
   });
 
+  // One-off (manual) tasks are fetched SEPARATELY. The combined list is capped
+  // at 1000 rows and daily instances (thousands, sorted oldest-first) crowd out
+  // recent one-off tasks — so a manager's freshly-assigned task to a leader was
+  // silently truncated and never appeared. task_kind=extra returns only manual
+  // tasks (always few), so they can't be pushed off the end.
+  const { data: extraData } = useQuery({
+    queryKey: ['todos', 'extra'],
+    queryFn: () => api.get('/todos', { params: { task_kind: 'extra', limit: 1000 } }).then(r => r.data),
+    staleTime: 20 * 1000,
+  });
+
   const { data: summary } = useQuery({
     queryKey: ['todos', 'team-summary'],
     queryFn: () => api.get('/todos/team-summary').then(r => r.data),
@@ -109,6 +120,22 @@ export default function LeaderTodos() {
       return true;
     });
   }, [todosData, filterPriority, filterAssignee, search]);
+
+  // Same client-side filters, applied to the dedicated one-off list.
+  const filteredExtras = useMemo(() => {
+    const list = extraData?.todos || [];
+    return list.filter(t => {
+      if (filterPriority && t.priority !== filterPriority) return false;
+      if (filterAssignee && String(t.assigned_to) !== String(filterAssignee)) return false;
+      if (search) {
+        const q = search.toLowerCase();
+        return (t.title || '').toLowerCase().includes(q)
+          || (t.description || '').toLowerCase().includes(q)
+          || (t.assigned_to_name || '').toLowerCase().includes(q);
+      }
+      return true;
+    });
+  }, [extraData, filterPriority, filterAssignee, search]);
 
   // Kanban shows DAILY WORKFLOW tasks only (instances of recurring templates).
   // Manual/one-off "extra" tasks get their own dedicated section above the
@@ -268,7 +295,7 @@ export default function LeaderTodos() {
 
       {/* Extra (non-daily) tasks — dedicated section above Kanban */}
       <ExtraTasksSection
-        todos={filtered}
+        todos={filteredExtras}
         onCardClick={(id) => setOpenId(id)}
         onEdit={(t) => setEditing(t)}
       />

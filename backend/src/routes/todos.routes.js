@@ -703,16 +703,40 @@ router.get('/templates-performance', (req, res) => {
         FROM todos c
         INNER JOIN users u ON u.id = c.assigned_to AND u.is_active = 1
        WHERE c.parent_todo_id = ? AND c.due_date BETWEEN ? AND ?
+         AND c.assigned_to IS NOT NULL
     `);
+    const getUserLite = db.prepare(`SELECT full_name AS name, department AS dept FROM users WHERE id = ? AND is_active = 1`);
 
-    // Every template is evaluated as a (template, assignee) pair so a shared
-    // fan-out template yields one cell per person.
-    const pairs = templates.map(t => ({
-      t, uid: t.assigned_to, name: t.assigned_to_name, dept: t.assigned_to_dept,
-    }));
-    for (const t of fanoutTemplates) {
+    // Build (template, assignee) pairs from WHO ACTUALLY HAS INSTANCES in the
+    // window — for EVERY template, not just fan-out ones. This is the only
+    // attribution that is always correct:
+    //   • user-scoped     → the one assignee (matches the old behaviour)
+    //   • fan-out (NULL)   → one cell per team member who received it
+    //   • reassigned       → an instance whose assigned_to differs from the
+    //     template's own column (e.g. a template reassigned after some instances
+    //     were generated) is still credited to the person who actually did it,
+    //     instead of vanishing.
+    // The template's own assignee is always included so a brand-new template
+    // with no instances yet still shows for its owner.
+    const pairs = [];
+    const seenPair = new Set();
+    const addPair = (t, uid, name, dept) => {
+      const key = `${t.id}|${uid == null ? 'null' : uid}`;
+      if (seenPair.has(key)) return;
+      seenPair.add(key);
+      pairs.push({ t, uid: uid ?? null, name, dept });
+    };
+    for (const t of [...templates, ...fanoutTemplates]) {
+      // nominal owner (if the template carries one and they're still employed)
+      if (t.assigned_to != null) {
+        const owner = t.assigned_to_name
+          ? { name: t.assigned_to_name, dept: t.assigned_to_dept }
+          : getUserLite.get(t.assigned_to);
+        if (owner) addPair(t, t.assigned_to, owner.name, owner.dept);
+      }
+      // everyone who actually received an instance in the window
       for (const a of getAudience.all(t.id, windowStart, windowEnd)) {
-        pairs.push({ t, uid: a.uid, name: a.name, dept: a.dept });
+        addPair(t, a.uid, a.name, a.dept);
       }
     }
     pairs.sort((a, b) =>

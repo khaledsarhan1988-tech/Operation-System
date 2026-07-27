@@ -71,6 +71,7 @@ async function bootServer(snapshotPath = SNAP) {
     requirePageOrManagement: passFactory,
     requireOwner: pass,
     requireOwnerOrManagement: passFactory,
+    requireSuperAdminOrPage: passFactory,
   } };
 
   require(path.join(BACKEND, 'src/config/database')).initDb();
