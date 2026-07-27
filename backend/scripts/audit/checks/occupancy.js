@@ -86,5 +86,26 @@ module.exports = async function occupancy({ call, db, window, holidaySet }) {
   add('endpoint == RAW true occupied', c2);
   add('heatmap == dashboard', c3);
 
+  // ── Duplicate shifts inflate AVAILABLE (capacity), not booked, so the
+  //    reconciliation checks above (which merge booked intervals) miss them —
+  //    but they silently HALVE a trainer's utilization%. Flag any trainer with
+  //    two identical shifts (same section + time + days + period). ──────────
+  // (Israa Hafiz got a duplicate general shift during a manual edit: available
+  //  9,660 vs true ~5,460, util 39% vs 69%.)
+  const c6 = [];
+  const dupKey = s => [s.section, s.startMin, s.endMin, [...s.days].sort().join(','),
+                       s.startDate || '', s.endDate || ''].join('|');
+  for (const [k, g] of byName) {
+    const seen = new Map();
+    for (const s of g.shifts) {
+      const key = dupKey(s);
+      seen.set(key, (seen.get(key) || 0) + 1);
+    }
+    for (const [key, n] of seen) {
+      if (n > 1) c6.push(`${g.name}: ${n}× identical shift [${key}] — doubles AVAILABLE, deflates utilization%`);
+    }
+  }
+  add('no duplicate identical shifts (capacity double-count)', c6);
+
   return { area: 'occupancy', meta: `rows=${rows.length} days=${dates.length}`, checks };
 };
