@@ -1,0 +1,240 @@
+import { useState, useRef } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Receipt, Search, Save, RefreshCw, CheckCircle, AlertTriangle, Trash2, Pencil, Plus, UserPlus } from 'lucide-react';
+import api from '../../api/axios';
+import SectionCard from '../../components/ui/SectionCard';
+
+// «حركة الإيصالات» — log a payment receipt; saving ALSO creates/updates a linked
+// operation in قائمة العمليات (and a Clients-Codes entry for a new client). Owner + Finance.
+const num = (v) => Number(String(v ?? '').replace(/,/g, '')) || 0;
+const r2 = (x) => Math.round((Number(x) || 0) * 100) / 100;
+const fmt = (x) => r2(x).toLocaleString('en-US', { maximumFractionDigits: 2 });
+function discountAmt(d, price) {
+  const s = String(d ?? '').trim();
+  if (!s) return 0;
+  if (s.endsWith('%')) { const p = parseFloat(s.slice(0, -1)); return isFinite(p) ? (Number(price) || 0) * p / 100 : 0; }
+  const a = parseFloat(s.replace(/,/g, '')); return isFinite(a) ? Math.abs(a) : 0;
+}
+const RECEIVER_CHANNELS = ['1012164464', '1281429649', '1012164327', '1015048618', '1015082452', '1094172559', '1016738176', '1012164368', '1040247384', '1040254359', 'Paytaps', 'CiB'];
+const STATUS_OPTS = ['', 'Approved', 'Pending', 'Rejected'];
+const DONE_OPTS = ['', 'Done'];
+const FW_OPTS = ['', 'Transfer'];
+const EMPTY = {
+  date: '', code: '', client_name: '', mobile_no: '', mobile_no2: '', client_wallet: '',
+  receiver_channel: '', amount: '', timing: '', courses: '', price: '', discount: '',
+  status: 'Approved', photo: '', tamkeen: '', operation_sys: '', system_status: '', financial_wallet: '',
+};
+const isoToMdy = (iso) => { const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? `${+m[2]}/${+m[3]}/${m[1]}` : iso; };
+const mdyToIso = (s) => { const m = String(s || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return m ? `${m[3]}-${String(+m[1]).padStart(2, '0')}-${String(+m[2]).padStart(2, '0')}` : ''; };
+
+function Field({ label, span, children }) {
+  return (
+    <div className={span === 2 ? 'sm:col-span-2' : ''}>
+      <label className="block text-[11px] font-bold text-gray-500 mb-1">{label}</label>
+      {children}
+    </div>
+  );
+}
+const inputCls = 'w-full px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-200 focus:border-teal-400';
+
+export default function ReceiptsSection() {
+  const qc = useQueryClient();
+  const [form, setForm] = useState({ ...EMPTY });
+  const [isNew, setIsNew] = useState(false);      // new client → will create a code
+  const [editId, setEditId] = useState(null);
+  const reqIdRef = useRef(globalThis.crypto?.randomUUID?.() || `rcpt-${Math.random().toString(36).slice(2)}`);
+  const [codeFocus, setCodeFocus] = useState(false);
+  const [phoneWarn, setPhoneWarn] = useState('');
+  const [q, setQ] = useState('');
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  // Membership catalog → course dropdown + auto price (Ahmed Hassan list price).
+  const { data: memData } = useQuery({ queryKey: ['membership-prices', 'all'], queryFn: () => api.get('/membership-prices/list').then(r => r.data), staleTime: 5 * 60 * 1000 });
+  const memberships = memData?.rows || [];
+  const courseOptions = memberships.map(m => m.code);
+  const priceOf = (code) => { const m = memberships.find(x => x.code === code); return m && m.price_ahmed_hassan != null ? m.price_ahmed_hassan : null; };
+
+  // Client autocomplete (existing clients — search by code/name/either phone).
+  const { data: codeSug } = useQuery({
+    queryKey: ['client-codes', 'rcpt-search', form.code],
+    queryFn: () => api.get('/client-codes/list', { params: { q: form.code, limit: 8 } }).then(r => r.data),
+    enabled: !isNew && String(form.code || '').trim().length >= 1,
+    keepPreviousData: true,
+  });
+  const codeMatches = codeSug?.rows || [];
+
+  // Next code for a NEW client.
+  const { data: nextData } = useQuery({ queryKey: ['client-codes', 'next'], queryFn: () => api.get('/client-codes/next-code').then(r => r.data), enabled: isNew, staleTime: 0 });
+
+  const startNewClient = () => {
+    setIsNew(true);
+    api.get('/client-codes/next-code').then(r => setForm(f => ({ ...f, code: r.data?.next ?? '', client_name: '', mobile_no: '', mobile_no2: '' }))).catch(() => {});
+  };
+
+  const price = num(form.price);
+  const balance = r2((price - discountAmt(form.discount, price)) - num(form.amount));
+
+  // Receipts list.
+  const { data: listData, isFetching } = useQuery({
+    queryKey: ['cs-receipts', 'list', q],
+    queryFn: () => api.get('/cs-receipts/list', { params: { q, limit: 50 } }).then(r => r.data),
+    keepPreviousData: true,
+  });
+  const rows = listData?.rows || [];
+
+  const resetForm = () => { setForm({ ...EMPTY }); setIsNew(false); setEditId(null); setPhoneWarn(''); reqIdRef.current = globalThis.crypto?.randomUUID?.() || `rcpt-${Math.random().toString(36).slice(2)}`; save.reset(); };
+  const editRow = (rw) => {
+    setEditId(rw.id); setIsNew(false); setPhoneWarn('');
+    reqIdRef.current = rw.client_request_id || (globalThis.crypto?.randomUUID?.() || `rcpt-${Math.random().toString(36).slice(2)}`);
+    setForm({
+      date: rw.date || '', code: rw.code || '', client_name: rw.client_name || '', mobile_no: rw.mobile_no || '',
+      mobile_no2: rw.mobile_no2 || '', client_wallet: rw.client_wallet || '', receiver_channel: rw.receiver_channel || '',
+      amount: rw.amount ?? '', timing: rw.timing || '', courses: rw.courses || '', price: rw.price ?? '', discount: rw.discount || '',
+      status: rw.status || '', photo: rw.photo || '', tamkeen: rw.tamkeen || '', operation_sys: rw.operation_sys || '',
+      system_status: rw.system_status || '', financial_wallet: rw.financial_wallet || '',
+    });
+    save.reset();
+  };
+
+  const save = useMutation({
+    mutationFn: (force) => api.post('/cs-receipts', { ...form, is_new_client: isNew, client_request_id: reqIdRef.current, force }).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cs-receipts'] });
+      qc.invalidateQueries({ queryKey: ['cs-sales'] });
+      setPhoneWarn('');
+      setTimeout(resetForm, 1200);
+    },
+    onError: (err) => { const d = err?.response?.data; if (d?.code === 'DUP_PHONE') setPhoneWarn(d.error || 'الموبايل مكرر'); },
+  });
+  const del = useMutation({ mutationFn: (id) => api.delete(`/cs-receipts/${id}`).then(r => r.data), onSuccess: () => qc.invalidateQueries({ queryKey: ['cs-receipts'] }) });
+
+  return (
+    <div className="space-y-4" dir="rtl">
+      <SectionCard title={editId ? 'تعديل إيصال' : 'حركة الإيصالات — تسجيل إيصال'} icon={Receipt} accent="teal"
+        actions={editId ? <button onClick={resetForm} className="text-xs font-bold text-teal-700 inline-flex items-center gap-1"><Plus size={14} /> إيصال جديد</button> : null}>
+        {/* Client */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="relative">
+            <label className="block text-[11px] font-bold text-gray-500 mb-1">الكود (Code) — ابحث أو {isNew ? 'كود جديد تلقائي' : 'اختر عميل قديم'}</label>
+            <input type="text" value={form.code ?? ''} onChange={(e) => set('code', e.target.value)} readOnly={isNew}
+              onFocus={() => setCodeFocus(true)} onBlur={() => setTimeout(() => setCodeFocus(false), 150)} autoComplete="off"
+              className={`${inputCls} ${isNew ? 'bg-gray-100 font-bold' : ''}`} />
+            {!isNew && codeFocus && codeMatches.length > 0 && (
+              <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-lg max-h-52 overflow-auto">
+                {codeMatches.map((c) => (
+                  <button type="button" key={c.id} onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => { setForm(f => ({ ...f, code: c.code, client_name: c.client_name || '', mobile_no: c.mobile_no || '', mobile_no2: c.mobile_no2 || '' })); setCodeFocus(false); }}
+                    className="block w-full text-right px-3 py-2 hover:bg-teal-50 text-sm border-b border-gray-50 last:border-0">
+                    <span className="font-black text-gray-800 font-mono">{c.code}</span>
+                    <span className="text-gray-600"> — {c.client_name || '—'}</span>
+                    {c.mobile_no ? <span className="text-gray-400 text-xs"> · {c.mobile_no}</span> : null}
+                    {c.mobile_no2 ? <span className="text-gray-400 text-xs"> · {c.mobile_no2}</span> : null}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <Field label="اسم العميل"><input value={form.client_name} onChange={(e) => set('client_name', e.target.value)} className={inputCls} /></Field>
+          <Field label="موبايل العميل"><input value={form.mobile_no} onChange={(e) => set('mobile_no', e.target.value)} className={inputCls} /></Field>
+          <Field label="موبايل إضافي"><input value={form.mobile_no2} onChange={(e) => set('mobile_no2', e.target.value)} className={inputCls} /></Field>
+        </div>
+        {!editId && (
+          <div className="mt-2">
+            {isNew ? (
+              <button type="button" onClick={() => { setIsNew(false); setForm(f => ({ ...f, code: '' })); }} className="text-xs font-bold text-gray-500">↩ رجوع لاختيار عميل قديم</button>
+            ) : (
+              <button type="button" onClick={startNewClient} className="inline-flex items-center gap-1 text-xs font-black text-teal-700"><UserPlus size={14} /> عميل جديد (كود جديد تلقائي)</button>
+            )}
+          </div>
+        )}
+
+        {/* Transfer + membership */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
+          <Field label="المبلغ"><input type="number" value={form.amount} onChange={(e) => set('amount', e.target.value)} className={inputCls} /></Field>
+          <Field label="محفظة العميل (Wallet)"><input value={form.client_wallet} onChange={(e) => set('client_wallet', e.target.value)} className={inputCls} /></Field>
+          <Field label="قناة الاستلام / محفظة المستلم">
+            <select value={form.receiver_channel} onChange={(e) => set('receiver_channel', e.target.value)} className={inputCls}>
+              <option value="">— اختر —</option>
+              {RECEIVER_CHANNELS.map(x => <option key={x} value={x}>{x}</option>)}
+            </select>
+          </Field>
+          <Field label="التوقيت"><input value={form.timing} onChange={(e) => set('timing', e.target.value)} placeholder="11:25 PM" className={inputCls} /></Field>
+          <Field label="التاريخ"><input type="date" value={mdyToIso(form.date)} onChange={(e) => set('date', e.target.value ? isoToMdy(e.target.value) : '')} className={inputCls} /></Field>
+          <Field label="العضوية (Courses)">
+            <select value={form.courses} onChange={(e) => { const v = e.target.value; setForm(f => { const p = priceOf(v); return { ...f, courses: v, price: p == null ? f.price : String(p) }; }); }} className={inputCls}>
+              <option value="">— اختر —</option>
+              {(form.courses && !courseOptions.includes(form.courses) ? [form.courses, ...courseOptions] : courseOptions).map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </Field>
+          <Field label="السعر"><input type="number" value={form.price} onChange={(e) => set('price', e.target.value)} className={inputCls} /></Field>
+          <Field label="الخصم (مبلغ أو %)"><input value={form.discount} onChange={(e) => set('discount', e.target.value)} placeholder="1000 أو 10%" className={inputCls} /></Field>
+        </div>
+
+        {/* Statuses */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mt-3">
+          <Field label="Status"><select value={form.status} onChange={(e) => set('status', e.target.value)} className={inputCls}>{STATUS_OPTS.map(o => <option key={o} value={o}>{o || '—'}</option>)}</select></Field>
+          <Field label="Photo"><select value={form.photo} onChange={(e) => set('photo', e.target.value)} className={inputCls}>{DONE_OPTS.map(o => <option key={o} value={o}>{o || '—'}</option>)}</select></Field>
+          <Field label="Tamkeen"><select value={form.tamkeen} onChange={(e) => set('tamkeen', e.target.value)} className={inputCls}>{DONE_OPTS.map(o => <option key={o} value={o}>{o || '—'}</option>)}</select></Field>
+          <Field label="Operation Sys"><select value={form.operation_sys} onChange={(e) => set('operation_sys', e.target.value)} className={inputCls}>{DONE_OPTS.map(o => <option key={o} value={o}>{o || '—'}</option>)}</select></Field>
+          <Field label="System"><select value={form.system_status} onChange={(e) => set('system_status', e.target.value)} className={inputCls}>{DONE_OPTS.map(o => <option key={o} value={o}>{o || '—'}</option>)}</select></Field>
+          <Field label="Financial Wallet"><select value={form.financial_wallet} onChange={(e) => set('financial_wallet', e.target.value)} className={inputCls}>{FW_OPTS.map(o => <option key={o} value={o}>{o || '—'}</option>)}</select></Field>
+        </div>
+
+        {/* Balance + save */}
+        <div className="mt-4 flex items-center gap-4 flex-wrap">
+          <div className="text-sm font-bold text-gray-600">الرصيد المتبقي للعملية: <span className={balance > 0 ? 'text-rose-600' : 'text-emerald-700'}>{fmt(balance)}</span></div>
+          <button type="button" onClick={() => save.mutate(false)} disabled={save.isPending || !form.code}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black text-white bg-teal-600 hover:bg-teal-700 transition disabled:opacity-50">
+            {save.isPending ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />} {editId ? 'حفظ التعديلات' : 'حفظ الإيصال'}
+          </button>
+          {save.isSuccess && <span className="inline-flex items-center gap-1 text-sm font-bold text-emerald-700"><CheckCircle size={16} /> اتسجّل الإيصال + العملية</span>}
+        </div>
+        {phoneWarn && (
+          <div className="mt-3 bg-amber-50 border-2 border-amber-200 rounded-2xl p-3 text-sm font-bold text-amber-800">
+            <div className="flex items-center gap-2 mb-2"><AlertTriangle size={16} /> {phoneWarn}</div>
+            <button onClick={() => save.mutate(true)} disabled={save.isPending} className="inline-flex items-center gap-2 px-4 py-1.5 text-xs font-black text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition disabled:opacity-50">تأكيد رغم التكرار</button>
+          </div>
+        )}
+      </SectionCard>
+
+      {/* Receipts list */}
+      <SectionCard title="الإيصالات المسجّلة" icon={Receipt} accent="cyan">
+        <div className="relative mb-3">
+          <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="بحث بالاسم / الكود / الموبايل / المحفظة" className={`${inputCls} pr-9`} />
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[900px]">
+            <thead className="text-gray-500 border-b">
+              <tr>
+                {['التاريخ', 'الكود', 'العميل', 'المبلغ', 'العضوية', 'قناة الاستلام', 'Status', 'المحفظة المالية', ''].map(h => <th key={h} className="text-right font-bold py-2 px-3">{h}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {isFetching && !rows.length ? (
+                <tr><td colSpan={9} className="py-4 text-center text-gray-400">جارٍ التحميل…</td></tr>
+              ) : !rows.length ? (
+                <tr><td colSpan={9} className="py-4 text-center text-gray-400">لا توجد إيصالات</td></tr>
+              ) : rows.map(rw => (
+                <tr key={rw.id} className="border-b border-gray-50 hover:bg-gray-50">
+                  <td className="py-2 px-3 text-xs text-gray-600 whitespace-nowrap">{rw.date || '—'}</td>
+                  <td className="py-2 px-3 font-mono font-bold text-gray-800">{rw.code || '—'}</td>
+                  <td className="py-2 px-3">{rw.client_name || '—'}</td>
+                  <td className="py-2 px-3 font-bold text-teal-700">{fmt(rw.amount)}</td>
+                  <td className="py-2 px-3 text-xs">{rw.courses || '—'}</td>
+                  <td className="py-2 px-3 font-mono text-xs text-gray-600">{rw.receiver_channel || '—'}</td>
+                  <td className="py-2 px-3 text-xs">{rw.status || '—'}</td>
+                  <td className="py-2 px-3 text-xs">{rw.financial_wallet || '—'}</td>
+                  <td className="py-2 px-3 whitespace-nowrap">
+                    <button onClick={() => editRow(rw)} className="p-1.5 text-indigo-600 hover:bg-indigo-100 rounded-lg" title="تعديل"><Pencil size={15} /></button>
+                    <button onClick={() => { if (window.confirm('حذف الإيصال؟ (العملية في قائمة العمليات مش هتتمسح)')) del.mutate(rw.id); }} className="p-1.5 text-rose-600 hover:bg-rose-100 rounded-lg" title="حذف"><Trash2 size={15} /></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
+    </div>
+  );
+}

@@ -1,0 +1,222 @@
+'use strict';
+/**
+ * «حركة الإيصالات» — payment-receipt log inside كشف العملاء.
+ *
+ * Saving a receipt does THREE things in ONE transaction:
+ *   1. (new client only) create the Clients-Codes entry (code + both phones),
+ *      with the same duplicate-phone guard. Existing clients are NOT modified.
+ *   2. create/update the linked cs_sales_register operation (course + price +
+ *      discount + paid=amount + Sales + payment_way=channel).
+ *   3. create/update the cs_receipts row, linked to the operation via sale_id.
+ *
+ * Idempotent by client_request_id: re-saving a receipt UPDATES the same operation
+ * + receipt, never duplicates. Owner + الإدارة المالية (Finance) only.
+ */
+const express = require('express');
+const db = require('../config/database');
+const { saveNow } = require('../config/database');
+const { authenticate } = require('../middleware/auth');
+const { requireOwnerOrManagement } = require('../middleware/roles');
+
+const router = express.Router();
+router.use(authenticate, requireOwnerOrManagement('Finance'));
+
+function nowTs() { return new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19); }
+function str(v) { if (v === undefined || v === null) return null; const s = String(v).trim(); return s === '' ? null : s; }
+function num(v) { if (v === undefined || v === null || v === '') return null; const n = Number(String(v).replace(/,/g, '')); return Number.isFinite(n) ? n : null; }
+// Discount: "10%" → % of price, else a plain amount. Returns the amount (magnitude).
+function discountAmt(d, price) {
+  const s = String(d ?? '').trim();
+  if (!s) return 0;
+  if (s.endsWith('%')) { const p = parseFloat(s.slice(0, -1)); return isFinite(p) ? (Number(price) || 0) * p / 100 : 0; }
+  const a = parseFloat(s.replace(/,/g, '')); return isFinite(a) ? Math.abs(a) : 0;
+}
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+// Derive "YY-Mon" from a "M/D/YYYY" or "YYYY-MM-DD" date (best effort).
+function monthsLabel(dateStr) {
+  const s = String(dateStr || '');
+  let y, m;
+  let mm = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (mm) { m = +mm[1]; y = +mm[3]; }
+  else { mm = s.match(/^(\d{4})-(\d{2})-(\d{2})$/); if (mm) { y = +mm[1]; m = +mm[2]; } }
+  if (!y || !m) return null;
+  return `${String(y).slice(2)}-${MONTH_ABBR[m - 1]}`;
+}
+// Duplicate phone across Clients-Codes (either stored number), leading-zero tolerant.
+function phoneClash(numbers) {
+  for (const raw of numbers) {
+    const m = str(raw);
+    if (!m) continue;
+    const hit = db.prepare(
+      `SELECT code, client_name FROM cs_client_codes
+        WHERE (TRIM(IFNULL(mobile_no,''))  <> '' AND LTRIM(mobile_no,'0')  = LTRIM(?, '0'))
+           OR (TRIM(IFNULL(mobile_no2,'')) <> '' AND LTRIM(mobile_no2,'0') = LTRIM(?, '0'))
+        LIMIT 1`
+    ).get(m, m);
+    if (hit) return { ...hit, number: m };
+  }
+  return null;
+}
+
+const OP_INSERT = db => db.prepare(`
+  INSERT INTO cs_sales_register
+    (code, entry_date, client_name, mobile_no, courses, price, discount,
+     total_paid_same_month, balance, department, payment_way, paid_status, months,
+     op_type, source, created_at, updated_at)
+  VALUES (@code, @entry_date, @client_name, @mobile_no, @courses, @price, @discount,
+     @paid, @balance, 'Sales', @payment_way, @paid_status, @months, '', 'system', @ts, @ts)
+`);
+const OP_UPDATE = db => db.prepare(`
+  UPDATE cs_sales_register SET
+    code=@code, entry_date=@entry_date, client_name=@client_name, mobile_no=@mobile_no,
+    courses=@courses, price=@price, discount=@discount, total_paid_same_month=@paid,
+    balance=@balance, payment_way=@payment_way, paid_status=@paid_status, months=@months,
+    updated_at=@ts
+  WHERE id=@id
+`);
+
+// Build the shared field bag for a receipt + its operation.
+function fields(body) {
+  const date = str(body.date);
+  const price = num(body.price) || 0;
+  const amount = num(body.amount) || 0;
+  const disc = discountAmt(body.discount, price);
+  const balance = Math.round(((price - disc) - amount) * 100) / 100;
+  return {
+    date, code: str(body.code), client_name: str(body.client_name),
+    mobile_no: str(body.mobile_no), mobile_no2: str(body.mobile_no2),
+    client_wallet: str(body.client_wallet), receiver_channel: str(body.receiver_channel),
+    amount, timing: str(body.timing), courses: str(body.courses), price,
+    discount: str(body.discount), status: str(body.status), photo: str(body.photo),
+    tamkeen: str(body.tamkeen), operation_sys: str(body.operation_sys),
+    system_status: str(body.system_status), financial_wallet: str(body.financial_wallet),
+    balance, months: monthsLabel(date),
+    paid_status: balance <= 0.01 ? 'Paid' : 'Not Paid',
+    payment_way: str(body.receiver_channel),
+  };
+}
+
+// ─── LIST ────────────────────────────────────────────────────────────────────
+router.get('/list', (req, res) => {
+  try {
+    const q = (req.query.q || '').trim();
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const offset = (page - 1) * limit;
+    const where = [], p = [];
+    if (q) {
+      const qz = q.replace(/^0+/, '') || q;
+      where.push("(client_name LIKE ? OR code LIKE ? OR LTRIM(IFNULL(mobile_no,''),'0') LIKE ? OR LTRIM(IFNULL(client_wallet,''),'0') LIKE ?)");
+      p.push(`%${q}%`, `${q}%`, `${qz}%`, `${qz}%`);
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const rows = db.prepare(`
+      SELECT *, COUNT(*) OVER() AS _total FROM cs_receipts
+      ${whereSql} ORDER BY id DESC LIMIT ? OFFSET ?
+    `).all(...p, limit, offset);
+    const total = rows.length ? rows[0]._total : 0;
+    rows.forEach(r => { delete r._total; });
+    return res.json({ rows, total, page, pages: Math.max(1, Math.ceil(total / limit)) });
+  } catch (err) {
+    console.error('[cs-receipts/list]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── CREATE / UPSERT (receipt + operation [+ new client code]) ───────────────
+router.post('/', (req, res) => {
+  try {
+    const body = req.body || {};
+    const f = fields(body);
+    const ts = nowTs();
+    const reqId = str(body.client_request_id);
+    const isNewClient = body.is_new_client === true || body.is_new_client === 'true';
+    const force = body.force === true || body.force === 'true';
+
+    if (!f.code) return res.status(400).json({ error: 'كود العميل مطلوب' });
+
+    // New client → create the Clients-Codes entry (with dup-phone guard), unless the
+    // code already exists (idempotent). Existing clients are never modified here.
+    if (isNewClient) {
+      const exists = db.prepare('SELECT id FROM cs_client_codes WHERE code = ?').get(f.code);
+      if (!exists) {
+        if (!force) {
+          const ph = phoneClash([f.mobile_no, f.mobile_no2]);
+          if (ph) return res.status(409).json({
+            code: 'DUP_PHONE', existingCode: ph.code, existingName: ph.client_name,
+            error: `الموبايل ${ph.number} موجود بالفعل في كود ${ph.code}${ph.client_name ? ' (' + ph.client_name + ')' : ''}`,
+          });
+        }
+      }
+    }
+
+    // Existing receipt with this request id → UPDATE its operation + itself.
+    const prior = reqId ? db.prepare('SELECT id, sale_id FROM cs_receipts WHERE client_request_id = ?').get(reqId) : null;
+
+    let saleId, receiptId;
+    db.transaction(() => {
+      if (isNewClient) {
+        const exists = db.prepare('SELECT id FROM cs_client_codes WHERE code = ?').get(f.code);
+        if (!exists) {
+          db.prepare(`INSERT INTO cs_client_codes (code, client_name, mobile_no, mobile_no2, created_at, updated_at)
+                      VALUES (?,?,?,?,?,?)`).run(f.code, f.client_name, f.mobile_no, f.mobile_no2, ts, ts);
+        }
+      }
+      const opArgs = { ...f, paid: f.amount, ts };
+      if (prior && prior.sale_id) {
+        OP_UPDATE(db).run({ ...opArgs, id: prior.sale_id });
+        saleId = prior.sale_id;
+      } else {
+        saleId = OP_INSERT(db).run(opArgs).lastInsertRowid;
+      }
+      const rParams = {
+        date: f.date, code: f.code, client_name: f.client_name, mobile_no: f.mobile_no, mobile_no2: f.mobile_no2,
+        client_wallet: f.client_wallet, receiver_channel: f.receiver_channel, amount: f.amount, timing: f.timing,
+        courses: f.courses, price: f.price, discount: f.discount, status: f.status, photo: f.photo,
+        tamkeen: f.tamkeen, operation_sys: f.operation_sys, system_status: f.system_status,
+        financial_wallet: f.financial_wallet, sale_id: saleId, reqId, ts,
+        by: req.user.id || null, byName: req.user.full_name || null,
+      };
+      if (prior) {
+        db.prepare(`UPDATE cs_receipts SET
+          date=@date, code=@code, client_name=@client_name, mobile_no=@mobile_no, mobile_no2=@mobile_no2,
+          client_wallet=@client_wallet, receiver_channel=@receiver_channel, amount=@amount, timing=@timing,
+          courses=@courses, price=@price, discount=@discount, status=@status, photo=@photo, tamkeen=@tamkeen,
+          operation_sys=@operation_sys, system_status=@system_status, financial_wallet=@financial_wallet,
+          sale_id=@sale_id, updated_at=@ts WHERE id=@id`).run({ ...rParams, id: prior.id });
+        receiptId = prior.id;
+      } else {
+        receiptId = db.prepare(`INSERT INTO cs_receipts
+          (date, code, client_name, mobile_no, mobile_no2, client_wallet, receiver_channel, amount, timing,
+           courses, price, discount, status, photo, tamkeen, operation_sys, system_status, financial_wallet,
+           sale_id, client_request_id, source, created_by, created_by_name, created_at, updated_at)
+          VALUES (@date,@code,@client_name,@mobile_no,@mobile_no2,@client_wallet,@receiver_channel,@amount,@timing,
+           @courses,@price,@discount,@status,@photo,@tamkeen,@operation_sys,@system_status,@financial_wallet,
+           @sale_id,@reqId,'system',@by,@byName,@ts,@ts)`).run(rParams).lastInsertRowid;
+      }
+    })();
+    saveNow();
+
+    const receipt = db.prepare('SELECT * FROM cs_receipts WHERE id = ?').get(receiptId);
+    return res.status(prior ? 200 : 201).json({ receipt, sale_id: saleId });
+  } catch (err) {
+    console.error('[cs-receipts/create]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── DELETE (receipt only; the operation stays — delete it from قائمة العمليات) ─
+router.delete('/:id', (req, res) => {
+  try {
+    const row = db.prepare('SELECT id FROM cs_receipts WHERE id = ?').get(req.params.id);
+    if (!row) return res.status(404).json({ error: 'غير موجود' });
+    db.prepare('DELETE FROM cs_receipts WHERE id = ?').run(req.params.id);
+    saveNow();
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[cs-receipts/delete]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+module.exports = router;

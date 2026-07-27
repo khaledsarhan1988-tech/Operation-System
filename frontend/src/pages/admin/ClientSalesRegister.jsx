@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Users, Search, Calendar, Filter, X, ChevronLeft, ChevronRight,
   Eye, RefreshCw, Plus, Pencil, Trash2, Save, CreditCard, Hash,
-  AlertTriangle, DollarSign, Upload, CheckCircle, Tag, RotateCcw,
+  AlertTriangle, DollarSign, Upload, CheckCircle, Tag, RotateCcw, Receipt,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -11,6 +11,7 @@ import SectionCard from '../../components/ui/SectionCard';
 import MembershipPricesSection from './MembershipPricesSection';
 import ClientCodesSection from './ClientCodesSection';
 import RefundCalculatorSection, { RefundReviewModal } from './RefundCalculatorSection';
+import ReceiptsSection from './ReceiptsSection';
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 function fmtAmount(amount) {
@@ -1038,6 +1039,7 @@ export default function ClientSalesRegister() {
           ['operations', 'قائمة العمليات', CreditCard],
           ['memberships', 'العضويات وأسعارها', Tag],
           ['codes', 'Clients Codes', Hash],
+          ['receipts', 'حركة الإيصالات', Receipt],
           ['refund', 'استرداد', RotateCcw],
         ].map(([key, label, Icon]) => (
           <button key={key} onClick={() => setView(key)}
@@ -1049,7 +1051,7 @@ export default function ClientSalesRegister() {
         ))}
       </div>
 
-      {view === 'memberships' ? <MembershipPricesSection /> : view === 'codes' ? <ClientCodesSection /> : view === 'refund' ? <RefundCalculatorSection /> : (
+      {view === 'memberships' ? <MembershipPricesSection /> : view === 'codes' ? <ClientCodesSection /> : view === 'receipts' ? <ReceiptsSection /> : view === 'refund' ? <RefundCalculatorSection /> : (
       <>
       {/* Filters */}
       <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-4 space-y-3">

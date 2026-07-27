@@ -3360,6 +3360,42 @@ initDb().then(db => {
     }
     db._raw.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_cs_client_codes_reqid ON cs_client_codes(client_request_id) WHERE client_request_id IS NOT NULL`);
 
+    // ── cs_receipts: «حركة الإيصالات» — payment-receipt log. Saving a receipt also
+    // creates/updates a linked cs_sales_register operation (sale_id) in ONE txn.
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS cs_receipts (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        date               TEXT,
+        code               TEXT,
+        client_name        TEXT,
+        mobile_no          TEXT,
+        mobile_no2         TEXT,
+        client_wallet      TEXT,                         -- العميل: رقم المحفظة اللي حوّل منها
+        receiver_channel   TEXT,                         -- قناة الاستلام: رقم محفظة المستلم | Paytaps | CiB
+        amount             REAL,                         -- المبلغ المحوّل (= المدفوع في العملية)
+        timing             TEXT,
+        courses            TEXT,                         -- العضوية (للعملية)
+        price              REAL,
+        discount           TEXT,                         -- نسبة "10%" أو مبلغ
+        status             TEXT,                         -- Approved | Pending | Rejected
+        photo              TEXT,                         -- Done | ''
+        tamkeen            TEXT,                         -- Done | ''
+        operation_sys      TEXT,                         -- Done | ''
+        system_status      TEXT,                         -- Done | ''
+        financial_wallet   TEXT,                         -- Transfer | ''
+        sale_id            INTEGER,                      -- linked cs_sales_register operation
+        client_request_id  TEXT,                         -- idempotency (re-save updates, never duplicates)
+        source             TEXT DEFAULT 'system',
+        created_by         INTEGER,
+        created_by_name    TEXT,
+        created_at         TEXT NOT NULL DEFAULT (datetime('now','+2 hours')),
+        updated_at         TEXT NOT NULL DEFAULT (datetime('now','+2 hours'))
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_receipts_code ON cs_receipts(code)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_receipts_sale ON cs_receipts(sale_id)`);
+    db._raw.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_cs_receipts_reqid ON cs_receipts(client_request_id) WHERE client_request_id IS NOT NULL`);
+
     // ── One-time: remap 4 poisoned client codes back to the real sequence ─────
     // A phone number was saved as a code on an operation (id 10118), which pushed
     // the next-code auto-suggestion into the billions; the next 4 codes cascaded
@@ -3552,6 +3588,7 @@ initDb().then(db => {
   app.use('/api/cs-sales-register',  require('./routes/cs-sales-register.routes'));
   app.use('/api/membership-prices',  require('./routes/membership-prices.routes'));
   app.use('/api/client-codes',       require('./routes/client-codes.routes'));
+  app.use('/api/cs-receipts',        require('./routes/cs-receipts.routes'));
   // Read-only data export (API-key gated; disabled unless DATA_EXPORT_API_KEY set)
   app.use('/api/data-export',        require('./routes/data-export.routes'));
 
