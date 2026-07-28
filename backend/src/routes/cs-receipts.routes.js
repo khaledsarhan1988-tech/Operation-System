@@ -132,6 +132,9 @@ router.post('/', (req, res) => {
     const reqId = str(body.client_request_id);
     const isNewClient = body.is_new_client === true || body.is_new_client === 'true';
     const force = body.force === true || body.force === 'true';
+    // confirm=true → also create/update the operation in قائمة العمليات.
+    // confirm=false («حفظ مؤقت») → log the receipt only (no operation yet).
+    const confirm = body.confirm === true || body.confirm === 'true';
 
     if (!f.code) return res.status(400).json({ error: 'كود العميل مطلوب' });
 
@@ -162,19 +165,24 @@ router.post('/', (req, res) => {
                       VALUES (?,?,?,?,?,?)`).run(f.code, f.client_name, f.mobile_no, f.mobile_no2, ts, ts);
         }
       }
-      // Only the keys the operation statement binds (better-sqlite3 is strict on
-      // named params — no extras, and `entry_date` must be present, not `date`).
-      const opArgs = {
-        code: f.code, entry_date: f.date, client_name: f.client_name, mobile_no: f.mobile_no,
-        courses: f.courses, price: f.price, discount: f.discount, paid: f.amount,
-        balance: f.balance, payment_way: f.payment_way, paid_status: f.paid_status,
-        months: f.months, ts,
-      };
-      if (prior && prior.sale_id) {
-        OP_UPDATE(db).run({ ...opArgs, id: prior.sale_id });
-        saleId = prior.sale_id;
+      if (confirm) {
+        // Only the keys the operation statement binds (better-sqlite3 is strict on
+        // named params — no extras, and `entry_date` must be present, not `date`).
+        const opArgs = {
+          code: f.code, entry_date: f.date, client_name: f.client_name, mobile_no: f.mobile_no,
+          courses: f.courses, price: f.price, discount: f.discount, paid: f.amount,
+          balance: f.balance, payment_way: f.payment_way, paid_status: f.paid_status,
+          months: f.months, ts,
+        };
+        if (prior && prior.sale_id) {
+          OP_UPDATE(db).run({ ...opArgs, id: prior.sale_id });
+          saleId = prior.sale_id;
+        } else {
+          saleId = OP_INSERT(db).run(opArgs).lastInsertRowid;
+        }
       } else {
-        saleId = OP_INSERT(db).run(opArgs).lastInsertRowid;
+        // «حفظ مؤقت» — keep any existing link, but don't create the operation yet.
+        saleId = prior ? prior.sale_id : null;
       }
       const rParams = {
         date: f.date, code: f.code, client_name: f.client_name, mobile_no: f.mobile_no, mobile_no2: f.mobile_no2,

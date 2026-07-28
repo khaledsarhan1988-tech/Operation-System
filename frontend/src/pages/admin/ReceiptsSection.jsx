@@ -96,8 +96,9 @@ export default function ReceiptsSection() {
     save.reset();
   };
 
+  const lastConfirmRef = useRef(false); // remembers مؤقت vs نهائي for the dup-phone retry
   const save = useMutation({
-    mutationFn: (force) => api.post('/cs-receipts', { ...form, is_new_client: isNew, client_request_id: reqIdRef.current, force }).then(r => r.data),
+    mutationFn: ({ confirm, force }) => { lastConfirmRef.current = confirm; return api.post('/cs-receipts', { ...form, is_new_client: isNew, client_request_id: reqIdRef.current, confirm, force }).then(r => r.data); },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['cs-receipts'] });
       qc.invalidateQueries({ queryKey: ['cs-sales'] });
@@ -181,19 +182,25 @@ export default function ReceiptsSection() {
         </div>
 
         {/* Balance + save */}
-        <div className="mt-4 flex items-center gap-4 flex-wrap">
+        <div className="mt-4 flex items-center gap-3 flex-wrap">
           <div className="text-sm font-bold text-gray-600">الرصيد المتبقي للعملية: <span className={balance > 0 ? 'text-rose-600' : 'text-emerald-700'}>{fmt(balance)}</span></div>
-          <button type="button" onClick={() => save.mutate(false)} disabled={save.isPending || !form.code}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black text-white bg-teal-600 hover:bg-teal-700 transition disabled:opacity-50">
-            {save.isPending ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />} {editId ? 'حفظ التعديلات' : 'حفظ الإيصال'}
+          {/* Temp save — receipt only, NO operation yet */}
+          <button type="button" onClick={() => save.mutate({ confirm: false, force: false })} disabled={save.isPending || !form.code}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-black text-teal-700 bg-teal-50 border border-teal-200 hover:bg-teal-100 transition disabled:opacity-50">
+            {save.isPending ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />} حفظ مؤقت (بدون عملية)
           </button>
-          {save.isSuccess && <span className="inline-flex items-center gap-1 text-sm font-bold text-emerald-700"><CheckCircle size={16} /> اتسجّل الإيصال + العملية</span>}
+          {/* Final — receipt + creates the operation in قائمة العمليات */}
+          <button type="button" onClick={() => save.mutate({ confirm: true, force: false })} disabled={save.isPending || !form.code}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black text-white bg-teal-600 hover:bg-teal-700 transition disabled:opacity-50">
+            {save.isPending ? <RefreshCw size={16} className="animate-spin" /> : <CheckCircle size={16} />} حفظ الإيصال (يعمل العملية)
+          </button>
+          {save.isSuccess && <span className="inline-flex items-center gap-1 text-sm font-bold text-emerald-700"><CheckCircle size={16} /> {lastConfirmRef.current ? 'اتسجّل الإيصال + العملية' : 'اتحفظ مؤقت (بدون عملية)'}</span>}
           {save.isError && !phoneWarn && <span className="inline-flex items-center gap-1 text-sm font-bold text-rose-700"><AlertTriangle size={16} /> {save.error?.response?.data?.error || 'فشل الحفظ'}</span>}
         </div>
         {phoneWarn && (
           <div className="mt-3 bg-amber-50 border-2 border-amber-200 rounded-2xl p-3 text-sm font-bold text-amber-800">
             <div className="flex items-center gap-2 mb-2"><AlertTriangle size={16} /> {phoneWarn}</div>
-            <button onClick={() => save.mutate(true)} disabled={save.isPending} className="inline-flex items-center gap-2 px-4 py-1.5 text-xs font-black text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition disabled:opacity-50">تأكيد رغم التكرار</button>
+            <button onClick={() => save.mutate({ confirm: lastConfirmRef.current, force: true })} disabled={save.isPending} className="inline-flex items-center gap-2 px-4 py-1.5 text-xs font-black text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition disabled:opacity-50">تأكيد رغم التكرار</button>
           </div>
         )}
       </SectionCard>
@@ -208,7 +215,7 @@ export default function ReceiptsSection() {
           <table className="w-full text-sm min-w-[900px]">
             <thead className="text-gray-500 border-b">
               <tr>
-                {['التاريخ', 'الكود', 'العميل', 'المبلغ', 'العضوية', 'قناة الاستلام', 'Status', 'المحفظة المالية', ''].map(h => <th key={h} className="text-right font-bold py-2 px-3">{h}</th>)}
+                {['التاريخ', 'الكود', 'العميل', 'المبلغ', 'العضوية', 'قناة الاستلام', 'Status', 'الحالة', ''].map(h => <th key={h} className="text-right font-bold py-2 px-3">{h}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -225,7 +232,11 @@ export default function ReceiptsSection() {
                   <td className="py-2 px-3 text-xs">{rw.courses || '—'}</td>
                   <td className="py-2 px-3 font-mono text-xs text-gray-600">{rw.receiver_channel || '—'}</td>
                   <td className="py-2 px-3 text-xs">{rw.status || '—'}</td>
-                  <td className="py-2 px-3 text-xs">{rw.financial_wallet || '—'}</td>
+                  <td className="py-2 px-3">
+                    {rw.sale_id
+                      ? <span className="px-2 py-0.5 rounded-lg text-[11px] font-bold bg-emerald-100 text-emerald-700">مسجّل في العمليات</span>
+                      : <span className="px-2 py-0.5 rounded-lg text-[11px] font-bold bg-amber-100 text-amber-700">مؤقت</span>}
+                  </td>
                   <td className="py-2 px-3 whitespace-nowrap">
                     <button onClick={() => editRow(rw)} className="p-1.5 text-indigo-600 hover:bg-indigo-100 rounded-lg" title="تعديل"><Pencil size={15} /></button>
                     <button onClick={() => { if (window.confirm('حذف الإيصال؟ (العملية في قائمة العمليات مش هتتمسح)')) del.mutate(rw.id); }} className="p-1.5 text-rose-600 hover:bg-rose-100 rounded-lg" title="حذف"><Trash2 size={15} /></button>
