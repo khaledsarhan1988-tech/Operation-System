@@ -220,6 +220,41 @@ router.post('/', (req, res) => {
   }
 });
 
+// ─── PATCH a single status flag (inline edit from the list — NO money touched) ──
+// Only the tracking flags are editable this way; the field name is whitelisted so
+// it can never be an arbitrary column, and the value must be one of the allowed opts.
+const INLINE_FIELDS = {
+  status: ['', 'Approved', 'Pending', 'Rejected'],
+  photo: ['', 'Done'],
+  tamkeen: ['', 'Done'],
+  operation_sys: ['', 'Done'],
+  system_status: ['', 'Done'],
+  financial_wallet: ['', 'Transfer'],
+};
+router.patch('/:id/field', (req, res) => {
+  try {
+    const field = str(req.body && req.body.field);
+    let value = req.body ? req.body.value : '';
+    value = value == null ? '' : String(value);
+    if (!field || !Object.prototype.hasOwnProperty.call(INLINE_FIELDS, field)) {
+      return res.status(400).json({ error: 'حقل غير مسموح' });
+    }
+    if (!INLINE_FIELDS[field].includes(value)) {
+      return res.status(400).json({ error: 'قيمة غير مسموحة' });
+    }
+    const row = db.prepare('SELECT id FROM cs_receipts WHERE id = ?').get(req.params.id);
+    if (!row) return res.status(404).json({ error: 'غير موجود' });
+    db.prepare(`UPDATE cs_receipts SET ${field} = ?, updated_at = ? WHERE id = ?`)
+      .run(str(value), nowTs(), req.params.id);
+    saveNow();
+    const receipt = db.prepare('SELECT * FROM cs_receipts WHERE id = ?').get(req.params.id);
+    return res.json({ ok: true, receipt });
+  } catch (err) {
+    console.error('[cs-receipts/field]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── DELETE (receipt only; the operation stays — delete it from قائمة العمليات) ─
 router.delete('/:id', (req, res) => {
   try {

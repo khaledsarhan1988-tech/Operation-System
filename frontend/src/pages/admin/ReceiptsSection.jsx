@@ -117,6 +117,18 @@ export default function ReceiptsSection() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['cs-receipts'] }); qc.invalidateQueries({ queryKey: ['cs-sales'] }); },
     onSettled: () => setConfirmingId(null),
   });
+  // Inline edit of a tracking flag straight from the list (two-option dropdowns) —
+  // updates ONLY that flag, never the money or the linked operation.
+  const patchField = useMutation({
+    mutationFn: ({ id, field, value }) => api.patch(`/cs-receipts/${id}/field`, { field, value }).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cs-receipts'] }),
+  });
+  const cellSelect = (rw, field, opts) => (
+    <select value={rw[field] || ''} onChange={(e) => patchField.mutate({ id: rw.id, field, value: e.target.value })}
+      className="px-2 py-1 border border-gray-200 rounded-lg text-xs bg-white outline-none focus:ring-2 focus:ring-teal-200 focus:border-teal-400">
+      {opts.map(o => <option key={o} value={o}>{o || '—'}</option>)}
+    </select>
+  );
 
   return (
     <div className="space-y-4" dir="rtl">
@@ -222,17 +234,17 @@ export default function ReceiptsSection() {
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="بحث بالاسم / الكود / الموبايل / المحفظة" className={`${inputCls} pr-9`} />
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[900px]">
+          <table className="w-full text-sm min-w-[1300px]">
             <thead className="text-gray-500 border-b">
               <tr>
-                {['التاريخ', 'الكود', 'العميل', 'موبايل العميل', 'محفظة العميل', 'المبلغ', 'العضوية', 'قناة الاستلام', 'Status', 'الحالة', ''].map(h => <th key={h} className="text-right font-bold py-2 px-3">{h}</th>)}
+                {['التاريخ', 'الكود', 'العميل', 'موبايل العميل', 'محفظة العميل', 'المبلغ', 'العضوية', 'قناة الاستلام', 'Status', 'Photo', 'Tamkeen', 'System', 'Financial Wallet', 'الحالة', ''].map(h => <th key={h} className="text-right font-bold py-2 px-3 whitespace-nowrap">{h}</th>)}
               </tr>
             </thead>
             <tbody>
               {isFetching && !rows.length ? (
-                <tr><td colSpan={11} className="py-4 text-center text-gray-400">جارٍ التحميل…</td></tr>
+                <tr><td colSpan={15} className="py-4 text-center text-gray-400">جارٍ التحميل…</td></tr>
               ) : !rows.length ? (
-                <tr><td colSpan={11} className="py-4 text-center text-gray-400">لا توجد إيصالات</td></tr>
+                <tr><td colSpan={15} className="py-4 text-center text-gray-400">لا توجد إيصالات</td></tr>
               ) : rows.map(rw => (
                 <tr key={rw.id} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="py-2 px-3 text-xs text-gray-600 whitespace-nowrap">{rw.date || '—'}</td>
@@ -244,6 +256,10 @@ export default function ReceiptsSection() {
                   <td className="py-2 px-3 text-xs">{rw.courses || '—'}</td>
                   <td className="py-2 px-3 font-mono text-xs text-gray-600">{rw.receiver_channel || '—'}</td>
                   <td className="py-2 px-3 text-xs">{rw.status || '—'}</td>
+                  <td className="py-2 px-3">{cellSelect(rw, 'photo', DONE_OPTS)}</td>
+                  <td className="py-2 px-3">{cellSelect(rw, 'tamkeen', DONE_OPTS)}</td>
+                  <td className="py-2 px-3">{cellSelect(rw, 'system_status', DONE_OPTS)}</td>
+                  <td className="py-2 px-3">{cellSelect(rw, 'financial_wallet', FW_OPTS)}</td>
                   <td className="py-2 px-3">
                     {rw.sale_id
                       ? <span className="px-2 py-0.5 rounded-lg text-[11px] font-bold bg-emerald-100 text-emerald-700">مسجّل في العمليات</span>
