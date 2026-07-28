@@ -43,6 +43,7 @@ export default function ReceiptsSection() {
   const [isNew, setIsNew] = useState(false);      // new client → will create a code
   const [editId, setEditId] = useState(null);
   const reqIdRef = useRef(globalThis.crypto?.randomUUID?.() || `rcpt-${Math.random().toString(36).slice(2)}`);
+  const topRef = useRef(null); // scroll target so editing a row brings the form into view
   const [codeFocus, setCodeFocus] = useState(false);
   const [phoneWarn, setPhoneWarn] = useState('');
   const [q, setQ] = useState('');
@@ -94,6 +95,7 @@ export default function ReceiptsSection() {
       system_status: rw.system_status || '', financial_wallet: rw.financial_wallet || '',
     });
     save.reset();
+    setTimeout(() => topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
   };
 
   const lastConfirmRef = useRef(false); // remembers مؤقت vs نهائي for the dup-phone retry
@@ -108,9 +110,17 @@ export default function ReceiptsSection() {
     onError: (err) => { const d = err?.response?.data; if (d?.code === 'DUP_PHONE') setPhoneWarn(d.error || 'الموبايل مكرر'); },
   });
   const del = useMutation({ mutationFn: (id) => api.delete(`/cs-receipts/${id}`).then(r => r.data), onSuccess: () => qc.invalidateQueries({ queryKey: ['cs-receipts'] }) });
+  // Confirm a receipt straight from the list (save icon) → creates the operation.
+  const [confirmingId, setConfirmingId] = useState(null);
+  const confirmRow = useMutation({
+    mutationFn: (rw) => api.post('/cs-receipts', { ...rw, is_new_client: false, confirm: true, force: true, client_request_id: rw.client_request_id }).then(r => r.data),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['cs-receipts'] }); qc.invalidateQueries({ queryKey: ['cs-sales'] }); },
+    onSettled: () => setConfirmingId(null),
+  });
 
   return (
     <div className="space-y-4" dir="rtl">
+      <div ref={topRef} />
       <SectionCard title={editId ? 'تعديل إيصال' : 'حركة الإيصالات — تسجيل إيصال'} icon={Receipt} accent="teal"
         actions={editId ? <button onClick={resetForm} className="text-xs font-bold text-teal-700 inline-flex items-center gap-1"><Plus size={14} /> إيصال جديد</button> : null}>
         {/* Client */}
@@ -238,6 +248,12 @@ export default function ReceiptsSection() {
                       : <span className="px-2 py-0.5 rounded-lg text-[11px] font-bold bg-amber-100 text-amber-700">مؤقت</span>}
                   </td>
                   <td className="py-2 px-3 whitespace-nowrap">
+                    {!rw.sale_id && (
+                      <button onClick={() => { setConfirmingId(rw.id); confirmRow.mutate(rw); }} disabled={confirmingId === rw.id}
+                        className="p-1.5 text-teal-600 hover:bg-teal-100 rounded-lg disabled:opacity-50" title="حفظ الإيصال (يعمل العملية)">
+                        {confirmingId === rw.id ? <RefreshCw size={15} className="animate-spin" /> : <Save size={15} />}
+                      </button>
+                    )}
                     <button onClick={() => editRow(rw)} className="p-1.5 text-indigo-600 hover:bg-indigo-100 rounded-lg" title="تعديل"><Pencil size={15} /></button>
                     <button onClick={() => { if (window.confirm('حذف الإيصال؟ (العملية في قائمة العمليات مش هتتمسح)')) del.mutate(rw.id); }} className="p-1.5 text-rose-600 hover:bg-rose-100 rounded-lg" title="حذف"><Trash2 size={15} /></button>
                   </td>
