@@ -130,13 +130,20 @@ router.post('/', (req, res) => {
     const f = fields(body);
     const ts = nowTs();
     const reqId = str(body.client_request_id);
-    const isNewClient = body.is_new_client === true || body.is_new_client === 'true';
     const force = body.force === true || body.force === 'true';
     // confirm=true → also create/update the operation in قائمة العمليات.
     // confirm=false («حفظ مؤقت») → log the receipt only (no operation yet).
     const confirm = body.confirm === true || body.confirm === 'true';
+    // A code-less receipt can never create a client code either.
+    const isNewClient = (body.is_new_client === true || body.is_new_client === 'true') && !!f.code;
 
-    if (!f.code) return res.status(400).json({ error: 'كود العميل مطلوب' });
+    // Final save builds the operation → a client code is mandatory. Temp save may log
+    // money that arrived before the client's data does (code added later on edit),
+    // but still needs at least an amount or the wallet/channel so it isn't a blank row.
+    if (confirm && !f.code) return res.status(400).json({ error: 'كود العميل مطلوب لحفظ العملية' });
+    if (!f.code && !(num(body.amount) || f.client_wallet || f.receiver_channel)) {
+      return res.status(400).json({ error: 'محتاج المبلغ أو رقم المحفظة على الأقل للحفظ المؤقت' });
+    }
 
     // New client → create the Clients-Codes entry (with dup-phone guard), unless the
     // code already exists (idempotent). Existing clients are never modified here.

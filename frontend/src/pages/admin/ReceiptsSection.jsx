@@ -206,8 +206,10 @@ export default function ReceiptsSection() {
         {/* Balance + save */}
         <div className="mt-4 flex items-center gap-3 flex-wrap">
           <div className="text-sm font-bold text-gray-600">الرصيد المتبقي للعملية: <span className={balance > 0 ? 'text-rose-600' : 'text-emerald-700'}>{fmt(balance)}</span></div>
-          {/* Temp save — receipt only, NO operation yet */}
-          <button type="button" onClick={() => save.mutate({ confirm: false, force: false })} disabled={save.isPending || !form.code}
+          {/* Temp save — receipt only, NO operation yet. Works even with no client code
+              (money on the wallet before the client's data arrives); needs amount/wallet. */}
+          <button type="button" onClick={() => save.mutate({ confirm: false, force: false })}
+            disabled={save.isPending || (!form.code && !num(form.amount) && !form.client_wallet && !form.receiver_channel)}
             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-black text-teal-700 bg-teal-50 border border-teal-200 hover:bg-teal-100 transition disabled:opacity-50">
             {save.isPending ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />} حفظ مؤقت (بدون عملية)
           </button>
@@ -267,8 +269,9 @@ export default function ReceiptsSection() {
                   </td>
                   <td className="py-2 px-3 whitespace-nowrap">
                     {!rw.sale_id && (
-                      <button onClick={() => { setConfirmingId(rw.id); confirmRow.mutate(rw); }} disabled={confirmingId === rw.id}
-                        className="p-1.5 text-teal-600 hover:bg-teal-100 rounded-lg disabled:opacity-50" title="حفظ الإيصال (يعمل العملية)">
+                      <button onClick={() => { setConfirmingId(rw.id); confirmRow.mutate(rw); }} disabled={confirmingId === rw.id || !rw.code}
+                        className="p-1.5 text-teal-600 hover:bg-teal-100 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed"
+                        title={rw.code ? 'حفظ الإيصال (يعمل العملية)' : 'محتاج كود العميل الأول — عدّل الإيصال وأضف بياناته'}>
                         {confirmingId === rw.id ? <RefreshCw size={15} className="animate-spin" /> : <Save size={15} />}
                       </button>
                     )}
