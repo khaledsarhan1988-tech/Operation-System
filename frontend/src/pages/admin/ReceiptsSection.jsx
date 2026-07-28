@@ -188,6 +188,7 @@ export default function ReceiptsSection() {
             {save.isPending ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />} {editId ? 'حفظ التعديلات' : 'حفظ الإيصال'}
           </button>
           {save.isSuccess && <span className="inline-flex items-center gap-1 text-sm font-bold text-emerald-700"><CheckCircle size={16} /> اتسجّل الإيصال + العملية</span>}
+          {save.isError && !phoneWarn && <span className="inline-flex items-center gap-1 text-sm font-bold text-rose-700"><AlertTriangle size={16} /> {save.error?.response?.data?.error || 'فشل الحفظ'}</span>}
         </div>
         {phoneWarn && (
           <div className="mt-3 bg-amber-50 border-2 border-amber-200 rounded-2xl p-3 text-sm font-bold text-amber-800">
