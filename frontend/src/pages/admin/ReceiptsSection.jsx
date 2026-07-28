@@ -69,7 +69,12 @@ export default function ReceiptsSection() {
 
   const startNewClient = () => {
     setIsNew(true);
-    api.get('/client-codes/next-code').then(r => setForm(f => ({ ...f, code: r.data?.next ?? '', client_name: '', mobile_no: '', mobile_no2: '' }))).catch(() => {});
+    // Editing a code-less temp receipt → keep the name/phones already typed and just
+    // pull a fresh code. Fresh create → clear them for a clean new client.
+    const keep = !!editId;
+    api.get('/client-codes/next-code')
+      .then(r => setForm(f => ({ ...f, code: r.data?.next ?? '', ...(keep ? {} : { client_name: '', mobile_no: '', mobile_no2: '' }) })))
+      .catch(() => {});
   };
 
   const price = num(form.price);
@@ -161,7 +166,7 @@ export default function ReceiptsSection() {
           <Field label="موبايل العميل"><input value={form.mobile_no} onChange={(e) => set('mobile_no', e.target.value)} className={inputCls} /></Field>
           <Field label="موبايل إضافي"><input value={form.mobile_no2} onChange={(e) => set('mobile_no2', e.target.value)} className={inputCls} /></Field>
         </div>
-        {!editId && (
+        {(!editId || !form.code) && (
           <div className="mt-2">
             {isNew ? (
               <button type="button" onClick={() => { setIsNew(false); setForm(f => ({ ...f, code: '' })); }} className="text-xs font-bold text-gray-500">↩ رجوع لاختيار عميل قديم</button>
