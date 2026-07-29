@@ -62,16 +62,17 @@ const OP_INSERT = db => db.prepare(`
   INSERT INTO cs_sales_register
     (code, entry_date, client_name, mobile_no, courses, price, discount,
      total_paid_same_month, balance, department, payment_way, paid_status, months,
-     op_type, source, created_at, updated_at)
+     lectures_count, op_type, source, created_at, updated_at)
   VALUES (@code, @entry_date, @client_name, @mobile_no, @courses, @price, @discount,
-     @paid, @balance, 'Sales', @payment_way, @paid_status, @months, '', 'system', @ts, @ts)
+     @paid, @balance, 'Sales', @payment_way, @paid_status, @months,
+     @lectures_count, '', 'system', @ts, @ts)
 `);
 const OP_UPDATE = db => db.prepare(`
   UPDATE cs_sales_register SET
     code=@code, entry_date=@entry_date, client_name=@client_name, mobile_no=@mobile_no,
     courses=@courses, price=@price, discount=@discount, total_paid_same_month=@paid,
     balance=@balance, payment_way=@payment_way, paid_status=@paid_status, months=@months,
-    updated_at=@ts
+    lectures_count=@lectures_count, updated_at=@ts
   WHERE id=@id
 `);
 
@@ -90,6 +91,7 @@ function fields(body) {
     discount: str(body.discount), status: str(body.status), photo: str(body.photo),
     tamkeen: str(body.tamkeen), operation_sys: str(body.operation_sys),
     system_status: str(body.system_status), financial_wallet: str(body.financial_wallet),
+    lectures_count: num(body.lectures_count),
     balance, months: monthsLabel(date),
     paid_status: balance <= 0.01 ? 'Paid' : 'Not Paid',
     payment_way: str(body.receiver_channel),
@@ -179,7 +181,7 @@ router.post('/', (req, res) => {
           code: f.code, entry_date: f.date, client_name: f.client_name, mobile_no: f.mobile_no,
           courses: f.courses, price: f.price, discount: f.discount, paid: f.amount,
           balance: f.balance, payment_way: f.payment_way, paid_status: f.paid_status,
-          months: f.months, ts,
+          months: f.months, lectures_count: f.lectures_count, ts,
         };
         if (prior && prior.sale_id) {
           OP_UPDATE(db).run({ ...opArgs, id: prior.sale_id });
@@ -196,7 +198,8 @@ router.post('/', (req, res) => {
         client_wallet: f.client_wallet, receiver_channel: f.receiver_channel, amount: f.amount, timing: f.timing,
         courses: f.courses, price: f.price, discount: f.discount, status: f.status, photo: f.photo,
         tamkeen: f.tamkeen, operation_sys: f.operation_sys, system_status: f.system_status,
-        financial_wallet: f.financial_wallet, sale_id: saleId, reqId, ts,
+        financial_wallet: f.financial_wallet, lectures_count: f.lectures_count,
+        sale_id: saleId, reqId, ts,
         by: req.user.id || null, byName: req.user.full_name || null,
       };
       if (prior) {
@@ -205,16 +208,16 @@ router.post('/', (req, res) => {
           client_wallet=@client_wallet, receiver_channel=@receiver_channel, amount=@amount, timing=@timing,
           courses=@courses, price=@price, discount=@discount, status=@status, photo=@photo, tamkeen=@tamkeen,
           operation_sys=@operation_sys, system_status=@system_status, financial_wallet=@financial_wallet,
-          sale_id=@sale_id, updated_at=@ts WHERE id=@id`).run({ ...rParams, id: prior.id });
+          lectures_count=@lectures_count, sale_id=@sale_id, updated_at=@ts WHERE id=@id`).run({ ...rParams, id: prior.id });
         receiptId = prior.id;
       } else {
         receiptId = db.prepare(`INSERT INTO cs_receipts
           (date, code, client_name, mobile_no, mobile_no2, client_wallet, receiver_channel, amount, timing,
            courses, price, discount, status, photo, tamkeen, operation_sys, system_status, financial_wallet,
-           sale_id, client_request_id, source, created_by, created_by_name, created_at, updated_at)
+           lectures_count, sale_id, client_request_id, source, created_by, created_by_name, created_at, updated_at)
           VALUES (@date,@code,@client_name,@mobile_no,@mobile_no2,@client_wallet,@receiver_channel,@amount,@timing,
            @courses,@price,@discount,@status,@photo,@tamkeen,@operation_sys,@system_status,@financial_wallet,
-           @sale_id,@reqId,'system',@by,@byName,@ts,@ts)`).run(rParams).lastInsertRowid;
+           @lectures_count,@sale_id,@reqId,'system',@by,@byName,@ts,@ts)`).run(rParams).lastInsertRowid;
       }
     })();
     saveNow();

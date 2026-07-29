@@ -34,8 +34,10 @@ const EMPTY_FORM = {
   noted2: '', tamkeen: '', installment_date: '', note: '',
   op_type: '', transfer_consumed_levels: '', transfer_total_levels: '',
   transfer_from_phone: '', transfer_from_code: '', refund_details: '',
-  transfer_consumed_value: '',
+  transfer_consumed_value: '', lectures_count: '',
 };
+// «Lectures» = extra-lectures membership: variable price + a requested lecture count.
+const isLectures = (c) => String(c || '').trim().toLowerCase() === 'lectures';
 // Parse the level count from a course code: "6L GAC" → 6, "3L PAC 2P" → 3.
 function parseLevels(code) {
   const m = String(code ?? '').match(/(\d+)\s*L\b/i);
@@ -516,6 +518,9 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                       : isUpgrade
                         ? F({ k: 'courses', label: 'بدأ بـ (الكورس الأصلي)', select: courseOptions, onChange: applyCourse })
                         : null}
+                  {/* «Lectures» membership → capture the requested lecture count (variable price stays manual) */}
+                  {!isTransfer && !isUpgrade && !isClientTransfer && isLectures(form.courses) &&
+                    F({ k: 'lectures_count', label: 'عدد المحاضرات', type: 'number' })}
                   {/* Sender identity (client_transfer): autocomplete fills the sender's real phone */}
                   {isClientTransfer && (
                     <div className="relative">
@@ -1142,7 +1147,7 @@ export default function ClientSalesRegister() {
                     <td className="px-3 py-2.5 font-mono text-xs text-gray-600">{r.entry_date || '—'}</td>
                     <td className="px-3 py-2.5 font-bold text-gray-900">{r.client_name || '—'}</td>
                     <td className="px-3 py-2.5 font-mono text-xs text-gray-600">{r.mobile_no || '—'}</td>
-                    <td className="px-3 py-2.5 text-gray-700">{r.courses || '—'}</td>
+                    <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">{r.courses || '—'}{isLectures(r.courses) && r.lectures_count != null && r.lectures_count !== '' ? <span className="text-indigo-600 font-bold"> ({r.lectures_count} محاضرة)</span> : null}</td>
                     <td className="px-3 py-2.5 text-violet-700 font-bold">{r.new_courses || '—'}</td>
                     <td className="px-3 py-2.5 text-right font-mono font-bold text-emerald-700">{fmtAmount((r.new_courses && String(r.new_courses).trim()) ? r.new_prices : r.price)}</td>
                     <td className="px-3 py-2.5 text-right font-mono font-bold text-sky-700">{fmtAmount(r.total_paid_calc)}</td>

@@ -3348,6 +3348,10 @@ initDb().then(db => {
       // formula (old paid × consumed ÷ total). Lets the owner honour a credit that
       // was quoted on the list price while the client actually paid a discounted amount.
       addCol('transfer_consumed_value', 'REAL');
+      // «Lectures» membership: a student buying extra lectures picks HOW MANY, the
+      // owner sets a variable price. Stores the requested lecture count (no price
+      // impact — the amount is written manually like any variable-price op).
+      addCol('lectures_count', 'INTEGER');
     }
     // A client_request_id may appear at most once → a retried create can never
     // produce a duplicate money row. Partial index so legacy NULLs are allowed.
@@ -3383,6 +3387,7 @@ initDb().then(db => {
         operation_sys      TEXT,                         -- Done | ''
         system_status      TEXT,                         -- Done | ''
         financial_wallet   TEXT,                         -- Transfer | ''
+        lectures_count     INTEGER,                      -- «Lectures» عضوية: عدد المحاضرات المطلوبة
         sale_id            INTEGER,                      -- linked cs_sales_register operation
         client_request_id  TEXT,                         -- idempotency (re-save updates, never duplicates)
         source             TEXT DEFAULT 'system',
@@ -3392,6 +3397,10 @@ initDb().then(db => {
         updated_at         TEXT NOT NULL DEFAULT (datetime('now','+2 hours'))
       )
     `);
+    { // add-if-missing for existing DBs
+      const rcols = db._raw.prepare(`PRAGMA table_info(cs_receipts)`).all().map(c => c.name);
+      if (!rcols.includes('lectures_count')) db._raw.run(`ALTER TABLE cs_receipts ADD COLUMN lectures_count INTEGER`);
+    }
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_receipts_code ON cs_receipts(code)`);
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_receipts_sale ON cs_receipts(sale_id)`);
     db._raw.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_cs_receipts_reqid ON cs_receipts(client_request_id) WHERE client_request_id IS NOT NULL`);

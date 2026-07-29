@@ -23,7 +23,10 @@ const EMPTY = {
   date: '', code: '', client_name: '', mobile_no: '', mobile_no2: '', client_wallet: '',
   receiver_channel: '', amount: '', timing: '', courses: '', price: '', discount: '',
   status: '', photo: '', tamkeen: '', operation_sys: '', system_status: '', financial_wallet: '',
+  lectures_count: '',
 };
+// «Lectures» = extra-lectures membership: variable price + a requested lecture count.
+const isLectures = (c) => String(c || '').trim().toLowerCase() === 'lectures';
 const isoToMdy = (iso) => { const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? `${+m[2]}/${+m[3]}/${m[1]}` : iso; };
 const mdyToIso = (s) => { const m = String(s || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return m ? `${m[3]}-${String(+m[1]).padStart(2, '0')}-${String(+m[2]).padStart(2, '0')}` : ''; };
 
@@ -98,6 +101,7 @@ export default function ReceiptsSection() {
       amount: rw.amount ?? '', timing: rw.timing || '', courses: rw.courses || '', price: rw.price ?? '', discount: rw.discount || '',
       status: rw.status || '', photo: rw.photo || '', tamkeen: rw.tamkeen || '', operation_sys: rw.operation_sys || '',
       system_status: rw.system_status || '', financial_wallet: rw.financial_wallet || '',
+      lectures_count: rw.lectures_count ?? '',
     });
     save.reset();
     setTimeout(() => topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
@@ -196,6 +200,9 @@ export default function ReceiptsSection() {
           </Field>
           <Field label="السعر"><input type="number" value={form.price} onChange={(e) => set('price', e.target.value)} className={inputCls} /></Field>
           <Field label="الخصم (مبلغ أو %)"><input value={form.discount} onChange={(e) => set('discount', e.target.value)} placeholder="1000 أو 10%" className={inputCls} /></Field>
+          {isLectures(form.courses) && (
+            <Field label="عدد المحاضرات"><input type="number" min="0" value={form.lectures_count} onChange={(e) => set('lectures_count', e.target.value)} placeholder="عدد المحاضرات المطلوبة" className={inputCls} /></Field>
+          )}
         </div>
 
         {/* Statuses */}
@@ -260,7 +267,7 @@ export default function ReceiptsSection() {
                   <td className="py-2 px-3 font-mono text-xs text-gray-600">{rw.mobile_no || '—'}</td>
                   <td className="py-2 px-3 font-mono text-xs text-gray-600">{rw.client_wallet || '—'}</td>
                   <td className="py-2 px-3 font-bold text-teal-700">{fmt(rw.amount)}</td>
-                  <td className="py-2 px-3 text-xs">{rw.courses || '—'}</td>
+                  <td className="py-2 px-3 text-xs whitespace-nowrap">{rw.courses || '—'}{isLectures(rw.courses) && rw.lectures_count != null && rw.lectures_count !== '' ? <span className="text-indigo-600 font-bold"> ({rw.lectures_count} محاضرة)</span> : null}</td>
                   <td className="py-2 px-3 font-mono text-xs text-gray-600">{rw.receiver_channel || '—'}</td>
                   <td className="py-2 px-3 text-xs">{rw.status || '—'}</td>
                   <td className="py-2 px-3">{cellSelect(rw, 'photo', DONE_OPTS)}</td>
