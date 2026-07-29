@@ -25,8 +25,9 @@ const EMPTY = {
   status: '', photo: '', tamkeen: '', operation_sys: '', system_status: '', financial_wallet: '',
   lectures_count: '',
 };
-// «Lectures» = extra-lectures membership: variable price + a requested lecture count.
-const isLectures = (c) => String(c || '').trim().toLowerCase() === 'lectures';
+// «Lecture(s)» = extra-lectures membership: variable price + a requested lecture
+// count. Matches any code starting with "lecture" (singular or plural).
+const isLectures = (c) => String(c || '').trim().toLowerCase().startsWith('lecture');
 const isoToMdy = (iso) => { const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? `${+m[2]}/${+m[3]}/${m[1]}` : iso; };
 const mdyToIso = (s) => { const m = String(s || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return m ? `${m[3]}-${String(+m[1]).padStart(2, '0')}-${String(+m[2]).padStart(2, '0')}` : ''; };
 

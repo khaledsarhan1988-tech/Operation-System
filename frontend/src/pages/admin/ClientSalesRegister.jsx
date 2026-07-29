@@ -36,8 +36,9 @@ const EMPTY_FORM = {
   transfer_from_phone: '', transfer_from_code: '', refund_details: '',
   transfer_consumed_value: '', lectures_count: '',
 };
-// «Lectures» = extra-lectures membership: variable price + a requested lecture count.
-const isLectures = (c) => String(c || '').trim().toLowerCase() === 'lectures';
+// «Lecture(s)» = extra-lectures membership: variable price + a requested lecture
+// count. Matches any code starting with "lecture" (singular or plural).
+const isLectures = (c) => String(c || '').trim().toLowerCase().startsWith('lecture');
 // Parse the level count from a course code: "6L GAC" → 6, "3L PAC 2P" → 3.
 function parseLevels(code) {
   const m = String(code ?? '').match(/(\d+)\s*L\b/i);
