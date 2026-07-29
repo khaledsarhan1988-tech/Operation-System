@@ -270,7 +270,7 @@ export default function ReceiptsSection() {
                   <td className="py-2 px-3 font-bold text-teal-700">{fmt(rw.amount)}</td>
                   <td className="py-2 px-3 text-xs whitespace-nowrap">{rw.courses || '—'}{isLectures(rw.courses) && rw.lectures_count != null && rw.lectures_count !== '' ? <span className="text-indigo-600 font-bold"> ({rw.lectures_count} محاضرة)</span> : null}</td>
                   <td className="py-2 px-3 font-mono text-xs text-gray-600">{rw.receiver_channel || '—'}</td>
-                  <td className="py-2 px-3 text-xs">{rw.status || '—'}</td>
+                  <td className="py-2 px-3">{cellSelect(rw, 'status', STATUS_OPTS)}</td>
                   <td className="py-2 px-3">{cellSelect(rw, 'photo', DONE_OPTS)}</td>
                   <td className="py-2 px-3">{cellSelect(rw, 'tamkeen', DONE_OPTS)}</td>
                   <td className="py-2 px-3">{cellSelect(rw, 'system_status', DONE_OPTS)}</td>
