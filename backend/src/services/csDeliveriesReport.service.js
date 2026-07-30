@@ -173,6 +173,11 @@ function getDeptAnalytics({ dept, gradFrom, gradTo }) {
       withRemaining.push({
         phone: pn, name, remaining: bal.remaining, paid_months: bal.paid_months, groups_taken: bal.groups_taken,
         in_upcoming: upcoming, last_group: lastGroup, last_level: parseLevel(lastGroup), last_date: lastEnd,
+        // Last lecture of the ACTIVE group specifically (null if they have no
+        // active group right now). last_date above is the newest across active
+        // AND finished groups; this one answers "when does their CURRENT group
+        // end". Both are surfaced so a date filter can target either.
+        active_last_date: activeLastEnd,
       });
     }
 

@@ -15,6 +15,36 @@ import { downloadCsv } from '../../utils/csv';
 
 const DEPT_LABEL = { General: 'جينرال', Semi: 'سيمي برايفت', Private: 'برايفت' };
 
+const AR_MONTHS = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
+  'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
+
+// The native date picker renders in the browser's locale, so "08/04/2026" is
+// month-first for some users and day-first for others. We echo the picked value
+// as an unambiguous Arabic date (day + month name + year) right under it.
+function readableDate(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+  if (!m) return '';
+  return `${Number(m[3])} ${AR_MONTHS[Number(m[2]) - 1]} ${m[1]}`;
+}
+
+// A date range where "from" is after "to" would silently match almost nothing.
+// Normalise so the smaller date is always the lower bound.
+function orderRange(from, to) {
+  if (from && to && from > to) return [to, from];
+  return [from, to];
+}
+
+// Native date input + an unambiguous readable echo beneath it.
+function DateField({ value, onChange }) {
+  return (
+    <span className="inline-flex flex-col">
+      <input type="date" value={value} onChange={onChange}
+        className="py-1.5 px-2 border border-slate-200 rounded-lg" dir="ltr" />
+      <span className="text-[10px] text-slate-400 text-center mt-0.5 h-3">{readableDate(value)}</span>
+    </span>
+  );
+}
+
 export default function DeptAnalyticsModal({ dept, onClose }) {
   const [gradFrom, setGradFrom] = useState('');
   const [gradTo, setGradTo] = useState('');
@@ -28,10 +58,12 @@ export default function DeptAnalyticsModal({ dept, onClose }) {
   const [fLastFrom, setFLastFrom] = useState('');
   const [fLastTo, setFLastTo] = useState('');
 
+  // Reversed range → no silent near-empty result; treat smaller date as lower.
+  const [gFrom, gTo] = orderRange(gradFrom, gradTo);
   const q = useQuery({
-    queryKey: ['dept-analytics', dept, gradFrom, gradTo],
+    queryKey: ['dept-analytics', dept, gFrom, gTo],
     queryFn: () => api.get('/cs/deliveries/analytics', {
-      params: { dept, grad_from: gradFrom, grad_to: gradTo },
+      params: { dept, grad_from: gFrom, grad_to: gTo },
     }).then(r => r.data),
     keepPreviousData: true,
   });
@@ -55,8 +87,9 @@ export default function DeptAnalyticsModal({ dept, onClose }) {
     if (remMin != null && (c.remaining == null || c.remaining < remMin)) return false;
     if (remMax != null && (c.remaining == null || c.remaining > remMax)) return false;
     if (fLevel && c.last_level !== fLevel) return false;
-    if (fLastFrom && (!c.last_date || c.last_date < fLastFrom)) return false;
-    if (fLastTo && (!c.last_date || c.last_date > fLastTo)) return false;
+    const [lFrom, lTo] = orderRange(fLastFrom, fLastTo);
+    if (lFrom && (!c.last_date || c.last_date < lFrom)) return false;
+    if (lTo && (!c.last_date || c.last_date > lTo)) return false;
     return true;
   });
   const anyFilter = fSearch || fUpcoming || fRemMin !== '' || fRemMax !== '' || fLevel || fLastFrom || fLastTo;
@@ -112,11 +145,10 @@ export default function DeptAnalyticsModal({ dept, onClose }) {
               <span className="text-sm font-semibold text-slate-700">التخرج في الفترة:</span>
               <div className="flex items-center gap-1 text-xs text-slate-500">
                 <span>من</span>
-                <input type="date" value={gradFrom} onChange={e => setGradFrom(e.target.value)}
-                  className="py-1.5 px-2 border border-slate-200 rounded-lg" dir="ltr" />
+                <DateField value={gradFrom} onChange={e => setGradFrom(e.target.value)} />
                 <span>→</span>
-                <input type="date" value={gradTo} onChange={e => setGradTo(e.target.value)}
-                  className="py-1.5 px-2 border border-slate-200 rounded-lg" dir="ltr" />
+                <DateField value={gradTo} onChange={e => setGradTo(e.target.value)} />
+                <span className="text-[10px] text-slate-400 mr-1">(شهر/يوم/سنة)</span>
               </div>
               <span className="inline-flex items-center gap-2 mr-auto text-sm">
                 <span className="text-slate-500">هيتخرجوا:</span>
@@ -189,11 +221,10 @@ export default function DeptAnalyticsModal({ dept, onClose }) {
               </div>
               <div className="flex items-center gap-1 text-xs text-slate-500">
                 <span className="whitespace-nowrap">آخر محاضرة:</span>
-                <input type="date" value={fLastFrom} onChange={e => setFLastFrom(e.target.value)}
-                  className="py-1.5 px-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-200" dir="ltr" />
+                <DateField value={fLastFrom} onChange={e => setFLastFrom(e.target.value)} />
                 <span>→</span>
-                <input type="date" value={fLastTo} onChange={e => setFLastTo(e.target.value)}
-                  className="py-1.5 px-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-200" dir="ltr" />
+                <DateField value={fLastTo} onChange={e => setFLastTo(e.target.value)} />
+                <span className="text-[10px] text-slate-400 mr-1">(شهر/يوم/سنة)</span>
               </div>
               {anyFilter && (
                 <button onClick={clearFilters} className="px-3 py-1.5 text-xs rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200">مسح الفلاتر</button>
