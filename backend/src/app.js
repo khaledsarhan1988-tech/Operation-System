@@ -515,6 +515,42 @@ initDb().then(db => {
     console.error('team_member_outofduty_hours migration error:', e.message);
   }
 
+  // ── coordinator_leave_periods: date ranges when a CS coordinator was AWAY
+  // (left to another dept then returned). During a leave period, any absence
+  // still attributed to them (a group that kept their name in the schedule) is
+  // moved OFF them: to the group's new coordinator if the batch handed it over,
+  // else to the reserved placeholder coordinator «بدون منسق». Owner rule
+  // 2026-07-20. Keyed by team_member_id + denormalized coordinator name (the
+  // coordinator_history/batches key the reports match on).
+  try {
+    db._raw.run(`
+      CREATE TABLE IF NOT EXISTS coordinator_leave_periods (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        team_member_id  INTEGER NOT NULL REFERENCES team_members(id) ON DELETE CASCADE,
+        coordinator     TEXT NOT NULL,
+        from_date       TEXT NOT NULL,
+        to_date         TEXT NOT NULL,
+        reason          TEXT,
+        created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now', '+2 hours'))
+      )
+    `);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_clp_member ON coordinator_leave_periods(team_member_id)`);
+    db._raw.run(`CREATE INDEX IF NOT EXISTS idx_clp_coord  ON coordinator_leave_periods(coordinator)`);
+    // Reserved placeholder coordinator «بدون منسق» — holds orphaned leave-period
+    // absences (groups that stayed under the departed coordinator's name).
+    const noCoord = db._raw.prepare(`SELECT id FROM team_members WHERE name = 'بدون منسق' AND department='customer_services'`).get();
+    if (!noCoord) {
+      db._raw.run(
+        `INSERT INTO team_members (name, department, section, status, notes) VALUES ('بدون منسق','customer_services','general','active','منسق افتراضي: يتجمّع فيه غياب المجموعات اللي فضلت باسم منسق في إجازته')`
+      );
+    }
+    saveNow();
+    console.log('✅ Migration: coordinator_leave_periods table + «بدون منسق» ready');
+  } catch (e) {
+    console.error('coordinator_leave_periods migration error:', e.message);
+  }
+
   // ── official_holidays: ranges where lectures get bulk-rescheduled ────────
   // Admin enters an entry per holiday (start..end + name). The sync service
   // uses it to AUTO-MARK lecture reschedules whose old_date falls in the
@@ -3404,6 +3440,25 @@ initDb().then(db => {
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_receipts_code ON cs_receipts(code)`);
     db._raw.run(`CREATE INDEX IF NOT EXISTS idx_cs_receipts_sale ON cs_receipts(sale_id)`);
     db._raw.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_cs_receipts_reqid ON cs_receipts(client_request_id) WHERE client_request_id IS NOT NULL`);
+
+    // ── Backfill blank Clients-Codes cards from their receipts ─────────────────
+    // A wallet-first/temp receipt creates the code row empty; older saves left the
+    // name/phone blank there even though the receipt later got them. Fill ONLY the
+    // blank fields from the newest receipt that has a value. Idempotent (a filled
+    // field is never touched) and never overwrites existing registry data.
+    try {
+      for (const col of ['client_name', 'mobile_no', 'mobile_no2']) {
+        db._raw.run(`
+          UPDATE cs_client_codes AS cc SET ${col} = (
+            SELECT r.${col} FROM cs_receipts r
+             WHERE r.code = cc.code AND TRIM(IFNULL(r.${col},'')) <> ''
+             ORDER BY r.id DESC LIMIT 1
+          ), updated_at = datetime('now','+2 hours')
+          WHERE TRIM(IFNULL(cc.${col},'')) = ''
+            AND EXISTS (SELECT 1 FROM cs_receipts r WHERE r.code = cc.code AND TRIM(IFNULL(r.${col},'')) <> '')
+        `);
+      }
+    } catch (e) { console.warn('[migration] cs_client_codes backfill from receipts skipped:', e.message); }
 
     // ── One-time: remap 4 poisoned client codes back to the real sequence ─────
     // A phone number was saved as a code on an operation (id 10118), which pushed

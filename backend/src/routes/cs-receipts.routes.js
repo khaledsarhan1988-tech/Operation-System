@@ -174,6 +174,22 @@ router.post('/', (req, res) => {
                       VALUES (?,?,?,?,?,?)`).run(f.code, f.client_name, f.mobile_no, f.mobile_no2, ts, ts);
         }
       }
+      // Enrich the registry card ONLY where it is blank. A wallet-first/temp save
+      // creates the code row empty; when the client's name/phone are later typed on
+      // the receipt they must flow into that card. We fill blanks only — never
+      // overwrite existing data (owner rule: a receipt must not change an existing
+      // client's Clients-Codes registry).
+      if (f.code) {
+        const cc = db.prepare('SELECT client_name, mobile_no, mobile_no2 FROM cs_client_codes WHERE code = ?').get(f.code);
+        if (cc) {
+          const blank = (v) => v == null || String(v).trim() === '';
+          const sets = [], vals = { ts, code: f.code };
+          if (blank(cc.client_name) && f.client_name) { sets.push('client_name=@client_name'); vals.client_name = f.client_name; }
+          if (blank(cc.mobile_no)   && f.mobile_no)   { sets.push('mobile_no=@mobile_no');     vals.mobile_no   = f.mobile_no; }
+          if (blank(cc.mobile_no2)  && f.mobile_no2)  { sets.push('mobile_no2=@mobile_no2');   vals.mobile_no2  = f.mobile_no2; }
+          if (sets.length) db.prepare(`UPDATE cs_client_codes SET ${sets.join(', ')}, updated_at=@ts WHERE code=@code`).run(vals);
+        }
+      }
       if (confirm) {
         // Only the keys the operation statement binds (better-sqlite3 is strict on
         // named params — no extras, and `entry_date` must be present, not `date`).
