@@ -252,17 +252,18 @@ export default function ReceiptsSection() {
           <table className="w-full text-sm min-w-[1300px]">
             <thead className="text-gray-500 border-b">
               <tr>
-                {['التاريخ', 'الكود', 'العميل', 'موبايل العميل', 'محفظة العميل', 'المبلغ', 'العضوية', 'قناة الاستلام', 'Status', 'Photo', 'Tamkeen', 'System', 'Financial Wallet', 'الحالة', ''].map(h => <th key={h} className="text-right font-bold py-2 px-3 whitespace-nowrap">{h}</th>)}
+                {['التاريخ', 'الوقت', 'الكود', 'العميل', 'موبايل العميل', 'محفظة العميل', 'المبلغ', 'العضوية', 'قناة الاستلام', 'Status', 'Photo', 'Tamkeen', 'System', 'Financial Wallet', 'الحالة', ''].map(h => <th key={h} className="text-right font-bold py-2 px-3 whitespace-nowrap">{h}</th>)}
               </tr>
             </thead>
             <tbody>
               {isFetching && !rows.length ? (
-                <tr><td colSpan={15} className="py-4 text-center text-gray-400">جارٍ التحميل…</td></tr>
+                <tr><td colSpan={16} className="py-4 text-center text-gray-400">جارٍ التحميل…</td></tr>
               ) : !rows.length ? (
-                <tr><td colSpan={15} className="py-4 text-center text-gray-400">لا توجد إيصالات</td></tr>
+                <tr><td colSpan={16} className="py-4 text-center text-gray-400">لا توجد إيصالات</td></tr>
               ) : rows.map(rw => (
                 <tr key={rw.id} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="py-2 px-3 text-xs text-gray-600 whitespace-nowrap">{rw.date || '—'}</td>
+                  <td className="py-2 px-3 text-xs text-gray-600 whitespace-nowrap">{rw.timing || '—'}</td>
                   <td className="py-2 px-3 font-mono font-bold text-gray-800">{rw.code || '—'}</td>
                   <td className="py-2 px-3">{rw.client_name || '—'}</td>
                   <td className="py-2 px-3 font-mono text-xs text-gray-600">{rw.mobile_no || '—'}</td>
