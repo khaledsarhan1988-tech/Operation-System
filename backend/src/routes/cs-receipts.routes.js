@@ -259,17 +259,22 @@ const INLINE_FIELDS = {
   system_status: ['', 'Done'],
   financial_wallet: ['', 'Transfer'],
 };
+// Free-text fields editable inline from the list (no fixed value list).
+const INLINE_TEXT_FIELDS = new Set(['timing']);
 router.patch('/:id/field', (req, res) => {
   try {
     const field = str(req.body && req.body.field);
     let value = req.body ? req.body.value : '';
     value = value == null ? '' : String(value);
-    if (!field || !Object.prototype.hasOwnProperty.call(INLINE_FIELDS, field)) {
+    const isEnum = field && Object.prototype.hasOwnProperty.call(INLINE_FIELDS, field);
+    const isText = field && INLINE_TEXT_FIELDS.has(field);
+    if (!isEnum && !isText) {
       return res.status(400).json({ error: 'حقل غير مسموح' });
     }
-    if (!INLINE_FIELDS[field].includes(value)) {
+    if (isEnum && !INLINE_FIELDS[field].includes(value)) {
       return res.status(400).json({ error: 'قيمة غير مسموحة' });
     }
+    if (isText) value = value.trim().slice(0, 40); // free text — keep it short
     const row = db.prepare('SELECT id FROM cs_receipts WHERE id = ?').get(req.params.id);
     if (!row) return res.status(404).json({ error: 'غير موجود' });
     db.prepare(`UPDATE cs_receipts SET ${field} = ?, updated_at = ? WHERE id = ?`)

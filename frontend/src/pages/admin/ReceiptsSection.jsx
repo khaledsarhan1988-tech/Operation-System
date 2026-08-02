@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Receipt, Search, Save, RefreshCw, CheckCircle, AlertTriangle, Trash2, Pencil, Plus, UserPlus } from 'lucide-react';
 import api from '../../api/axios';
@@ -40,6 +40,20 @@ function Field({ label, span, children }) {
   );
 }
 const inputCls = 'w-full px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-teal-200 focus:border-teal-400';
+
+// Inline-editable free-text cell (used for الوقت) — local state so typing is smooth,
+// saves on blur/Enter only when the value actually changed.
+function TimeCell({ value, onSave }) {
+  const [v, setV] = useState(value ?? '');
+  useEffect(() => { setV(value ?? ''); }, [value]);
+  return (
+    <input value={v} onChange={(e) => setV(e.target.value)}
+      onBlur={() => { if ((v || '') !== (value || '')) onSave(v); }}
+      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+      placeholder="—"
+      className="w-24 px-2 py-1 border border-gray-200 rounded-lg text-xs bg-white outline-none focus:ring-2 focus:ring-teal-200 focus:border-teal-400" />
+  );
+}
 
 export default function ReceiptsSection() {
   const qc = useQueryClient();
@@ -263,7 +277,7 @@ export default function ReceiptsSection() {
               ) : rows.map(rw => (
                 <tr key={rw.id} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="py-2 px-3 text-xs text-gray-600 whitespace-nowrap">{rw.date || '—'}</td>
-                  <td className="py-2 px-3 text-xs text-gray-600 whitespace-nowrap">{rw.timing || '—'}</td>
+                  <td className="py-2 px-3 whitespace-nowrap"><TimeCell value={rw.timing} onSave={(v) => patchField.mutate({ id: rw.id, field: 'timing', value: v })} /></td>
                   <td className="py-2 px-3 font-mono font-bold text-gray-800">{rw.code || '—'}</td>
                   <td className="py-2 px-3">{rw.client_name || '—'}</td>
                   <td className="py-2 px-3 font-mono text-xs text-gray-600">{rw.mobile_no || '—'}</td>
