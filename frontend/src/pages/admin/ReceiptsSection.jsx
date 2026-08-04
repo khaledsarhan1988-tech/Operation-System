@@ -15,7 +15,7 @@ function discountAmt(d, price) {
   if (s.endsWith('%')) { const p = parseFloat(s.slice(0, -1)); return isFinite(p) ? (Number(price) || 0) * p / 100 : 0; }
   const a = parseFloat(s.replace(/,/g, '')); return isFinite(a) ? Math.abs(a) : 0;
 }
-const RECEIVER_CHANNELS = ['1012164464', '1281429649', '1012164327', '1015048618', '1015082452', '1094172559', '1016738176', '1012164368', '1040247384', '1040254359', 'Paytaps', 'CiB'];
+const RECEIVER_CHANNELS = ['1012164464', '1281429649', '1012164327', '1015048618', '1015082452', '1094172559', '1016738176', '1012164368', '1040247384', '1040254359', 'Paytaps', 'CiB', 'QNB-USD'];
 const STATUS_OPTS = ['', 'Approved', 'Pending', 'Rejected'];
 const DONE_OPTS = ['', 'Done'];
 const FW_OPTS = ['', 'Transfer'];
