@@ -536,7 +536,41 @@ function syncBatches(buffer, line) {
 }
 
 function syncRemarks(buffer, line, warnings) {
-  const rows = excel.parseRemarks(buffer);
+  let rows = excel.parseRemarks(buffer);
+
+  // ─── IN-FILE DUPLICATE external_id DEDUPE ─────────────────────
+  // The sheet can contain the SAME external_id on two rows (a data-entry
+  // artifact). Inserting row-by-row would then violate UNIQUE(external_id,line)
+  // and abort the whole import. Keep the LAST occurrence of each external_id
+  // (bottom-most sheet row wins — mirrors "latest re-import wins") and surface a
+  // warning so the sheet can be cleaned. Rows WITHOUT a finite external_id are
+  // never deduped (NULLs are distinct under the UNIQUE index).
+  {
+    const lastIdx = new Map();               // external_id -> last row index
+    const dupCount = new Map();               // external_id -> occurrences
+    rows.forEach((r, i) => {
+      const id = r.external_id;
+      if (id == null || !Number.isFinite(id)) return;
+      if (lastIdx.has(id)) dupCount.set(id, (dupCount.get(id) || 1) + 1);
+      lastIdx.set(id, i);
+    });
+    if (dupCount.size) {
+      const keepIdx = new Set(lastIdx.values());
+      rows = rows.filter((r, i) => {
+        const id = r.external_id;
+        if (id == null || !Number.isFinite(id)) return true;   // keep all null-id rows
+        return keepIdx.has(i);                                  // keep only the last of each id
+      });
+      console.log(`[syncRemarks] line=${line} | in-file duplicate external_ids merged: ${dupCount.size}`);
+      warnings.push({
+        type: 'duplicate_external_id_in_file',
+        file: 'remarks',
+        message: `⚠ تم دمج ${dupCount.size} external_id مكرر داخل الملف (أُبقي أحدث صف لكل واحد)`,
+        count: dupCount.size,
+        details: [...dupCount.entries()].map(([external_id, occurrences]) => ({ external_id, occurrences })),
+      });
+    }
+  }
 
   // ─── CROSS-LINE DUPLICATE DETECTION ───────────────────────────
   // Check: any external_id from incoming rows that already exists in OTHER lines?
