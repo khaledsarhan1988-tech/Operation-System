@@ -4002,15 +4002,27 @@ router.get('/trainer-utilization', (req, res) => {
         let lectures = byTrainerDay[`${tKey}|${date}`] || [];
         if (clampEnd && date > clampEnd) lectures = lectures.filter(l => l.status !== 'مجدولة');
         const extraBlk = extraBlocksByMemberDay[`${t.id}|${date}`] || [];
-        const outIv = [];
+        const allIv = [], inIv = [];
         for (const l of lectures) {
           const st = parseTime12(l.time), du = parseDur(l.duration);
           if (st < 0 || du <= 0) continue;
+          const iv = [st, st + du];
+          allIv.push(iv);
           const inShift = shifts.some(sh => shiftMinsForDate(sh, date) > 0 && st >= sh.startMin && st < sh.endMin);
           const inExtra = extraBlk.some(([a, b]) => st >= a && st < b);
-          if (!inShift && !inExtra) outIv.push([st, st + du]);
+          if (inShift || inExtra) inIv.push(iv);
         }
-        total += mergeIntervalsMinutes(outIv);
+        // Voice notes are in-shift work (they belong to `booked`), so include them
+        // in the in-shift set — otherwise a voice note overlapping an out-of-shift
+        // lecture would leak into out_of_shift.
+        for (const v of voiceNoteIntervalsForDate(shifts, date)) { const iv = [v.start_min, v.end_min]; allIv.push(iv); inIv.push(iv); }
+        // out_of_shift = occupied time NOT already counted as booked (in-shift).
+        // Computing (all − in-shift) instead of a SEPARATE merge of out-of-shift
+        // lectures guarantees booked + out_of_shift == the trainer's TRUE occupied
+        // time exactly (constitution 2026-06-23 invariant). The old separate-merge
+        // double-counted any minutes where an in-shift and an out-of-shift lecture
+        // overlapped (surfaced as a tiny endpoint>raw drift in the audit).
+        total += mergeIntervalsMinutes(allIv) - mergeIntervalsMinutes(inIv);
       }
       return total;
     };
@@ -4439,7 +4451,13 @@ router.get('/trainer-utilization-summary', (req, res) => {
           if (vn.length) (secIv[cs.sec] = secIv[cs.sec] || []).push(...vn);
         }
         for (const sec of Object.keys(secIv)) add(sec, 0, mergeIntervalsMinutes(secIv[sec]));
-        outOfShiftMin += mergeIntervalsMinutes(outIv);
+        // out_of_shift = occupied time NOT already booked in a section. Computing
+        // (all − in-shift) instead of a separate merge of the out-of-shift lectures
+        // keeps Σ(sections) + out_of_shift == the trainer's TRUE occupied time
+        // (constitution 2026-06-23 invariant) and matches /trainer-utilization; the
+        // old separate merge double-counted in/out boundary overlaps.
+        const inIvAll = Object.values(secIv).flat();
+        outOfShiftMin += mergeIntervalsMinutes([...inIvAll, ...outIv]) - mergeIntervalsMinutes(inIvAll);
       }
       return { sections: map, out_of_shift_min: outOfShiftMin };
     }

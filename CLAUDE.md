@@ -339,6 +339,11 @@ node -e "
 
 > راجع `git log` و `Quality_System_Data/system_audit_2026-06-05.md` للتفاصيل الكاملة بالأرقام.
 
+### إصلاح عدّ «خارج الشيفت» المزدوج (2026-08-05) — إشغال المدربين (مرتبات)
+- **الـ bug:** في `/trainer-utilization` و`/trainer-utilization-summary`، كان «خارج الشيفت» (`out_of_shift_min`) يُحسب كـ **دمج منفصل** للمحاضرات اللي بدايتها خارج الشيفت، مستقل عن دمج «المحجوز» (داخل الشيفت). لو محاضرة داخل الشيفت تتداخل زمنيًا مع محاضرة خارج الشيفت، الدقائق المشتركة تُعدّ **مرتين** → `booked + out_of_shift` أكبر من الوقت المشغول الحقيقي، فيخالف ثابت 2026-06-23 «مجموع (أقسام + خارج الشيفت) = الوقت المشغول الحقيقي». ظهر كفرق 3 دقائق عند Nada Talat في أوديت occupancy (endpoint==RAW).
+- **الإصلاح:** «خارج الشيفت» لكل يوم بقى = `mergeIntervalsMinutes(كل المحاضرات+الفويس) − mergeIntervalsMinutes(داخل الشيفت+الفويس)` في `outOfShiftMinForTrainer` (الـ heatmap) و`totalsBySectionForRange` (الـ summary) — فيضمن بالبناء `booked + out_of_shift = المشغول الحقيقي` بلا عدّ مزدوج، ومتطابق بين الـ endpoint-ين. «المحجوز»/«المتاح» لم يتغيّرا.
+- **متحقَّق:** الأوديت الكامل ALL PASS (occupancy: endpoint==RAW **و** heatmap==dashboard أخضر، صفر تراجع لأي مدرب/تقرير).
+
 ### مراجعة أمان + تحديث تبعيات (2026-06-26) — قرارات جديدة معتمدة
 > كلها متحقَّقة على snapshot حيّ (أرقام مطابقة للنسخة الأصلية: occupancy + deliveries أخضر، lectures-list valid==raw + injection معطَّل) والفرونت يبني. تفاصيل في الذاكرة [[project_security_audit_2026-06-26]].
 - **S1 — SQL injection في `reports.routes.js`:** كل التقارير `requireRole('agent')` = أي مستخدم مسجّل. الإصلاح: (1) middleware على مستوى الراوتر يتحقق من بارامترات التاريخ (`from_date/to_date/modal_from/modal_to/from/to/date_from/date_to`) لصيغة `^\d{4}-\d{2}-\d{2}$` صارمة (فاضي لو غلط)؛ (2) `escapeLike` بقى يهرّب الكوتة المفردة كمان؛ (3) helper `qLit()` على 7 خانات نصية (`trainer/category/min_duration/max_duration/session_type/priority/status_filter`). سلوك مطابق للمدخلات الصحيحة. **القاعدة:** أي خانة `req.query` تُحقن في SQL لازم تمرّ بـ `qLit`/`escapeLike` أو تتحقق كتاريخ.
