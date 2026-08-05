@@ -107,6 +107,17 @@ export default function DeptAnalyticsModal({ dept, onClose }) {
     downloadCsv(csv, `تحليلات-${dept}-متبقي-مستويات.csv`);
   };
 
+  // Export the «هيتخرجوا» list exactly as shown — same columns and same order
+  // as the on-screen table (name+phone split into two Excel columns).
+  const exportGraduating = () => {
+    const headers = ['العميل', 'الموبايل', 'آخر مجموعة', 'المستوى', 'تاريخ التخرج (آخر محاضرة)'];
+    const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+    const rows = graduating.map(g => [g.name, g.phone, g.last_group, g.last_level, g.grad_date]);
+    const csv = [headers, ...rows].map(r => r.map(esc).join(',')).join('\n');
+    const [gf, gt] = orderRange(gradFrom, gradTo);
+    downloadCsv(csv, `هيتخرجوا-${dept}-${gf || ''}_${gt || ''}.csv`);
+  };
+
   const Stat = ({ icon: Icon, label, value, cls }) => (
     <div className={`flex items-center gap-3 rounded-xl border px-4 py-3 ${cls}`}>
       <Icon className="w-5 h-5 flex-shrink-0" />
@@ -155,6 +166,12 @@ export default function DeptAnalyticsModal({ dept, onClose }) {
                 <span className="inline-flex items-center justify-center min-w-8 px-3 py-1 rounded-full bg-violet-100 text-violet-700 text-lg font-bold">
                   {q.isLoading ? '…' : (data.graduating_count ?? 0)}
                 </span>
+                {graduating.length > 0 && (
+                  <button onClick={exportGraduating}
+                    className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 bg-emerald-600 text-white text-xs hover:bg-emerald-700">
+                    <Download className="w-3.5 h-3.5" /> تصدير Excel ({graduating.length})
+                  </button>
+                )}
               </span>
             </div>
             {(gradFrom || gradTo) && graduating.length > 0 && (
