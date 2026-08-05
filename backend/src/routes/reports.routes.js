@@ -234,6 +234,18 @@ function effectiveGroupNameAtDate(groupExpr, lineExpr, dateExpr) {
   )`;
 }
 
+// Reserved placeholder coordinator that holds orphaned leave-period absences.
+const NO_COORD_NAME = 'بدون منسق';
+// SQL: is `coordExpr` on a recorded leave period covering `dateExpr`?
+// Name match is SPACE-INSENSITIVE + case-insensitive (the compact key used
+// everywhere else in this file): team_members.name may be "Radwa Gamal" while
+// coordinator_history.coordinator is "RadwaGamal". A plain `=` would silently
+// miss those and the leave period would do nothing.
+const coordOnLeaveSql = (coordExpr, dateExpr) => `EXISTS (
+    SELECT 1 FROM coordinator_leave_periods lp
+     WHERE REPLACE(lp.coordinator,' ','') = REPLACE(${coordExpr},' ','') COLLATE NOCASE
+       AND DATE(lp.from_date) <= ${dateExpr} AND DATE(lp.to_date) >= ${dateExpr})`;
+
 function coordFilterAtDate(groupExpr, lineExpr, dateExpr, value) {
   if (!value) return '';
   const safe = String(value).replace(/'/g, "''").trim();
@@ -241,14 +253,26 @@ function coordFilterAtDate(groupExpr, lineExpr, dateExpr, value) {
   // DATE() wrapper + rename-aware group resolution: for events whose date
   // is before a recorded rename, look up history under the OLD group_name.
   const effG = effectiveGroupNameAtDate(groupExpr, lineExpr, dateExpr);
-  return ` AND EXISTS (
+  // A responsible-coordinator-at-date EXISTS clause with an extra condition on ch_f.
+  const respFor = (cond) => `EXISTS (
     SELECT 1 FROM coordinator_history ch_f
     WHERE ch_f.group_name = ${effG}
       AND ch_f.line       = ${lineExpr}
       AND DATE(ch_f.effective_from) <= ${dateExpr}
       AND (ch_f.effective_to IS NULL OR DATE(ch_f.effective_to) > ${dateExpr})
-      AND ch_f.coordinator = '${safe}' COLLATE NOCASE
+      AND ${cond}
   )`;
+  // Leave-period rule (Owner 2026-07-20): the placeholder «بدون منسق» collects
+  // events where the group's responsible coordinator(s) are ALL on leave (the
+  // group kept a departed coordinator's name, no real handover). A real
+  // coordinator matches only when responsible AND not on leave that day (so a
+  // handed-over group already goes to the new coordinator via the normal match).
+  if (safe === NO_COORD_NAME) {
+    return ` AND ${respFor(coordOnLeaveSql('ch_f.coordinator', dateExpr))}
+             AND NOT ${respFor('NOT ' + coordOnLeaveSql('ch_f.coordinator', dateExpr))}`;
+  }
+  return ` AND ${respFor(`ch_f.coordinator = '${safe}' COLLATE NOCASE`)}
+           AND NOT ${coordOnLeaveSql(`'${safe}'`, dateExpr)}`;
 }
 
 /**
@@ -259,6 +283,14 @@ function coordFilterAtDate(groupExpr, lineExpr, dateExpr, value) {
  */
 function coordFilterAtDatePrepared(groupExpr, lineExpr, dateExpr) {
   const effG = effectiveGroupNameAtDate(groupExpr, lineExpr, dateExpr);
+  // Leave-period aware (MUST mirror coordFilterAtDate / dateAwareCoord): an event
+  // is NOT credited to the responsible coordinator on a day they were on leave —
+  // otherwise the quality report (which uses this prepared variant) would still
+  // blame an on-leave coordinator while the attendance report moved the absence,
+  // breaking the protected quality↔attendance parity. Handed-over groups already
+  // credit the new coordinator via coordinator_history; orphaned groups (kept the
+  // departed name) fall to «بدون منسق», which quality does not list — so they are
+  // simply excluded from every real agent here (consistent, no double-count).
   return ` AND EXISTS (
     SELECT 1 FROM coordinator_history ch_f
     WHERE ch_f.group_name = ${effG}
@@ -266,6 +298,7 @@ function coordFilterAtDatePrepared(groupExpr, lineExpr, dateExpr) {
       AND DATE(ch_f.effective_from) <= ${dateExpr}
       AND (ch_f.effective_to IS NULL OR DATE(ch_f.effective_to) > ${dateExpr})
       AND ch_f.coordinator = ? COLLATE NOCASE
+      AND NOT ${coordOnLeaveSql('ch_f.coordinator', dateExpr)}
   )`;
 }
 
@@ -6195,24 +6228,28 @@ router.get('/attendance-absence', (req, res) => {
     // groups were double-counted. A single deterministic coordinator credits each
     // event exactly once and also resolves section/status (which keyed on the
     // combined string and came back null).
-    const dateAwareCoord = (batchAlias, dateExpr) => `(
-      SELECT ch.coordinator
+    const dateAwareCoord = (batchAlias, dateExpr) => {
+      const effG = effectiveGroupNameAtDate(`${batchAlias}.group_name`, `${batchAlias}.line`, dateExpr);
+      const base = (extra) => `SELECT ch.coordinator
         FROM coordinator_history ch
         JOIN team_members tm
           ON LOWER(TRIM(tm.name)) = LOWER(TRIM(ch.coordinator))
          AND tm.department = 'customer_services'
-       WHERE ch.group_name = ${effectiveGroupNameAtDate(`${batchAlias}.group_name`, `${batchAlias}.line`, dateExpr)}
+       WHERE ch.group_name = ${effG}
          AND ch.line       = ${batchAlias}.line
          AND DATE(ch.effective_from) <= ${dateExpr}
          AND (ch.effective_to IS NULL OR DATE(ch.effective_to) > ${dateExpr})
-         -- Hire-date (tm.start_date) lower-bound deliberately removed: it defaults
-         -- to the record-creation date for members added without an explicit hire
-         -- date, so it wrongly dropped real events that predate the roster record.
-         -- coordinator_history.effective_from already bounds "responsible since".
+         -- Hire-date (tm.start_date) lower-bound deliberately removed (see note).
          AND (tm.end_date   IS NULL OR TRIM(tm.end_date)   = '' OR DATE(tm.end_date)   >= ${dateExpr})
-       ORDER BY DATE(ch.effective_from) ASC, ch.coordinator ASC
-       LIMIT 1
-    )`;
+         ${extra}`;
+      // Leave-period aware: pick the earliest coordinator NOT on leave that day;
+      // if the only responsible coordinator(s) are on leave → «بدون منسق».
+      return `(COALESCE(
+        (${base('AND NOT ' + coordOnLeaveSql('ch.coordinator', dateExpr))}
+          ORDER BY DATE(ch.effective_from) ASC, ch.coordinator ASC LIMIT 1),
+        (SELECT '${NO_COORD_NAME}' WHERE EXISTS (${base('AND ' + coordOnLeaveSql('ch.coordinator', dateExpr))}))
+      ))`;
+    };
 
     // ─── MAIN EXPECTED per coordinator ─────────────────────────────────────
     // Student-slot denominator: SUM of per-lecture group size = MAX(enrolled,
@@ -6964,15 +7001,28 @@ router.get('/quality-employee', (req, res) => {
   const qDateResolved = (from && to) ? ` AND resolved_date BETWEEN '${from}' AND '${to}'`
     : from ? ` AND resolved_date >= '${from}'` : to ? ` AND resolved_date <= '${to}'` : '';
   const _compactQ = v => String(v == null ? '' : v).toLowerCase().replace(/\s/g, '');
-  const _dateAwareCoordQ = (alias, dateExpr) => `(
-    SELECT ch.coordinator FROM coordinator_history ch
+  // Leave-period aware — MUST mirror /attendance-absence's dateAwareCoord exactly,
+  // or /quality-employee's per-coordinator absences diverge from /attendance-absence
+  // (breaks the protected quality↔attendance parity). Pick the earliest responsible
+  // coordinator NOT on leave that day; if the only responsible coordinator(s) are on
+  // leave → «بدون منسق» (which is not an agent row here, so those orphaned absences
+  // are excluded from every real agent — same handling as attendance).
+  const _dateAwareCoordQ = (alias, dateExpr) => {
+    const effG = effectiveGroupNameAtDate(`${alias}.group_name`, `${alias}.line`, dateExpr);
+    const base = (extra) => `SELECT ch.coordinator FROM coordinator_history ch
       JOIN team_members tm ON LOWER(TRIM(tm.name)) = LOWER(TRIM(ch.coordinator)) AND tm.department='customer_services'
-     WHERE ch.group_name = ${effectiveGroupNameAtDate(`${alias}.group_name`, `${alias}.line`, dateExpr)}
+     WHERE ch.group_name = ${effG}
        AND ch.line = ${alias}.line
        AND DATE(ch.effective_from) <= ${dateExpr}
        AND (ch.effective_to IS NULL OR DATE(ch.effective_to) > ${dateExpr})
        AND (tm.end_date IS NULL OR TRIM(tm.end_date)='' OR DATE(tm.end_date) >= ${dateExpr})
-     ORDER BY DATE(ch.effective_from) ASC, ch.coordinator ASC LIMIT 1)`;
+       ${extra}`;
+    return `(COALESCE(
+      (${base('AND NOT ' + coordOnLeaveSql('ch.coordinator', dateExpr))}
+        ORDER BY DATE(ch.effective_from) ASC, ch.coordinator ASC LIMIT 1),
+      (SELECT '${NO_COORD_NAME}' WHERE EXISTS (${base('AND ' + coordOnLeaveSql('ch.coordinator', dateExpr))}))
+    ))`;
+  };
   const _presentNumQ = `(CASE WHEN l.attendance GLOB '[0-9]*' THEN CAST(l.attendance AS INTEGER) ELSE 0 END)`;
   const _absentOnLecQ = `(SELECT COUNT(*) FROM absent_students asx WHERE asx.group_name = l.group_name AND asx.date = l.date${qLineLit ? ` AND asx.line = ${qLineLit}` : ''})`;
   const _traineeCountQ = `COALESCE(b.trainee_count, (SELECT COUNT(*) FROM clients cc WHERE cc.group_name = l.group_name${qLineLit ? ` AND cc.line = ${qLineLit}` : ''}))`;

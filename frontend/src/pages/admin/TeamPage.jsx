@@ -580,6 +580,99 @@ function ShiftSection({
 // the trainer's daily capacity in utilization reports — even if the day is
 // outside their regular shift window.
 //
+// ─── LEAVE PERIODS ("فترات الانقطاع") — CS coordinators who left & returned ─────
+// During a leave period the attendance/quality reports move absences off this
+// coordinator (to the group's new coordinator, else to «بدون منسق»). Saves
+// immediately via its own endpoints.
+function LeavePeriodsSection({ memberId, inputCls, labelCls }) {
+  const qc = useQueryClient();
+  const { data: rows = [], isLoading } = useQuery({
+    queryKey: ['team-leave-periods', memberId],
+    queryFn: () => api.get(`/team/${memberId}/leave-periods`).then(r => r.data),
+  });
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState(null);
+  const addMut = useMutation({
+    mutationFn: (body) => api.post(`/team/${memberId}/leave-periods`, body).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['team-leave-periods', memberId] });
+      setFrom(''); setTo(''); setReason(''); setError(null);
+    },
+    onError: (e) => setError(e.response?.data?.error || 'تعذّر الإضافة'),
+  });
+  const delMut = useMutation({
+    mutationFn: (id) => api.delete(`/team/leave-periods/${id}`).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['team-leave-periods', memberId] }),
+  });
+  function submit() {
+    setError(null);
+    if (!from || !to) { setError('حدد الفترة (من / إلى)'); return; }
+    if (from > to) { setError('«من» لازم يكون قبل «إلى»'); return; }
+    addMut.mutate({ from_date: from, to_date: to, reason });
+  }
+  return (
+    <div className="bg-indigo-50/60 border border-indigo-200 rounded-xl p-4">
+      <div className="flex items-center gap-2 mb-2">
+        <CalendarIcon size={16} className="text-indigo-600" />
+        <h4 className="text-sm font-bold text-indigo-900">فترات الانقطاع (سابت ورجعت)</h4>
+      </div>
+      <p className="text-[11px] text-indigo-700/80 mb-3 leading-relaxed">
+        💡 لو المنسق ساب خدمة العملاء لفترة ورجع تاني — سجّل الفترة هنا. النظام هيشيل غياب الفترة دي من عليه:
+        يروح للمنسق الجديد لو المجموعة اتسلّمت، أو لـ«بدون منسق» لو فضلت باسمه.
+      </p>
+
+      {isLoading ? (
+        <p className="text-xs text-gray-500 text-center py-2">جاري التحميل...</p>
+      ) : rows.length === 0 ? (
+        <p className="text-xs text-gray-500 text-center py-2 italic">لا توجد فترات انقطاع مسجلة</p>
+      ) : (
+        <ul className="space-y-1.5 mb-3">
+          {rows.map(r => (
+            <li key={r.id} className="bg-white border border-indigo-200 rounded-lg px-3 py-2 flex items-center gap-2 text-xs">
+              <CalendarIcon size={12} className="text-indigo-600 flex-shrink-0" />
+              <span className="font-bold text-gray-800">{r.from_date}</span>
+              <span className="text-gray-400">→</span>
+              <span className="font-bold text-gray-800">{r.to_date}</span>
+              {r.reason && <span className="text-gray-500 truncate flex-1">— {r.reason}</span>}
+              <button type="button"
+                onClick={() => { if (confirm('حذف فترة الانقطاع؟')) delMut.mutate(r.id); }}
+                className="mr-auto p-1 hover:bg-red-50 rounded text-red-500" title="حذف">
+                <Trash2 size={12} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="border-t border-indigo-200 pt-3 space-y-2">
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className={labelCls}>من تاريخ <span className="text-red-500">*</span></label>
+            <input type="date" className={inputCls} value={from} onChange={e => setFrom(e.target.value)} />
+          </div>
+          <div>
+            <label className={labelCls}>إلى تاريخ <span className="text-red-500">*</span></label>
+            <input type="date" className={inputCls} value={to} onChange={e => setTo(e.target.value)} />
+          </div>
+        </div>
+        <div>
+          <label className={labelCls}>سبب (اختياري)</label>
+          <input className={inputCls} value={reason} onChange={e => setReason(e.target.value)}
+            placeholder="مثلاً: انتقل لقسم تاني / إجازة" />
+        </div>
+        {error && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">{error}</p>}
+        <button type="button" onClick={submit} disabled={addMut.isPending || !from || !to}
+          className="w-full py-2 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-bold disabled:opacity-50 flex items-center justify-center gap-2">
+          <Plus size={14} />
+          {addMut.isPending ? 'جاري الإضافة...' : 'إضافة فترة انقطاع'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // CRUD lives in dedicated endpoints, NOT in the main member-save payload, so
 // edits here persist immediately (no need to press the main "Save" button).
 function ExtraShiftsSection({ memberId, inputCls, labelCls }) {
@@ -1356,6 +1449,13 @@ export function MemberModal({ initial, onSave, onClose, loading }) {
               a few hours on specific days. */}
           {form.department === 'education' && initial?.id && (
             <ExtraShiftsSection memberId={initial.id} inputCls={inputCls} labelCls={labelCls} />
+          )}
+
+          {/* Coordinator leave periods — CS only, on EDIT. During a leave period,
+              absences attributed to this coordinator move to the group's new
+              coordinator (if handed over) or to «بدون منسق». */}
+          {form.department === 'customer_services' && initial?.id && (
+            <LeavePeriodsSection memberId={initial.id} inputCls={inputCls} labelCls={labelCls} />
           )}
 
           {/* Teachable courses — education only */}

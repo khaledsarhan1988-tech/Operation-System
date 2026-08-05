@@ -1176,4 +1176,74 @@ router.delete('/outofduty-hours/:entryId', (req, res) => {
   }
 });
 
+// ─── COORDINATOR LEAVE PERIODS ("فترات الانقطاع") ─────────────────────────────
+// Date ranges when a CS coordinator was AWAY (left to another dept then returned).
+// During a leave period the attendance/quality reports move any absence still
+// attributed to them (a group that kept their name) OFF them — to the group's new
+// coordinator if the batch handed it over, else to the placeholder «بدون منسق».
+
+// GET /api/team/:id/leave-periods — list a member's leave periods (newest first)
+router.get('/:id/leave-periods', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'invalid member id' });
+  try {
+    const rows = db.prepare(`
+      SELECT lp.*, u.full_name AS created_by_name
+        FROM coordinator_leave_periods lp
+        LEFT JOIN users u ON u.id = lp.created_by
+       WHERE lp.team_member_id = ?
+       ORDER BY lp.from_date DESC, lp.id DESC
+    `).all(id);
+    return res.json(rows);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/team/:id/leave-periods — add a leave period. Admin / leader only.
+router.post('/:id/leave-periods', express.json(), (req, res) => {
+  if (req.user?.role !== 'admin' && req.user?.role !== 'leader') {
+    return res.status(403).json({ error: 'صلاحية للأدمن أو القائد فقط' });
+  }
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'invalid member id' });
+  const member = db.prepare(`SELECT id, name FROM team_members WHERE id = ?`).get(id);
+  if (!member) return res.status(404).json({ error: 'team member not found' });
+
+  const { from_date, to_date, reason } = req.body || {};
+  const dRe = /^\d{4}-\d{2}-\d{2}$/;
+  if (!from_date || !dRe.test(String(from_date)) || !to_date || !dRe.test(String(to_date))) {
+    return res.status(400).json({ error: 'from_date & to_date required (YYYY-MM-DD)' });
+  }
+  if (String(from_date) > String(to_date)) {
+    return res.status(400).json({ error: 'from_date must be ≤ to_date' });
+  }
+  try {
+    const result = db.prepare(`
+      INSERT INTO coordinator_leave_periods (team_member_id, coordinator, from_date, to_date, reason, created_by)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, member.name, from_date, to_date, reason ? String(reason) : null, req.user?.id || null);
+    const row = db.prepare(`SELECT * FROM coordinator_leave_periods WHERE id = ?`).get(result.lastInsertRowid);
+    return res.status(201).json(row);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/team/leave-periods/:entryId — remove a leave period
+router.delete('/leave-periods/:entryId', (req, res) => {
+  if (req.user?.role !== 'admin' && req.user?.role !== 'leader') {
+    return res.status(403).json({ error: 'صلاحية للأدمن أو القائد فقط' });
+  }
+  const entryId = parseInt(req.params.entryId, 10);
+  if (!entryId) return res.status(400).json({ error: 'invalid entry id' });
+  try {
+    const r = db.prepare(`DELETE FROM coordinator_leave_periods WHERE id = ?`).run(entryId);
+    if (r.changes === 0) return res.status(404).json({ error: 'entry not found' });
+    return res.json({ deleted: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

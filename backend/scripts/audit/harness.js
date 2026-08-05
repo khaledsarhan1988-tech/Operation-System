@@ -74,7 +74,21 @@ async function bootServer(snapshotPath = SNAP) {
     requireSuperAdminOrPage: passFactory,
   } };
 
-  require(path.join(BACKEND, 'src/config/database')).initDb();
+  const dbMod = require(path.join(BACKEND, 'src/config/database'));
+  dbMod.initDb();
+
+  // The attendance/quality/absence reports now reference coordinator_leave_periods
+  // unconditionally (leave-period feature). In production app.js's migration
+  // creates it; this harness boots only the routers, so mirror that migration here
+  // (idempotent) — otherwise every absence report throws "no such table".
+  try {
+    dbMod._raw.run(`CREATE TABLE IF NOT EXISTS coordinator_leave_periods (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, team_member_id INTEGER, coordinator TEXT NOT NULL,
+      from_date TEXT NOT NULL, to_date TEXT NOT NULL, reason TEXT, created_by INTEGER, created_at TEXT)`);
+    if (!dbMod._raw.prepare(`SELECT 1 FROM team_members WHERE name='بدون منسق' AND department='customer_services'`).get()) {
+      dbMod._raw.run(`INSERT INTO team_members (name, department, section, status) VALUES ('بدون منسق','customer_services','general','active')`);
+    }
+  } catch (e) { console.warn('[harness] leave-table ensure:', e.message); }
 
   const express = require('express');
   const app = express();
