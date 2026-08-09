@@ -278,7 +278,9 @@ export default function ReceiptsSection() {
                 <tr key={rw.id} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="py-2 px-3 text-xs text-gray-600 whitespace-nowrap">{rw.date || '—'}</td>
                   <td className="py-2 px-3 whitespace-nowrap"><TimeCell value={rw.timing} onSave={(v) => patchField.mutate({ id: rw.id, field: 'timing', value: v })} /></td>
-                  <td className="py-2 px-3 font-mono font-bold text-gray-800">{rw.code || '—'}</td>
+                  <td className="py-2 px-3 font-mono font-bold">
+                    <button type="button" onClick={() => editRow(rw)} className="text-teal-700 hover:text-teal-900 hover:underline" title="فتح تعديل الإيصال">{rw.code || '—'}</button>
+                  </td>
                   <td className="py-2 px-3">{rw.client_name || '—'}</td>
                   <td className="py-2 px-3 font-mono text-xs text-gray-600">{rw.mobile_no || '—'}</td>
                   <td className="py-2 px-3 font-mono text-xs text-gray-600">{rw.client_wallet || '—'}</td>
