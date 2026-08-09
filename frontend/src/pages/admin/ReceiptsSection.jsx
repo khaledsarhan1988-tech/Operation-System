@@ -28,6 +28,12 @@ const EMPTY = {
 // «Lecture(s)» = extra-lectures membership: variable price + a requested lecture
 // count. Matches any code starting with "lecture" (singular or plural).
 const isLectures = (c) => String(c || '').trim().toLowerCase().startsWith('lecture');
+// Row flagged (light red) when it still needs follow-up: Status blank/Pending, or
+// any of Photo/Tamkeen/System/Financial Wallet not filled.
+const isBlank = (v) => v == null || String(v).trim() === '';
+const rowNeedsAttention = (rw) =>
+  isBlank(rw.status) || rw.status === 'Pending' ||
+  isBlank(rw.photo) || isBlank(rw.tamkeen) || isBlank(rw.system_status) || isBlank(rw.financial_wallet);
 const isoToMdy = (iso) => { const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? `${+m[2]}/${+m[3]}/${m[1]}` : iso; };
 const mdyToIso = (s) => { const m = String(s || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return m ? `${m[3]}-${String(+m[1]).padStart(2, '0')}-${String(+m[2]).padStart(2, '0')}` : ''; };
 
@@ -275,7 +281,7 @@ export default function ReceiptsSection() {
               ) : !rows.length ? (
                 <tr><td colSpan={16} className="py-4 text-center text-gray-400">لا توجد إيصالات</td></tr>
               ) : rows.map(rw => (
-                <tr key={rw.id} className="border-b border-gray-50 hover:bg-gray-50">
+                <tr key={rw.id} className={`border-b border-gray-50 ${rowNeedsAttention(rw) ? 'bg-rose-50 hover:bg-rose-100' : 'hover:bg-gray-50'}`}>
                   <td className="py-2 px-3 text-xs text-gray-600 whitespace-nowrap">{rw.date || '—'}</td>
                   <td className="py-2 px-3 whitespace-nowrap"><TimeCell value={rw.timing} onSave={(v) => patchField.mutate({ id: rw.id, field: 'timing', value: v })} /></td>
                   <td className="py-2 px-3 font-mono font-bold">
