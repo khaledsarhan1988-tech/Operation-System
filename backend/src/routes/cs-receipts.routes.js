@@ -251,6 +251,8 @@ router.post('/', (req, res) => {
 // ─── PATCH a single status flag (inline edit from the list — NO money touched) ──
 // Only the tracking flags are editable this way; the field name is whitelisted so
 // it can never be an arbitrary column, and the value must be one of the allowed opts.
+// Receiver channels — MUST mirror RECEIVER_CHANNELS in ReceiptsSection.jsx.
+const RECEIVER_CHANNELS = ['1012164464', '1281429649', '1012164327', '1015048618', '1015082452', '1094172559', '1016738176', '1012164368', '1040247384', '1040254359', 'Paytaps', 'CiB', 'QNB-USD'];
 const INLINE_FIELDS = {
   status: ['', 'Approved', 'Pending', 'Rejected'],
   photo: ['', 'Done'],
@@ -258,6 +260,7 @@ const INLINE_FIELDS = {
   operation_sys: ['', 'Done'],
   system_status: ['', 'Done'],
   financial_wallet: ['', 'Transfer'],
+  receiver_channel: ['', ...RECEIVER_CHANNELS],
 };
 // Free-text fields editable inline from the list (no fixed value list).
 const INLINE_TEXT_FIELDS = new Set(['timing']);
