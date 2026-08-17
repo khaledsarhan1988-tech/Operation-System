@@ -145,6 +145,14 @@ const INSERT_INST = `
 
 // ─── LIST ────────────────────────────────────────────────────────────────────
 
+// entry_date normalized to sortable ISO "YYYY-MM-DD": converts the sheet's
+// "M/D/YYYY" text, and leaves values that are already ISO untouched.
+const ISO_ENTRY_DATE = `(CASE WHEN entry_date LIKE '%/%/%' THEN `
+  + `substr(entry_date,-4) || '-' `
+  + `|| printf('%02d', CAST(substr(entry_date,1,instr(entry_date,'/')-1) AS INTEGER)) || '-' `
+  + `|| printf('%02d', CAST(substr(substr(entry_date,instr(entry_date,'/')+1),1,instr(substr(entry_date,instr(entry_date,'/')+1),'/')-1) AS INTEGER)) `
+  + `ELSE entry_date END)`;
+
 // Build the shared WHERE (+ bind params) from the query filters. Used by BOTH
 // /list and /export so their filtering can never drift apart.
 function buildSalesWhere(query) {
@@ -186,10 +194,13 @@ function buildSalesWhere(query) {
   if (courses)    { where.push('courses = ?');     p.push(courses); }
   if (agent)      { where.push('agent_name = ?');  p.push(agent); }
   if (source)     { where.push('source = ?');      p.push(source); }
-  // entry_date is stored as the sheet's text (e.g. "7/1/2023"); date filters
-  // compare on a best-effort parsed form below only when both are y-m-d.
-  if (from)       { where.push("date(entry_date) >= date(?)"); p.push(from); }
-  if (to)         { where.push("date(entry_date) <= date(?)"); p.push(to); }
+  // entry_date is stored as the sheet's text "M/D/YYYY" (e.g. "8/6/2026") — SQLite's
+  // date() only parses ISO, so it returned NULL for every sheet row and the date
+  // filter matched nothing. Normalize "M/D/YYYY" → "YYYY-MM-DD" (leaving already-ISO
+  // values as-is) and compare as ISO strings against the from/to (which the <input
+  // type=date> already sends as YYYY-MM-DD).
+  if (from)       { where.push(`${ISO_ENTRY_DATE} >= ?`); p.push(from); }
+  if (to)         { where.push(`${ISO_ENTRY_DATE} <= ?`); p.push(to); }
 
   return { whereSql: where.length ? `WHERE ${where.join(' AND ')}` : '', p };
 }
