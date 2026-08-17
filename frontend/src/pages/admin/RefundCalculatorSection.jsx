@@ -31,6 +31,9 @@ function parseRefundData(row) {
   return parseRefundNote(row?.note);
 }
 const isRefundRow = (row) => String(row?.courses || '').trim().toLowerCase() === 'refund';
+// User note = the part of `note` BEFORE any legacy [refund] calc marker (current
+// refunds keep the calc in refund_details, so `note` holds only the free-text note).
+const noteTextOf = (row) => String(row?.note || '').split(REFUND_TAG)[0].trim();
 
 function Box({ label, value, onChange, readOnly, tone }) {
   const base = 'w-full px-3 py-2 border rounded-xl text-sm outline-none text-right';
@@ -70,6 +73,7 @@ export default function RefundCalculatorSection() {
   const [placement, setPlacement]       = useState('');
   const [adminFee, setAdminFee]         = useState('');
   const [otherFees, setOtherFees]       = useState('');
+  const [note, setNote]                 = useState('');
 
   const { data, isFetching } = useQuery({
     queryKey: ['cs-sales', 'refund-search', q],
@@ -90,6 +94,7 @@ export default function RefundCalculatorSection() {
         setMVal(saved.mVal ?? ''); setMMonths(saved.mMonths ?? ''); setTPaid(saved.tPaid ?? '');
         setConsumed(saved.consumed ?? ''); setSessions(saved.sessions ?? ''); setSessionPrice(saved.sessionPrice ?? '');
         setDiscountPct(saved.discountPct ?? ''); setPlacement(saved.placement ?? ''); setAdminFee(saved.adminFee ?? ''); setOtherFees(saved.otherFees ?? '');
+        setNote(noteTextOf(row));
       } else {
         // Fresh calc from a membership operation.
         const eff = (row.new_courses && String(row.new_courses).trim()) ? row.new_courses : row.courses;
@@ -97,7 +102,7 @@ export default function RefundCalculatorSection() {
         setMVal(val ? String(val) : '');
         setMMonths(levelsOf(eff) ? String(levelsOf(eff)) : '');
         setTPaid(num(row.total_paid_calc) ? String(num(row.total_paid_calc)) : '');
-        setConsumed(''); setSessions(''); setSessionPrice(''); setDiscountPct(''); setPlacement(''); setAdminFee(''); setOtherFees('');
+        setConsumed(''); setSessions(''); setSessionPrice(''); setDiscountPct(''); setPlacement(''); setAdminFee(''); setOtherFees(''); setNote('');
         reqIdRef.current = (globalThis.crypto?.randomUUID?.() || `refund-${Date.now()}-${Math.random().toString(36).slice(2)}`);
       }
       setSeededId(row.id);
@@ -125,7 +130,7 @@ export default function RefundCalculatorSection() {
         code: picked.code, client_name: picked.client_name, mobile_no: picked.mobile_no,
         courses: 'Refund', price: neg, total_paid_same_month: neg, balance: 0,
         paid_status: 'Paid', payment_way: 'Cash', department: 'Sales',
-        entry_date: entryDate, months, note: '', refund_details, op_type: '',
+        entry_date: entryDate, months, note, refund_details, op_type: '',
         client_request_id: reqIdRef.current,
       }).then((r) => r.data);
     },
@@ -216,6 +221,12 @@ export default function RefundCalculatorSection() {
                 className="w-full px-3 py-2.5 border-2 border-emerald-300 rounded-xl text-lg font-black text-emerald-800 bg-emerald-50 outline-none text-right"
               />
             </div>
+            <div className="col-span-2 sm:col-span-3 lg:col-span-4">
+              <label className="block text-[11px] font-bold text-gray-500 mb-1">Note — ملاحظات</label>
+              <textarea rows={4} value={note} onChange={(e) => setNote(e.target.value)}
+                readOnly={savedRefund} placeholder="اكتب ملاحظاتك هنا…"
+                className={`w-full px-3 py-2 border rounded-xl text-sm outline-none resize-y ${savedRefund ? 'bg-gray-100 text-gray-800 border-gray-200' : 'border-gray-200 focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400'}`} />
+            </div>
           </div>
 
           {/* Save — only for a fresh calc (not when reviewing an already-saved refund) */}
@@ -270,6 +281,7 @@ export function RefundReviewModal({ row, onClose }) {
   const [placement, setPlacement]   = useState(init.placement ?? '');
   const [adminFee, setAdminFee]     = useState(init.adminFee ?? '');
   const [otherFees, setOtherFees]   = useState(init.otherFees ?? '');
+  const [note, setNote]             = useState(noteTextOf(row));
 
   const perLevel = num(mMonths) > 0 ? num(mVal) / num(mMonths) : 0;
   const levelValue = num(consumed) * perLevel;
@@ -283,8 +295,9 @@ export function RefundReviewModal({ row, onClose }) {
       const neg = -r2(refund);
       const refund_details = JSON.stringify({ mVal, mMonths, tPaid, consumed, sessions, sessionPrice, discountPct, placement, adminFee, otherFees });
       // Update the SAME row: spread its existing fields, override the money + calc.
+      // The free-text note lives in `note` (calc stays in the hidden refund_details).
       return api.put(`/cs-sales-register/${row.id}`, {
-        ...row, courses: 'Refund', price: neg, total_paid_same_month: neg, balance: 0, note: '', refund_details,
+        ...row, courses: 'Refund', price: neg, total_paid_same_month: neg, balance: 0, note, refund_details,
       }).then((r) => r.data);
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['cs-sales'] }); onClose(); },
@@ -324,6 +337,12 @@ export function RefundReviewModal({ row, onClose }) {
               <label className="block text-[11px] font-black text-emerald-700 mb-1">إجمالي الاسترداد — تلقائي</label>
               <input type="text" dir="ltr" readOnly value={fmt(refund)}
                 className="w-full px-3 py-2.5 border-2 border-emerald-300 rounded-xl text-lg font-black text-emerald-800 bg-emerald-50 outline-none text-right" />
+            </div>
+            <div className="col-span-2 sm:col-span-3 lg:col-span-4">
+              <label className="block text-[11px] font-bold text-gray-500 mb-1">Note — ملاحظات</label>
+              <textarea rows={4} value={note} onChange={(e) => setNote(e.target.value)}
+                placeholder="اكتب ملاحظاتك هنا…"
+                className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 resize-y" />
             </div>
           </div>
           <div className="mt-4 flex items-center gap-3 flex-wrap">
