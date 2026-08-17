@@ -271,9 +271,13 @@ export default function RefundCalculatorSection() {
 export function RefundReviewModal({ row, onClose }) {
   const qc = useQueryClient();
   const init = parseRefundData(row) || {};
+  // Refunds saved without a stored breakdown open with empty boxes → the total would
+  // recompute to 0 on save and WIPE the amount. Seed «المبلغ المدفوع» from the row's
+  // actual refund value so, untouched, the amount is preserved (you add data on top).
+  const fallbackPaid = Math.abs(num(row.total_paid_calc) || num(row.price) || 0);
   const [mVal, setMVal]             = useState(init.mVal ?? '');
   const [mMonths, setMMonths]       = useState(init.mMonths ?? '');
-  const [tPaid, setTPaid]           = useState(init.tPaid ?? '');
+  const [tPaid, setTPaid]           = useState(init.tPaid || (fallbackPaid ? String(fallbackPaid) : ''));
   const [consumed, setConsumed]     = useState(init.consumed ?? '');
   const [sessions, setSessions]     = useState(init.sessions ?? '');
   const [sessionPrice, setSessionPrice] = useState(init.sessionPrice ?? '');
