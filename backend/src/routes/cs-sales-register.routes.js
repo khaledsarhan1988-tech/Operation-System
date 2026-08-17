@@ -145,58 +145,64 @@ const INSERT_INST = `
 
 // ─── LIST ────────────────────────────────────────────────────────────────────
 
+// Build the shared WHERE (+ bind params) from the query filters. Used by BOTH
+// /list and /export so their filtering can never drift apart.
+function buildSalesWhere(query) {
+  const q          = (query.q || '').trim();
+  const department = (query.department || '').trim();
+  const paymentWay = (query.payment_way || '').trim();
+  const paidStatus = (query.paid_status || '').trim();
+  const pages      = (query.pages || '').trim();
+  const courses    = (query.courses || '').trim();
+  const agent      = (query.agent || '').trim();
+  const source     = (query.source || '').trim();
+  const from       = (query.from || '').trim();
+  const to         = (query.to || '').trim();
+
+  const where = [];
+  const p = [];
+  if (q) {
+    // Name = substring match; code + mobile = PREFIX match. Prefix avoids the
+    // false positive where a short code (e.g. 22364) appears inside an
+    // unrelated phone number (e.g. 1223643366 contains "22364").
+    // Mobiles are stored WITHOUT the leading zero (e.g. 1555…), so strip a
+    // leading zero from BOTH sides — searching "01555…" or "1555…" both match.
+    // A client may also have a SECOND phone stored on their Clients-Codes entry
+    // (mobile_no2). Searching by EITHER registry number resolves to that client's
+    // code, so all their operations are found even if a row carries the other one.
+    const qz = q.replace(/^0+/, '') || q;
+    where.push(
+      "(client_name LIKE ? OR LTRIM(IFNULL(mobile_no,''),'0') LIKE ? OR code LIKE ?" +
+      " OR code IN (SELECT code FROM cs_client_codes" +
+      "              WHERE LTRIM(IFNULL(mobile_no,''),'0') LIKE ?" +
+      "                 OR LTRIM(IFNULL(mobile_no2,''),'0') LIKE ?))"
+    );
+    p.push(`%${q}%`, `${qz}%`, `${q}%`, `${qz}%`, `${qz}%`);
+  }
+  if (department) { where.push('department = ?');  p.push(department); }
+  if (paymentWay) { where.push('payment_way = ?'); p.push(paymentWay); }
+  if (paidStatus) { where.push('paid_status = ?'); p.push(paidStatus); }
+  if (pages)      { where.push('pages = ?');       p.push(pages); }
+  if (courses)    { where.push('courses = ?');     p.push(courses); }
+  if (agent)      { where.push('agent_name = ?');  p.push(agent); }
+  if (source)     { where.push('source = ?');      p.push(source); }
+  // entry_date is stored as the sheet's text (e.g. "7/1/2023"); date filters
+  // compare on a best-effort parsed form below only when both are y-m-d.
+  if (from)       { where.push("date(entry_date) >= date(?)"); p.push(from); }
+  if (to)         { where.push("date(entry_date) <= date(?)"); p.push(to); }
+
+  return { whereSql: where.length ? `WHERE ${where.join(' AND ')}` : '', p };
+}
+
 // GET /api/cs-sales-register/list
 // Paginated + filtered. Single-pass total via COUNT(*) OVER().
 router.get('/list', (req, res) => {
   try {
-    const q          = (req.query.q || '').trim();
-    const department = (req.query.department || '').trim();
-    const paymentWay = (req.query.payment_way || '').trim();
-    const paidStatus = (req.query.paid_status || '').trim();
-    const pages      = (req.query.pages || '').trim();
-    const courses    = (req.query.courses || '').trim();
-    const agent      = (req.query.agent || '').trim();
-    const source     = (req.query.source || '').trim();
-    const from       = (req.query.from || '').trim();
-    const to         = (req.query.to || '').trim();
-
     const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
     const offset = (page - 1) * limit;
 
-    const where = [];
-    const p = [];
-    if (q) {
-      // Name = substring match; code + mobile = PREFIX match. Prefix avoids the
-      // false positive where a short code (e.g. 22364) appears inside an
-      // unrelated phone number (e.g. 1223643366 contains "22364").
-      // Mobiles are stored WITHOUT the leading zero (e.g. 1555…), so strip a
-      // leading zero from BOTH sides — searching "01555…" or "1555…" both match.
-      // A client may also have a SECOND phone stored on their Clients-Codes entry
-      // (mobile_no2). Searching by EITHER registry number resolves to that client's
-      // code, so all their operations are found even if a row carries the other one.
-      const qz = q.replace(/^0+/, '') || q;
-      where.push(
-        "(client_name LIKE ? OR LTRIM(IFNULL(mobile_no,''),'0') LIKE ? OR code LIKE ?" +
-        " OR code IN (SELECT code FROM cs_client_codes" +
-        "              WHERE LTRIM(IFNULL(mobile_no,''),'0') LIKE ?" +
-        "                 OR LTRIM(IFNULL(mobile_no2,''),'0') LIKE ?))"
-      );
-      p.push(`%${q}%`, `${qz}%`, `${q}%`, `${qz}%`, `${qz}%`);
-    }
-    if (department) { where.push('department = ?');  p.push(department); }
-    if (paymentWay) { where.push('payment_way = ?'); p.push(paymentWay); }
-    if (paidStatus) { where.push('paid_status = ?'); p.push(paidStatus); }
-    if (pages)      { where.push('pages = ?');       p.push(pages); }
-    if (courses)    { where.push('courses = ?');     p.push(courses); }
-    if (agent)      { where.push('agent_name = ?');  p.push(agent); }
-    if (source)     { where.push('source = ?');      p.push(source); }
-    // entry_date is stored as the sheet's text (e.g. "7/1/2023"); date filters
-    // compare on a best-effort parsed form below only when both are y-m-d.
-    if (from)       { where.push("date(entry_date) >= date(?)"); p.push(from); }
-    if (to)         { where.push("date(entry_date) <= date(?)"); p.push(to); }
-
-    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const { whereSql, p } = buildSalesWhere(req.query);
 
     const rows = db.prepare(`
       SELECT *,
@@ -225,6 +231,47 @@ router.get('/list', (req, res) => {
     });
   } catch (err) {
     console.error('[cs-sales-register/list]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── EXPORT CSV (all matching rows, same filters, no pagination) ─────────────
+// GET /api/cs-sales-register/export  → text/csv (UTF-8 BOM so Excel reads Arabic).
+function csvCell(v) {
+  if (v === null || v === undefined) return '';
+  const s = String(v);
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+const EXPORT_COLS = [
+  ['code', 'Code'], ['entry_date', 'Date'], ['client_name', 'Client'],
+  ['mobile_no', 'Phone'], ['courses', 'Course'], ['new_courses', 'New Course'],
+  ['price', 'Price'], ['new_prices', 'New Price'], ['total_paid_calc', 'Total Paid'],
+  ['discount', 'Discount'], ['balance', 'Balance'], ['months', 'Months'],
+  ['payment_way', 'Payment'], ['paid_status', 'Paid'], ['agent_name', 'Agent'],
+  ['department', 'Dept'], ['pages', 'Brand'], ['shift', 'Shift'],
+  ['op_type', 'Op Type'], ['lectures_count', 'Lectures'], ['source', 'Source'],
+  ['note', 'Note'], ['created_at', 'Created At'], ['updated_at', 'Updated At'],
+];
+router.get('/export', (req, res) => {
+  try {
+    const { whereSql, p } = buildSalesWhere(req.query);
+    const rows = db.prepare(`
+      SELECT *,
+        (IFNULL(total_paid_same_month, 0)
+         + (SELECT IFNULL(SUM(amount), 0) FROM cs_sales_installments WHERE sale_id = cs_sales_register.id)
+        ) AS total_paid_calc
+      FROM cs_sales_register
+      ${whereSql}
+      ORDER BY id DESC
+    `).all(...p);
+    const header = EXPORT_COLS.map(c => csvCell(c[1])).join(',');
+    const body = rows.map(r => EXPORT_COLS.map(c => csvCell(r[c[0]])).join(',')).join('\r\n');
+    const csv = '﻿' + header + (body ? '\r\n' + body : '');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="operations.csv"');
+    return res.send(csv);
+  } catch (err) {
+    console.error('[cs-sales-register/export]', err);
     return res.status(500).json({ error: err.message });
   }
 });

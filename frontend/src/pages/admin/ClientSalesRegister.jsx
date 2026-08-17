@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Users, Search, Calendar, Filter, X, ChevronLeft, ChevronRight,
   Eye, RefreshCw, Plus, Pencil, Trash2, Save, CreditCard, Hash,
-  AlertTriangle, DollarSign, Upload, CheckCircle, Tag, RotateCcw, Receipt,
+  AlertTriangle, DollarSign, Upload, CheckCircle, Tag, RotateCcw, Receipt, Download,
 } from 'lucide-react';
 import api from '../../api/axios';
 import PageHero from '../../components/ui/PageHero';
@@ -1017,6 +1017,27 @@ export default function ClientSalesRegister() {
   const openAdd  = () => { setEditId(null); setFormOpen(true); };
   const openEdit = (id) => { setEditId(id); setFormOpen(true); };
 
+  // Export ALL rows matching the current filters as CSV (auth flows through axios,
+  // so we fetch a blob and trigger the download rather than a bare link).
+  const [exporting, setExporting] = useState(false);
+  const exportCsv = async () => {
+    setExporting(true);
+    try {
+      const { page, limit, ...filterParams } = params; // export ignores pagination
+      const res = await api.get('/cs-sales-register/export', { params: filterParams, responseType: 'blob' });
+      const url = URL.createObjectURL(new Blob([res.data], { type: 'text/csv;charset=utf-8' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `operations-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert('فشل تصدير الملف');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div className="p-6 space-y-5" dir="rtl">
       <PageHero
@@ -1026,6 +1047,10 @@ export default function ClientSalesRegister() {
         gradient="emerald"
         actions={view === 'operations' ? (
           <>
+            <button onClick={exportCsv} disabled={exporting}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-black text-teal-700 bg-white hover:bg-teal-50 rounded-xl transition shadow-sm disabled:opacity-50">
+              <Download size={18} /> {exporting ? 'جارٍ التصدير…' : 'تصدير CSV'}
+            </button>
             <button onClick={() => setImportOpen(true)}
               className="inline-flex items-center gap-2 px-4 py-2 text-sm font-black text-sky-700 bg-white hover:bg-sky-50 rounded-xl transition shadow-sm">
               <Upload size={18} /> رفع CSV
