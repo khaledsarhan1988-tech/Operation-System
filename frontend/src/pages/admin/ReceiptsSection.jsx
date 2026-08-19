@@ -57,7 +57,7 @@ function TimeCell({ value, onSave }) {
       onBlur={() => { if ((v || '') !== (value || '')) onSave(v); }}
       onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
       placeholder="—"
-      className="w-24 px-2 py-1 border border-gray-200 rounded-lg text-xs bg-white outline-none focus:ring-2 focus:ring-teal-200 focus:border-teal-400" />
+      className="w-full min-w-[80px] px-2 py-1 border border-gray-200 rounded-lg text-xs bg-white outline-none focus:ring-2 focus:ring-teal-200 focus:border-teal-400" />
   );
 }
 
@@ -155,7 +155,7 @@ export default function ReceiptsSection() {
   });
   const cellSelect = (rw, field, opts) => (
     <select value={rw[field] || ''} onChange={(e) => patchField.mutate({ id: rw.id, field, value: e.target.value })}
-      className="px-2 py-1 border border-gray-200 rounded-lg text-xs bg-white outline-none focus:ring-2 focus:ring-teal-200 focus:border-teal-400">
+      className="w-full min-w-[96px] px-2 py-1 border border-gray-200 rounded-lg text-xs bg-white outline-none focus:ring-2 focus:ring-teal-200 focus:border-teal-400">
       {opts.map(o => <option key={o} value={o}>{o || '—'}</option>)}
     </select>
   );
