@@ -153,9 +153,10 @@ export default function ReceiptsSection() {
     mutationFn: ({ id, field, value }) => api.patch(`/cs-receipts/${id}/field`, { field, value }).then(r => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['cs-receipts'] }),
   });
-  const cellSelect = (rw, field, opts) => (
+  const cellSelect = (rw, field, opts, minWidth = 96) => (
     <select value={rw[field] || ''} onChange={(e) => patchField.mutate({ id: rw.id, field, value: e.target.value })}
-      className="w-full min-w-[96px] px-2 py-1 border border-gray-200 rounded-lg text-xs bg-white outline-none focus:ring-2 focus:ring-teal-200 focus:border-teal-400">
+      style={{ minWidth }}
+      className="w-full px-2 py-1 border border-gray-200 rounded-lg text-xs bg-white outline-none focus:ring-2 focus:ring-teal-200 focus:border-teal-400">
       {opts.map(o => <option key={o} value={o}>{o || '—'}</option>)}
     </select>
   );
@@ -292,7 +293,7 @@ export default function ReceiptsSection() {
                   <td className="py-2 px-3 font-mono text-xs text-gray-600">{rw.client_wallet || '—'}</td>
                   <td className="py-2 px-3 font-bold text-teal-700">{fmt(rw.amount)}</td>
                   <td className="py-2 px-3 text-xs whitespace-nowrap">{rw.courses || '—'}{isLectures(rw.courses) && rw.lectures_count != null && rw.lectures_count !== '' ? <span className="text-indigo-600 font-bold"> ({rw.lectures_count} محاضرة)</span> : null}</td>
-                  <td className="py-2 px-3">{cellSelect(rw, 'receiver_channel', ['', ...RECEIVER_CHANNELS])}</td>
+                  <td className="py-2 px-3">{cellSelect(rw, 'receiver_channel', ['', ...RECEIVER_CHANNELS], 140)}</td>
                   <td className="py-2 px-3">{cellSelect(rw, 'status', STATUS_OPTS)}</td>
                   <td className="py-2 px-3">{cellSelect(rw, 'photo', DONE_OPTS)}</td>
                   <td className="py-2 px-3">{cellSelect(rw, 'tamkeen', DONE_OPTS)}</td>
