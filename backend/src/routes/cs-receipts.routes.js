@@ -76,6 +76,15 @@ const OP_UPDATE = db => db.prepare(`
   WHERE id=@id
 `);
 
+// Map the receipt Status → the linked operation's paid_status (owner decision
+// 2026-08): Rejected → Fake, Pending → Not Paid, Approved/blank → by balance.
+function paidStatusFor(status, balance) {
+  const s = String(status || '').trim();
+  if (s === 'Rejected') return 'Fake';
+  if (s === 'Pending') return 'Not Paid';
+  return (Number(balance) || 0) <= 0.01 ? 'Paid' : 'Not Paid';
+}
+
 // Build the shared field bag for a receipt + its operation.
 function fields(body) {
   const date = str(body.date);
@@ -93,7 +102,7 @@ function fields(body) {
     system_status: str(body.system_status), financial_wallet: str(body.financial_wallet),
     lectures_count: num(body.lectures_count),
     balance, months: monthsLabel(date),
-    paid_status: balance <= 0.01 ? 'Paid' : 'Not Paid',
+    paid_status: paidStatusFor(body.status, balance),
     payment_way: str(body.receiver_channel),
   };
 }
@@ -248,9 +257,11 @@ router.post('/', (req, res) => {
   }
 });
 
-// ─── PATCH a single status flag (inline edit from the list — NO money touched) ──
-// Only the tracking flags are editable this way; the field name is whitelisted so
-// it can never be an arbitrary column, and the value must be one of the allowed opts.
+// ─── PATCH a single tracking flag (inline edit from the list) ─────────────────
+// Only tracking flags are editable this way; the field name is whitelisted so it
+// can never be an arbitrary column, and the value must be one of the allowed opts.
+// Amounts are never touched — the one exception is Status, which also updates the
+// linked operation's paid_status flag (see below).
 // Receiver channels — MUST mirror RECEIVER_CHANNELS in ReceiptsSection.jsx.
 const RECEIVER_CHANNELS = ['1012164464', '1281429649', '1012164327', '1015048618', '1015082452', '1094172559', '1016738176', '1012164368', '1040247384', '1040254359', 'Paytaps', 'CiB', 'QNB-USD'];
 const INLINE_FIELDS = {
@@ -278,10 +289,19 @@ router.patch('/:id/field', (req, res) => {
       return res.status(400).json({ error: 'قيمة غير مسموحة' });
     }
     if (isText) value = value.trim().slice(0, 40); // free text — keep it short
-    const row = db.prepare('SELECT id FROM cs_receipts WHERE id = ?').get(req.params.id);
+    const row = db.prepare('SELECT id, sale_id FROM cs_receipts WHERE id = ?').get(req.params.id);
     if (!row) return res.status(404).json({ error: 'غير موجود' });
+    const ts = nowTs();
     db.prepare(`UPDATE cs_receipts SET ${field} = ?, updated_at = ? WHERE id = ?`)
-      .run(str(value), nowTs(), req.params.id);
+      .run(str(value), ts, req.params.id);
+    // Status drives the linked operation's paid_status (Rejected→Fake, Pending→Not
+    // Paid, Approved/blank→by balance) so قائمة العمليات never shows Paid for a
+    // rejected receipt. Amounts are untouched — only the paid_status flag changes.
+    if (field === 'status' && row.sale_id) {
+      const op = db.prepare('SELECT balance FROM cs_sales_register WHERE id = ?').get(row.sale_id);
+      db.prepare('UPDATE cs_sales_register SET paid_status = ?, updated_at = ? WHERE id = ?')
+        .run(paidStatusFor(value, op ? op.balance : 0), ts, row.sale_id);
+    }
     saveNow();
     const receipt = db.prepare('SELECT * FROM cs_receipts WHERE id = ?').get(req.params.id);
     return res.json({ ok: true, receipt });
