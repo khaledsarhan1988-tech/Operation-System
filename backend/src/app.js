@@ -3460,6 +3460,31 @@ initDb().then(db => {
       }
     } catch (e) { console.warn('[migration] cs_client_codes backfill from receipts skipped:', e.message); }
 
+    // ── Sync paid_status of receipt-linked operations to their receipt Status ──
+    // Owner decision 2026-08: a receipt Status must drive its operation's PAID —
+    // Rejected→Fake, Pending→Not Paid, Approved/blank→by balance. Older confirmed
+    // receipts were created before that link, so a rejected receipt could still show
+    // Paid. Fix ONLY operations that have a linked receipt (created via حركة الإيصالات);
+    // operations entered directly in قائمة العمليات have no receipt and are untouched.
+    // Idempotent (re-running yields the same paid_status).
+    try {
+      db._raw.run(`
+        UPDATE cs_sales_register SET
+          paid_status = (
+            SELECT CASE
+              WHEN TRIM(IFNULL(r.status,'')) = 'Rejected' THEN 'Fake'
+              WHEN TRIM(IFNULL(r.status,'')) = 'Pending'  THEN 'Not Paid'
+              WHEN IFNULL(cs_sales_register.balance,0) <= 0.01 THEN 'Paid'
+              ELSE 'Not Paid' END
+            FROM cs_receipts r
+            WHERE r.sale_id = cs_sales_register.id
+            ORDER BY r.id DESC LIMIT 1
+          ),
+          updated_at = datetime('now','+2 hours')
+        WHERE id IN (SELECT sale_id FROM cs_receipts WHERE sale_id IS NOT NULL)
+      `);
+    } catch (e) { console.warn('[migration] receipt→operation paid_status sync skipped:', e.message); }
+
     // ── One-time: remap 4 poisoned client codes back to the real sequence ─────
     // A phone number was saved as a code on an operation (id 10118), which pushed
     // the next-code auto-suggestion into the billions; the next 4 codes cascaded
