@@ -107,10 +107,21 @@ function fields(body) {
   };
 }
 
+// Receipt `date` (sheet text "M/D/YYYY") normalized to sortable ISO "YYYY-MM-DD"
+// so the date-range filter compares correctly (SQLite date() only parses ISO).
+const ISO_RECEIPT_DATE = `(CASE WHEN "date" LIKE '%/%/%' THEN `
+  + `substr("date",-4) || '-' `
+  + `|| printf('%02d', CAST(substr("date",1,instr("date",'/')-1) AS INTEGER)) || '-' `
+  + `|| printf('%02d', CAST(substr(substr("date",instr("date",'/')+1),1,instr(substr("date",instr("date",'/')+1),'/')-1) AS INTEGER)) `
+  + `ELSE "date" END)`;
+
 // ─── LIST ────────────────────────────────────────────────────────────────────
 router.get('/list', (req, res) => {
   try {
     const q = (req.query.q || '').trim();
+    const status = (req.query.status || '').trim();
+    const from = (req.query.from || '').trim();
+    const to = (req.query.to || '').trim();
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
     const offset = (page - 1) * limit;
@@ -120,6 +131,12 @@ router.get('/list', (req, res) => {
       where.push("(client_name LIKE ? OR code LIKE ? OR LTRIM(IFNULL(mobile_no,''),'0') LIKE ? OR LTRIM(IFNULL(client_wallet,''),'0') LIKE ?)");
       p.push(`%${q}%`, `${q}%`, `${qz}%`, `${qz}%`);
     }
+    if (status) {
+      if (status === '__blank__') where.push("TRIM(IFNULL(status,'')) = ''");
+      else { where.push('status = ?'); p.push(status); }
+    }
+    if (from) { where.push(`${ISO_RECEIPT_DATE} >= ?`); p.push(from); }
+    if (to)   { where.push(`${ISO_RECEIPT_DATE} <= ?`); p.push(to); }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const rows = db.prepare(`
       SELECT *, COUNT(*) OVER() AS _total FROM cs_receipts

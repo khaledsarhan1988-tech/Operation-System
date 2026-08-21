@@ -71,6 +71,11 @@ export default function ReceiptsSection() {
   const [codeFocus, setCodeFocus] = useState(false);
   const [phoneWarn, setPhoneWarn] = useState('');
   const [q, setQ] = useState('');
+  const [statusF, setStatusF] = useState('');   // '' = all, '__blank__' = فاضي
+  const [fromF, setFromF] = useState('');
+  const [toF, setToF] = useState('');
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [q, statusF, fromF, toF]); // any filter change → page 1
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   // Membership catalog → course dropdown + auto price (Ahmed Hassan list price).
@@ -106,11 +111,13 @@ export default function ReceiptsSection() {
 
   // Receipts list.
   const { data: listData, isFetching } = useQuery({
-    queryKey: ['cs-receipts', 'list', q],
-    queryFn: () => api.get('/cs-receipts/list', { params: { q, limit: 50 } }).then(r => r.data),
+    queryKey: ['cs-receipts', 'list', q, statusF, fromF, toF, page],
+    queryFn: () => api.get('/cs-receipts/list', { params: { q, status: statusF, from: fromF, to: toF, page, limit: 50 } }).then(r => r.data),
     keepPreviousData: true,
   });
   const rows = listData?.rows || [];
+  const total = listData?.total || 0;
+  const totalPages = listData?.pages || 1;
 
   const resetForm = () => { setForm({ ...EMPTY }); setIsNew(false); setEditId(null); setPhoneWarn(''); reqIdRef.current = globalThis.crypto?.randomUUID?.() || `rcpt-${Math.random().toString(36).slice(2)}`; save.reset(); };
   const editRow = (rw) => {
@@ -269,6 +276,25 @@ export default function ReceiptsSection() {
           <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="بحث بالاسم / الكود / الموبايل / المحفظة" className={`${inputCls} pr-9`} />
         </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
+          <Field label="Status">
+            <select value={statusF} onChange={(e) => setStatusF(e.target.value)} className={inputCls}>
+              <option value="">كل الحالات</option>
+              <option value="Approved">Approved</option>
+              <option value="Pending">Pending</option>
+              <option value="Rejected">Rejected</option>
+              <option value="__blank__">— (بدون)</option>
+            </select>
+          </Field>
+          <Field label="من تاريخ"><input type="date" value={fromF} onChange={(e) => setFromF(e.target.value)} className={inputCls} /></Field>
+          <Field label="إلى تاريخ"><input type="date" value={toF} onChange={(e) => setToF(e.target.value)} className={inputCls} /></Field>
+          {(statusF || fromF || toF) && (
+            <div className="flex items-end">
+              <button type="button" onClick={() => { setStatusF(''); setFromF(''); setToF(''); }} className="inline-flex items-center gap-1 px-3 py-2 text-xs font-bold text-gray-500 hover:text-gray-700"><AlertTriangle size={14} /> مسح الفلاتر</button>
+            </div>
+          )}
+        </div>
+        <div className="text-xs font-bold text-gray-500 mb-2">{total} إيصال</div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm min-w-[1300px]">
             <thead className="text-gray-500 border-b">
@@ -320,6 +346,15 @@ export default function ReceiptsSection() {
             </tbody>
           </table>
         </div>
+        {totalPages > 1 && (
+          <div className="flex items-center justify-center gap-3 mt-4">
+            <button type="button" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
+              className="px-3 py-1.5 rounded-lg text-sm font-bold text-gray-600 bg-gray-50 border border-gray-200 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed">السابق</button>
+            <span className="text-sm font-bold text-gray-500">صفحة {page} من {totalPages}</span>
+            <button type="button" onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages}
+              className="px-3 py-1.5 rounded-lg text-sm font-bold text-gray-600 bg-gray-50 border border-gray-200 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed">التالي</button>
+          </div>
+        )}
       </SectionCard>
     </div>
   );
