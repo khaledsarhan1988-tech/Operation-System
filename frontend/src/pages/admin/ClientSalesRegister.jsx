@@ -577,7 +577,7 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                       {/* Client transfer: sender's levels → moved to the receiver. The
                           fee is the only money; balance is 0. */}
                       <div>
-                        <label className="block text-[11px] font-bold text-gray-500 mb-1">إجمالي ليفلات القديمة (تلقائي من الكود)</label>
+                        <label className="block text-[11px] font-bold text-gray-500 mb-1">اجمالى ليفلات العضويه القديمة</label>
                         <input type="number" value={form.transfer_total_levels ?? ''}
                           onChange={(e) => set('transfer_total_levels', e.target.value)}
                           className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
@@ -607,13 +607,13 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                     <>
                       {/* Transfer: levels consumed + auto credit/required/balance */}
                       <div>
-                        <label className="block text-[11px] font-bold text-gray-500 mb-1">عدد الليفلات المستهلكة</label>
+                        <label className="block text-[11px] font-bold text-gray-500 mb-1">عدد الليفلات المستهلكة من العضويه القديمة</label>
                         <input type="number" value={form.transfer_consumed_levels ?? ''}
                           onChange={(e) => setTr({ transfer_consumed_levels: e.target.value })}
                           className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
                       </div>
                       <div>
-                        <label className="block text-[11px] font-bold text-gray-500 mb-1">إجمالي ليفلات القديمة (تلقائي من الكود)</label>
+                        <label className="block text-[11px] font-bold text-gray-500 mb-1">اجمالى ليفلات العضويه القديمة</label>
                         <input type="number" value={form.transfer_total_levels ?? ''}
                           onChange={(e) => setTr({ transfer_total_levels: e.target.value })}
                           className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
