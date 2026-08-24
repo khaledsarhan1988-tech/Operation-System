@@ -159,9 +159,13 @@ router.post('/', (req, res) => {
     const ts = nowTs();
     const reqId = str(body.client_request_id);
     const force = body.force === true || body.force === 'true';
+    // recorded=true («حفظ كمسجّل بدون عملية») → close the receipt as manually recorded
+    // (its operation is already in قائمة العمليات, e.g. a transfer/upgrade). NEVER
+    // creates or touches an operation, whatever confirm says.
+    const recorded = body.recorded === true || body.recorded === 'true';
     // confirm=true → also create/update the operation in قائمة العمليات.
     // confirm=false («حفظ مؤقت») → log the receipt only (no operation yet).
-    const confirm = body.confirm === true || body.confirm === 'true';
+    const confirm = (body.confirm === true || body.confirm === 'true') && !recorded;
     // A code-less receipt can never create a client code either.
     const isNewClient = (body.is_new_client === true || body.is_new_client === 'true') && !!f.code;
 
@@ -243,6 +247,7 @@ router.post('/', (req, res) => {
         courses: f.courses, price: f.price, discount: f.discount, status: f.status, photo: f.photo,
         tamkeen: f.tamkeen, operation_sys: f.operation_sys, system_status: f.system_status,
         financial_wallet: f.financial_wallet, lectures_count: f.lectures_count,
+        recorded_manually: recorded ? 1 : 0,
         sale_id: saleId, reqId, ts,
         by: req.user.id || null, byName: req.user.full_name || null,
       };
@@ -252,16 +257,16 @@ router.post('/', (req, res) => {
           client_wallet=@client_wallet, receiver_channel=@receiver_channel, amount=@amount, timing=@timing,
           courses=@courses, price=@price, discount=@discount, status=@status, photo=@photo, tamkeen=@tamkeen,
           operation_sys=@operation_sys, system_status=@system_status, financial_wallet=@financial_wallet,
-          lectures_count=@lectures_count, sale_id=@sale_id, updated_at=@ts WHERE id=@id`).run({ ...rParams, id: prior.id });
+          lectures_count=@lectures_count, recorded_manually=@recorded_manually, sale_id=@sale_id, updated_at=@ts WHERE id=@id`).run({ ...rParams, id: prior.id });
         receiptId = prior.id;
       } else {
         receiptId = db.prepare(`INSERT INTO cs_receipts
           (date, code, client_name, mobile_no, mobile_no2, client_wallet, receiver_channel, amount, timing,
            courses, price, discount, status, photo, tamkeen, operation_sys, system_status, financial_wallet,
-           lectures_count, sale_id, client_request_id, source, created_by, created_by_name, created_at, updated_at)
+           lectures_count, recorded_manually, sale_id, client_request_id, source, created_by, created_by_name, created_at, updated_at)
           VALUES (@date,@code,@client_name,@mobile_no,@mobile_no2,@client_wallet,@receiver_channel,@amount,@timing,
            @courses,@price,@discount,@status,@photo,@tamkeen,@operation_sys,@system_status,@financial_wallet,
-           @lectures_count,@sale_id,@reqId,'system',@by,@byName,@ts,@ts)`).run(rParams).lastInsertRowid;
+           @lectures_count,@recorded_manually,@sale_id,@reqId,'system',@by,@byName,@ts,@ts)`).run(rParams).lastInsertRowid;
       }
     })();
     saveNow();

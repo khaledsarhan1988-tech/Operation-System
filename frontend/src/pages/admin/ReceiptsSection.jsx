@@ -32,8 +32,10 @@ const isLectures = (c) => String(c || '').trim().toLowerCase().startsWith('lectu
 // any of Photo/Tamkeen/System/Financial Wallet not filled.
 const isBlank = (v) => v == null || String(v).trim() === '';
 const rowNeedsAttention = (rw) =>
-  isBlank(rw.status) || rw.status === 'Pending' ||
-  isBlank(rw.photo) || isBlank(rw.tamkeen) || isBlank(rw.system_status) || isBlank(rw.financial_wallet);
+  !rw.recorded_manually && (
+    isBlank(rw.status) || rw.status === 'Pending' ||
+    isBlank(rw.photo) || isBlank(rw.tamkeen) || isBlank(rw.system_status) || isBlank(rw.financial_wallet)
+  );
 const isoToMdy = (iso) => { const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? `${+m[2]}/${+m[3]}/${m[1]}` : iso; };
 const mdyToIso = (s) => { const m = String(s || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return m ? `${m[3]}-${String(+m[1]).padStart(2, '0')}-${String(+m[2]).padStart(2, '0')}` : ''; };
 
@@ -137,7 +139,7 @@ export default function ReceiptsSection() {
 
   const lastConfirmRef = useRef(false); // remembers مؤقت vs نهائي for the dup-phone retry
   const save = useMutation({
-    mutationFn: ({ confirm, force }) => { lastConfirmRef.current = confirm; return api.post('/cs-receipts', { ...form, is_new_client: isNew, client_request_id: reqIdRef.current, confirm, force }).then(r => r.data); },
+    mutationFn: ({ confirm, force, recorded }) => { lastConfirmRef.current = confirm; return api.post('/cs-receipts', { ...form, is_new_client: isNew, client_request_id: reqIdRef.current, confirm, force, recorded }).then(r => r.data); },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['cs-receipts'] });
       qc.invalidateQueries({ queryKey: ['cs-sales'] });
@@ -259,7 +261,14 @@ export default function ReceiptsSection() {
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black text-white bg-teal-600 hover:bg-teal-700 transition disabled:opacity-50">
             {save.isPending ? <RefreshCw size={16} className="animate-spin" /> : <CheckCircle size={16} />} حفظ الإيصال (يعمل العملية)
           </button>
-          {save.isSuccess && <span className="inline-flex items-center gap-1 text-sm font-bold text-emerald-700"><CheckCircle size={16} /> {lastConfirmRef.current ? 'اتسجّل الإيصال + العملية' : 'اتحفظ مؤقت (بدون عملية)'}</span>}
+          {/* Close as manually-recorded — NO operation created/touched (its operation is
+              already in قائمة العمليات, e.g. a transfer/upgrade). */}
+          <button type="button" onClick={() => save.mutate({ confirm: false, force: false, recorded: true })} disabled={save.isPending || !form.code}
+            title="للتحويلات/الترقيات المسجّلة يدويًا في قائمة العمليات — يقفل الإيصال بدون إنشاء عملية"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-black text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition disabled:opacity-50">
+            {save.isPending ? <RefreshCw size={16} className="animate-spin" /> : <CheckCircle size={16} />} حفظ كمسجّل (بدون عملية)
+          </button>
+          {save.isSuccess && <span className="inline-flex items-center gap-1 text-sm font-bold text-emerald-700"><CheckCircle size={16} /> {lastConfirmRef.current ? 'اتسجّل الإيصال + العملية' : 'اتحفظ (بدون عملية)'}</span>}
           {save.isError && !phoneWarn && <span className="inline-flex items-center gap-1 text-sm font-bold text-rose-700"><AlertTriangle size={16} /> {save.error?.response?.data?.error || 'فشل الحفظ'}</span>}
         </div>
         {phoneWarn && (
@@ -328,10 +337,12 @@ export default function ReceiptsSection() {
                   <td className="py-2 px-3">
                     {rw.sale_id
                       ? <span className="px-2 py-0.5 rounded-lg text-[11px] font-bold bg-emerald-100 text-emerald-700">مسجّل في العمليات</span>
-                      : <span className="px-2 py-0.5 rounded-lg text-[11px] font-bold bg-amber-100 text-amber-700">مؤقت</span>}
+                      : rw.recorded_manually
+                        ? <span className="px-2 py-0.5 rounded-lg text-[11px] font-bold bg-emerald-100 text-emerald-700">مسجّل يدويًا</span>
+                        : <span className="px-2 py-0.5 rounded-lg text-[11px] font-bold bg-amber-100 text-amber-700">مؤقت</span>}
                   </td>
                   <td className="py-2 px-3 whitespace-nowrap">
-                    {!rw.sale_id && (
+                    {!rw.sale_id && !rw.recorded_manually && (
                       <button onClick={() => { setConfirmingId(rw.id); confirmRow.mutate(rw); }} disabled={confirmingId === rw.id || !rw.code}
                         className="p-1.5 text-teal-600 hover:bg-teal-100 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed"
                         title={rw.code ? 'حفظ الإيصال (يعمل العملية)' : 'محتاج كود العميل الأول — عدّل الإيصال وأضف بياناته'}>
