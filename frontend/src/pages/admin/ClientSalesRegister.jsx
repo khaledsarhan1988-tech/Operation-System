@@ -117,10 +117,15 @@ function calcPaidBalance(form, installments, mode = 'normal') {
     // Consumed value: the auto formula, UNLESS the owner typed an override (e.g. a
     // credit quoted on the list price while the client paid a discounted amount).
     const consumedValue = consumedValueOf(form);
+    // Optional discount on the NEW membership price (amount or "%") — reduces the
+    // money still required and the remaining balance. Does NOT touch the carried
+    // credit (that value comes from the OLD membership).
+    const discount = Math.abs(discountAmount(form.discount, newPrice));
+    const effNewPrice = newPrice - discount;
     const credit = oldPrice - consumedValue;       // value carried from the old membership (informational)
-    const required = newPrice - credit;            // new money still required (informational)
-    const balance = Math.round((newPrice - (totalPaid - consumedValue)) * 100) / 100;
-    return { hasInst, instSum, manual: manual || 0, effPrice: newPrice, discount: 0,
+    const required = effNewPrice - credit;         // new money still required (informational)
+    const balance = Math.round((effNewPrice - (totalPaid - consumedValue)) * 100) / 100;
+    return { hasInst, instSum, manual: manual || 0, effPrice: effNewPrice, discount,
              consumedValue, credit, required, totalPaid, balance };
   }
 
@@ -638,6 +643,13 @@ function SaleFormModal({ open, editId, options, onClose, onSaved }) {
                         <label className="block text-[11px] font-bold text-gray-500 mb-1">مدفوع مباشرة (غير الأقساط)</label>
                         <input type="number" value={form.total_paid_same_month ?? ''}
                           onChange={(e) => set('total_paid_same_month', e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-gray-500 mb-1">خصم على السعر الجديد (مبلغ أو %)</label>
+                        <input type="text" value={form.discount ?? ''}
+                          onChange={(e) => set('discount', e.target.value)}
+                          placeholder="مثال: 235 أو 5%"
                           className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
                       </div>
                       <div>
