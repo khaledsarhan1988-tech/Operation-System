@@ -78,7 +78,7 @@ function makeGroupDept() {
   const byName = (g) => {
     const s = String(g || '');
     if (/_SP\b|_SP\(|_SP_|\bSp_|_Sp_|\b[23]P\b/i.test(s)) return 'Semi';
-    if (/_P\b|_P\(|_PM\b|_Pm\b|_P_|_Pac|Starter\s*\d?P\b|\d\s*P\(/i.test(s)) return 'Private';
+    if (/_P\b|_P\(|_PM\b|_Pm\b|_P_|_Pac|_KP\b|Starter\s*\d?P\b|\d\s*P\(/i.test(s)) return 'Private';
     return 'General';
   };
   return (group) => map.get(canonKey(group)) || byName(group);
