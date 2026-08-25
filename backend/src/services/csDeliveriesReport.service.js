@@ -54,6 +54,36 @@ function makeLectureMeta() {
   return (group, _line) => byCanon.get(canonKey(group)) || { start: null, end: null };
 }
 
+// Classify a group to its department (General | Private | Semi). Authoritative
+// source is the dept_type column — from batches (active groups) and
+// cs_completed_levels (finished groups). A handful of old groups sit in neither;
+// for those we fall back to the name suffix. Needed because a client who
+// transferred General→Private keeps groups in BOTH depts, and a per-dept report
+// must show only the groups that belong to THAT dept (owner 2026-07-24).
+function makeGroupDept() {
+  const { canonKey } = require('../utils/csBatchMatch');
+  const map = new Map();
+  for (const r of db.prepare(`SELECT group_name AS g, dept_type AS d FROM batches WHERE dept_type IS NOT NULL`).all()) {
+    map.set(canonKey(r.g), r.d);
+  }
+  try {
+    for (const r of db.prepare(`SELECT DISTINCT group_name_raw AS g, dept AS d FROM cs_completed_levels
+                                 WHERE dept IS NOT NULL AND group_name_raw IS NOT NULL`).all()) {
+      const k = canonKey(r.g);
+      if (!map.has(k)) map.set(k, r.d);
+    }
+  } catch (_) { /* optional table */ }
+  // Name fallback: "_SP"/"Sp_"/"2P"/"3P" = Semi; "_P"/"_PM"/"_Pm"/"…P" = Private;
+  // otherwise General. "_PM" is Private (a coordinator/shift tag), NOT a time.
+  const byName = (g) => {
+    const s = String(g || '');
+    if (/_SP\b|_SP\(|_SP_|\bSp_|_Sp_|\b[23]P\b/i.test(s)) return 'Semi';
+    if (/_P\b|_P\(|_PM\b|_Pm\b|_P_|_Pac|Starter\s*\d?P\b|\d\s*P\(/i.test(s)) return 'Private';
+    return 'General';
+  };
+  return (group) => map.get(canonKey(group)) || byName(group);
+}
+
 // "M/D/YYYY" → sortable YYYYMMDD (0 if unparseable). SAME as csDeliveries.salesDateKey.
 function salesDateKey(s) {
   const m = String(s == null ? '' : s).match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
@@ -102,6 +132,7 @@ function getDeptAnalytics({ dept, gradFrom, gradTo }) {
 
   const ctx = csDel.buildBalanceContext();        // { salesMap, activeMap, inactiveMap } (phone-aliases folded)
   const lectMeta = makeLectureMeta();
+  const groupDept = makeGroupDept();              // group → General|Private|Semi
   // Secondary→primary phone aliases (كشف العملاء mobile_no2): ctx keys are the
   // PRIMARY phones, so every phone landing in a lookup set must resolve too.
   const alias = csDel.buildPhoneAliasMap ? csDel.buildPhoneAliasMap() : new Map();
@@ -146,9 +177,16 @@ function getDeptAnalytics({ dept, gradFrom, gradTo }) {
     const bal = csDel.membershipBalance(ctx, pn, dept);
     if (bal.state === 'unknown') continue;        // not part of this dept's population
 
-    const active = ctx.activeMap.get(pn) || [];
+    // Only THIS dept's groups drive the displayed group/level/date. A client who
+    // transferred (e.g. General→Private) has groups in both depts; showing the
+    // other dept's group under this report is what made a Private "Starter 3_P"
+    // appear in the General list (owner 2026-07-24). The balance above stays
+    // cross-dept on purpose — only the display + graduation date are scoped.
+    const active = (ctx.activeMap.get(pn) || []).filter(a => groupDept(a.group_name) === dept);
     const activeKeys = new Set(active.map(a => String(a.group_name).split('(')[0].replace(/\s/g, '')));
-    const inactive = [...(ctx.inactiveMap.get(pn) || [])].filter(g => !activeKeys.has(String(g).split('(')[0].replace(/\s/g, '')));
+    const inactive = [...(ctx.inactiveMap.get(pn) || [])]
+      .filter(g => groupDept(g) === dept)
+      .filter(g => !activeKeys.has(String(g).split('(')[0].replace(/\s/g, '')));
 
     // Last-lecture end date per group.
     const activeEnds = active.map(a => ({ name: a.group_name, end: lectMeta(a.group_name, a.line).end }));

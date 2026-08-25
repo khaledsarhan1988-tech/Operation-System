@@ -110,12 +110,12 @@ export default function DeptAnalyticsModal({ dept, onClose }) {
   // Export the «هيتخرجوا» list exactly as shown — same columns and same order
   // as the on-screen table (name+phone split into two Excel columns).
   const exportGraduating = () => {
-    const headers = ['العميل', 'الموبايل', 'آخر مجموعة', 'المستوى', 'تاريخ التخرج (آخر محاضرة)'];
+    const headers = ['العميل', 'الموبايل', 'آخر مجموعة في القسم', 'المستوى', 'تاريخ آخر محاضرة'];
     const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
     const rows = graduating.map(g => [g.name, g.phone, g.last_group, g.last_level, g.grad_date]);
     const csv = [headers, ...rows].map(r => r.map(esc).join(',')).join('\n');
     const [gf, gt] = orderRange(gradFrom, gradTo);
-    downloadCsv(csv, `هيتخرجوا-${dept}-${gf || ''}_${gt || ''}.csv`);
+    downloadCsv(csv, `خلصوا-المدفوع-${dept}-${gf || ''}_${gt || ''}.csv`);
   };
 
   const Stat = ({ icon: Icon, label, value, cls }) => (
@@ -150,10 +150,14 @@ export default function DeptAnalyticsModal({ dept, onClose }) {
               cls="bg-rose-50 text-rose-800 border-rose-200" />
           </div>
 
-          {/* Q4 — graduating in a date range */}
+          {/* Q4 — finished their PAID levels in a date range (renewal candidates).
+              NOT program graduation: remaining==0 means their paid package ran
+              out (owner clarified the label 2026-07-24). */}
           <div className="rounded-xl border border-slate-200 p-4">
             <div className="flex flex-wrap items-center gap-3">
-              <span className="text-sm font-semibold text-slate-700">التخرج في الفترة:</span>
+              <span className="text-sm font-semibold text-slate-700" title="العملاء اللي خلصوا كل المستويات المدفوعة في الفترة — يعني إما يجدّدوا إما يسيبوا. مش تخرّج من البرنامج.">
+                خلصوا المدفوع في الفترة:
+              </span>
               <div className="flex items-center gap-1 text-xs text-slate-500">
                 <span>من</span>
                 <DateField value={gradFrom} onChange={e => setGradFrom(e.target.value)} />
@@ -162,7 +166,7 @@ export default function DeptAnalyticsModal({ dept, onClose }) {
                 <span className="text-[10px] text-slate-400 mr-1">(شهر/يوم/سنة)</span>
               </div>
               <span className="inline-flex items-center gap-2 mr-auto text-sm">
-                <span className="text-slate-500">هيتخرجوا:</span>
+                <span className="text-slate-500">محتاجين تجديد:</span>
                 <span className="inline-flex items-center justify-center min-w-8 px-3 py-1 rounded-full bg-violet-100 text-violet-700 text-lg font-bold">
                   {q.isLoading ? '…' : (data.graduating_count ?? 0)}
                 </span>
@@ -179,9 +183,9 @@ export default function DeptAnalyticsModal({ dept, onClose }) {
                 <table className="w-full text-xs text-right">
                   <thead><tr className="text-slate-500 border-b border-slate-100">
                     <th className="px-2 py-2 font-medium">العميل</th>
-                    <th className="px-2 py-2 font-medium">آخر مجموعة</th>
+                    <th className="px-2 py-2 font-medium">آخر مجموعة في القسم</th>
                     <th className="px-2 py-2 font-medium">المستوى</th>
-                    <th className="px-2 py-2 font-medium">تاريخ التخرج (آخر محاضرة)</th>
+                    <th className="px-2 py-2 font-medium">تاريخ آخر محاضرة</th>
                   </tr></thead>
                   <tbody>
                     {graduating.map((g, i) => (
