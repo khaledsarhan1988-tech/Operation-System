@@ -587,6 +587,65 @@ function buildGroupExclusions(alias) {
   return map;
 }
 
+// Ghost groups = a group that never actually ran (ZERO main-session lectures)
+// while a sibling with the SAME level+time+date+trainer but a different weekday
+// DID run. This is a group that was rostered then rescheduled to another day —
+// the old weekday record is a phantom that would otherwise be counted as a
+// second consumed level (owner 2026-07-24, guarded so it can NEVER merge two
+// real sections). The guard is the lecture count: only a zero-lecture sibling of
+// a real group is dropped. Two real sections (both with lectures) are left alone,
+// which is why this does not violate the "no loose level+trainer merge" rule —
+// it requires proof (no lectures) that the ghost never existed as a class.
+//
+// Returns { ghosts: Set<groupNameLower>, edges: [[ghostName, realName]] }.
+function buildGhostGroupSet() {
+  const WD = new Set(['sat', 'sun', 'mon', 'tue', 'tus', 'tues', 'wed', 'thu', 'thr',
+    'thur', 'fri', 'saturday', 'sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday']);
+  const stableNoDay = (g) => {
+    const i = String(g).indexOf('('); if (i === -1) return null;
+    return String(g).substring(0, i).toLowerCase().split(/[_\s]+/).filter(t => t && !WD.has(t)).join('');
+  };
+  const trainer = (g) => { const m = String(g).match(/\(([^)]+)\)/); return m ? m[1].trim().toLowerCase().replace(/\s/g, '') : ''; };
+
+  // One query: which group names ever held a main-session lecture. Keyed the same
+  // way we test membership (stable prefix before "(", spaces stripped, lowercase).
+  const lecKey = (g) => String(g).split('(')[0].replace(/\s/g, '').toLowerCase();
+  const ranKeys = new Set();
+  for (const r of db.prepare(`SELECT DISTINCT group_name AS g FROM lectures WHERE session_type='main'`).all()) {
+    ranKeys.add(lecKey(r.g));
+  }
+  const hasLectures = (g) => ranKeys.has(lecKey(g));
+
+  // Every group name the balance can see.
+  const names = new Set();
+  for (const src of [
+    `SELECT DISTINCT group_name AS g FROM batches WHERE group_name IS NOT NULL`,
+    `SELECT DISTINCT group_name_raw AS g FROM cs_completed_levels WHERE group_name_raw IS NOT NULL`,
+  ]) { try { for (const r of db.prepare(src).all()) if (r.g) names.add(r.g); } catch (_) {} }
+  try { for (const r of db.prepare(`SELECT DISTINCT group_name_raw AS g FROM cs_client_group_history WHERE group_name_raw IS NOT NULL`).all()) if (r.g) names.add(r.g); } catch (_) {}
+
+  const clusters = new Map();   // (stableNoDay|trainer) → [names]
+  for (const g of names) {
+    const s = stableNoDay(g); if (!s) continue;
+    const k = s + '|' + trainer(g);
+    if (!clusters.has(k)) clusters.set(k, []);
+    clusters.get(k).push(g);
+  }
+
+  const ghosts = new Set(), edges = [];
+  for (const arr of clusters.values()) {
+    if (arr.length < 2) continue;
+    const ran = arr.filter(hasLectures);
+    const phantom = arr.filter(g => !hasLectures(g));
+    // CLEAN case only: exactly one real group ran; the rest never held a lecture.
+    // Two+ real groups (both ran) = distinct sections → leave every one alone.
+    if (ran.length === 1 && phantom.length >= 1) {
+      for (const g of phantom) { ghosts.add(g.toLowerCase()); edges.push([g, ran[0]]); }
+    }
+  }
+  return { ghosts, edges };
+}
+
 function buildBalanceContext() {
   const alias = buildPhoneAliasMap();
   const ctx = foldPhoneAliases({
@@ -611,6 +670,21 @@ function buildBalanceContext() {
     const set = ctx.inactiveMap.get(pn);
     if (!set) continue;
     for (const g of [...set]) if (bmCanon(g) === ck) set.delete(g);
+  }
+
+  // Drop zero-lecture ghost groups (a phantom weekday-twin of a real group) so a
+  // rescheduled group is not counted as a second consumed level. Applied to BOTH
+  // maps and after the alias fold, exactly like exclusions above.
+  const { ghosts } = buildGhostGroupSet();
+  ctx.ghostGroups = ghosts;
+  if (ghosts.size) {
+    for (const [pn, arr] of ctx.activeMap) {
+      const kept = arr.filter(a => !ghosts.has(String(a.group_name).toLowerCase()));
+      if (kept.length !== arr.length) ctx.activeMap.set(pn, kept);
+    }
+    for (const [pn, set] of ctx.inactiveMap) {
+      for (const g of [...set]) if (ghosts.has(String(g).toLowerCase())) set.delete(g);
+    }
   }
   return ctx;
 }
