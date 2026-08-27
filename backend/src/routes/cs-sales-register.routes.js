@@ -179,13 +179,18 @@ function buildSalesWhere(query) {
     // (mobile_no2). Searching by EITHER registry number resolves to that client's
     // code, so all their operations are found even if a row carries the other one.
     const qz = q.replace(/^0+/, '') || q;
+    // Also match the OTHER side of a cross-client transfer: a receiver's row carries
+    // the SENDER's code/phone in transfer_from_code/transfer_from_phone, so searching
+    // by the sender's number surfaces the receiver's row too (and vice-versa) — the
+    // two linked rows show together.
     where.push(
       "(client_name LIKE ? OR LTRIM(IFNULL(mobile_no,''),'0') LIKE ? OR code LIKE ?" +
+      " OR transfer_from_code LIKE ? OR LTRIM(IFNULL(transfer_from_phone,''),'0') LIKE ?" +
       " OR code IN (SELECT code FROM cs_client_codes" +
       "              WHERE LTRIM(IFNULL(mobile_no,''),'0') LIKE ?" +
       "                 OR LTRIM(IFNULL(mobile_no2,''),'0') LIKE ?))"
     );
-    p.push(`%${q}%`, `${qz}%`, `${q}%`, `${qz}%`, `${qz}%`);
+    p.push(`%${q}%`, `${qz}%`, `${q}%`, `${q}%`, `${qz}%`, `${qz}%`, `${qz}%`);
   }
   if (department) { where.push('department = ?');  p.push(department); }
   if (paymentWay) { where.push('payment_way = ?'); p.push(paymentWay); }
