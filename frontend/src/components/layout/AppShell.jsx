@@ -7,10 +7,10 @@ import QuickAddTodo from '../todos/QuickAddTodo';
 export default function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { pathname } = useLocation();
-  // Wide, data-heavy pages (e.g. the trainer payroll table with many columns)
-  // use the FULL available width instead of the centered 1600px cap, so columns
-  // don't overflow the frame and the empty side margins are used.
-  const fullWidth = /\/salaries\//.test(pathname);
+  // Wide, data-heavy pages (e.g. the trainer payroll table, or كشف العملاء with its
+  // many-column operations/receipts tables) use the FULL available width instead of
+  // the centered 1600px cap, so columns don't overflow the frame.
+  const fullWidth = /\/salaries\/|\/sales-register/.test(pathname);
 
   return (
     <div className="flex h-screen overflow-hidden bg-surface">
