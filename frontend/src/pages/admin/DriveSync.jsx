@@ -470,6 +470,9 @@ export default function DriveSync() {
 
   const userLine = user?.line || 'Ahmed Hassan';
   const canChooseLine = userLine === 'All';
+  // Sync + Backfill are open to a 'drive-sync' grant holder (any role); the
+  // destructive delete-day + cold-archive (VACUUM) panels stay super-admin only.
+  const isSuperAdmin = user?.role === 'admin' && user?.management === 'All';
 
   const [selectedLine, setSelectedLine] = useState(canChooseLine ? 'Ahmed Hassan' : userLine);
   const [date, setDate] = useState(todayStr());
@@ -927,9 +930,9 @@ export default function DriveSync() {
         </div>
       )}
 
-      <ImportByDatePanel isAr={isAr} />
+      {isSuperAdmin && <ImportByDatePanel isAr={isAr} />}
 
-      <ColdArchivePanel isAr={isAr} />
+      {isSuperAdmin && <ColdArchivePanel isAr={isAr} />}
     </div>
   );
 }

@@ -318,6 +318,11 @@ node -e "
   - **`team.routes.js`:** حارس الراوتر → `requirePageOrManagement('team','Enrollment')` (مسؤول-عام + مدير Enrollment + منح `team`).
   - **الفرونت:** `GRANTABLE_PAGES` += `users-management` + `team`؛ مسارات محايدة **`/reports/users`** (`requirePage="users-management"` → `UserManagement`) + **`/reports/team`** (`requirePage="team"` → `TeamPage`)؛ قسم Sidebar «صلاحيات ممنوحة» (`UserCog`→‏`/reports/users`، `Users`→‏`/reports/team`).
   - متحقَّق: `node --check` ×3 + `@babel/parser` ×3 + اختبار حارس وظيفي: مسؤول-عام والممنوح للكتابة→200؛ مدير-قسم-بلا-منح وموظف-عادي→403؛ منح على `/backup`→403؛ منح `team`→200 ومنسق CS→403. **اليوزر لازم logout+login** بعد المنح (JWT).
+- **⚠ فتح «مزامنة Drive» للمنح — مزامنة + `Backfill` فقط (2026-09-09، قرار Owner):** الصفحة `DriveSync.jsx` كانت **للمسؤول العام فقط** (راوترا `/drive` + `/cold-archive`). الـ Owner اختار نطاق **«المزامنة والـ Backfill بس»** — الأجزاء التدميرية تفضل للمسؤول العام. مفتاح جديد **`drive-sync`**.
+  - **`drive.routes.js`:** الحارس العام بقى **`requireSuperAdminOrPage('drive-sync')`** (مسؤول عام أو منح، أي دور). واتشال `requireRole('leader')` الزيادة من الـ4 endpoints الأساسية (`/status`, `/files`, `/prepare-folders`, `/sync`) عشان الممنوح لو «موظف/`agent`» يعدّي (الحارس العام بقى المرجع الوحيد). ونقاط «حذف استيراد يوم» الـ3 (`import-by-date` + `/delete` + `/restore`) بقت **`requireSuperAdmin`** (تمنع الممنوح).
+  - **`cold-archive.routes.js`:** **ملمستهوش** — فاضل `requireSuperAdmin` فالأرشفة + **`VACUUM`** للمسؤول العام فقط. ⚠ ليه `VACUUM` مهم: على `better-sqlite3` عملية **متزامنة بتقفل الـ event loop** = حادثة «الدخول واقف»؛ ممنوع توصل لغير المسؤول العام.
+  - **الفرونت:** `GRANTABLE_PAGES` += `drive-sync`؛ مسار محايد `‎/reports/drive-sync` (`requirePage="drive-sync"`)؛ لينك Sidebar «صلاحيات ممنوحة» (`Cloud`). **`DriveSync.jsx`:** قسمَا الحذف + الأرشفة/`VACUUM` مغلّفين `{isSuperAdmin && ...}` فالممنوح مايشوفش أزرار بترجع 403.
+  - متحقَّق: `node --check` + `@babel/parser` ×4 + اختبار حارس (مسؤول-عام والممنوح-agent→200؛ leader/agent-بلا-منح→403؛ الممنوح ومدير-القسم→403 على النقاط التدميرية). **logout+login** بعد المنح (JWT).
 
 ---
 

@@ -45,6 +45,7 @@ const GRANTABLE_PAGES = [
   { value: 'enr-levels',             label: 'تسليمات الأقسام — المستويات الشغّالة' },
   { value: 'users-management',       label: '⚠ إدارة المستخدمين (إضافة/تعديل/حذف + منح صلاحيات)' },
   { value: 'team',                   label: 'فريق العمل (عرض + تعديل)' },
+  { value: 'drive-sync',             label: 'مزامنة Google Drive (مزامنة + Backfill فقط)' },
   // كشف العملاء is NOT a page-grant anymore — access is via the «الإدارة المالية»
   // (Finance) management (requireOwnerOrManagement). Assign the user management=Finance.
 ];

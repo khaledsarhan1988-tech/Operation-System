@@ -140,6 +140,7 @@ const router = createBrowserRouter([
       // — backend enforces the real access (users-management / team grants).
       { path: 'users',                  element: <PrivateRoute requirePage="users-management"><UserManagement /></PrivateRoute> },
       { path: 'team',                   element: <PrivateRoute requirePage="team"><TeamPage /></PrivateRoute> },
+      { path: 'drive-sync',             element: <PrivateRoute requirePage="drive-sync"><DriveSync /></PrivateRoute> },
     ],
   },
 

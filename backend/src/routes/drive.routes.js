@@ -2,7 +2,7 @@
 
 const express = require('express');
 const { authenticate } = require('../middleware/auth');
-const { requireRole } = require('../middleware/roles');
+const { requireRole, requireSuperAdmin, requireSuperAdminOrPage } = require('../middleware/roles');
 const drive = require('../services/googleDrive.service');
 const driveSync = require('../services/driveSync.service');
 const { VALID_LINES } = require('../services/sync.service');
@@ -36,12 +36,11 @@ function cascadeRematch() {
 
 // Super-Admin only: department managers (admin بـ management != 'All')
 // ما يقدروش يستخدموا الـ Drive sync. الرفع للمسؤول العام فقط.
-router.use(authenticate, (req, res, next) => {
-  if (req.user?.role !== 'admin' || req.user?.management !== 'All') {
-    return res.status(403).json({ error: 'صلاحية Drive للمسؤول العام فقط (Super Admin)' });
-  }
-  next();
-});
+// Router gate: super-admin (admin+All) OR a user granted the 'drive-sync' page
+// (extra_pages). The grant covers SYNC + BACKFILL only — the destructive
+// «حذف استيراد يوم» endpoints below re-check requireSuperAdmin, and the whole
+// /cold-archive router (archive + VACUUM) stays super-admin-only. (Owner 2026-09-09.)
+router.use(authenticate, requireSuperAdminOrPage('drive-sync'));
 
 // Resolve the line a request should target, honoring line restrictions.
 function resolveLine(req, requestedLine) {
@@ -69,7 +68,9 @@ function parseDate(input) {
 }
 
 // GET /api/drive/status — verify connection and return config
-router.get('/status', authenticate, requireRole('leader'), async (req, res) => {
+// Access already enforced by the router gate (super-admin OR 'drive-sync' grant)
+// — the per-route requireRole was dropped so a granted agent/employee passes too.
+router.get('/status', async (req, res) => {
   try {
     const root = await drive.verifyConnection();
     return res.json({
@@ -88,7 +89,7 @@ router.get('/status', authenticate, requireRole('leader'), async (req, res) => {
 
 // GET /api/drive/files?line=X&date=YYYY-MM-DD
 // Returns latest file per File Type folder + Smart Sync hint (changed/unchanged).
-router.get('/files', authenticate, requireRole('leader'), async (req, res) => {
+router.get('/files', async (req, res) => {
   const { line: lineParam, date: dateParam } = req.query;
   const { line, error } = resolveLine(req, lineParam);
   if (error) return res.status(400).json({ error });
@@ -140,7 +141,7 @@ router.get('/files', authenticate, requireRole('leader'), async (req, res) => {
 // POST /api/drive/prepare-folders
 // Body: { line, date (optional, defaults to today) }
 // Pre-creates Line/YYYY/MM/DD/<all 7 File Type folders>. Idempotent.
-router.post('/prepare-folders', authenticate, requireRole('leader'), express.json(), async (req, res) => {
+router.post('/prepare-folders', express.json(), async (req, res) => {
   const { line: lineParam, date: dateParam } = req.body || {};
   const { line, error } = resolveLine(req, lineParam);
   if (error) return res.status(400).json({ error });
@@ -188,7 +189,7 @@ router.post('/prepare-transfer-month', authenticate, requireRole('admin'), expre
 // POST /api/drive/sync
 // Body: { line, date, fileTypes?, force? }
 // force=true → re-import even unchanged files (default false = Smart Sync)
-router.post('/sync', authenticate, requireRole('leader'), express.json(), async (req, res) => {
+router.post('/sync', express.json(), async (req, res) => {
   const { line: lineParam, date: dateParam, fileTypes, force } = req.body || {};
   const { line, error } = resolveLine(req, lineParam);
   if (error) return res.status(400).json({ error });
@@ -355,7 +356,7 @@ function ensureRollbackBackup() {
 function bustCacheSafe() { try { require('../utils/reportCache').bustReportCache(); } catch (_) {} }
 
 // GET /api/drive/import-by-date?date=YYYY-MM-DD → per-table row counts (preview).
-router.get('/import-by-date', authenticate, requireRole('admin'), (req, res) => {
+router.get('/import-by-date', authenticate, requireSuperAdmin, (req, res) => {
   try {
     const date = String(req.query.date || '').trim();
     if (!isISODate(date)) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
@@ -369,7 +370,7 @@ router.get('/import-by-date', authenticate, requireRole('admin'), (req, res) => 
 });
 
 // POST /api/drive/import-by-date/delete {date} → back up + delete that day's rows.
-router.post('/import-by-date/delete', authenticate, requireRole('admin'), express.json(), (req, res) => {
+router.post('/import-by-date/delete', authenticate, requireSuperAdmin, express.json(), (req, res) => {
   try {
     const date = String(req.body?.date || '').trim();
     if (!isISODate(date)) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
@@ -393,7 +394,7 @@ router.post('/import-by-date/delete', authenticate, requireRole('admin'), expres
 });
 
 // POST /api/drive/import-by-date/restore {date} → re-insert that date's backed-up rows.
-router.post('/import-by-date/restore', authenticate, requireRole('admin'), express.json(), (req, res) => {
+router.post('/import-by-date/restore', authenticate, requireSuperAdmin, express.json(), (req, res) => {
   try {
     const date = String(req.body?.date || '').trim();
     if (!isISODate(date)) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });

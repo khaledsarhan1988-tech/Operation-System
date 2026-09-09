@@ -321,6 +321,8 @@ export default function Sidebar({ mobile, onClose }) {
     adminGrants.push({ to: '/reports/users', label: 'إدارة المستخدمين', icon: UserCog, color: 'indigo' });
   if (grants.has('team'))
     adminGrants.push({ to: '/reports/team', label: 'فريق العمل', icon: Users, color: 'purple' });
+  if (grants.has('drive-sync'))
+    adminGrants.push({ to: '/reports/drive-sync', label: 'مزامنة Drive', icon: Cloud, color: 'sky' });
   if (adminGrants.length) {
     grantedLinks.push({ type: 'section', label: 'صلاحيات ممنوحة' }, ...adminGrants);
   }
