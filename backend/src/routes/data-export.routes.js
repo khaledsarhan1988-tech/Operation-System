@@ -354,4 +354,27 @@ router.get('/code-audit', (req, res) => {
   }
 });
 
+// Full dump of the «كشف العملاء» module's 5 tables (schema + rows) so the whole
+// module can be re-created on another system. Read-only, fixed table whitelist,
+// no user SQL. Small (text data only) — NOT the heavy VACUUM snapshot.
+router.get('/cs-register', (req, res) => {
+  try {
+    const TABLES = [
+      'cs_sales_register', 'cs_sales_installments', 'cs_client_codes',
+      'cs_receipts', 'cs_membership_prices',
+    ];
+    const out = { generated_at: new Date().toISOString(), tables: {} };
+    for (const t of TABLES) {
+      const schema = db.prepare(
+        "SELECT sql FROM sqlite_master WHERE name = ? AND sql IS NOT NULL ORDER BY (type='table') DESC"
+      ).all(t).map(r => r.sql);
+      const rows = db.prepare(`SELECT * FROM ${t}`).all();
+      out.tables[t] = { schema, count: rows.length, rows };
+    }
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;
