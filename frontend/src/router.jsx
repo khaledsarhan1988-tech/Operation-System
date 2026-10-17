@@ -178,7 +178,7 @@ const router = createBrowserRouter([
     path: '/admin',
     element: <PrivateRoute allowedRoles={['admin']}><AppShell /></PrivateRoute>,
     children: [
-      { index: true, element: <Navigate to="dashboard" replace /> },
+      { index: true, element: <Navigate to="sales-register" replace /> },
       { path: 'dashboard',                    element: <AdminDashboard /> },
       { path: 'dashboard/details/:metric',    element: <DashboardDetail /> },
       { path: 'users',                        element: <PrivateRoute superAdmin><UserManagement /></PrivateRoute> },
