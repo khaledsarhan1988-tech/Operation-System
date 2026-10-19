@@ -232,7 +232,7 @@ router.get('/list', (req, res) => {
         COUNT(*) OVER() AS _total
       FROM cs_sales_register
       ${whereSql}
-      ORDER BY id DESC
+      ORDER BY ${ISO_ENTRY_DATE} DESC, id DESC
       LIMIT ? OFFSET ?
     `).all(...p, limit, offset);
 
