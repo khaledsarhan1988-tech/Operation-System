@@ -1,0 +1,27 @@
+name: Monthly Transfer-Photo folders
+
+on:
+  schedule:
+    - cron: '0 1 25 * *'
+  workflow_dispatch: {}
+
+jobs:
+  create-folders:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install googleapis
+        working-directory: backend
+        run: npm install googleapis --no-save --no-audit --no-fund
+      - name: Create Transfer-Photo folders
+        working-directory: backend
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          DRIVE_ROOT_FOLDER_ID: ${{ secrets.DRIVE_ROOT_FOLDER_ID }}
+          DRIVE_PREP_FOLDERS_TZ: 'Africa/Cairo'
+        run: node scripts/make-transfer-folders.js
